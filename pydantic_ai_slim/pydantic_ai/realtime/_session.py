@@ -2984,7 +2984,7 @@ class RealtimeSession:
     def _is_replayed_item(self, item_id: str | None, tool_call_id: str | None = None) -> bool:
         """Whether a provider-generic resumption replay already exists in local history.
 
-        Only xAI currently emits `ConversationItemCreated(replayed=True)`.
+        No built-in connection currently emits `ConversationItemCreated(replayed=True)`.
         """
         return (item_id is not None and item_id in self._replayed_item_ids) or (
             tool_call_id is not None and tool_call_id in self._replayed_tool_call_ids
@@ -2997,11 +2997,11 @@ class RealtimeSession:
     def _handle_reconnected(self, event: RealtimeSessionReconnectEvent) -> list[RealtimeEvent]:
         """Settle any in-flight state the reconnect did not actually carry, and report restoration honestly.
 
-        A connection that resumes in-flight state (native resumption on xAI Grok Voice; Gemini Live,
-        which settles the cut turn in the connection itself) reports
+        A connection that resumes in-flight state (Gemini Live, which settles the cut turn in the
+        connection itself) reports
         [`reconnect_restores_in_flight_state`][pydantic_ai.realtime.codec.RealtimeConnection.reconnect_restores_in_flight_state],
         so `state_restored=True` holds as reported and there is nothing more to settle. A connection we
-        reconnect by replaying local history (OpenAI, Azure OpenAI) only restores *finalized* turns: the
+        reconnect by replaying local history (OpenAI, Azure OpenAI, xAI) only restores *finalized* turns: the
         response and tool calls that were in flight when the socket dropped are gone, and the fresh
         server-side conversation knows nothing of them. Settle them here exactly as for a fully lost
         session — the partial reply as an interrupted response, running tool calls as cancelled returns —
@@ -3120,7 +3120,7 @@ class RealtimeSession:
             self._retained_image_requests = [kept for kept in self._retained_image_requests if kept is not request]
 
     def _handle_conversation_item(self, event: ConversationItemCreated) -> None:
-        """Remember IDs assigned to xAI's replay burst so related events are suppressed."""
+        """Remember IDs assigned to a provider's replay burst so related events are suppressed."""
         if event.replayed:
             if event.item_id is not None:
                 self._replayed_item_ids.add(event.item_id)

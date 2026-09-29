@@ -1106,15 +1106,14 @@ async def connect_openai_protocol(
         [ClientConnection, Callable[[], Awaitable[ClientConnection]], str | None, Callable[[], str | None]],
         _ConnectionT,
     ],
-    after_session_created: Callable[[ClientConnection, dict[str, Any]], Awaitable[None]] | None = None,
     on_unexpected_during_update: Callable[[], Callable[[dict[str, Any]], None] | None] | None = None,
     replay_on_redial: bool = False,
 ) -> AsyncGenerator[_ConnectionT]:
     """Connect an OpenAI-protocol realtime model and own its socket lifecycle.
 
-    OpenAI supplies refreshable `dial_headers` and enables `replay_on_redial`. xAI supplies static
-    headers, a `dial_url` that adds its conversation ID, `after_session_created` to establish native
-    resumption, and `on_unexpected_during_update` to capture the server's replay burst.
+    OpenAI supplies refreshable `dial_headers`, and xAI static ones plus `on_unexpected_during_update`
+    to read the conversation ID from the frames that arrive while the session is configured. Both
+    enable `replay_on_redial`.
     """
     # Normalize history before opening a socket so unsupported content remains a caller `UserError`.
     seed = await seed_items(messages, profile=profile, provider_name=provider_name)
@@ -1133,8 +1132,6 @@ async def connect_openai_protocol(
         created = await expect_event(ws, SESSION_CREATED_EVENT, timeout=handshake_timeout)
         if served_model := session_model(created):
             server_model = served_model
-        if after_session_created is not None:
-            await after_session_created(ws, created)
         await ws.send(to_json({'type': SESSION_UPDATE_EVENT, 'session': session_config}).decode())
         on_unexpected = on_unexpected_during_update() if on_unexpected_during_update is not None else None
         await expect_event(ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout, on_unexpected=on_unexpected)

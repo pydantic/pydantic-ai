@@ -10,13 +10,15 @@ conversion, server-VAD config, and the WebSocket connection itself — and diver
 - input audio transcription, delivered as cumulative
   `conversation.item.input_audio_transcription.updated` snapshots plus a final `.completed`, rather
   than OpenAI's incremental `.delta` events (see [`map_event`][pydantic_ai.realtime.xai.map_event]);
-- native conversation resumption when a reconnect policy is configured: the provider-assigned
-  `conversation.id` is reused and its replay burst is suppressed from local history;
+- the provider's conversation ID, reported in `conversation.created` (see
+  [`XaiRealtimeConnection.conversation_id`][pydantic_ai.realtime.xai.XaiRealtimeConnection.conversation_id]).
+  A reconnect replays the local message history into the new session, as on OpenAI: xAI's own
+  conversation resumption leaves user text and function calls out of the conversation it restores;
 - no output truncation at barge-in: xAI's `conversation.item.truncate` only lands once the response
   has ended, and unreliably even then, so
   [`RealtimeModelProfile.supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation]
   is `False` while cancellation-based interruption still works;
-- no text output — the API has no response-modality control and always speaks — so
+- no text output — the API accepts a response-modality setting but ignores it and always speaks — so
   [`RealtimeModelProfile.supports_text_output`][pydantic_ai.realtime.RealtimeModelProfile.supports_text_output]
   is `False` and `output_modality='text'` raises rather than silently coming back as audio.
 
@@ -29,11 +31,11 @@ supplies the event types the shared OpenAI codec is built on):
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
+import warnings
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
-from urllib.parse import quote
 
 try:
     import websockets as websockets
@@ -58,18 +60,16 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 
 from .._instrumentation import get_instructions
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import UserError
-from ..messages import ModelMessage, RealtimeSessionReconnectEvent
+from ..messages import ModelMessage
 from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import LifecycleEvent
 from ._openai_protocol import (
-    RealtimeHandshakeError,
     config_interrupts_response_on_speech,
     connect_openai_protocol,
-    expect_event,
     map_event as _map_openai_event,
     realtime_websocket_url,
     resolve_base_turn_detection,
@@ -247,8 +247,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
     """A live WebSocket connection to the xAI Grok Voice realtime API.
 
     Reuses [`OpenAIRealtimeConnection`][pydantic_ai.realtime.openai.OpenAIRealtimeConnection] for the
-    shared wire protocol, while mapping xAI's cumulative input transcription and conversation lifecycle
-    events and emitting the resumption replay controls captured during reconnect handshakes.
+    shared wire protocol, including reconnecting by replaying the local message history, while mapping
+    xAI's cumulative input transcription and conversation lifecycle events.
     """
 
     _provider_name = 'xai'
@@ -268,6 +268,12 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         conversation_id: str | None = None,
         replayed_items: list[ConversationItemCreated] | None = None,
     ) -> None:
+        if replayed_items is not None:
+            warnings.warn(
+                '`replayed_items` is deprecated and ignored: xAI reconnects replay the local message history.',
+                PydanticAIDeprecationWarning,
+                stacklevel=2,
+            )
         super().__init__(
             ws,
             dial=dial,
@@ -277,13 +283,11 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             model_name=model_name,
             model_name_getter=model_name_getter,
         )
-        self._restores_state_on_reconnect = True
         self._conversation_id = conversation_id
-        self._replayed_items = replayed_items if replayed_items is not None else []
-        # xAI reports `billable_audio_seconds` as the session's running total, not the response's own
+        # xAI reports `billable_audio_seconds` as the conversation's running total, not the response's own
         # share (live: three turns of 0.71s, 0.71s and 0.87s report 1, 2 and 3), so each response is
-        # credited the increase since the last report. Kept on the connection, which outlives a resumed
-        # session, as does xAI's total. The total restarts only with a new conversation.
+        # credited the increase since the last report. The total restarts with a new conversation, which
+        # every reconnect starts.
         self._billed_audio_seconds = 0
         self._billed_conversation_id = conversation_id
 
@@ -313,9 +317,9 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         """This response's share of xAI's running `billable_audio_seconds` total.
 
         The session sums each response's usage, so passing the running total through would count every
-        earlier second again on each turn. xAI keeps counting across a resumed connection and starts
-        afresh only in a new conversation, so that is the one boundary the baseline resets on; a lower
-        total within the same conversation is not new usage, and adds nothing.
+        earlier second again on each turn. xAI starts afresh only in a new conversation, so that is the
+        one boundary the baseline resets on; a lower total within the same conversation is not new usage,
+        and adds nothing.
         """
         total = (usage.model_extra or {}).get('billable_audio_seconds')
         if not isinstance(total, int) or isinstance(total, bool):
@@ -327,18 +331,9 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         self._billed_audio_seconds = max(total, self._billed_audio_seconds)
         return increase
 
-    def set_message_history(self, message_history: Callable[[], Sequence[ModelMessage]]) -> None:
-        """Ignored: xAI restores the conversation itself, so replaying it would say everything twice."""
-
-    @property
-    def reconnect_restores_in_flight_state(self) -> bool:
-        # xAI resumes the conversation server-side, so the in-flight turn is not the session's to settle
-        # (unlike the OpenAI base, which reconnects by replaying finalized history only).
-        return True
-
     @property
     def conversation_id(self) -> str | None:
-        """The xAI conversation ID used for native session resumption."""
+        """The ID xAI gave the conversation on the current socket, once its `conversation.created` arrives."""
         return self._conversation_id
 
     @conversation_id.setter
@@ -346,16 +341,10 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         self._conversation_id = conversation_id
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
-        return map_event(data)
-
-    async def _all_events(self) -> AsyncIterator[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
-        async for event, stale in super()._all_events():
-            yield event, stale
-            if isinstance(event, RealtimeSessionReconnectEvent):
-                replayed_items = self._replayed_items[:]
-                self._replayed_items.clear()
-                for replayed_item in replayed_items:
-                    yield replayed_item, False
+        event = map_event(data)
+        if isinstance(event, ConversationCreated):
+            self._conversation_id = event.conversation_id
+        return event
 
 
 @dataclass(init=False)
@@ -374,9 +363,8 @@ class XaiRealtimeModel(RealtimeModel):
             the server, which otherwise falls back to a default silently.
         provider: The provider to use for authentication and the base URL. Defaults to `'xai'`.
         settings: [Model settings][pydantic_ai.realtime.RealtimeModelSettings] used as defaults for
-            realtime sessions. A [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect]
-            policy enables xAI's native session resumption: prior turns are restored when reconnecting
-            within xAI's resumption window (30 minutes of inactivity).
+            realtime sessions. With a [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect]
+            policy, a dropped connection is re-dialed and the local message history replayed into it.
         profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
             merged over the provider's — a partial dict, or a callable taking the resolved profile and
             returning the one to use. Mirrors `profile=` on a standard
@@ -487,8 +475,6 @@ class XaiRealtimeModel(RealtimeModel):
             # Grok Voice exposes only enabled-at-high and disabled, so every enabled unified effort
             # maps to its sole enabled value.
             config['reasoning'] = {'effort': 'high' if thinking is not False else 'none'}
-        if model_settings.get('reconnect') is not None:
-            config['resumption'] = {'enabled': True}
         return config
 
     @asynccontextmanager
@@ -513,45 +499,27 @@ class XaiRealtimeModel(RealtimeModel):
         )
         transcription_enabled = settings.get('input_transcription_model', 'auto') is not None
         conversation_id: str | None = None
-        replayed_items: list[ConversationItemCreated] = []
         connection: XaiRealtimeConnection | None = None
 
         async def dial_headers() -> dict[str, str]:
             return headers
 
         def dial_url() -> str:
-            resume_id = connection.conversation_id if connection is not None else None
-            dial_url = f'{url}&conversation_id={quote(resume_id, safe="")}' if resume_id else url
-            return dial_url
+            return url
 
         def session_model(created: dict[str, Any]) -> str | None:
             return _XaiSessionCreatedEvent.model_validate(created).session.model
 
-        async def after_session_created(ws: ClientConnection, _: dict[str, Any]) -> None:
-            nonlocal conversation_id
-            if reconnect is not None:
-                conversation = map_conversation_event(
-                    await expect_event(ws, _CONVERSATION_CREATED_EVENT, timeout=handshake_timeout)
-                )
-                if not isinstance(conversation, ConversationCreated):
-                    raise RealtimeHandshakeError(
-                        '`conversation.created` did not include a `conversation.id`, so the session '
-                        'cannot be resumed after a drop'
-                    )
-                conversation_id = conversation.conversation_id
-                if connection is not None:
-                    connection.conversation_id = conversation_id
+        def on_unexpected_during_update() -> Callable[[dict[str, Any]], None]:
+            def capture_conversation_id(data: dict[str, Any]) -> None:
+                # xAI names the conversation right after `session.created`, while the session is configured.
+                nonlocal conversation_id
+                if isinstance(event := map_conversation_event(data), ConversationCreated):
+                    conversation_id = event.conversation_id
+                    if connection is not None:
+                        connection.conversation_id = conversation_id
 
-        def on_unexpected_during_update() -> Callable[[dict[str, Any]], None] | None:
-            if connection is None:
-                return None
-
-            def capture_replayed_item(data: dict[str, Any]) -> None:
-                event = map_conversation_event(data, replayed=True)
-                if isinstance(event, ConversationItemCreated):
-                    replayed_items.append(event)
-
-            return capture_replayed_item
+            return capture_conversation_id
 
         def build_connection(
             ws: ClientConnection,
@@ -569,7 +537,6 @@ class XaiRealtimeModel(RealtimeModel):
                 model_name=server_model,
                 model_name_getter=model_name_getter,
                 conversation_id=conversation_id,
-                replayed_items=replayed_items,
             )
             return connection
 
@@ -584,7 +551,7 @@ class XaiRealtimeModel(RealtimeModel):
             dial_url=dial_url,
             session_model=session_model,
             build_connection=build_connection,
-            after_session_created=after_session_created,
             on_unexpected_during_update=on_unexpected_during_update,
+            replay_on_redial=True,
         ) as connected:
             yield connected

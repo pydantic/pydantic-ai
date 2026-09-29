@@ -371,9 +371,9 @@ class ConversationCreated:
 class ConversationItemCreated:
     """An OpenAI-protocol server reported a conversation item.
 
-    xAI uses `replayed=True` for item events emitted during the resume handshake. The session consumes
-    those items and remembers their newly assigned IDs so any follow-on content or tool events aren't
-    appended or executed again.
+    A connection that resumes a provider-side conversation marks the items the provider replays into it
+    with `replayed=True`. The session consumes those items and remembers their newly assigned IDs so any
+    follow-on content or tool events aren't appended or executed again.
     """
 
     _: KW_ONLY
@@ -520,7 +520,7 @@ class RealtimeConnection(ABC):
         session instead of resuming with total amnesia. The session's history grows as the call goes on,
         hence a callable rather than a snapshot.
 
-        A no-op by default: providers with native session resumption (Gemini Live, xAI) have nothing to
+        A no-op by default: a provider with native session resumption (Gemini Live) has nothing to
         replay, and one that can't seed a session at all has nowhere to put it.
         """
 
@@ -583,11 +583,11 @@ class RealtimeConnection(ABC):
     def reconnect_restores_in_flight_state(self) -> bool:
         """Whether a reconnect continues the response and tool calls that were in flight when the socket dropped.
 
-        Otherwise it only brings back the finalized conversation. Native session resumption (xAI Grok Voice) restores the in-flight generation server-side, and
-        Gemini Live settles the cut turn in the connection before its
-        [`RealtimeSessionReconnectEvent`][pydantic_ai.messages.RealtimeSessionReconnectEvent], so in
-        both the [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] must not settle again and
-        trusts `state_restored`. Local replay (OpenAI, Azure OpenAI) restores only finalized turns, so
+        Otherwise it only brings back the finalized conversation. Gemini Live settles the cut turn in the
+        connection before its
+        [`RealtimeSessionReconnectEvent`][pydantic_ai.messages.RealtimeSessionReconnectEvent], so the
+        [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] must not settle again and trusts
+        `state_restored`. Local replay (OpenAI, Azure OpenAI, xAI) restores only finalized turns, so
         the session settles the interrupted turn itself and reports `state_restored=False`. Defaults to
         `True`; the OpenAI connection overrides it.
         """

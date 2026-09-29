@@ -926,7 +926,9 @@ def test_scenario_openai_connection_faults() -> None:
     run_tolerant(OpenAISimulation(openai=OpenAIOptions(transcription=False)), scenario)
 
 
-def test_scenario_xai_resumption() -> None:
+def test_scenario_xai_reconnect_replays_history() -> None:
+    """xAI reconnects like OpenAI, by replaying the history: its own resumption drops user text (checked live)."""
+
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
         sim.speak()

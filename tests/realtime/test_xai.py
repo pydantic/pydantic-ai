@@ -14,8 +14,10 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal, cast
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.messages import (
@@ -59,6 +61,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.xai import XaiProvider
     from pydantic_ai.realtime import xai as rt_xai
+    from pydantic_ai.realtime._openai_protocol import RealtimeHandshakeError
     from pydantic_ai.realtime.xai import XaiRealtimeConnection, XaiRealtimeModel, map_event as _map_wire_event
 
 from .test_openai import sdk_frame
@@ -332,14 +335,13 @@ def test_session_config_uses_profile_sample_rates() -> None:
     assert config['audio']['output']['format']['rate'] == 32000
 
 
-def test_session_config_resumption_follows_reconnect_policy() -> None:
-    assert 'resumption' not in _model()._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
-    # A model-level default policy (via `settings=`) enables native resumption...
-    model_level = _model(rt_xai.XaiRealtimeModelSettings(reconnect={}))
-    assert model_level._session_config('hi', None, model_settings=None)['resumption'] == {'enabled': True}  # pyright: ignore[reportPrivateUsage]
-    # ...and so does a per-session policy on a model with no defaults.
-    per_session = rt_xai.XaiRealtimeModelSettings(reconnect={})
-    assert _model()._session_config('hi', None, model_settings=per_session)['resumption'] == {'enabled': True}  # pyright: ignore[reportPrivateUsage]
+def test_session_config_never_asks_for_resumption() -> None:
+    """A reconnect replays local history, so xAI's own conversation resumption is never requested.
+
+    It restores assistant turns but leaves user text and function calls out (checked live).
+    """
+    for settings in (None, rt_xai.XaiRealtimeModelSettings(reconnect={})):
+        assert 'resumption' not in _model(settings)._session_config('hi', None, model_settings=None)  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize(
@@ -496,37 +498,15 @@ class FakeWebSocket:
             yield self._incoming.pop(0)
 
 
-def test_xai_connection_restores_in_flight_state_on_reconnect() -> None:
-    # xAI resumes the conversation server-side, so the session keeps its in-flight state rather than
-    # settling it (unlike the OpenAI base this connection is cloned from).
+def test_xai_connection_settles_in_flight_state_on_reconnect() -> None:
+    # A reconnect replays only the finalized conversation, so the session settles what was in flight.
     conn = XaiRealtimeConnection(FakeWebSocket([]))  # type: ignore[arg-type]
-    assert conn.reconnect_restores_in_flight_state is True
+    assert conn.reconnect_restores_in_flight_state is False
 
 
-async def test_reconnect_does_not_re_solicit_an_unstarted_response() -> None:
-    # xAI inherits the OpenAI `_attempt_reconnect`, but because it resumes in-flight state server-side
-    # a response solicited before the drop is resumed by the server — re-soliciting it would duplicate
-    # the turn, so the re-solicit is gated off for this connection.
-    replacement = FakeWebSocket([])
-    replacements = iter([replacement])
-
-    async def dial() -> Any:
-        try:
-            return next(replacements)
-        except StopIteration:
-            raise OSError('server is down')
-
-    conn = XaiRealtimeConnection(
-        _DropAfterFrames([]),  # type: ignore[arg-type]
-        dial=dial,
-        reconnect={'base_delay': 0.0, 'max_attempts': 1},
-    )
-    conn._response_active = True  # pyright: ignore[reportPrivateUsage]
-    conn._response_started = False  # pyright: ignore[reportPrivateUsage]
-
-    events = [e async for e in conn]
-    assert any(isinstance(e, RealtimeSessionReconnectEvent) for e in events)
-    assert not any(json.loads(s).get('type') == 'response.create' for s in replacement.sent)
+def test_replayed_items_is_deprecated() -> None:
+    with pytest.warns(PydanticAIDeprecationWarning, match='`replayed_items` is deprecated and ignored'):
+        XaiRealtimeConnection(FakeWebSocket([]), replayed_items=[])  # type: ignore[arg-type]
 
 
 async def test_response_done_maps_xai_usage_extras() -> None:
@@ -831,7 +811,7 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     """A reconnect through `connect()`'s own dial closes the dropped socket before opening the next."""
     transcript = json.dumps({'type': 'response.output_audio_transcript.done', 'transcript': 'hi'})
     dropped = _DropAfterHandshake([_created(), _conversation_created(), _updated()])
-    good = FakeWebSocket([_created(), _conversation_created(), _updated(), transcript])
+    good = FakeWebSocket([_created(), _conversation_created('conversation-2'), _updated(), transcript])
     connect = _RecordingConnect([dropped, good])
     monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
@@ -839,36 +819,28 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     async with _connect(model, 'x') as conn:
         events = await collect_codec_events(conn)
 
+    # No session offered history to replay, so nothing of the conversation was restored.
     assert events == [
-        RealtimeSessionReconnectEvent(state_restored=True),
+        RealtimeSessionReconnectEvent(state_restored=False),
         OutputTranscript(text='hi', is_final=True, response_id='response'),
     ]
     assert connect.closed == [dropped, good]  # both the dropped and the current socket are closed
-    # The last URL is the re-dial attempted after `good` hung up, which the stand-in refuses.
-    assert connect.urls == [
-        'wss://api.x.ai/v1/realtime?model=grok-voice-latest',
-        'wss://api.x.ai/v1/realtime?model=grok-voice-latest&conversation_id=conversation-1',
-        'wss://api.x.ai/v1/realtime?model=grok-voice-latest&conversation_id=conversation-1',
-    ]
-    assert json.loads(dropped.sent[0])['session']['resumption'] == {'enabled': True}
-    assert json.loads(good.sent[0])['session']['resumption'] == {'enabled': True}
+    # Every dial opens a fresh conversation: xAI isn't asked to resume the dropped one. The last URL is
+    # the re-dial attempted after `good` hung up, which the stand-in refuses.
+    assert connect.urls == ['wss://api.x.ai/v1/realtime?model=grok-voice-latest'] * 3
+    assert conn.conversation_id == 'conversation-2'
 
 
-async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Resumed items are suppressed even when xAI assigns new IDs to the replayed copies."""
+async def test_reconnect_replays_local_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reconnect replays the finalized conversation into the new session, as on OpenAI.
+
+    xAI's own resumption would restore the assistant turn but not the user's text (checked live).
+    """
     dropped = _DropAfterFrames(
         [
             _created(),
             _conversation_created(),
             _updated(),
-            json.dumps(
-                {
-                    'type': 'conversation.item.added',
-                    'item': {'id': 'item-user', 'type': 'message', 'role': 'user'},
-                }
-            ),
             json.dumps(
                 {
                     'type': 'response.output_audio_transcript.done',
@@ -879,35 +851,9 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
             json.dumps({'type': 'response.done', 'response': {'id': 'response-1', 'status': 'completed'}}),
         ]
     )
-    resumed = FakeWebSocket(
-        [
-            _created(),
-            _conversation_created(),
-            json.dumps(
-                {
-                    'type': 'conversation.item.added',
-                    'item': {'id': 'replayed-item-user', 'type': 'message', 'role': 'user'},
-                }
-            ),
-            json.dumps(
-                {
-                    'type': 'conversation.item.added',
-                    'item': {'id': 'replayed-item-assistant', 'type': 'message', 'role': 'assistant'},
-                }
-            ),
-            _updated(),
-            # Defensive duplicate content after the replay marker proves suppression happens by ID,
-            # rather than merely because `conversation.item.created` itself has no history mapping.
-            json.dumps(
-                {
-                    'type': 'response.output_audio_transcript.done',
-                    'item_id': 'replayed-item-assistant',
-                    'transcript': 'Hello back.',
-                }
-            ),
-        ]
-    )
-    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([dropped, resumed]))
+    resumed = FakeWebSocket([_created(), _conversation_created('conversation-2'), _updated()])
+    connect = _RecordingConnect([dropped, resumed])
+    monkeypatch.setattr(rt_xai.websockets, 'connect', connect)
 
     agent = Agent()
     model = _model(rt_xai.XaiRealtimeModelSettings(reconnect={'base_delay': 0.0, 'max_attempts': 1}))
@@ -915,19 +861,19 @@ async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
         await session.send('Hello.')
         events = await collect_session_events(session)
 
-    assert sum(isinstance(event, RealtimeSessionReconnectEvent) for event in events) == 1
+    reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
+    assert connect.urls[:2] == ['wss://api.x.ai/v1/realtime?model=grok-voice-latest'] * 2
+    replayed = [json.loads(frame) for frame in resumed.sent[1:]]
+    replayed_items = [frame['item'] for frame in replayed if frame['type'] == 'conversation.item.create']
+    assert [(item['role'], item['content']) for item in replayed_items] == snapshot(
+        [
+            ('user', [{'type': 'input_text', 'text': 'Hello.'}]),
+            ('assistant', [{'type': 'output_text', 'text': 'Hello back.'}]),
+        ]
+    )
     messages = session.all_messages()
-    assert len(messages) == 2
-    assert isinstance(messages[0], ModelRequest)
-    assert isinstance(messages[0].parts[0], UserPromptPart)
-    assert messages[0].parts[0].content == 'Hello.'
-    assert isinstance(messages[1], ModelResponse)
-    assert messages[1].parts == [
-        SpeechPart(
-            speaker='assistant',
-            transcript='Hello back.',
-        )
-    ]
+    assert [type(message).__name__ for message in messages] == ['ModelRequest', 'ModelResponse']
 
 
 async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -979,7 +925,7 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
 
 async def test_reconnect_handshake_error_is_retryable() -> None:
     async def dial() -> rt_xai.ClientConnection:
-        raise rt_xai.RealtimeHandshakeError('expired conversation')
+        raise RealtimeHandshakeError('the server refused the session')
 
     conn = XaiRealtimeConnection(FakeWebSocket([]), dial=dial)  # type: ignore[arg-type]
 
@@ -1005,13 +951,19 @@ async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pyt
             pass  # pragma: no cover
 
 
-async def test_connect_rejects_conversation_created_without_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    ws = FakeWebSocket([_created(), json.dumps({'type': 'conversation.created', 'conversation': {}})])
-    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(ws))
+@pytest.mark.parametrize('after_handshake', [False, True], ids=['during-handshake', 'after-handshake'])
+async def test_connect_reads_the_conversation_id(monkeypatch: pytest.MonkeyPatch, after_handshake: bool) -> None:
+    """The connection reports the conversation ID xAI gives it, whether it comes before `session.updated` or after."""
+    frames = (
+        [_created(), _updated(), _conversation_created()]
+        if after_handshake
+        else [_created(), _conversation_created(), _updated()]
+    )
+    monkeypatch.setattr(rt_xai.websockets, 'connect', FakeConnect(FakeWebSocket(frames)))
 
-    with pytest.raises(RuntimeError, match=r'did not include a `conversation\.id`'):
-        async with _connect(_model(rt_xai.XaiRealtimeModelSettings(reconnect={})), 'x'):
-            pass  # pragma: no cover
+    async with _connect(_model(), 'x') as conn:
+        _ = await collect_codec_events(conn)
+        assert conn.conversation_id == 'conversation-1'
 
 
 # --- provider / auth resolution ------------------------------------------------------------------
@@ -1125,50 +1077,3 @@ async def test_billable_audio_seconds_restart_with_a_new_conversation() -> None:
 
     assert first is not None and second is not None
     assert (first.audio_seconds, second.audio_seconds) == (4, 1)
-
-
-@pytest.mark.anyio
-async def test_reconnect_keeps_a_tool_call_batch_the_server_restores() -> None:
-    """xAI resumes the response and its tool calls on reconnect, so an early result still gets its answer."""
-    call = {
-        'id': 'item-c1',
-        'type': 'function_call',
-        'call_id': 'c1',
-        'name': 'w',
-        'arguments': '{}',
-        'status': 'completed',
-    }
-    first = _DropAfterFrames(
-        [
-            json.dumps({'type': 'response.created', 'response': {'id': 'r1', 'status': 'in_progress', 'output': []}}),
-            json.dumps(
-                {
-                    'type': 'response.function_call_arguments.done',
-                    'response_id': 'r1',
-                    'item_id': 'item-c1',
-                    'output_index': 0,
-                    'call_id': 'c1',
-                    'name': 'w',
-                    'arguments': '{}',
-                }
-            ),
-        ]
-    )
-    replacement = FakeWebSocket(
-        [json.dumps({'type': 'response.done', 'response': {'id': 'r1', 'status': 'completed', 'output': [call]}})]
-    )
-    replacements = iter([replacement])
-
-    async def dial() -> Any:
-        try:
-            return next(replacements)
-        except StopIteration:
-            raise OSError('server is down')
-
-    conn = XaiRealtimeConnection(first, dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})  # type: ignore[arg-type]
-    events = conn.__aiter__()
-    await events.__anext__()  # the tool call
-    await conn.send(ToolResult(tool_call_id='c1', output='sunny'))  # out before r1 is done
-    _ = [event async for event in events]
-
-    assert [json.loads(frame)['type'] for frame in replacement.sent] == ['response.create']

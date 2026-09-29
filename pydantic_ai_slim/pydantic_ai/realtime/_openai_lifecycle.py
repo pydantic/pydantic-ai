@@ -306,14 +306,13 @@ class OpenAILifecycle:
         self._messages.clear()
         self._tool_outputs.clear()
 
-    def reconnected(self, *, restores_in_flight: bool, lost_inputs: Sequence[InputId]) -> None:
+    def reconnected(self, *, lost_inputs: Sequence[InputId]) -> None:
         """A reconnect succeeded: settle what it did not carry over, before it is reported."""
         self._pending.extend(InputAdded(input_id=input_id) for input_id in sorted(self._carried_over))
         self._carried_over.clear()
         self.requests_dropped(lost_inputs)
-        if not restores_in_flight:
-            self._requests.clear()
-            self._lose_everything_open()
+        self._requests.clear()
+        self._lose_everything_open()
 
     def closed(self, unanswered: Sequence[InputId]) -> None:
         """The connection is gone for good: nothing still open will ever end on its own, or be answered."""
