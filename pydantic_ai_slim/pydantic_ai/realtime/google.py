@@ -16,6 +16,7 @@ Application Default Credentials.
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import time
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
@@ -23,7 +24,7 @@ from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanag
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal, cast
 
-from anyio import Lock, fail_after
+from anyio import Lock
 from anyio.lowlevel import RunVar
 from pydantic_core import to_json
 from typing_extensions import TypedDict, assert_never
@@ -1208,8 +1209,15 @@ class GoogleRealtimeModel(RealtimeModel):
                     # static header set on the client at build time (see `_set_google_ws_gateway_auth`).
                     # The SDK waits for `setup_complete` without a deadline of its own, so a server that
                     # accepts the socket and never answers the setup would hang the dial forever.
-                    with fail_after(handshake_timeout):
-                        session = await opening.__aenter__()
+                    # `asyncio.wait_for` rather than an anyio scope: its cancellation is edge-triggered,
+                    # so the SDK's `async with ws_connect(...)` still gets to close the socket it opened,
+                    # where a level-triggered scope would cancel that close too and leak the socket.
+                    try:
+                        session = await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)
+                    except asyncio.TimeoutError as e:
+                        # On Python 3.10, `asyncio.TimeoutError` isn't the built-in `TimeoutError` that
+                        # the initial dial and a reconnect's retry both handle.
+                        raise TimeoutError(f'no setup_complete within {handshake_timeout} seconds') from e
             cm = opening
             return session
 
@@ -1247,10 +1255,10 @@ class GoogleRealtimeModel(RealtimeModel):
                 # status, so surface it as a `RealtimeError` rather than letting it escape untyped.
                 raise RealtimeError(model_name=self.model, message=f'WebSocket error during connect: {e}') from e
             except TimeoutError as e:
-                # `handshake_timeout` ran out (or the socket's own opening timeout did) before the
-                # session was set up: a `RealtimeError`, like an OpenAI-protocol handshake that times out.
+                # `handshake_timeout` ran out before the session was set up, or the socket's own
+                # opening timeout did: a `RealtimeError`, like an OpenAI-protocol handshake timeout.
                 raise RealtimeError(
-                    model_name=self.model, message='Timed out waiting for the Gemini Live session setup to complete'
+                    model_name=self.model, message=f'Timed out opening the Gemini Live session: {e}'
                 ) from e
             except OSError as e:
                 # The connection never came up: DNS failure, refused, or reset. No HTTP status exists,

@@ -179,6 +179,8 @@ class RealtimeModelSettings(TypedDict, total=False):
 
     On OpenAI, Azure OpenAI, and xAI this bounds the wait for each handshake event; on Gemini it bounds
     opening the socket and waiting for the session setup to complete.
+
+    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
     """
 
     reconnect: ReconnectPolicy
