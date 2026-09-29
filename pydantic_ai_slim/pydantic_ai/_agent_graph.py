@@ -1033,6 +1033,17 @@ def _split_resume_seed(
     return messages, None
 
 
+def _record_attempts_usage(usage: _usage.RunUsage, attempts: Sequence[_messages.ModelRequestAttempt] | None) -> None:
+    """Record the usage of attempts that failed before a response, such as responses a `FallbackModel` rejected.
+
+    Only their tokens and cost are recorded: a failed attempt isn't a response the agent acted on, so it
+    doesn't count as a request towards [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit].
+    """
+    for attempt in attempts or ():
+        if attempt.usage is not None:
+            _usage_attribution.record_usage(usage, attempt.usage)
+
+
 def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: _usage.RequestUsage) -> None:
     """Enforce token limits mid-turn against a provisional total during continuations.
 
@@ -1515,6 +1526,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         )
                         fill_response_cost(partial_response)
                         partial_response.workspace_ref = ctx.deps.workspace_ref
+                        _record_attempts_usage(ctx.state.usage, partial_response.failed_attempts)
                         _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
                         ctx.state.message_history.append(partial_response)
                 else:
@@ -1601,9 +1613,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 nonlocal _handler_response
                 _handler_response = response
 
-            response = await model_request(
-                req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
-            )
+            try:
+                response = await model_request(
+                    req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
+                )
+            except exceptions.FallbackExceptionGroup as e:
+                # No response reaches history, but a response a `FallbackModel` rejected was still billed.
+                _record_attempts_usage(ctx.state.usage, e.attempts)
+                raise
             _handler_response = response
             return response
 
@@ -2053,6 +2070,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         fill_response_cost(response)
         response.workspace_ref = ctx.deps.workspace_ref
+        _record_attempts_usage(ctx.state.usage, response.failed_attempts)
         _usage_attribution.record_usage(ctx.state.usage, response.usage)
         if ctx.deps.usage_limits:  # pragma: no branch
             ctx.deps.usage_limits.check_tokens(ctx.state.usage)

@@ -6,7 +6,7 @@ import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import timezone
+from datetime import timedelta, timezone
 from decimal import Decimal
 from typing import Any, Literal, cast
 
@@ -18,11 +18,14 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import (
     Agent,
+    FallbackExceptionGroup,
     ModelAPIError,
     ModelHTTPError,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelProfile,
     ModelRequest,
+    ModelRequestAttempt,
     ModelResponse,
     TextPart,
     ToolCallPart,
@@ -53,11 +56,11 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import OutputObjectDefinition
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsFloat, IsInt, IsNow, IsStr, strip_logfire_metrics, try_import
+from ..conftest import IsDatetime, IsFloat, IsInstance, IsInt, IsNow, IsStr, strip_logfire_metrics, try_import
 
 with try_import() as openai_imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
@@ -190,6 +193,16 @@ def test_first_failed() -> None:
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                failed_attempts=[
+                    ModelRequestAttempt(
+                        model_name='function:failure_response:',
+                        provider_name='function',
+                        outcome='error',
+                        error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                        timestamp=IsDatetime(),
+                        duration=IsInstance(timedelta),
+                    )
+                ],
             ),
         ]
     )
@@ -296,13 +309,23 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                failed_attempts=[
+                    ModelRequestAttempt(
+                        model_name='function:failure_response:',
+                        provider_name='function',
+                        outcome='error',
+                        error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                        timestamp=IsDatetime(),
+                        duration=IsInstance(timedelta),
+                    )
+                ],
             ),
         ]
     )
     assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
-                'name': 'fallback attempt function:failure_response:',
+                'name': 'model request attempt function:failure_response:',
                 'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'start_time': IsInt(),
@@ -311,9 +334,9 @@ def test_first_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.provider.name': 'function',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:failure_response:',
-                    'pydantic_ai.fallback.attempt': 0,
+                    'pydantic_ai.model_request.attempt': 0,
                     'logfire.span_type': 'span',
-                    'logfire.msg': 'fallback attempt function:failure_response:',
+                    'logfire.msg': 'model request attempt function:failure_response:',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.conversation.id': IsStr(),
@@ -453,6 +476,16 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    failed_attempts=[
+                        ModelRequestAttempt(
+                            model_name='function::failure_response_stream',
+                            provider_name='function',
+                            outcome='error',
+                            error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            timestamp=IsDatetime(),
+                            duration=IsInstance(timedelta),
+                        )
+                    ],
                     state='incomplete',
                 ),
                 ModelResponse(
@@ -460,6 +493,16 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    failed_attempts=[
+                        ModelRequestAttempt(
+                            model_name='function::failure_response_stream',
+                            provider_name='function',
+                            outcome='error',
+                            error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            timestamp=IsDatetime(),
+                            duration=IsInstance(timedelta),
+                        )
+                    ],
                     state='incomplete',
                 ),
                 ModelResponse(
@@ -467,6 +510,16 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    failed_attempts=[
+                        ModelRequestAttempt(
+                            model_name='function::failure_response_stream',
+                            provider_name='function',
+                            outcome='error',
+                            error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            timestamp=IsDatetime(),
+                            duration=IsInstance(timedelta),
+                        )
+                    ],
                     state='incomplete',
                 ),
                 ModelResponse(
@@ -477,6 +530,16 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                     state='complete',
+                    failed_attempts=[
+                        ModelRequestAttempt(
+                            model_name='function::failure_response_stream',
+                            provider_name='function',
+                            outcome='error',
+                            error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            timestamp=IsDatetime(),
+                            duration=IsInstance(timedelta),
+                        )
+                    ],
                 ),
             ]
         )
@@ -490,7 +553,7 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
     assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
-                'name': 'fallback attempt function::failure_response_stream',
+                'name': 'model request attempt function::failure_response_stream',
                 'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'start_time': IsInt(),
@@ -499,9 +562,9 @@ async def test_first_failed_instrumented_stream(capfire: CaptureLogfire) -> None
                     'gen_ai.provider.name': 'function',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function::failure_response_stream',
-                    'pydantic_ai.fallback.attempt': 0,
+                    'pydantic_ai.model_request.attempt': 0,
                     'logfire.span_type': 'span',
-                    'logfire.msg': 'fallback attempt function::failure_response_stream',
+                    'logfire.msg': 'model request attempt function::failure_response_stream',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.conversation.id': IsStr(),
@@ -643,7 +706,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
     assert add_missing_response_model(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
-                'name': 'fallback attempt function:failure_response:',
+                'name': 'model request attempt function:failure_response:',
                 'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'start_time': IsInt(),
@@ -652,9 +715,9 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.provider.name': 'function',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:failure_response:',
-                    'pydantic_ai.fallback.attempt': 0,
+                    'pydantic_ai.model_request.attempt': 0,
                     'logfire.span_type': 'span',
-                    'logfire.msg': 'fallback attempt function:failure_response:',
+                    'logfire.msg': 'model request attempt function:failure_response:',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.conversation.id': IsStr(),
@@ -675,7 +738,7 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                 ],
             },
             {
-                'name': 'fallback attempt function:failure_response:',
+                'name': 'model request attempt function:failure_response:',
                 'context': {'trace_id': 1, 'span_id': 7, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'start_time': IsInt(),
@@ -684,9 +747,9 @@ def test_all_failed_instrumented(capfire: CaptureLogfire) -> None:
                     'gen_ai.provider.name': 'function',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:failure_response:',
-                    'pydantic_ai.fallback.attempt': 1,
+                    'pydantic_ai.model_request.attempt': 1,
                     'logfire.span_type': 'span',
-                    'logfire.msg': 'fallback attempt function:failure_response:',
+                    'logfire.msg': 'model request attempt function:failure_response:',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.conversation.id': IsStr(),
@@ -933,6 +996,16 @@ async def test_first_failed_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=1),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    failed_attempts=[
+                        ModelRequestAttempt(
+                            model_name='function::failure_response_stream',
+                            provider_name='function',
+                            outcome='error',
+                            error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            timestamp=IsDatetime(),
+                            duration=IsInstance(timedelta),
+                        )
+                    ],
                     state='incomplete',
                 ),
                 ModelResponse(
@@ -940,6 +1013,16 @@ async def test_first_failed_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    failed_attempts=[
+                        ModelRequestAttempt(
+                            model_name='function::failure_response_stream',
+                            provider_name='function',
+                            outcome='error',
+                            error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            timestamp=IsDatetime(),
+                            duration=IsInstance(timedelta),
+                        )
+                    ],
                     state='incomplete',
                 ),
                 ModelResponse(
@@ -947,6 +1030,16 @@ async def test_first_failed_streaming() -> None:
                     usage=RequestUsage(input_tokens=50, output_tokens=2),
                     model_name='function::success_response_stream',
                     timestamp=IsNow(tz=timezone.utc),
+                    failed_attempts=[
+                        ModelRequestAttempt(
+                            model_name='function::failure_response_stream',
+                            provider_name='function',
+                            outcome='error',
+                            error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            timestamp=IsDatetime(),
+                            duration=IsInstance(timedelta),
+                        )
+                    ],
                     state='incomplete',
                 ),
                 ModelResponse(
@@ -957,6 +1050,16 @@ async def test_first_failed_streaming() -> None:
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                     state='complete',
+                    failed_attempts=[
+                        ModelRequestAttempt(
+                            model_name='function::failure_response_stream',
+                            provider_name='function',
+                            outcome='error',
+                            error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                            timestamp=IsDatetime(),
+                            duration=IsInstance(timedelta),
+                        )
+                    ],
                 ),
             ]
         )
@@ -1038,6 +1141,16 @@ async def test_fallback_condition_tuple() -> None:
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                failed_attempts=[
+                    ModelRequestAttempt(
+                        model_name='function:potato_exception_response:',
+                        provider_name='function',
+                        outcome='error',
+                        error='PotatoException',
+                        timestamp=IsDatetime(),
+                        duration=IsInstance(timedelta),
+                    )
+                ],
             ),
         ]
     )
@@ -1068,6 +1181,16 @@ async def test_fallback_connection_error() -> None:
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                failed_attempts=[
+                    ModelRequestAttempt(
+                        model_name='function:connection_error_response:',
+                        provider_name='function',
+                        outcome='error',
+                        error='ModelAPIError: Connection timed out',
+                        timestamp=IsDatetime(),
+                        duration=IsInstance(timedelta),
+                    )
+                ],
             ),
         ]
     )
@@ -1394,13 +1517,23 @@ Don't include any text or Markdown fencing before or after.
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                failed_attempts=[
+                    ModelRequestAttempt(
+                        model_name='function:tool_output_func:',
+                        provider_name='function',
+                        outcome='error',
+                        error='ModelHTTPError: status_code: 500, model_name: tool-model, body: None',
+                        timestamp=IsDatetime(),
+                        duration=IsInstance(timedelta),
+                    )
+                ],
             ),
         ]
     )
     assert strip_logfire_metrics(capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)) == snapshot(
         [
             {
-                'name': 'fallback attempt function:tool_output_func:',
+                'name': 'model request attempt function:tool_output_func:',
                 'context': {'trace_id': 1, 'span_id': 5, 'is_remote': False},
                 'parent': {'trace_id': 1, 'span_id': 3, 'is_remote': False},
                 'start_time': IsInt(),
@@ -1409,9 +1542,9 @@ Don't include any text or Markdown fencing before or after.
                     'gen_ai.provider.name': 'function',
                     'gen_ai.system': 'function',
                     'gen_ai.request.model': 'function:tool_output_func:',
-                    'pydantic_ai.fallback.attempt': 0,
+                    'pydantic_ai.model_request.attempt': 0,
                     'logfire.span_type': 'span',
-                    'logfire.msg': 'fallback attempt function:tool_output_func:',
+                    'logfire.msg': 'model request attempt function:tool_output_func:',
                     'gen_ai.agent.name': 'agent',
                     'gen_ai.agent.call.id': IsStr(),
                     'gen_ai.conversation.id': IsStr(),
@@ -1616,6 +1749,16 @@ async def test_response_handler_triggered() -> None:
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+                failed_attempts=[
+                    ModelRequestAttempt(
+                        model_name='function:primary_response:',
+                        provider_name='function',
+                        outcome='rejected',
+                        timestamp=IsDatetime(),
+                        duration=IsInstance(timedelta),
+                        usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    )
+                ],
             ),
         ]
     )
@@ -1644,7 +1787,13 @@ async def test_response_handler_rejected_cost_counts_toward_limit() -> None:
         await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
 
 
-async def test_response_handler_preserves_successful_model_usage_for_pricing() -> None:
+async def test_response_handler_rejected_usage_is_attributed_to_its_attempt() -> None:
+    """A rejected response's tokens and cost count towards the run, on its own attempt rather than the winner's usage.
+
+    The winner's `usage` stays its own, so it is priced as the model that answered, and the rejected
+    attempt adds no request: `request_limit` counts responses the agent acted on.
+    """
+
     def reject_primary(response: ModelResponse) -> bool:
         return response.model_name == 'gpt-4o-mini'
 
@@ -1652,6 +1801,7 @@ async def test_response_handler_preserves_successful_model_usage_for_pricing() -
         return ModelResponse(
             parts=[TextPart('rejected')],
             usage=RequestUsage(input_tokens=100, output_tokens=10, cost=Decimal('0.001')),
+            finish_reason='content_filter',
         )
 
     def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1667,14 +1817,152 @@ async def test_response_handler_preserves_successful_model_usage_for_pricing() -
     )
 
     result = await Agent(model).run('test')
+    assert result.usage == snapshot(RunUsage(cost=Decimal('0.003'), input_tokens=120, output_tokens=12, requests=1))
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
-    assert response.usage == RequestUsage(input_tokens=20, output_tokens=2, cost=Decimal('0.003'))
+    assert response.usage == RequestUsage(input_tokens=20, output_tokens=2, cost=Decimal('0.002'))
     assert (
         response.cost().total_price
         == ModelResponse(parts=[], usage=RequestUsage(input_tokens=20, output_tokens=2), model_name='gpt-4o')
         .cost()
         .total_price
+    )
+    assert response.failed_attempts == snapshot(
+        [
+            ModelRequestAttempt(
+                model_name='gpt-4o-mini',
+                provider_name='function',
+                outcome='rejected',
+                timestamp=IsDatetime(),
+                duration=IsInstance(timedelta),
+                usage=RequestUsage(input_tokens=100, output_tokens=10, cost=Decimal('0.001')),
+            )
+        ]
+    )
+    # The rejected response's parts never reach history.
+    assert [message.parts for message in result.all_messages() if isinstance(message, ModelResponse)] == snapshot(
+        [[TextPart(content='accepted')]]
+    )
+
+
+async def test_all_rejected_usage_counts_towards_the_run() -> None:
+    """When every response is rejected, their usage still reaches the run's usage and the exception group."""
+
+    def reject_all(response: ModelResponse) -> bool:
+        return True
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('rejected')], usage=RequestUsage(input_tokens=100, output_tokens=10, cost=Decimal('0.001'))
+        )
+
+    model = FallbackModel(
+        FunctionModel(failure_response, model_name='failing'),
+        FunctionModel(respond, model_name='rejected'),
+        fallback_on=[ModelHTTPError, reject_all],
+    )
+    agent = Agent(model)
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        async with agent.iter('test') as run:
+            async for _ in run:
+                pass
+
+    assert run.usage == snapshot(RunUsage(cost=Decimal('0.001'), input_tokens=100, output_tokens=10))
+    assert exc_info.value.attempts == snapshot(
+        [
+            ModelRequestAttempt(
+                model_name='failing',
+                provider_name='function',
+                outcome='error',
+                error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                timestamp=IsDatetime(),
+                duration=IsInstance(timedelta),
+            ),
+            ModelRequestAttempt(
+                model_name='rejected',
+                provider_name='function',
+                outcome='rejected',
+                timestamp=IsDatetime(),
+                duration=IsInstance(timedelta),
+                usage=RequestUsage(input_tokens=100, output_tokens=10, cost=Decimal('0.001')),
+            ),
+        ]
+    )
+
+
+async def test_rejected_usage_counts_towards_token_limits() -> None:
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('response')], usage=RequestUsage(input_tokens=60))
+
+    model = FallbackModel(
+        FunctionModel(respond, model_name='primary'),
+        FunctionModel(respond, model_name='fallback'),
+        fallback_on=reject_primary,
+    )
+
+    with pytest.raises(UsageLimitExceeded, match='Exceeded the input_tokens_limit of 100 \\(input_tokens=120\\)'):
+        await Agent(model).run('test', usage_limits=UsageLimits(input_tokens_limit=100))
+
+
+async def test_failed_attempts_survive_a_continuation() -> None:
+    """Attempts that failed before a suspended response stay on the response its continuation completes."""
+    calls = 0
+
+    def pausing(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[TextPart('paused ')], state='suspended')
+        return ModelResponse(parts=[TextPart('done')])
+
+    model = FallbackModel(FunctionModel(failure_response, model_name='failing'), FunctionModel(pausing))
+    result = await Agent(model).run('test')
+
+    assert result.output == 'paused done'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.failed_attempts == snapshot(
+        [
+            ModelRequestAttempt(
+                model_name='failing',
+                provider_name='function',
+                outcome='error',
+                error="ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
+                timestamp=IsDatetime(),
+                duration=IsInstance(timedelta),
+            )
+        ]
+    )
+
+
+async def test_failed_attempts_round_trip_through_message_history() -> None:
+    """Stored history keeps each attempt's accounting, so it can be audited after the run."""
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[TextPart('response')], usage=RequestUsage(input_tokens=10, output_tokens=1, cost=Decimal('0.001'))
+        )
+
+    model = FallbackModel(
+        FunctionModel(failure_response, model_name='failing'),
+        FunctionModel(respond, model_name='primary'),
+        FunctionModel(respond, model_name='fallback'),
+        fallback_on=[ModelHTTPError, reject_primary],
+    )
+    messages = (await Agent(model).run('test')).all_messages()
+
+    loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    assert loaded == messages
+    response = loaded[-1]
+    assert isinstance(response, ModelResponse)
+    assert [(attempt.outcome, attempt.usage) for attempt in response.failed_attempts or []] == snapshot(
+        [('error', None), ('rejected', RequestUsage(input_tokens=10, output_tokens=1, cost=Decimal('0.001')))]
     )
 
 
@@ -2476,6 +2764,16 @@ def test_fallback_secondary_continuation_back_to_primary() -> None:
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 metadata={'__pydantic_ai__': {'fallback_model_id': 'function:fallback'}},
+                failed_attempts=[
+                    ModelRequestAttempt(
+                        model_name='primary',
+                        provider_name='function',
+                        outcome='error',
+                        error='ModelHTTPError: status_code: 500, model_name: primary, body: error',
+                        timestamp=IsDatetime(),
+                        duration=IsInstance(timedelta),
+                    )
+                ],
             ),
             ModelRequest(
                 parts=[
@@ -3565,7 +3863,7 @@ def test_context_window_is_smallest_known_candidate_window() -> None:
 _SPAN_TREE_ATTRIBUTES = (
     'gen_ai.provider.name',
     'gen_ai.request.model',
-    'pydantic_ai.fallback.attempt',
+    'pydantic_ai.model_request.attempt',
     'gen_ai.response.finish_reasons',
 )
 
@@ -3606,13 +3904,13 @@ def test_failed_attempt_span_redacts_exception_without_content(capfire: CaptureL
     assert _span_tree(capfire) == snapshot(
         [
             {
-                'name': 'fallback attempt function:failure_response:',
+                'name': 'model request attempt function:failure_response:',
                 'parent': 'chat function:success_response:',
                 'status': 'ERROR',
                 'attributes': {
                     'gen_ai.provider.name': 'function',
                     'gen_ai.request.model': 'function:failure_response:',
-                    'pydantic_ai.fallback.attempt': 0,
+                    'pydantic_ai.model_request.attempt': 0,
                 },
                 'events': [
                     {
@@ -3640,7 +3938,12 @@ def test_failed_attempt_span_redacts_exception_without_content(capfire: CaptureL
 def test_response_rejected_span(capfire: CaptureLogfire) -> None:
     def rejected(finish_reason: FinishReason | None) -> FunctionModel:
         def respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart('reject')], finish_reason=finish_reason)
+            return ModelResponse(
+                parts=[TextPart('reject')],
+                usage=RequestUsage(input_tokens=100, output_tokens=10, cost=Decimal('0.001')),
+                finish_reason=finish_reason,
+                provider_response_id=f'resp-{finish_reason}',
+            )
 
         return FunctionModel(respond, model_name=f'rejected-{finish_reason}')
 
@@ -3656,26 +3959,26 @@ def test_response_rejected_span(capfire: CaptureLogfire) -> None:
     assert _span_tree(capfire) == snapshot(
         [
             {
-                'name': 'fallback attempt rejected-length',
+                'name': 'model request attempt rejected-length',
                 'parent': 'chat function:success_response:',
                 'status': 'ERROR',
                 'status_description': 'Response rejected by a `fallback_on` response handler',
                 'attributes': {
                     'gen_ai.provider.name': 'function',
                     'gen_ai.request.model': 'rejected-length',
-                    'pydantic_ai.fallback.attempt': 0,
+                    'pydantic_ai.model_request.attempt': 0,
                     'gen_ai.response.finish_reasons': ('length',),
                 },
             },
             {
-                'name': 'fallback attempt rejected-None',
+                'name': 'model request attempt rejected-None',
                 'parent': 'chat function:success_response:',
                 'status': 'ERROR',
                 'status_description': 'Response rejected by a `fallback_on` response handler',
                 'attributes': {
                     'gen_ai.provider.name': 'function',
                     'gen_ai.request.model': 'rejected-None',
-                    'pydantic_ai.fallback.attempt': 1,
+                    'pydantic_ai.model_request.attempt': 1,
                 },
             },
             {
@@ -3689,6 +3992,28 @@ def test_response_rejected_span(capfire: CaptureLogfire) -> None:
             },
             {'name': 'invoke_agent agent', 'parent': None, 'status': 'UNSET', 'attributes': {}},
         ]
+    )
+    # A rejected response was billed, so its attempt span carries its usage and cost, as a `chat` span would.
+    attempt_span = capfire.exporter.exported_spans_as_dict()[0]
+    assert attempt_span['attributes'] == snapshot(
+        {
+            'gen_ai.provider.name': 'function',
+            'gen_ai.system': 'function',
+            'gen_ai.request.model': 'rejected-length',
+            'pydantic_ai.model_request.attempt': 0,
+            'gen_ai.usage.input_tokens': 100,
+            'gen_ai.usage.output_tokens': 10,
+            'gen_ai.response.model': 'rejected-length',
+            'operation.cost': 0.001,
+            'gen_ai.response.id': 'resp-length',
+            'gen_ai.response.finish_reasons': ('length',),
+            'logfire.span_type': 'span',
+            'logfire.msg': 'model request attempt rejected-length',
+            'gen_ai.agent.name': 'agent',
+            'gen_ai.agent.call.id': IsStr(),
+            'gen_ai.conversation.id': IsStr(),
+            'logfire.level_num': 17,
+        }
     )
 
 
@@ -3715,14 +4040,14 @@ async def test_failed_pinned_continuation_span(capfire: CaptureLogfire) -> None:
     assert _span_tree(capfire) == snapshot(
         [
             {
-                'name': 'fallback attempt primary',
+                'name': 'model request attempt primary',
                 'parent': 'chat function:success_response:',
                 'status': 'ERROR',
                 'status_description': 'ModelHTTPError: status_code: 500, model_name: primary, body: continuation failed',
                 'attributes': {
                     'gen_ai.provider.name': 'function',
                     'gen_ai.request.model': 'primary',
-                    'pydantic_ai.fallback.attempt': 0,
+                    'pydantic_ai.model_request.attempt': 0,
                 },
                 'events': [
                     {
@@ -3735,14 +4060,14 @@ async def test_failed_pinned_continuation_span(capfire: CaptureLogfire) -> None:
                 ],
             },
             {
-                'name': 'fallback attempt primary',
+                'name': 'model request attempt primary',
                 'parent': 'chat function:success_response:',
                 'status': 'ERROR',
                 'status_description': 'ModelHTTPError: status_code: 500, model_name: primary, body: continuation failed',
                 'attributes': {
                     'gen_ai.provider.name': 'function',
                     'gen_ai.request.model': 'primary',
-                    'pydantic_ai.fallback.attempt': 1,
+                    'pydantic_ai.model_request.attempt': 1,
                 },
                 'events': [
                     {
@@ -3798,14 +4123,14 @@ async def test_failed_pinned_continuation_span_stream(capfire: CaptureLogfire) -
     assert _span_tree(capfire) == snapshot(
         [
             {
-                'name': 'fallback attempt primary',
+                'name': 'model request attempt primary',
                 'parent': 'chat function::success_response_stream',
                 'status': 'ERROR',
                 'status_description': 'ModelHTTPError: status_code: 500, model_name: primary, body: continuation failed',
                 'attributes': {
                     'gen_ai.provider.name': 'function',
                     'gen_ai.request.model': 'primary',
-                    'pydantic_ai.fallback.attempt': 0,
+                    'pydantic_ai.model_request.attempt': 0,
                 },
                 'events': [
                     {
@@ -3818,14 +4143,14 @@ async def test_failed_pinned_continuation_span_stream(capfire: CaptureLogfire) -
                 ],
             },
             {
-                'name': 'fallback attempt primary',
+                'name': 'model request attempt primary',
                 'parent': 'chat function::success_response_stream',
                 'status': 'ERROR',
                 'status_description': 'ModelHTTPError: status_code: 500, model_name: primary, body: continuation failed',
                 'attributes': {
                     'gen_ai.provider.name': 'function',
                     'gen_ai.request.model': 'primary',
-                    'pydantic_ai.fallback.attempt': 1,
+                    'pydantic_ai.model_request.attempt': 1,
                 },
                 'events': [
                     {
@@ -3861,14 +4186,14 @@ def test_failed_attempt_span_leaves_request_span_ok(capfire: CaptureLogfire) -> 
     assert _span_tree(capfire) == snapshot(
         [
             {
-                'name': 'fallback attempt function:failure_response:',
+                'name': 'model request attempt function:failure_response:',
                 'parent': 'chat function:success_response:',
                 'status': 'ERROR',
                 'status_description': "ModelHTTPError: status_code: 500, model_name: test-function-model, body: {'error': 'test error'}",
                 'attributes': {
                     'gen_ai.provider.name': 'function',
                     'gen_ai.request.model': 'function:failure_response:',
-                    'pydantic_ai.fallback.attempt': 0,
+                    'pydantic_ai.model_request.attempt': 0,
                 },
                 'events': [
                     {
@@ -3914,5 +4239,5 @@ def test_failed_attempt_span_ends_when_recording_the_error_fails(capfire: Captur
     assert agent.run_sync('hello').output == 'success'
 
     assert [span['name'] for span in capfire.exporter.exported_spans_as_dict()] == snapshot(
-        ['fallback attempt undescribable', 'chat function:success_response:', 'invoke_agent agent']
+        ['model request attempt undescribable', 'chat function:success_response:', 'invoke_agent agent']
     )

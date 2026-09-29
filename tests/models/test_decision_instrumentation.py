@@ -968,7 +968,7 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
 
     The route span records the `UnfillableRoute` with the picked route's label, and the step goes to the model
     behind Jev, so the `chat` span above it ends without an error. The failed attempt gets its own
-    `fallback attempt` span beside the `decide` span.
+    `model request attempt` span beside the `decide` span.
     """
     agent = Agent(
         FallbackModel(jev, FunctionModel(write_reply, model_name='writer')),
@@ -1069,7 +1069,7 @@ async def test_a_route_jev_cannot_fill_is_handed_off(
                                     }
                                 ],
                             },
-                            {'name': 'fallback attempt jev-latest'},
+                            {'name': 'model request attempt jev-latest'},
                         ],
                     }
                 ],

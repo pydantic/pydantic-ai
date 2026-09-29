@@ -289,6 +289,11 @@ class RequestUsage(UsageBase):
 
     @property
     def requests(self):
+        """Always `1`, as this is the usage of a single request, which is how genai-prices prices it.
+
+        Adding a `RequestUsage` to a [`RunUsage`][pydantic_ai.usage.RunUsage] doesn't change
+        [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests], which counts the model responses the agent acted on.
+        """
         return 1
 
     def incr(self, incr_usage: RequestUsage) -> None:
@@ -355,7 +360,16 @@ class RunUsage(UsageBase):
     """
 
     requests: int = 0
-    """Number of requests made to the LLM API."""
+    """Number of model responses the agent acted on, one per step of the agent loop.
+
+    This is what [`UsageLimits.request_limit`][pydantic_ai.usage.UsageLimits.request_limit] bounds. It can be
+    lower than the number of requests sent to the provider: attempts a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, the continuation requests that
+    complete a suspended response, and retries made by the provider SDK or HTTP transport aren't counted.
+    The tokens and cost of a response a `FallbackModel` rejected, and of continuation requests, are still added
+    to this usage. The attempts before a response are listed in its
+    [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts].
+    """
 
     tool_calls: int = 0
     """Number of successful tool calls executed during the run."""
@@ -456,8 +470,8 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
 class UsageLimits:
     """Limits on model usage.
 
-    The request count is tracked by pydantic_ai, and the request limit is checked before each request to the model.
-    Token counts are provided in responses from the model, and the token limits are checked after each response.
+    The request count is tracked by Pydantic AI, and the request limit is checked before each step of the agent
+    loop sends a request to the model. Token counts are provided in responses from the model, and the token limits are checked after each response.
 
     Each of the limits can be set to `None` to disable that limit.
     """
@@ -465,7 +479,13 @@ class UsageLimits:
     cost_limit: Decimal | None = None
     """The maximum cost allowed in USD."""
     request_limit: int | None = 50
-    """The maximum number of requests allowed to the model."""
+    """The maximum number of model responses the agent acts on, as counted by [`RunUsage.requests`][pydantic_ai.usage.RunUsage.requests].
+
+    This bounds the number of turns of the agent loop, not the number of requests sent to the provider: attempts a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, continuation requests, and
+    provider SDK or HTTP transport retries aren't counted. The tokens and cost of a response a `FallbackModel`
+    rejected, and of continuation requests, do count towards the token and cost limits.
+    """
     tool_calls_limit: int | None = None
     """The maximum number of successful tool calls allowed to be executed."""
     input_tokens_limit: int | None = None

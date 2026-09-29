@@ -23,7 +23,7 @@ else:
 
 
 if TYPE_CHECKING:
-    from .messages import ModelMessage, ModelResponse, RetryPromptPart, ToolReturnPart
+    from .messages import ModelMessage, ModelRequestAttempt, ModelResponse, RetryPromptPart, ToolReturnPart
     from .usage import RunUsage
 
 __all__ = (
@@ -611,6 +611,14 @@ class ModelHTTPError(ModelAPIError):
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):
     """A group of exceptions that can be raised when all fallback models fail."""
+
+    attempts: Sequence[ModelRequestAttempt] = ()
+    """Every attempt the [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] made, in order.
+
+    Unlike the grouped exceptions, this includes the usage of any response that was rejected by a
+    `fallback_on` response handler, which also counts towards the run's
+    [`RunUsage`][pydantic_ai.usage.RunUsage].
+    """
 
 
 class ToolRetryError(Exception):

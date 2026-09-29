@@ -2,16 +2,14 @@ from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
-from copy import copy
 from dataclasses import dataclass, field, replace
-from decimal import Decimal
 from functools import cached_property
 from time import time_ns
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
 import anyio
-from opentelemetry.trace import Span, Status, StatusCode, get_current_span, set_span_in_context
+from opentelemetry.trace import Span, get_current_span
 from opentelemetry.util.types import AttributeValue
 from typing_extensions import assert_never
 
@@ -19,16 +17,14 @@ from pydantic_ai._instrumentation import (
     model_attributes,
     model_request_parameters_attributes,
     open_request_policy,
-    record_exception,
-    set_error_status,
     span_include_content,
 )
+from pydantic_ai._model_request_attempts import failed_attempt, record_attempt_span
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import await_maybe, get_first_param_type
 
-from .._genai_prices import fill_response_cost
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
-from ..messages import ModelResponse
+from ..messages import ModelRequestAttempt, ModelResponse
 from ..profiles import ModelProfile
 from . import (
     KnownModelName,
@@ -252,7 +248,7 @@ class FallbackModel(Model):
         """
         exceptions: list[Exception] = []
         rejected_responses: list[ModelResponse] = []
-        rejected_cost: Decimal | None = None
+        attempts: list[ModelRequestAttempt] = []
         # Set once a pinned continuation fails and we rewind to the chain: the first successful response
         # the chain then produces is fresh generation superseding the stale suspended turn, so it must
         # be stamped as a replace (see `_stamp_replace_previous`) rather than accumulated onto it.
@@ -281,7 +277,7 @@ class FallbackModel(Model):
                 messages = _rewind_messages(messages)
                 rewound = True
                 exceptions.append(exc)
-                self._record_failed_attempt(pinned, 0, started_at, exc)
+                self._record_failed_attempt(pinned, attempts, started_at, exc)
                 # Fall through to normal chain below
             else:
                 if response.state == 'suspended':
@@ -289,8 +285,7 @@ class FallbackModel(Model):
                 self._set_span_attributes(pinned, prepared_parameters)
                 return response
 
-        # A failed pinned continuation was attempt 0, so the chain's attempts count on from it.
-        for attempt, model in enumerate(self.models, start=int(rewound)):
+        for model in self.models:
             prepared_parameters = model_request_parameters
             started_at = time_ns()
             try:
@@ -301,24 +296,18 @@ class FallbackModel(Model):
             except Exception as exc:
                 if await self._should_fallback(exc):
                     exceptions.append(exc)
-                    self._record_failed_attempt(model, attempt, started_at, exc)
+                    self._record_failed_attempt(model, attempts, started_at, exc)
                     continue
                 self._set_span_attributes(model, prepared_parameters)
                 raise exc
 
             if await self._should_fallback(response):
-                fill_response_cost(response)
-                if response.usage.cost is not None:
-                    rejected_cost = (rejected_cost or Decimal()) + response.usage.cost
                 rejected_responses.append(response)
-                self._record_failed_attempt(model, attempt, started_at, response)
+                self._record_failed_attempt(model, attempts, started_at, response)
                 continue
 
-            if rejected_cost is not None:
-                fill_response_cost(response)
-                usage = copy(response.usage)
-                usage.cost = (usage.cost or Decimal()) + rejected_cost
-                response = replace(response, usage=usage)
+            if attempts:
+                response = replace(response, failed_attempts=[*attempts, *(response.failed_attempts or [])])
 
             # After a rewind, the first successful response is fresh generation that supersedes the
             # abandoned suspended turn (whether it ends complete or suspended), so mark it as a replace.
@@ -329,7 +318,7 @@ class FallbackModel(Model):
             self._set_span_attributes(model, prepared_parameters)
             return response
 
-        _raise_fallback_exception_group(exceptions, rejected_responses)
+        _raise_fallback_exception_group(exceptions, rejected_responses, attempts)
 
     @asynccontextmanager
     async def request_stream(
@@ -347,6 +336,7 @@ class FallbackModel(Model):
         and the normal fallback chain is tried. Mid-stream failures still propagate.
         """
         exceptions: list[Exception] = []
+        attempts: list[ModelRequestAttempt] = []
         # Set once a pinned continuation fails and we rewind to the chain: see the non-streaming `request`.
         rewound = False
 
@@ -375,7 +365,7 @@ class FallbackModel(Model):
                     messages = _rewind_messages(messages)
                     rewound = True
                     exceptions.append(exc)
-                    self._record_failed_attempt(pinned, 0, started_at, exc)
+                    self._record_failed_attempt(pinned, attempts, started_at, exc)
                     # Fall through to normal chain below
                 else:
                     self._set_span_attributes(pinned, prepared_parameters)
@@ -387,8 +377,7 @@ class FallbackModel(Model):
                         _stamp_continuation(streamed_response, pinned)
                     return
 
-        # A failed pinned continuation was attempt 0, so the chain's attempts count on from it.
-        for attempt, model in enumerate(self.models, start=int(rewound)):
+        for model in self.models:
             async with AsyncExitStack() as stack:
                 prepared_parameters = model_request_parameters
                 started_at = time_ns()
@@ -401,7 +390,7 @@ class FallbackModel(Model):
                 except Exception as exc:
                     if await self._should_fallback(exc):
                         exceptions.append(exc)
-                        self._record_failed_attempt(model, attempt, started_at, exc)
+                        self._record_failed_attempt(model, attempts, started_at, exc)
                         continue
                     self._set_span_attributes(model, prepared_parameters)
                     raise exc
@@ -414,6 +403,8 @@ class FallbackModel(Model):
                 # stream supersedes the suspended turn is known the moment the rewound chain is entered.
                 if rewound:
                     _stamp_replace_previous(streamed_response)
+                if attempts:
+                    streamed_response.failed_attempts = [*attempts, *(streamed_response.failed_attempts or [])]
                 self._set_span_attributes(model, prepared_parameters)
                 yield streamed_response
                 # Stamp after `yield` (see the pinned path above): `state` is only final once the
@@ -422,7 +413,7 @@ class FallbackModel(Model):
                     _stamp_continuation(streamed_response, model)
                 return
 
-        _raise_fallback_exception_group(exceptions, [])
+        _raise_fallback_exception_group(exceptions, [], attempts)
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
         """Cancel a suspended continuation on the underlying model holding the server-side job.
@@ -538,45 +529,21 @@ class FallbackModel(Model):
                 span.set_attributes(span_attributes)
 
     def _record_failed_attempt(
-        self, model: Model, attempt: int, started_at: int, failure: Exception | ModelResponse
+        self,
+        model: Model,
+        attempts: list[ModelRequestAttempt],
+        started_at: int,
+        failure: Exception | ModelResponse,
     ) -> None:
-        """Record an attempt this request fell back from as an ERROR child span of the `chat` span.
-
-        The `chat` span keeps its own outcome, that of the model that answered, the way a failed
-        tool call gets its own ERROR span under an agent run that goes on to succeed. The span is
-        only opened once the attempt has failed, back-dated to when it started, so the winning
-        attempt, which `chat` already describes, gets none. Spans the tried model opened itself, like a
-        decision model's `decide`, were opened under `chat` while the attempt ran, so they sit beside
-        this span rather than inside it. It is deliberately not named `chat`,
-        so model-call views don't count it as a model call. An error's message and stack trace
-        follow the span's `include_content`, since a provider's error response can echo the request.
-        """
+        """Append the attempt this request is falling back from to `attempts`, and record it as a span under `chat`."""
+        attempt = failed_attempt(model, failure, started_at=started_at, ended_at=time_ns())
+        attempts.append(attempt)
+        # Only under the `chat` span instrumentation opened for this request, and on its tracer provider.
         with suppress(Exception):
             if (span := self._fallback_span()) and (policy := open_request_policy()):
-                attributes: dict[str, AttributeValue] = {
-                    **model_attributes(model),
-                    'pydantic_ai.fallback.attempt': attempt,
-                }
-                if isinstance(failure, ModelResponse) and failure.finish_reason is not None:
-                    attributes['gen_ai.response.finish_reasons'] = [failure.finish_reason]
-                attempt_span = policy.tracer.start_span(
-                    f'fallback attempt {model.model_name}',
-                    context=set_span_in_context(span),
-                    attributes=attributes,
-                    start_time=started_at,
+                record_attempt_span(
+                    attempt, failure, model=model, index=len(attempts) - 1, parent=span, tracer=policy.tracer
                 )
-                # Ended even if describing the failure raises, or the span would never be exported.
-                try:
-                    if isinstance(failure, Exception):
-                        include_content = span_include_content(span)
-                        record_exception(attempt_span, failure, include_content=include_content)
-                        set_error_status(attempt_span, failure, include_content=include_content)
-                    else:
-                        attempt_span.set_status(
-                            Status(StatusCode.ERROR, 'Response rejected by a `fallback_on` response handler')
-                        )
-                finally:
-                    attempt_span.end(time_ns())
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
@@ -631,14 +598,19 @@ def _exception_types_to_handler(exceptions: tuple[type[Exception], ...]) -> Exce
     return handler
 
 
-def _raise_fallback_exception_group(exceptions: list[Exception], rejected_responses: list[ModelResponse]) -> NoReturn:
+def _raise_fallback_exception_group(
+    exceptions: list[Exception], rejected_responses: list[ModelResponse], attempts: list[ModelRequestAttempt]
+) -> NoReturn:
     """Raise a FallbackExceptionGroup combining exceptions and response rejections.
 
     Args:
         exceptions: List of exceptions raised by models.
         rejected_responses: List of responses that were rejected by fallback_on handlers.
+        attempts: Every attempt that was made, in order.
     """
     all_errors = list(exceptions)
     if rejected_responses:
         all_errors.append(ResponseRejected(len(rejected_responses)))
-    raise FallbackExceptionGroup('All models from FallbackModel failed', all_errors)
+    group = FallbackExceptionGroup('All models from FallbackModel failed', all_errors)
+    group.attempts = attempts
+    raise group

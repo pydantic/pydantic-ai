@@ -316,7 +316,11 @@ async def test_no_content_reaches_telemetry_through_a_fallback_refresh(include_c
 
 @pytest.mark.parametrize('include_content', [True, False])
 async def test_no_content_reaches_telemetry_from_a_failed_fallback_attempt(include_content: bool) -> None:
-    """An error `FallbackModel` fell back from gets its own span even though the run succeeds."""
+    """An error `FallbackModel` fell back from gets its own span even though the run succeeds.
+
+    The error is also kept in the answering response's `failed_attempts`, so the history a later run
+    continues from carries it too.
+    """
     settings, exporter = redacted_setup(include_content)
 
     def fail(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
@@ -328,7 +332,11 @@ async def test_no_content_reaches_telemetry_from_a_failed_fallback_attempt(inclu
     agent = Agent(
         FallbackModel(FunctionModel(fail), FunctionModel(respond)), capabilities=[Instrumentation(settings=settings)]
     )
-    await agent.run(SECRETS['user_prompt'])
+    result = await agent.run(SECRETS['user_prompt'])
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse) and response.failed_attempts
+    assert SECRETS['provider_error_body'] in (response.failed_attempts[0].error or '')
+    await agent.run('again', message_history=result.all_messages())
 
     check(exporter, include_content, {'user_prompt', 'model_text', 'provider_error_body'})
 

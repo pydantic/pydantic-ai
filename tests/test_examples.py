@@ -620,6 +620,7 @@ def test_docs_examples(
 
 def print_callback(s: str) -> str:
     s = re.sub(r'datetime\.datetime\(.+?\)', 'datetime.datetime(...)', s, flags=re.DOTALL)
+    s = re.sub(r'datetime\.timedelta\(.+?\)', 'datetime.timedelta(...)', s, flags=re.DOTALL)
     s = re.sub(r'\d\.\d{4,}e-0\d', '0.0...', s)
     s = re.sub(r'datetime.date\(', 'date(', s)
     s = re.sub(r"run_id='.+?'", "run_id='...'", s)
@@ -1866,7 +1867,11 @@ def mock_infer_model(model: Model | KnownModelName) -> Model:
                 mock_fallback_models.append(FunctionModel(raise_http_error, model_name=m.model_name))
             else:
                 mock_fallback_models.append(mock_infer_model(m))
-        return FallbackModel(*mock_fallback_models)
+        mocked = FallbackModel(*mock_fallback_models)
+        # Keep the example's own `fallback_on`, so a response handler it passes still applies.
+        mocked._exception_handlers = model._exception_handlers  # pyright: ignore[reportPrivateUsage]
+        mocked._response_handlers = model._response_handlers  # pyright: ignore[reportPrivateUsage]
+        return mocked
     if isinstance(model, FunctionModel | TestModel):
         return model
     elif isinstance(model, DecisionModel):
