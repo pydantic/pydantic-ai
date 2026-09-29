@@ -84,6 +84,7 @@ from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities._run_resolution import (
     RunCapabilityResolutions as _RunCapabilityResolutions,
     capture_run_capability_resolutions,
+    reconstructing_setup_cleanup,
     replace_resolved_run_capabilities,
     resolve_capability_for_run,
     setup_error_dispatch_scope,
@@ -96,7 +97,7 @@ from ..capabilities.abstract import (
     leaf_capabilities,
     select_workspace,
 )
-from ..capabilities.combined import bind_capabilities_tier, reconstructing_setup_cleanup
+from ..capabilities.combined import bind_capabilities_tier
 from ..capabilities.hooks import EventT, Hooks, OnEventHookFunc
 from ..capabilities.instrumentation import Instrumentation as InstrumentationCap
 from ..capabilities.wrapper import WrapperCapability

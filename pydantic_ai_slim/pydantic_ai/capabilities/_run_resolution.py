@@ -37,6 +37,7 @@ _current_resolution: ContextVar[tuple[RunCapabilityResolutions, object, int] | N
     '_current_resolution', default=None
 )
 _setup_error_dispatch: ContextVar[object | None] = ContextVar('_setup_error_dispatch', default=None)
+setup_cleanup_reconstruction_active: ContextVar[bool] = ContextVar('setup_cleanup_reconstruction_active', default=False)
 
 
 @contextmanager
@@ -69,6 +70,16 @@ def is_setup_error_dispatching(ctx: RunContext[Any]) -> bool:
     run_capabilities = ctx._run_capabilities_by_id  # pyright: ignore[reportPrivateUsage]
     active_run_capabilities = _setup_error_dispatch.get()
     return active_run_capabilities is not None and run_capabilities is active_run_capabilities
+
+
+@contextmanager
+def reconstructing_setup_cleanup() -> Generator[None, None, None]:
+    """Keep resolved instances available for cleanup without reevaluating their ordering."""
+    token: Token[bool] = setup_cleanup_reconstruction_active.set(True)
+    try:
+        yield
+    finally:
+        setup_cleanup_reconstruction_active.reset(token)
 
 
 def resolve_capability_for_run(

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Generator, Mapping, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar, Token
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from copy import copy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
@@ -35,7 +33,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
-from ._run_resolution import is_setup_error_dispatching, resolve_capability_for_run
+from ._run_resolution import is_setup_error_dispatching, resolve_capability_for_run, setup_cleanup_reconstruction_active
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -52,19 +50,6 @@ if TYPE_CHECKING:
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
     from pydantic_graph import End
-
-
-_reconstructing_setup_cleanup: ContextVar[bool] = ContextVar('_reconstructing_setup_cleanup', default=False)
-
-
-@contextmanager
-def reconstructing_setup_cleanup() -> Generator[None, None, None]:
-    """Keep resolved instances available for cleanup without reevaluating their ordering."""
-    token: Token[bool] = _reconstructing_setup_cleanup.set(True)
-    try:
-        yield
-    finally:
-        _reconstructing_setup_cleanup.reset(token)
 
 
 @dataclass
@@ -185,7 +170,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             else:
                 flat.append(cap)
         self.capabilities = flat
-        if not _reconstructing_setup_cleanup.get() and any(
+        if not setup_cleanup_reconstruction_active.get() and any(
             leaf.get_ordering() is not None for leaf in collect_leaves(self)
         ):
             self.capabilities = sort_capabilities(list(self.capabilities))
