@@ -3069,25 +3069,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         has_image_generating_tool = False
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                web_search_tool = responses.WebSearchToolParam(
-                    type='web_search', search_context_size=tool.search_context_size
-                )
-                if tool.user_location:
-                    web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
-                        type='approximate', **tool.user_location
-                    )
-                filters = responses.web_search_tool_param.Filters()
-                if tool.allowed_domains:
-                    filters['allowed_domains'] = tool.allowed_domains
-                if tool.blocked_domains:
-                    # The OpenAI API supports this field, but the SDK's `Filters` does not include it yet.
-                    cast(dict[str, object], filters)['blocked_domains'] = tool.blocked_domains
-                if filters:
-                    web_search_tool['filters'] = filters
-                if tool.external_web_access is not None:
-                    # The OpenAI API supports this field, but the SDK's `WebSearchToolParam` does not include it yet.
-                    cast(dict[str, object], web_search_tool)['external_web_access'] = tool.external_web_access
-                tools.append(web_search_tool)
+                tools.append(_map_web_search_tool_param(tool))
             elif isinstance(tool, FileSearchTool):
                 file_search_tool = cast(
                     responses.FileSearchToolParam,
@@ -5656,6 +5638,27 @@ def _build_tool_search_return_part(
             'status': output_item.status,
         },
     )
+
+
+def _map_web_search_tool_param(tool: WebSearchTool) -> responses.WebSearchToolParam:
+    """Map a [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] to a Responses `web_search` tool."""
+    web_search_tool = responses.WebSearchToolParam(type='web_search', search_context_size=tool.search_context_size)
+    if tool.user_location:
+        web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
+            type='approximate', **tool.user_location
+        )
+    filters = responses.web_search_tool_param.Filters()
+    if tool.allowed_domains:
+        filters['allowed_domains'] = tool.allowed_domains
+    if tool.blocked_domains:
+        # The OpenAI API supports this field, but the SDK's `Filters` does not include it yet.
+        cast(dict[str, object], filters)['blocked_domains'] = tool.blocked_domains
+    if filters:
+        web_search_tool['filters'] = filters
+    if tool.external_web_access is not None:
+        # The OpenAI API supports this field, but the SDK's `WebSearchToolParam` does not include it yet.
+        cast(dict[str, object], web_search_tool)['external_web_access'] = tool.external_web_access
+    return web_search_tool
 
 
 def _map_web_search_tool_call(

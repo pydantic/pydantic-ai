@@ -141,7 +141,8 @@ async def main():
 An unsupported native tool with a configured local fallback is replaced before connection. Without
 a fallback, opening the session raises [`UserError`][pydantic_ai.exceptions.UserError]. Provider and
 model-specific combinations—including Gemini grounding, URL context, and function-tool
-restrictions—are canonical on the [Gemini provider page](gemini.md#native-tools).
+restrictions—are canonical on the [Gemini provider page](gemini.md#native-tools). On OpenAI
+GPT-Live, web search runs on the [delegated backend](openai.md#how-delegation-works).
 
 ## Deferred and approval-required tools
 

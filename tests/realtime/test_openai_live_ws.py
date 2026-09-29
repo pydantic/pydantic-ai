@@ -17,17 +17,21 @@ from genai_prices import calc_price
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.messages import (
     BinaryImage,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     SpeechPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.providers import Provider
 from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
@@ -268,3 +272,57 @@ async def test_an_image_is_described_by_the_backend(
         if isinstance(part, SpeechPart)
     )
     assert 'kiwi' in spoken.lower()
+
+
+async def test_the_backend_searches_the_web(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """`WebSearchTool` runs on the delegated backend, and its searches land in history as native parts.
+
+    The backend searches while Live keeps the conversation going, then Live speaks the answer; the
+    searches are recorded on the spoken reply they informed, ahead of the speech, as a standard run
+    records them ahead of its text.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    agent = Agent(
+        _BACKEND,
+        instructions='Always search the web before answering, and answer in one short sentence.',
+        capabilities=[WebSearch(native=WebSearchTool(search_context_size='low', allowed_domains=['wikipedia.org']))],
+    )
+
+    pcm = assets_path.joinpath('amsterdam_population_question_24khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == snapshot(['ModelRequest', 'ModelResponse'])
+    reply = messages[1]
+    assert isinstance(reply, ModelResponse)
+    calls = [part for part in reply.parts if isinstance(part, NativeToolCallPart)]
+    returns = [part for part in reply.parts if isinstance(part, NativeToolReturnPart)]
+    assert calls and len(calls) == len(returns)
+    assert {part.tool_name for part in [*calls, *returns]} == {'web_search'}
+    assert [part.tool_call_id for part in calls] == [part.tool_call_id for part in returns]
+    assert all(part.provider_name == 'openai' for part in calls)
+    # Each search records what the backend searched for, as on a direct Responses call.
+    assert [part.args for part in calls] == snapshot(
+        [
+            {
+                'type': 'search',
+                'queries': ['site:en.wikipedia.org/wiki/Amsterdam Amsterdam population 2026'],
+                'query': 'site:en.wikipedia.org/wiki/Amsterdam Amsterdam population 2026',
+            },
+            {'type': 'search', 'queries': ['Amsterdam population'], 'query': 'Amsterdam population'},
+        ]
+    )
+    assert [part.content for part in returns] == snapshot([{'status': 'completed'}, {'status': 'completed'}])
+    # The searches come first, then what Live said with their results.
+    speech = reply.parts[-1]
+    assert isinstance(speech, SpeechPart) and speech.speaker == 'assistant'
+    assert all(not isinstance(part, SpeechPart) for part in reply.parts[:-1])
+    assert 'thirty-six thousand' in (speech.transcript or '')

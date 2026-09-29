@@ -506,6 +506,8 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         # Speech and delegated work run independently: the Live model can keep the conversation going
         # while the backend works, so a tool call doesn't hold up speech, and there's no mode that waits.
         'async_tool_call_mode': 'always',
+        # The backend runs web search; Live refuses every other native Responses tool (checked live).
+        'supported_native_tools': frozenset({WebSearchTool}),
         'supports_thinking': False,
         'emits_input_speech_events': False,
         'synthesizes_turn_boundary': True,

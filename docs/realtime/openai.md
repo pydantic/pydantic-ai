@@ -130,6 +130,7 @@ Live splits one agent across two models:
 | --- | --- |
 | The agent's [instructions](../agent.md#instructions) | The backend model, which does the work |
 | The agent's [tools](tools.md) | The backend model, advertised as function tools |
+| [Web search](tools.md#native-tools) | The backend model, as its native `web_search` tool |
 | `openai_live_instructions` | The Live model, which does the talking |
 
 When the Live model decides it cannot answer from the conversation alone, it opens a *delegation* and
@@ -431,8 +432,8 @@ secure offer-relay flow, and the sideband trust model, and the
 
 ## Feature support and limitations
 
-Neither family supports [native tools](tools.md#native-tools); configure local fallbacks for web
-capabilities. Both run [tool calls asynchronously](tools.md#concurrent-tool-execution), so the model
+Of the [native tools](tools.md#native-tools), only GPT-Live's backend runs one, web search; configure
+local fallbacks for the other web capabilities. Both families run [tool calls asynchronously](tools.md#concurrent-tool-execution), so the model
 keeps talking while a tool runs. See [Audio, images, and transcripts](audio.md),
 [Turns and interruptions](turns.md), [Tools](tools.md), and [Connection lifecycle](lifecycle.md) for
 the provider-agnostic workflows.
@@ -448,6 +449,7 @@ the provider-agnostic workflows.
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |
 | Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) and no way to disable it |
 | Input speech events | Unsupported | No speech start/end frames, so a "listening" indicator should read the profile rather than wait for events |
+| Native tools | Limited parameter support | [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] only, with the [options](../native-tools.md#configuration-options) OpenAI Responses supports, run by the [backend](#how-delegation-works). Each search is recorded as a [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] ahead of the reply it informed. Search sources and the backend's citations are not recorded: Live takes no `include` for the backend, and speaks its own rendering of the answer |
 | Thinking | Unsupported | Set the backend's effort instead; see [Reasoning](#reasoning) |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
 | Browser WebRTC | Unsupported | Bridge media through your backend |
