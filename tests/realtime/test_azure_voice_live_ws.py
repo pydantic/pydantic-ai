@@ -138,7 +138,7 @@ async def test_text_in_audio_out_turn(
     part = response.parts[0]
     assert isinstance(part, SpeechPart)
     assert part.speaker == 'assistant'
-    assert part.transcript == snapshot('Hola, ¿qué tal?')
+    assert part.transcript == snapshot('Hello there!')
     assert isinstance(part.audio, BinaryContent)
     assert part.audio.media_type == 'audio/wav'
     assert len(part.audio.data) > 0
@@ -147,15 +147,15 @@ async def test_text_in_audio_out_turn(
     # as different, so it can't just be left out. Snapshot the detail keys, state the counts here.
     assert session.usage == RunUsage(
         input_tokens=16,
-        output_tokens=45,
-        output_audio_tokens=31,
+        output_tokens=32,
+        output_audio_tokens=23,
         output_reasoning_tokens=0,
         details=snapshot(
             {
                 'input_text_tokens': 16,
                 'input_image_tokens': 0,
-                'output_text_tokens': 14,
-                'audio_tokens': 31,
+                'output_text_tokens': 9,
+                'audio_tokens': 23,
                 'reasoning_tokens': 0,
             }
         ),
@@ -229,16 +229,16 @@ async def test_audio_in_server_vad_turn(
     # See the note on the text-turn test: an extension attribute can't survive a whole-object snapshot.
     assert session.usage == RunUsage(
         input_tokens=44,
-        output_tokens=99,
+        output_tokens=93,
         input_audio_tokens=30,
-        output_audio_tokens=72,
+        output_audio_tokens=66,
         output_reasoning_tokens=0,
         details=snapshot(
             {
                 'input_text_tokens': 14,
                 'input_image_tokens': 0,
                 'output_text_tokens': 27,
-                'audio_tokens': 72,
+                'audio_tokens': 66,
                 'reasoning_tokens': 0,
             }
         ),
@@ -254,7 +254,7 @@ async def test_tool_call_round(
     model = AzureRealtimeModel(
         'gpt-realtime',
         provider=provider,
-        settings=AzureRealtimeModelSettings(azure_voice_live=True, output_modality='text'),
+        settings=AzureRealtimeModelSettings(azure_voice_live=True, output_modality='text', parallel_tool_calls=False),
     )
     agent = Agent(instructions='Use the get_weather tool for any weather question, then answer in one short sentence.')
 
@@ -301,10 +301,20 @@ async def test_tool_call_round(
                             'description': 'Look up the weather for a city.',
                         }
                     ],
+                    'parallel_tool_calls': False,
                 },
             }
         ]
     )
+    # The server applies it rather than dropping it.
+    [updated] = [
+        message.data
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage)
+        and message.direction == 'received'
+        and message.data.get('type') == 'session.updated'
+    ]
+    assert updated['session']['parallel_tool_calls'] is False
     call_events = [event for event in events if isinstance(event, FunctionToolCallEvent)]
     result_events = [event for event in events if isinstance(event, FunctionToolResultEvent)]
     assert len(call_events) == 1
@@ -445,7 +455,7 @@ async def test_cascade_reasoning_model_settings_are_adapted(
     assert session_update['session']['turn_detection']['type'] == 'azure_semantic_vad'
     assert 'temperature' not in session_update['session']
     assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
-    assert session.usage.details['reasoning_tokens'] == snapshot(320)
+    assert session.usage.details['reasoning_tokens'] == snapshot(256)
     response = session.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     part = response.parts[0]
@@ -576,7 +586,40 @@ async def test_gpt_realtime_2_is_served_by_voice_live(
     assert response.model_name == snapshot('gpt-realtime-2-global-standard')
     part = response.parts[0]
     assert isinstance(part, TextPart)
-    assert part.content == snapshot('Hey there!')
+    assert part.content == snapshot('Hello there!')
+
+
+async def test_image_input(
+    azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette], assets_path: Path
+) -> None:
+    """An image reaches the model as an `input_image` content part and it answers about it."""
+    provider, cassette = azure_voice_live_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-realtime',
+        provider=provider,
+        settings=AzureRealtimeModelSettings(azure_voice_live=True, output_modality='text'),
+    )
+    agent = Agent(instructions='Answer in a few words.')
+    image = BinaryContent(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send(image)
+        await session.send('What fruit is in the image?')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    [image_item] = sent_frames_containing(cassette, 'input_image')
+    assert [part['type'] for part in image_item['item']['content']] == ['input_image']
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, TextPart)
+    assert 'kiwi' in part.content.lower()
 
 
 async def test_voice_live_rejects_webrtc_signaling() -> None:
