@@ -581,7 +581,7 @@ class TestRunControls:
         assert result.output == 'all done'
         # The child's own limit needs isolated accounting, but its request still counts toward the parent total.
         assert captured['usage_is_parent'] is False
-        assert result.usage().requests == 3
+        assert result.usage.requests == 3
 
     async def test_usage_budget_reached_is_soft(self) -> None:
         counter = {'n': 0}
