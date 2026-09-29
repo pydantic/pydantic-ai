@@ -21,7 +21,7 @@ from pydantic_ai_harness.day_ai import DayAI
 from . import theme
 from .api_keys import KeyReference, SavedKey, load_keys
 from .field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
-from .mcp import TokenStore, browser_sign_in, http_client
+from .mcp import TokenStore, http_client, sign_in
 from .menu_worker import run_worker
 from .plugin_keys import pick_key_from_menu
 from .plugins import DepsT, PluginHost, SessionStart
@@ -230,6 +230,4 @@ async def _configure(source: DayAISource[DepsT]) -> str:
 
 
 def _transport() -> StreamableHttpTransport:
-    return StreamableHttpTransport(
-        DAY_AI_MCP_URL, auth=browser_sign_in(TOKEN_ACCOUNT), httpx_client_factory=http_client
-    )
+    return StreamableHttpTransport(DAY_AI_MCP_URL, auth=sign_in(TOKEN_ACCOUNT), httpx_client_factory=http_client)

@@ -17,7 +17,7 @@ from termflow.tui.menu import Menu
 from pydantic_ai.exceptions import UserError
 
 from ._rendering import markdown_style
-from .credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from .credential_store import credentials_path, delete_credentials, load_codex_credentials, save_codex_credentials
 from .menu_worker import menu_key, run_worker
 
 
@@ -26,7 +26,8 @@ class KeyReference(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    name: str = Field(min_length=1)
+    # The pattern `normalize_name` gives every `/keys` label; it also rejects most pasted tokens, such as `ghp_...`.
+    name: str = Field(pattern=r'^[A-Z_][A-Z0-9_]*$')
 
 
 def resolve_key(*, token: SecretStr | KeyReference) -> str:
@@ -36,7 +37,7 @@ def resolve_key(*, token: SecretStr | KeyReference) -> str:
     keys = load_keys()
     if token.name not in keys:
         raise UserError(
-            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure through /add_model.'
+            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure the connection that uses it.'
         )
     return keys[token.name].get_secret_value()
 
@@ -64,8 +65,16 @@ def save_key_connection(*, account: str, token: SecretStr | KeyReference, value:
     """Validate references and save atomically with respect to key renames and deletions."""
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
-            raise UserError('The selected API key no longer exists. Select a saved key again through /add_model.')
+            raise UserError(
+                f'The selected API key no longer exists. Select a saved key again through {_KEY_CONSUMERS[account]}.'
+            )
         save_codex_credentials(account=account, value=value)
+
+
+def forget_connection(*, account: str) -> None:
+    """Drop a saved connection, and with it any key reference it held; the keys themselves stay."""
+    with key_transaction():
+        delete_credentials(account=account)
 
 
 class SecretPrompt(Protocol):
@@ -113,11 +122,14 @@ def _load_keys() -> dict[str, SecretStr]:
         raise UserError('Stored API keys are invalid. Repair the api-keys credential bundle.') from None
 
 
+class KeyExistsError(ValueError):
+    """`save_key(replace=False)` found a key of that name, which other connections may share."""
+
+
 def save_key(*, name: str, value: str, replace: bool = True) -> str:
     """Save one key without touching unrelated credentials or SQLite.
 
-    With `replace=False`, the existence check happens under the same lock as the write, so a key another
-    process saved after the caller looked is not overwritten without the user confirming it.
+    `replace=False` checks and saves under one lock, so a key another process just created is not overwritten.
     """
     name = normalize_name(name=name)
     value = value.strip()
@@ -126,7 +138,7 @@ def save_key(*, name: str, value: str, replace: bool = True) -> str:
     with key_transaction():
         keys = _load_keys()
         if not replace and name in keys:
-            raise ValueError(f'{name} was saved in /keys by another session meanwhile. Choose it again to replace it.')
+            raise KeyExistsError(f'{name} is already saved.')
         keys[name] = SecretStr(value)
         _save_keys(keys=keys)
     path = credentials_path(account='api-keys')
@@ -141,20 +153,29 @@ def _save_keys(*, keys: dict[str, SecretStr]) -> None:
     )
 
 
+_KEY_CONSUMERS = {
+    'vllm': '/add_model',
+    'openrouter': '/add_model',
+    'google-workspace': '/google_workspace',
+    'pylon': '/pylon',
+}
+"""Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
+
+
 class _Credential(BaseModel):
     token: SecretStr | KeyReference = Field(default_factory=lambda: SecretStr(''))
 
 
 def key_users(*, name: str) -> list[str]:
-    """Find saved provider references without exposing their inline credentials."""
+    """Find saved provider and plugin references without exposing their inline credentials."""
     users: list[str] = []
-    for account in ('vllm', 'openrouter'):
+    for account, command in _KEY_CONSUMERS.items():
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:
                 credential = _Credential.model_validate_json(raw)
             except ValidationError:
-                raise UserError(f'Reconfigure the invalid {account} connection through /add_model first.') from None
+                raise UserError(f'Reconfigure the invalid {account} connection through {command} first.') from None
             if isinstance(credential.token, KeyReference) and credential.token.name == name:
                 users.append(account)
     return users

@@ -51,7 +51,7 @@ async def test_a_key_saved_by_another_session_meanwhile_is_not_overwritten(monke
         return keys
 
     monkeypatch.setattr('pydantic_clai2.plugin_keys.load_keys', load_keys_then_another_session_saves)
-    with pytest.raises(ValueError, match='DEMO_TOKEN was saved in /keys by another session meanwhile'):
+    with pytest.raises(api_keys.KeyExistsError, match='DEMO_TOKEN is already saved'):
         await choose(Script(lists=[], choices=[], texts=[]))
     assert api_keys.load_keys()['DEMO_TOKEN'].get_secret_value() == 'theirs'
 
