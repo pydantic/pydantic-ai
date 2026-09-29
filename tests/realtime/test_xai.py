@@ -1573,3 +1573,72 @@ async def test_commit_of_speech_is_sent_without_a_request() -> None:
     await conn.send(CommitAudio())
     await conn.send(CreateResponse())
     assert _sent_types(ws)[2:] == ['input_audio_buffer.append', 'input_audio_buffer.commit', 'response.create']
+
+
+async def test_refused_commit_of_speech_releases_the_request() -> None:
+    """A commit sent in place of `response.create` carries its id, so an error echoing it refuses the request."""
+    ws = FakeWebSocket(
+        [
+            json.dumps({'type': 'input_audio_buffer.speech_started', 'item_id': 'item-u1', 'audio_start_ms': 0}),
+            json.dumps(
+                {
+                    'type': 'error',
+                    'error': {'type': 'invalid_request_error', 'message': 'no', 'event_id': 'pydantic_ai.response.2'},
+                }
+            ),
+        ]
+    )
+    conn = _manual(ws)
+    await conn.send(_AUDIO)
+    events = conn.__aiter__()
+    await events.__anext__()  # xAI heard speech
+    await conn.send(CommitAudio())
+    await conn.send(CreateResponse())
+    assert _sent(ws)[-1] == {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.response.2'}
+    rest = [event async for event in events]
+    assert InputRejected(2, refused='response') in rest
+
+
+class _FailingSend(FakeWebSocket):
+    """Fails every send after the first `sends` ones, as a connection dropping mid-send would."""
+
+    def __init__(self, incoming: list[Any], *, sends: int) -> None:
+        super().__init__(incoming)
+        self._sends = sends
+
+    async def send(self, data: str) -> None:
+        if len(self.sent) >= self._sends:
+            raise OSError('connection reset')
+        await super().send(data)
+
+
+async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> None:
+    """A connection dropping while the held commit goes out keeps the turn, which is sent again after the reconnect."""
+    replacement = FakeWebSocket([])
+    replacements = iter([replacement])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    ws = _FailingSend([], sends=2)
+    conn = _manual(ws, dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    await conn.send(_OTHER_AUDIO)
+    await conn.send(CommitAudio())
+    with pytest.raises(OSError):
+        await conn.send(CreateResponse())
+    events = [event async for event in conn]
+    assert any(isinstance(event, RealtimeSessionReconnectEvent) for event in events)
+    await conn.send(CreateResponse())
+
+    assert _sent_types(replacement) == [
+        'input_audio_buffer.append',
+        'input_audio_buffer.append',
+        'input_audio_buffer.commit',
+        'response.create',
+    ]
+    assert _appended(replacement) == [_AUDIO.data, _OTHER_AUDIO.data]
