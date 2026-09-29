@@ -1473,13 +1473,13 @@ class CompletedStreamedResponse(StreamedResponse):
         pass
 
     def get(self) -> ModelResponse:
+        response = self.response
         if isinstance(self._replay_events, list):
-            return replace(
-                self.response,
-                parts=self._parts_manager.get_parts(),
-                state=super().get().state,
-            )
-        return self.response
+            response = replace(response, parts=self._parts_manager.get_parts(), state=super().get().state)
+        # A `FallbackModel` that fell back to the model producing this stream records its attempts here.
+        if self.failed_attempts:
+            response = replace(response, failed_attempts=[*self.failed_attempts, *(response.failed_attempts or [])])
+        return response
 
     @property
     def usage(self) -> RequestUsage:

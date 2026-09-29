@@ -49,7 +49,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     ToolAvailabilityDeltaPart,
 )
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.fallback import FallbackModel, ResponseRejected
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -1940,6 +1940,34 @@ async def test_nested_fallback_keeps_the_inner_attempts(inner_outcome: str) -> N
     }
     attempts = [(attempt.model_name, attempt.outcome) for attempt in result.response.failed_attempts or []]
     assert (attempts, result.usage.input_tokens) == expected[inner_outcome]
+
+
+class _CompletedStreamModel(FunctionModel):
+    """A model whose stream is a response it already has, as a durable model replays one."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        response = await self.request(messages, model_settings, model_request_parameters)
+        yield CompletedStreamedResponse(response, model_request_parameters=model_request_parameters)
+
+
+async def test_failed_attempts_on_a_completed_stream() -> None:
+    """The attempts reach the response when the model fallen back to streams a response it already has."""
+    model = FallbackModel(failure_model_stream, _CompletedStreamModel(success_response, model_name='completed'))
+    async with Agent(model).run_stream('test') as result:
+        assert await result.get_output() == 'success'
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [(attempt.model_name, attempt.outcome) for attempt in response.failed_attempts or []] == snapshot(
+        [('function::failure_response_stream', 'error')]
+    )
 
 
 async def test_failed_attempts_survive_a_continuation() -> None:
