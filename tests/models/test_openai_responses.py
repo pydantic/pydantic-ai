@@ -35,7 +35,6 @@ from pydantic_ai import (
     PartEndEvent,
     PartStartEvent,
     RetryPromptPart,
-    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -10255,62 +10254,6 @@ async def test_openai_responses_builtin_tool_call_id_uses_id_field(allow_model_r
     assert len(web_search_items) == 1
     web_search_item = cast(dict[str, Any], web_search_items[0])
     assert web_search_item['id'] == long_id
-
-
-async def test_openai_responses_skips_delegated_live_web_search_history(allow_model_requests: None):
-    mock_client = MockOpenAIResponses.create_mock(
-        response_message(
-            [
-                ResponseOutputMessage(
-                    id='msg_123',
-                    content=cast(
-                        list[Content],
-                        [ResponseOutputText(text='Follow-up answer.', type='output_text', annotations=[])],
-                    ),
-                    role='assistant',
-                    status='completed',
-                    type='message',
-                ),
-            ]
-        )
-    )
-    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client))
-    agent = Agent(model=model)
-    web_search_id = 'ws_67e886540a108191a3db18a0336eb0f80bb7f4baa8488460a1'
-    history: list[ModelRequest | ModelResponse] = [
-        ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris?')]),
-        ModelResponse(
-            parts=[
-                NativeToolCallPart(
-                    tool_name='web_search',
-                    tool_call_id=web_search_id,
-                    args={'queries': ['weather in Paris']},
-                    id=web_search_id,
-                    provider_name='openai',
-                ),
-                NativeToolReturnPart(
-                    tool_name='web_search',
-                    tool_call_id=web_search_id,
-                    content={'status': 'completed'},
-                    provider_name='openai',
-                ),
-                SpeechPart(speaker='assistant', transcript='It is sunny in Paris.'),
-            ],
-            model_name='gpt-live-1',
-            provider_name='openai',
-            provider_details={'delegated_model': 'gpt-5'},
-        ),
-    ]
-
-    await agent.run('Should I take an umbrella?', message_history=history)
-
-    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
-        [
-            {'role': 'user', 'content': 'What is the weather in Paris?'},
-            {'role': 'assistant', 'content': 'It is sunny in Paris.'},
-            {'role': 'user', 'content': 'Should I take an umbrella?'},
-        ]
-    )
 
 
 async def test_openai_responses_mcp_call_replays_empty_tool_args(allow_model_requests: None):

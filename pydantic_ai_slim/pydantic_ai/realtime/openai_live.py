@@ -69,6 +69,7 @@ from ..messages import (
 )
 from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
 from ..models.openai import (
+    _map_reasoning_item as map_reasoning_item,  # pyright: ignore[reportPrivateUsage]
     _map_usage as map_openai_usage,  # pyright: ignore[reportPrivateUsage]
     _map_web_search_tool_call as map_web_search_tool_call,  # pyright: ignore[reportPrivateUsage]
     _map_web_search_tool_param as map_web_search_tool_param,  # pyright: ignore[reportPrivateUsage]
@@ -132,6 +133,7 @@ try:
         ResponseFunctionWebSearch,
         ResponseIncompleteEvent,
         ResponseOutputItemDoneEvent,
+        ResponseReasoningItem,
         ResponseStreamEvent,
     )
     from websockets.asyncio.client import ClientConnection
@@ -481,6 +483,9 @@ class OpenAILiveConnection(RealtimeConnection):
         self._reported_seconds = 0.0
         # Numbers the native tool parts this connection reports; the session maps them to its own indexes.
         self._native_part_index = 0
+        # The backend's reasoning since its last other output item, per delegation. A search replays into
+        # the Responses API only with the reasoning item that led to it, so that is recorded with it.
+        self._pending_reasoning: dict[str | None, list[ResponseReasoningItem]] = {}
 
     @property
     def model_name(self) -> str | None:
@@ -883,6 +888,7 @@ class OpenAILiveConnection(RealtimeConnection):
             ]
         delegation = self._delegations.get(delegation_id) if delegation_id is not None else None
         if isinstance(event, (ResponseCompletedEvent, ResponseFailedEvent, ResponseIncompleteEvent)):
+            self._pending_reasoning.pop(delegation_id, None)
             events: list[RealtimeCodecEvent] = self._map_backend_usage(event.response)
             if delegation is not None:
                 if not events:
@@ -893,8 +899,12 @@ class OpenAILiveConnection(RealtimeConnection):
             return events
         if not isinstance(event, ResponseOutputItemDoneEvent):
             return []
+        if isinstance(event.item, ResponseReasoningItem):
+            self._pending_reasoning.setdefault(delegation_id, []).append(event.item)
+            return []
+        reasoning = self._pending_reasoning.pop(delegation_id, [])
         if isinstance(event.item, ResponseFunctionWebSearch):
-            return self._map_web_search(event.item)
+            return self._map_web_search(event.item, reasoning)
         if not isinstance(event.item, ResponseFunctionToolCall):
             return []
         call = event.item
@@ -918,14 +928,24 @@ class OpenAILiveConnection(RealtimeConnection):
             ),
         ]
 
-    def _map_web_search(self, item: ResponseFunctionWebSearch) -> list[RealtimeCodecEvent]:
+    def _map_web_search(
+        self, item: ResponseFunctionWebSearch, reasoning: list[ResponseReasoningItem]
+    ) -> list[RealtimeCodecEvent]:
         """Record a search the backend ran with the native `web_search` tool, as a standard run would.
 
         The call and its result arrive together, once the search is done, so both parts start and end
-        here. The session folds them into the response they belong to, ahead of what is spoken.
+        here. The session folds them into the response they belong to, ahead of what is spoken. The
+        reasoning that led to the search goes first, as `ThinkingPart`s: OpenAI refuses to replay a search
+        without it, so without them this history couldn't be continued by an `OpenAIResponsesModel` agent.
         """
+        parts: list[ModelResponsePart] = [
+            thinking
+            for reasoning_item in reasoning
+            for thinking in map_reasoning_item(reasoning_item, self._provider_name)
+        ]
+        parts.extend(map_web_search_tool_call(item, self._provider_name))
         events: list[RealtimeCodecEvent] = []
-        for part in map_web_search_tool_call(item, self._provider_name):
+        for part in parts:
             index = self._native_part_index
             self._native_part_index += 1
             events.extend((PartStartEvent(index=index, part=part), PartEndEvent(index=index, part=part)))

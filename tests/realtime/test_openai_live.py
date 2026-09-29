@@ -1178,6 +1178,67 @@ def test_a_backend_web_search_is_recorded_as_native_tool_parts() -> None:
     assert [event.index for event in second if isinstance(event, PartStartEvent)] == [2, 3]
 
 
+def _output_item_done(item: dict[str, Any], *, delegation_id: str = 'd1') -> dict[str, Any]:
+    return {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': delegation_id,
+        'event': {'type': 'response.output_item.done', 'sequence_number': 1, 'output_index': 0, 'item': item},
+    }
+
+
+def _reasoning(item_id: str) -> dict[str, Any]:
+    return {'id': item_id, 'type': 'reasoning', 'summary': [], 'encrypted_content': f'enc-{item_id}'}
+
+
+_SEARCH_ITEM = {'id': 'ws_1', 'type': 'web_search_call', 'status': 'completed', 'action': {'type': 'search'}}
+
+
+def test_a_search_is_recorded_with_the_reasoning_that_led_to_it() -> None:
+    """OpenAI replays a search only with its reasoning item, so that is recorded with it, as a Responses run does.
+
+    Reasoning that leads to anything else (a function call, the answer) isn't recorded: nothing needs it.
+    """
+    connection = _connection()
+    connection._map_event(_event(_delegation_created('d1')))  # pyright: ignore[reportPrivateUsage]
+    connection._map_event(_event(_delegation_created('d2')))  # pyright: ignore[reportPrivateUsage]
+
+    def parts(frame: dict[str, Any]) -> list[str]:
+        events = connection._map_event(_event(frame))  # pyright: ignore[reportPrivateUsage]
+        return [
+            f'{type(e.part).__name__}:{getattr(e.part, "id", None)}' for e in events if isinstance(e, PartStartEvent)
+        ]
+
+    # Reasoning waits for what it leads to.
+    assert parts(_output_item_done(_reasoning('rs_1'))) == []
+    # Another delegation's reasoning is its own.
+    assert parts(_output_item_done(_reasoning('rs_other'), delegation_id='d2')) == []
+    assert parts(_output_item_done(_SEARCH_ITEM)) == [
+        'ThinkingPart:rs_1',
+        'NativeToolCallPart:ws_1',
+        'NativeToolReturnPart:None',
+    ]
+    # Reasoning before the answer is dropped when the answer arrives.
+    parts(_output_item_done(_reasoning('rs_2')))
+    message: dict[str, Any] = {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'status': 'completed',
+        'content': [],
+    }
+    assert parts(_output_item_done(message)) == []
+    assert parts(_output_item_done(_SEARCH_ITEM)) == ['NativeToolCallPart:ws_1', 'NativeToolReturnPart:None']
+    # And so is reasoning a response ends with.
+    parts(_output_item_done(_reasoning('rs_3')))
+    connection._map_response_event(_backend_terminal('response.completed'), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    assert parts(_output_item_done(_SEARCH_ITEM, delegation_id='d2')) == [
+        'ThinkingPart:rs_other',
+        'NativeToolCallPart:ws_1',
+        'NativeToolReturnPart:None',
+    ]
+
+
 def _backend(model: OpenAILiveModel, **settings: Any) -> str:
     return _config(model, settings=OpenAILiveModelSettings(**settings))['delegation']['responses']['model']
 

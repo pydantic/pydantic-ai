@@ -247,6 +247,21 @@ def openai_live_ws_cassette(
 
 
 @pytest.fixture
+def openai_live_ws_and_http_cassette(
+    request: pytest.FixtureRequest, openai_api_key: str
+) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:
+    """Like `openai_live_ws_cassette`, for a test that also records an HTTP VCR cassette.
+
+    The WebSocket cassette gets its own subdirectory, as for `openai_ws_sideband_cassette`, so the two
+    don't collide.
+    """
+    if not openai_imports_successful():  # pragma: no cover
+        pytest.skip('openai / websockets not installed')
+    with _ws_cassette(request, 'openai_live', subdir='test_openai_live_ws_and_http') as cassette:
+        yield OpenAIProvider(api_key=openai_api_key), cassette
+
+
+@pytest.fixture
 def openai_ws_sideband_cassette(
     request: pytest.FixtureRequest, openai_api_key: str
 ) -> Iterator[tuple[Provider[Any], RealtimeCassette]]:

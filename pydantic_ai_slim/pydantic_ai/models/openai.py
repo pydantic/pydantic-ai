@@ -2370,38 +2370,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         paired_tool_search_output_ids = {item.id for item in tool_search_outputs.values()}
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
-                signature = item.encrypted_content
-                # Handle raw CoT content from gpt-oss models
-                provider_details: dict[str, Any] = {}
-                raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
-                if raw_content:
-                    provider_details['raw_content'] = raw_content
-
-                if item.summary:
-                    for summary in item.summary:
-                        # We use the same id for all summaries so that we can merge them on the round trip.
-                        items.append(
-                            ThinkingPart(
-                                content=summary.text,
-                                id=item.id,
-                                signature=signature,
-                                provider_name=self.system,
-                                provider_details=provider_details or None,
-                            )
-                        )
-                        # We only need to store the signature and raw_content once.
-                        signature = None
-                        provider_details = {}
-                elif signature or provider_details:
-                    items.append(
-                        ThinkingPart(
-                            content='',
-                            id=item.id,
-                            signature=signature,
-                            provider_name=self.system,
-                            provider_details=provider_details or None,
-                        )
-                    )
+                items.extend(_map_reasoning_item(item, self.system))
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputRefusal):
@@ -3434,9 +3403,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         assert_never(part)
             elif isinstance(message, ModelResponse):
                 response_from_same_provider = message.provider_name == self.system
-                delegated_live_response = (
-                    message.provider_details is not None and 'delegated_model' in message.provider_details
-                )
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
@@ -3451,14 +3417,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         client_tool_search_active=client_tool_search_active,
                     )
                 for item in response_parts:
-                    if (
-                        delegated_live_response
-                        and isinstance(item, (NativeToolCallPart, NativeToolReturnPart))
-                        and item.tool_name == WebSearchTool.kind
-                    ):
-                        # Live does not retain the delegated backend's linked reasoning item, so OpenAI
-                        # rejects this web-search item when it is replayed into the Responses API.
-                        continue
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
@@ -5670,6 +5628,44 @@ def _map_web_search_tool_param(tool: WebSearchTool) -> responses.WebSearchToolPa
         # The OpenAI API supports this field, but the SDK's `WebSearchToolParam` does not include it yet.
         cast(dict[str, object], web_search_tool)['external_web_access'] = tool.external_web_access
     return web_search_tool
+
+
+def _map_reasoning_item(item: responses.ResponseReasoningItem, provider_name: str) -> list[ThinkingPart]:
+    """Map a Responses reasoning item to the `ThinkingPart`s that replay it."""
+    signature = item.encrypted_content
+    # Handle raw CoT content from gpt-oss models
+    provider_details: dict[str, Any] = {}
+    raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
+    if raw_content:
+        provider_details['raw_content'] = raw_content
+
+    parts: list[ThinkingPart] = []
+    if item.summary:
+        for summary in item.summary:
+            # We use the same id for all summaries so that we can merge them on the round trip.
+            parts.append(
+                ThinkingPart(
+                    content=summary.text,
+                    id=item.id,
+                    signature=signature,
+                    provider_name=provider_name,
+                    provider_details=provider_details or None,
+                )
+            )
+            # We only need to store the signature and raw_content once.
+            signature = None
+            provider_details = {}
+    elif signature or provider_details:
+        parts.append(
+            ThinkingPart(
+                content='',
+                id=item.id,
+                signature=signature,
+                provider_name=provider_name,
+                provider_details=provider_details or None,
+            )
+        )
+    return parts
 
 
 def _map_web_search_tool_call(

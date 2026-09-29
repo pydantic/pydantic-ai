@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     SpeechPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -39,6 +40,7 @@ from ..conftest import try_import
 from .ws_cassettes import RealtimeCassette
 
 with try_import() as imports_successful:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
 
 pytestmark = [
@@ -274,16 +276,22 @@ async def test_an_image_is_described_by_the_backend(
     assert 'kiwi' in spoken.lower()
 
 
+@pytest.mark.vcr
 async def test_the_backend_searches_the_web(
-    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+    openai_live_ws_and_http_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+    allow_model_requests: None,
 ) -> None:
     """`WebSearchTool` runs on the delegated backend, and its searches land in history as native parts.
 
     The backend searches while Live keeps the conversation going, then Live speaks the answer; the
     searches are recorded on the spoken reply they informed, ahead of the speech, as a standard run
-    records them ahead of its text.
+    records them ahead of its text. The history carries on in a standard run on a Responses model (the
+    HTTP cassette), which OpenAI accepts only because each search is recorded with the reasoning that led
+    to it.
     """
-    provider, cassette = openai_live_ws_cassette
+    provider, cassette = openai_live_ws_and_http_cassette
     model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
     agent = Agent(
         _BACKEND,
@@ -325,3 +333,23 @@ async def test_the_backend_searches_the_web(
     assert isinstance(speech, SpeechPart) and speech.speaker == 'assistant'
     assert all(not isinstance(part, SpeechPart) for part in reply.parts[:-1])
     assert 'thirty-six thousand' in (speech.transcript or '')
+    # Each search follows the backend reasoning that led to it, as a direct Responses run records it.
+    assert [type(part).__name__ for part in reply.parts] == snapshot(
+        [
+            'ThinkingPart',
+            'NativeToolCallPart',
+            'NativeToolReturnPart',
+            'ThinkingPart',
+            'NativeToolCallPart',
+            'NativeToolReturnPart',
+            'SpeechPart',
+        ]
+    )
+    thinking = [part for part in reply.parts if isinstance(part, ThinkingPart)]
+    assert thinking and all(part.id and part.signature and part.provider_name == 'openai' for part in thinking)
+
+    # A text agent on the backend's model picks the conversation up where the call left it.
+    follow_up = await Agent(OpenAIResponsesModel('gpt-5.6-sol', provider=provider)).run(
+        'What number did you just give me? Answer with digits only.', message_history=messages
+    )
+    assert '936' in follow_up.output
