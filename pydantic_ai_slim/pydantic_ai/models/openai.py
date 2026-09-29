@@ -802,8 +802,9 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     instructions are sent as leading input messages instead. That only happens on requests that
     don't continue server-side state: when `openai_previous_response_id` or `openai_conversation_id`
     is set, or the history has been compacted, the instructions stay in the top-level field and no
-    breakpoint is added. A stored response keeps its input, so relocated instructions would
-    otherwise be replayed alongside the next request's own.
+    breakpoint is added. That includes `openai_previous_response_id='auto'` on the first request of a
+    chain: a stored response keeps its input, so relocated instructions would be replayed alongside
+    every later request's own.
 
     No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
     per-request content would sit inside the cached prefix and miss the cache on every run.
