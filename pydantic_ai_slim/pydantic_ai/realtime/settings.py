@@ -175,9 +175,12 @@ class RealtimeModelSettings(TypedDict, total=False):
     """
 
     handshake_timeout: float
-    """Seconds to wait for a realtime protocol handshake event. Defaults to `30.0`.
+    """Seconds to wait for the realtime protocol handshake to complete. Defaults to `30.0`.
 
-    Supported by: OpenAI, Azure OpenAI, and xAI.
+    On OpenAI, Azure OpenAI, and xAI this bounds the wait for each handshake event; on Gemini it bounds
+    opening the socket and waiting for the session setup to complete.
+
+    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
     """
 
     reconnect: ReconnectPolicy
