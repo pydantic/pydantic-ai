@@ -382,13 +382,19 @@ order plugin instructions, renderers, and status segments are consulted in.
 | `persistence` | `pydantic_clai2.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 
+[`day_ai`](#day_ai-day-ai-crm-tools) is built in too, but starts disabled because
+it needs your Day AI account.
+
 ### Other harness capabilities
 
 `/plugins` lists only the built-ins above, plus plugins you or the repository
 declared. It does not list every public harness capability for Space-enable:
 hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
-CLAI plugins written for them, such as the [`pylon` plugin](#pylon-support-issues-and-accounts-in-pylon).
+CLAI plugins written for them, such as the disabled built-ins
+[`day_ai`](#day_ai-day-ai-crm-tools),
+[`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools), and
+[`pylon`](#pylon-support-issues-and-accounts-in-pylon).
 
 To run any other capability, declare it on purpose under an id of your choice,
 with JSON constructor settings if it takes them:
@@ -404,7 +410,8 @@ as `filesystem` or `shell` alongside `coder`.
 
 Earlier releases listed every harness capability here, disabled. If you enabled
 one of those, it was saved as your own declaration, so it keeps loading and now
-shows as a saved plugin; `/plugins remove NAME` forgets it.
+shows as a saved plugin; `/plugins remove NAME` forgets it. The exception is
+`google_workspace`, which now loads its built-in plugin instead.
 
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
@@ -579,6 +586,72 @@ key that a plugin uses. Neither sign-in uses your `/login github-copilot` login,
 and Copilot does not read the `GITHUB_TOKEN` key. The plugin emits no telemetry
 of its own; tool calls appear in core's spans.
 
+### `google_workspace`: Gmail, Calendar, and Drive tools
+
+`google_workspace` (`pydantic_clai2.google_workspace`) is a built-in that starts
+disabled. It gives the agent the tools of Google's hosted Workspace MCP servers
+through harness [`GoogleWorkspace`](../../docs/harness/google-workspace.md). It needs a
+Google OAuth access token whose scopes cover the products you select.
+
+Turning it on (Space in `/plugins`, or `/plugins enable google_workspace`) opens
+its settings menu. Open it again later with `C` in `/plugins`,
+`/plugins configure google_workspace`, or:
+
+```text
+/google_workspace
+```
+
+The settings menu is full-screen with one row per setting. Up/Down moves, Enter
+edits a row, `r` puts a row back to its default, and **Save & close** or Esc
+leaves. Each change is saved to the plugin's declaration as soon as you make it and applies
+from the next turn, without reloading. Run `/google_workspace` again at any time
+to change a setting or pick a different key.
+
+| Row | Stored as | Default | Does |
+|---|---|---|---|
+| Access token key | the key's name, in the credential store | `GOOGLE_ACCESS_TOKEN` | which `/keys` entry holds the Google OAuth access token |
+| Products | `services` | `gmail, calendar, drive` | a searchable checklist of `gmail`, `drive`, `docs`, `sheets`, `slides`, `calendar`, `chat`, `people`; Enter toggles one, and at least one stays on |
+| Read-only tools | `read_only` | `true` | keep only the tools Google marks as read-only |
+| Server instructions | `include_instructions` | `true` | pass the Google servers' own instructions to the agent |
+
+CLAI runs tools without asking first, so `read_only` defaults to `true`. Set it to
+`false` to also get the tools that send, change, and delete.
+
+**The token.** It lives in the [saved API keys](#saved-api-keys) store, never in
+plugin settings, which are plain SQLite and reject a `token` or `auth` entry.
+Enter on the key row lists your saved key names so you can pick one (type to
+filter; Esc leaves the choice unchanged). **Enter a different API key** asks for a
+new token without echoing it and saves it in `/keys` as `GOOGLE_ACCESS_TOKEN`,
+replacing any value already stored under that name. Only the chosen key's name is
+remembered, in the credential store. Several plugins and connections can share one
+named key, such as GitHub integrations all using `GITHUB_TOKEN`. While the plugin
+refers to a key, `/keys` refuses to rename it; pick another key here first. To
+replace the token itself, edit the key in `/keys`.
+
+The plugin loads without a token so that `/google_workspace` is available, and
+prints which key it is missing. Each turn looks the key up again, because Google
+access tokens expire after about an hour: replacing the value in `/keys` applies
+from the next turn. If the key is missing or was deleted, the turn fails with a
+message naming it instead of running without the tools. The `GOOGLE_ACCESS_TOKEN`
+environment variable is not read; key names are labels, not environment variables.
+
+**Not configurable here.** The token decides the Google account and its OAuth
+scopes. `GoogleWorkspace` takes a ready-made access token and has no OAuth client
+ID, client secret, or scope settings, so there is nothing about the OAuth client to
+store: mint the token with your own OAuth client and save it in `/keys`.
+
+Declarations still work for scripted setups:
+
+```text
+/plugins add google_workspace pydantic_clai2.google_workspace '{"services": ["gmail", "docs"], "read_only": false}'
+```
+
+Earlier versions listed `google_workspace` as a raw harness entry,
+`pydantic_ai_harness.google_workspace:GoogleWorkspace`. If you turned that entry on
+or off in the menu, CLAI now loads this plugin in its place and keeps your on or off
+choice. A declaration you added with its own settings under that factory is kept
+as written.
+
 ### `pylon`: support issues and accounts in Pylon
 
 `pylon` (`pydantic_clai2.pylon`) gives the agent harness
@@ -644,6 +717,61 @@ opens the browser, as `/mcp` servers with OAuth do, and waits up to five minutes
 for you to finish. Those tokens stay in the keyring (account `mcp-plugin_pylon`,
 or a private `0600` file when there is no keyring). They are refreshed as
 needed and never touch `/keys` or plugin settings.
+
+### `day_ai`: Day AI CRM tools
+
+`day_ai` (`pydantic_clai2.day_ai`) starts disabled. It gives the model harness
+[`DayAI`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/day_ai/),
+the tools of Day AI's hosted MCP server: search and update CRM records, read
+meeting context, and draft emails. It needs a paid Day AI Agent tier.
+
+`/plugins enable day_ai` loads it and opens its settings menu. Reopen the menu
+at any time with `/plugins configure day_ai`, or `C` on `day_ai` in `/plugins`.
+Type to filter the rows, press Enter to change one, `R` to reset it to its
+default, and Esc to close. Each change is saved as soon as you make it, and the
+plugin loads again with the new settings when the menu closes. The menu has
+one row for each option harness `DayAI` takes:
+
+| Row | Setting | Choices |
+| --- | --- | --- |
+| Sign-in | `auth` | **automatic** (default): `DAY_AI_ACCESS_TOKEN` from `/keys` if it is saved, else a browser sign-in you completed earlier; **choose or enter a key in /keys**; **browser sign-in** |
+| Server instructions | `include_instructions` | **forwarded** (default) or **left out**: whether the Day AI server's own instructions reach the agent |
+
+Day AI runs one hosted endpoint (`https://day.ai/api/mcp`), and harness `DayAI`
+has no base URL, workspace, or read-only option, so the menu offers none.
+Which workspace you reach follows from the token or the account you sign in
+with. The server does not mark any tool read-only, so the model gets every
+tool your tier and role allow, including ones that change CRM records.
+
+Tokens are kept out of plugin settings, which are stored in plaintext:
+
+- **A token in `/keys`.** Choosing "choose or enter a key in /keys" lists your
+  saved keys, searchable by name, so you can pick one, or enter a new token in
+  a masked field. A new token is saved in `/keys` as `DAY_AI_ACCESS_TOKEN`, the
+  name harness `DayAI` documents, after asking before it replaces a saved one.
+  Settings keep only the name, as `{"auth": {"name": "DAY_AI_ACCESS_TOKEN"}}`.
+  The name is a `/keys` label only; CLAI does not read the environment
+  variable. The token is looked up on every run, so replacing it in `/keys`
+  reaches the next run, and deleting it makes runs fail with a message until
+  you save it again. Rename, replace, or delete keys in `/keys`. Plugins that
+  name the same key share one value.
+- **Browser sign-in.** This keeps the tokens in the OS keyring (credential
+  `mcp-day_ai`), the way `/mcp` signs in to an OAuth server, so later sessions
+  reuse and refresh them. Choosing it saves `{"auth": "oauth"}`, which keeps
+  using the browser even when `DAY_AI_ACCESS_TOKEN` is saved. If you are not
+  signed in yet, the browser opens when the menu closes. A failed sign-in fails
+  the load, so nothing is added. A headless run that is not signed in fails to
+  load rather than opening a browser.
+
+Until you choose one, with no `DAY_AI_ACCESS_TOKEN` and no earlier sign-in,
+the plugin loads without Day AI tools and prints how to connect. A key named
+in `auth` that is missing from `/keys` never falls back to the browser, and the
+menu marks it "missing from /keys".
+
+If you enabled `day_ai` from the earlier harness catalog, your saved
+`pydantic_ai_harness.day_ai:DayAI` declaration still takes precedence and reads
+`DAY_AI_ACCESS_TOKEN` from the environment. `/plugins remove day_ai` switches to
+this plugin.
 
 ## Managing plugins
 
@@ -1046,6 +1174,12 @@ settings = host.settings(NotifySettings)
 ```
 
 Bad or missing values fail at startup with a message naming your plugin.
+
+To edit settings from inside the plugin, call `host.save_settings(model)` (see
+[`@host.configure`](#offer-a-settings-menu-hostconfigure)); `host.settings(Model)`
+returns them from then on. Read them per run (for example in a capability
+function passed to `host.add`) so an edit also reaches the next turn from a
+plugin command, without a reload. `google_workspace` is a worked example.
 CLAI ignores unknown names in its own saved settings and preserves their values for
 other versions or branches. This does not relax validation of plugin declarations
 or `host.settings(Model)`.
@@ -1232,7 +1366,8 @@ name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not p
 the secret on the command line.
 
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
-and plugins such as [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
+and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools)
+and [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
 searchable list of names. Choose one, enter a different key privately, or
 choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
 login flows are unchanged. Select keys only for endpoints you trust.

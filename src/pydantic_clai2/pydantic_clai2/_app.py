@@ -100,6 +100,8 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
     PluginSettings(id='github', factory='pydantic_clai2.github', enabled=False),
     PluginSettings(id='pylon', factory='pydantic_clai2.pylon', enabled=False),
+    PluginSettings(id='google_workspace', factory='pydantic_clai2.google_workspace', enabled=False),
+    PluginSettings(id='day_ai', factory='pydantic_clai2.day_ai', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 

@@ -4807,6 +4807,41 @@ _USAGE_RETENTION_CASES = [
         ),
     ),
     _UsageRetentionCase(
+        id='empty_metadata_on_later_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo').model_copy(
+                update={'usage_metadata': GenerateContentResponseUsageMetadata()}
+            ),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=5,
+                details={'cached_content_tokens': 16365},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
+        id='single_field_chunk_extracts_through_guard',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo').model_copy(
+                update={'usage_metadata': GenerateContentResponseUsageMetadata(thoughts_token_count=70)}
+            ),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_reasoning_tokens=70,
+                output_tokens=70,
+                details={'cached_content_tokens': 16365, 'thoughts_tokens': 70},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
         id='details_only_fields_dropped_by_later_chunk',
         make_chunks=lambda: [
             _usage_chunk(cached=16365, thoughts=100, candidates=5, text='hel'),
@@ -4828,7 +4863,7 @@ _USAGE_RETENTION_CASES = [
 async def test_gemini_streamed_response_usage_retained_across_chunks(case: _UsageRetentionCase):
     """Gemini streams usage as cumulative snapshots, but a later chunk can drop a field an earlier one
     carried (#5205): a gateway/proxy omits `cached_content_token_count`, a Vertex-direct stream omits
-    `usage_metadata` entirely, or a `details`-only field like `thoughts_tokens` disappears. The
+    `usage_metadata` or sends it empty, or a `details`-only field like `thoughts_tokens` disappears. The
     accumulated usage must survive instead of resetting to zero.
 
     These are deterministic unit tests rather than VCR tests because the direct Gemini APIs (GLA and

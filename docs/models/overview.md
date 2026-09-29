@@ -472,8 +472,8 @@ print(result.output)
     The [agent loop](../agent.md) only acts on a finish reason when the response has no actionable
     output. A `'length'` finish reason on an empty or thinking-only response raises
     [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior] (typically the model hit
-    the token limit mid-thinking), and an empty response with a `'content_filter'` finish reason raises
-    [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
+    the token limit mid-thinking), and an empty or thinking-only response with a `'content_filter'` finish
+    reason raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
     responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
     regardless of finish reason — a tool call truncated mid-arguments is re-prompted like any other
     invalid-arguments failure, and only once its retry budget is exhausted does it surface as
