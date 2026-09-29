@@ -23,6 +23,7 @@ with try_import() as imports_successful:
         AzureRealtimeModel,
         AzureRealtimeModelProfile,
         AzureRealtimeModelSettings,
+        AzureVoiceLiveVoice,
         SemanticVAD,
         ServerVAD,
         _default_azure_realtime_apis,  # pyright: ignore[reportPrivateUsage]
@@ -61,7 +62,6 @@ def test_non_azure_provider_instance_is_rejected() -> None:
         AzureRealtimeModel('gpt-realtime', provider=OpenAIProvider(api_key='x'))
 
 
-@pytest.mark.anyio
 async def test_url_and_auth_headers() -> None:
     provider = AzureProvider(
         azure_endpoint='https://resource.openai.azure.com/openai/v1/',
@@ -75,7 +75,6 @@ async def test_url_and_auth_headers() -> None:
     assert await model._auth_headers() == {'api-key': 'azure-key'}  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_voice_live_url_and_auth_headers() -> None:
     provider = AzureProvider(
         azure_endpoint='https://resource.services.ai.azure.com',
@@ -109,9 +108,11 @@ def _azure_provider() -> AzureProvider:
         ('gpt-realtime', True, 'voice_live'),
         ('gpt-realtime-mini', None, 'ga'),
         ('gpt-realtime-1.5', True, 'voice_live'),
-        # GA-only: defaults to GA, `azure_voice_live=True` is rejected before connecting.
         ('gpt-realtime-2', None, 'ga'),
-        ('gpt-realtime-2', True, 'error'),
+        ('gpt-realtime-2', True, 'voice_live'),
+        ('gpt-realtime-2.1-mini', True, 'voice_live'),
+        # GA-only: defaults to GA, `azure_voice_live=True` is rejected before connecting.
+        ('gpt-realtime-translate', None, 'ga'),
         ('gpt-4o-realtime-preview', True, 'error'),
         ('gpt-realtime-translate', True, 'error'),
         # Voice-Live-only: auto-routed to Voice Live whether or not the setting is passed.
@@ -157,11 +158,13 @@ def test_azure_realtime_apis_default_absent_for_unknown_model() -> None:
 @pytest.mark.parametrize(
     'model_name,expected',
     [
-        # A version number is matched at a boundary, so `gpt-realtime-2` (GA-only) does not swallow a
-        # date-suffixed `gpt-realtime` deployment (served by both, hence unconstrained).
-        ('gpt-realtime-2', frozenset({'azure_openai'})),
-        ('gpt-realtime-2-2026-05-07', frozenset({'azure_openai'})),
-        ('gpt-realtime-2025-08-28', None),
+        # Served by both APIs, so unconstrained — including point releases and dated snapshots.
+        ('gpt-realtime-2', None),
+        ('gpt-realtime-2.1-mini', None),
+        # A GA-only base is matched at a boundary: its dated snapshot is covered too.
+        ('gpt-realtime-translate-2026-05-07', frozenset({'azure_openai'})),
+        # ...but not a longer name that merely starts with it.
+        ('gpt-50', None),
         # Cascade families cover their point releases (`.`-delimited) as well as `-`-suffixed variants.
         ('gpt-5.2-chat', frozenset({'voice_live'})),
         ('gpt-4o-mini', frozenset({'voice_live'})),
@@ -189,7 +192,7 @@ def test_voice_live_session_config_options() -> None:
         input_transcription_model=None,
         openai_voice='alloy',
         max_tokens=123,
-        tool_choice='required',
+        tool_choice='auto',
     )
 
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
@@ -202,7 +205,7 @@ def test_voice_live_session_config_options() -> None:
     assert 'input_audio_transcription' not in config
     assert config['voice'] == {'type': 'openai', 'name': 'alloy'}
     assert config['max_response_output_tokens'] == 123
-    assert config['tool_choice'] == 'required'
+    assert config['tool_choice'] == 'auto'
     assert config['tools'][0]['name'] == 'lookup'
 
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
@@ -230,7 +233,36 @@ def test_voice_live_rejects_openai_custom_voice_id() -> None:
         model._session_config('Be concise.', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
+def test_voice_live_azure_voice() -> None:
+    """`azure_voice_live_voice` selects an Azure voice, taking precedence over `openai_voice`."""
+    provider = AzureProvider(
+        azure_endpoint='https://resource.services.ai.azure.com',
+        api_version='2026-04-10',
+        api_key='azure-key',
+    )
+    model = AzureRealtimeModel('gpt-5', provider=provider)
+
+    def voice(settings: AzureRealtimeModelSettings) -> Any:
+        return model._session_config('', None, model_settings=settings).get('voice')  # pyright: ignore[reportPrivateUsage]
+
+    # A bare name is a standard Azure text-to-speech voice.
+    assert voice(AzureRealtimeModelSettings(azure_voice_live_voice='en-US-AvaMultilingualNeural')) == {
+        'type': 'azure-standard',
+        'name': 'en-US-AvaMultilingualNeural',
+    }
+    # The full object is forwarded as-is, and wins over `openai_voice` (which cascade models reject).
+    custom = AzureVoiceLiveVoice(type='azure-custom', name='my-voice', endpoint_id='endpoint', rate='1.2')
+    assert voice(AzureRealtimeModelSettings(azure_voice_live_voice=custom, openai_voice='alloy')) == custom
+    # Without it, the session sends no voice and Voice Live uses the model's default.
+    assert voice(AzureRealtimeModelSettings()) is None
+    # It has no GA counterpart, so the GA session config ignores it.
+    ga_model = AzureRealtimeModel('gpt-realtime', provider=provider)
+    ga_config = ga_model._session_config(  # pyright: ignore[reportPrivateUsage]
+        '', None, model_settings=AzureRealtimeModelSettings(azure_voice_live_voice='en-US-AvaNeural')
+    )
+    assert 'voice' not in ga_config['audio']['output']
+
+
 async def test_voice_live_uses_coherent_credential_set(monkeypatch: pytest.MonkeyPatch) -> None:
     """Voice Live targets its own endpoint/key/version as one set, never mixed with the GA resource.
 
@@ -415,7 +447,6 @@ def test_sideband_url_uses_the_ga_realtime_path() -> None:
     )
 
 
-@pytest.mark.anyio
 async def test_connection_names_azure_not_openai() -> None:
     # The GA protocol is shared with OpenAI, but the vendor in a connection's messages must not be:
     # someone debugging a dropped or rejected Azure call would be sent to the wrong service.

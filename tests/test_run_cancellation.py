@@ -65,8 +65,6 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .conftest import IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
-
 READINESS_WAIT_TIMEOUT = 5
 
 requires_task_cancelling = pytest.mark.skipif(

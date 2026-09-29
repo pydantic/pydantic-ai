@@ -1,5 +1,4 @@
 import datetime
-import json
 import os
 from collections.abc import AsyncIterable, Sequence
 from copy import deepcopy
@@ -9,8 +8,8 @@ from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from cassetter import Cassette
 from pydantic import BaseModel, ValidationError
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -39,6 +38,8 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request, model_request_stream
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AdvisorTool, WebSearchTool
+from pydantic_ai.output import OutputObjectDefinition
+from pydantic_ai.profiles import ModelProfile
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
@@ -68,7 +69,6 @@ with try_import() as imports_successful:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -1482,14 +1482,18 @@ async def test_openrouter_forced_tool_choice_with_thinking(
     [
         pytest.param(
             'required',
-            "OpenRouter does not support tool_choice='required' with thinking mode. Disable thinking or use "
-            "`tool_choice='auto'`; otherwise OpenRouter silently drops reasoning.",
+            "tool_choice='required' is not supported by model 'anthropic/claude-sonnet-4.6'. This model does not "
+            'support forcing tool use while thinking is enabled. OpenRouter would silently drop reasoning. Disable '
+            "thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`, or use "
+            "`tool_choice='auto'`.",
             id='required',
         ),
         pytest.param(
             ['get_weather'],
-            'OpenRouter does not support forcing specific tools with thinking mode. Disable thinking or use '
-            "`tool_choice='auto'`; otherwise OpenRouter silently drops reasoning.",
+            "tool_choice=['get_weather'] is not supported by model 'anthropic/claude-sonnet-4.6'. This model does "
+            'not support forcing tool use while thinking is enabled. OpenRouter would silently drop reasoning. '
+            "Disable thinking with `thinking=False` or `openrouter_reasoning={'enabled': False}`, or use "
+            "`tool_choice='auto'`.",
             id='list',
         ),
     ],
@@ -1514,6 +1518,122 @@ async def test_openrouter_explicit_forced_tool_choice_with_thinking_errors(
         )
 
     assert str(exc_info.value) == expected_error
+
+
+@pytest.mark.parametrize(
+    ('settings', 'expected_tool_choice'),
+    [
+        pytest.param({}, 'auto', id='thinking_on_by_default'),
+        pytest.param({'thinking': False}, 'required', id='thinking_off'),
+        pytest.param({'openai_reasoning_effort': 'none'}, 'required', id='effort_none'),
+    ],
+)
+async def test_openrouter_forced_tool_choice_follows_default_thinking(
+    allow_model_requests: None, settings: dict[str, Any], expected_tool_choice: str
+) -> None:
+    """A model that thinks by default counts as thinking when the request doesn't configure it."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel(
+        'anthropic/claude-sonnet-4.6',
+        provider=OpenRouterProvider(openai_client=mock_client),
+        profile=ModelProfile(thinking_enabled_by_default=True),
+    )
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('hello')],
+        model_settings=cast(OpenRouterModelSettings, settings),
+        model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+    )
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == expected_tool_choice
+
+
+@pytest.mark.parametrize(
+    ('settings', 'expected_tool_choice'),
+    [
+        pytest.param({'tool_choice': 'required'}, 'required', id='explicit-forcing-without-thinking-setting'),
+        pytest.param({}, 'auto', id='inferred-forcing'),
+    ],
+)
+async def test_openrouter_forcing_on_anthropic_model_that_thinks_by_default(
+    allow_model_requests: None, settings: dict[str, Any], expected_tool_choice: str
+) -> None:
+    """Claude Opus 5 thinks without a thinking setting. An explicit forcing `tool_choice` still goes out, as on the
+    direct API, while forcing Pydantic AI inferred falls back to `auto` so the model keeps thinking."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel('anthropic/claude-opus-5', provider=OpenRouterProvider(openai_client=mock_client))
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('hello')],
+        model_settings=cast(OpenRouterModelSettings, settings),
+        model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == expected_tool_choice
+
+
+@pytest.mark.parametrize('model_name', ['anthropic/claude-opus-5.5', 'anthropic/claude-fable-5.1'])
+async def test_openrouter_forced_tool_choice_on_anthropic_model_that_rejects_it(
+    allow_model_requests: None, model_name: str
+) -> None:
+    """Claude Opus 5.5 and Fable 5.1 reject a forced `tool_choice` with a 400, and OpenRouter passes it back.
+
+    The Anthropic profile's `supports_forced_tool_choice=False` reaches the OpenRouter route too, so an inferred
+    forcing falls back to `auto` and an explicit one raises before the request is sent.
+    """
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('done'))
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
+
+    await model_request(
+        model,
+        [ModelRequest.user_text_prompt('hello')],
+        model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+    )
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
+
+    with pytest.raises(UserError, match='This model does not support forcing tool use'):
+        await model_request(
+            model,
+            [ModelRequest.user_text_prompt('hello')],
+            model_settings=OpenRouterModelSettings(tool_choice='required'),
+            model_request_parameters=_TOOL_FORCING_REQUEST_PARAMETERS,
+        )
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expects_native_output'),
+    [
+        pytest.param('anthropic/claude-opus-5', True, id='thinks-by-default'),
+        pytest.param('anthropic/claude-sonnet-4.6', False, id='thinks-when-asked'),
+        pytest.param('openai/gpt-5.5', False, id='forcing-keeps-thinking'),
+    ],
+)
+async def test_openrouter_structured_output_mode_follows_whether_forcing_stops_thinking(
+    allow_model_requests: None, model_name: str, expects_native_output: bool
+) -> None:
+    """A bare structured `output_type` uses Native Output where forcing the output tool would stop the model from
+    thinking: a Claude model that thinks by default, on any route. Models that keep thinking when forced, and Claude
+    models that don't think unless asked, keep forced Tool Output."""
+    mock_client = MockOpenAI.create_mock(_openrouter_completion('{"city": "Zurich"}'))
+    model = OpenRouterModel(model_name, provider=OpenRouterProvider(openai_client=mock_client))
+    schema = {'type': 'object', 'properties': {'city': {'type': 'string'}}, 'required': ['city']}
+    params = ModelRequestParameters(
+        output_tools=[ToolDefinition(name='final_result', parameters_json_schema=schema, kind='output')],
+        output_object=OutputObjectDefinition(json_schema=schema),
+        output_mode='auto',
+    )
+
+    await model_request(
+        model, [ModelRequest.user_text_prompt('Which Swiss city is the largest?')], model_request_parameters=params
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    if expects_native_output:
+        assert kwargs['response_format']['type'] == 'json_schema'
+        assert 'tools' not in kwargs
+    else:
+        assert kwargs['tool_choice'] == 'required'
 
 
 async def test_openrouter_advisor_tool(allow_model_requests: None, openrouter_api_key: str) -> None:
@@ -1577,7 +1697,7 @@ async def test_openrouter_web_search_tool_usage(
     response = result.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert response.provider_details is not None
-    raw_response = json.loads(vcr.responses[0]['body']['string'])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    raw_response = vcr.interactions[0].response.body.content
     assert raw_response['usage']['server_tool_use_details'] == {'web_search_requests': 1}
     assert response.provider_details['server_tool_use'] == {'web_search_requests': 1}
     assert 'annotations' not in response.provider_details

@@ -119,7 +119,7 @@ jobs:
 
       - name: Install bubblewrap
         if: steps.check-label.outputs.has_label == 'false'
-        run: sudo apt-get install -y bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
       - name: Classify PR with Claude Code
         if: steps.check-label.outputs.has_label == 'false'
@@ -331,7 +331,7 @@ jobs:
           PR_HEAD_DIR: pr-head
 
       - name: Install bubblewrap
-        run: sudo apt-get install -y bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
 
       - uses: anthropics/claude-code-action@428971d2ecd6e3a7cb0ee0da2a3a8b33fdb3678d # v1.0.157
         env:

@@ -29,6 +29,7 @@ from pydantic_ai.capabilities import (
     Hooks,
     ImageGeneration,
     Instrumentation,
+    LocalWorkspace,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
     Thinking,
@@ -58,8 +59,6 @@ from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool,
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclass
@@ -133,6 +132,11 @@ _FIRST_EXECUTOR = ThreadPoolExecutor(1, 'first')
 _SECOND_EXECUTOR = ThreadPoolExecutor(1, 'second')
 
 
+def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
+    # One environment: the later workspace replaces the earlier whole, so the first one's `env` never leaks.
+    assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
+
+
 def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
@@ -191,6 +195,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         'carries no configuration at all, so two are interchangeable',
         lambda: (RaiseContentFilterError(), RaiseContentFilterError()),
         _check_content_filter,
+    ),
+    'LocalWorkspace': Combines(
+        'the later configuration replaces the earlier one whole',
+        lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
+        _check_local_workspace,
     ),
     'ToolSearch': Combines(
         'one tool-discovery configuration per agent',
@@ -581,24 +590,6 @@ def test_generic_alias_metadata_is_not_capability_configuration() -> None:
     assert isinstance(merged, ReinjectSystemPrompt)
     assert merged.replace_existing is True
     assert getattr(merged, '__orig_class__', None) is ReinjectSystemPrompt[Any]
-
-
-def test_durable_operation_bindings_are_not_capability_configuration() -> None:
-    """Bindings added when a capability is reused by durable agents are runtime bookkeeping.
-
-    Reached through the same rule as any other cached state rather than by being named in the
-    merge: they are a `cached_property`, so the merge finds them on the class, and the merged
-    capability starts without them so the next engine to bind creates its own.
-    """
-
-    first = ReinjectSystemPrompt(replace_existing=False)
-    assert first._durable_operation_bindings is not None  # pyright: ignore[reportPrivateUsage]
-
-    merged = ReinjectSystemPrompt.combine([first, ReinjectSystemPrompt(replace_existing=True)])
-
-    assert isinstance(merged, ReinjectSystemPrompt)
-    assert merged.replace_existing is True
-    assert '_durable_operation_bindings' not in vars(merged), "the last instance's bindings do not ride along"
 
 
 def test_a_cached_property_is_recomputed_against_the_merged_fields() -> None:
@@ -1274,6 +1265,11 @@ async def test_a_session_level_instrumentation_supersedes_the_agent_level_one() 
         assert resolution.instrumentation_settings is not None
         assert resolution.instrumentation_settings.include_content is False, 'the session-level one wins'
         assert resolution.run_context.trace_include_content is False
+
+    workspace_agent = Agent(TestModel(), capabilities=[LocalWorkspace('/tmp')])
+    async with workspace_agent._resolve_realtime_session(_StubRealtimeModel()) as resolution:  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(Exception, match='Realtime sessions do not support workspaces yet'):
+            await resolution.run_context.workspace.working_dir()
 
 
 async def test_two_capabilities_on_one_agent_merge_rather_than_override() -> None:

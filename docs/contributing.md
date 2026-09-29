@@ -1,3 +1,7 @@
+---
+description: "How to contribute to Pydantic AI: agree an approach before opening a PR, what to expect in review, dev setup and tests, and rules for adding model providers."
+---
+
 We'd love you to contribute to Pydantic AI!
 
 ## How we work — the short version {#how-we-work-the-short-version}
@@ -25,9 +29,9 @@ If the fix could reasonably go more than one way, or you're unsure it's actually
 
 ### Features, integrations, or API changes
 
-Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](https://github.com/pydantic/pydantic-ai-harness), the official capability library — not in this repo. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](https://pydantic.dev/docs/ai/harness/#when-do-you-need-the-harness) for the full distinction.
+Before writing code, ask whether the change needs to live in core at all. Most new agent behaviors belong in [**Pydantic AI Harness**](harness/index.md), the official capability library (`src/pydantic_ai_harness` in this repo), not in core. Pydantic AI core is for the agent loop, model providers, and capabilities that require model-specific support or are fundamental to the agent experience. Standalone capabilities — guardrails, memory, context management, file system access, etc. — belong in the harness, where they can iterate faster. See [What goes where?](https://pydantic.dev/docs/ai/harness/#when-do-you-need-the-harness) for the full distinction.
 
-**If your idea is a capability**, open an issue on [pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness/issues) instead. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable API, we can talk about upstreaming to harness or core.
+**If your idea is a capability**, open a [feature request](https://github.com/pydantic/pydantic-ai/issues/new?template=feature-request.yaml) for Pydantic AI Harness. You can also publish capabilities as your own package using the `pydantic-ai-<name>` convention — see [Publishing capability packages](extensibility.md#publishing-capability-packages). Once a capability has real users and a stable API, we can talk about upstreaming to harness or core.
 
 If it does belong in core:
 
@@ -85,8 +89,8 @@ How we weigh priorities:
 
 - **User demand** -- features that more users need get priority. Champion-backed features with production use cases outrank speculative additions.
 - **Provider significance** -- work that affects frontier providers (Anthropic, OpenAI, Google) or providers we know are heavily used gets priority. A model integration for a niche provider will wait; a fix for Anthropic won't.
-- **Roadmap alignment** -- features that align with our current focus areas get priority. Right now that includes the capabilities/hooks API, provider-adaptive tools, and the [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) capability library.
-- **Capabilities over core** -- features that could live as a [capability](capabilities/overview.md) should go to [Pydantic AI Harness](https://github.com/pydantic/pydantic-ai-harness) or ship as your own package — that's often the fastest path. Once it has traction, come back and we can talk about upstreaming.
+- **Roadmap alignment** -- features that align with our current focus areas get priority. Right now that includes the capabilities/hooks API, provider-adaptive tools, and the [Pydantic AI Harness](harness/index.md) capability library.
+- **Capabilities over core** -- features that could live as a [capability](capabilities/overview.md) should go to [Pydantic AI Harness](harness/index.md) or ship as your own package — that's often the fastest path. Once it has traction, come back and we can talk about upstreaming.
 
 ## If your PR or issue has gone quiet
 
@@ -129,41 +133,53 @@ make
 
 ### Type checking
 
-`make typecheck` runs Pyright over every file in the project.
+`make typecheck` runs Pyright over every file in the project. Pre-commit does not run Pyright: CI
+runs the full check on every pull request that touches something Pyright reads. Locally, type-check
+the files you changed:
 
-The pre-commit hook runs `make typecheck-changed` instead, which checks only the files whose content
-changed since Pyright last passed plus everything that transitively imports them. It records what
-passed under your git directory, so the record is per-worktree and never committed.
+```bash
+PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py
+```
 
-CI runs that same hook, and whenever it runs it checks everything: GitHub Actions always sets `CI`,
-and on seeing it `make typecheck-changed` narrows nothing and hands the whole project to
-`make typecheck-pyright`. A fresh runner has no record to narrow against in the first place. CI still
-skips the hook outright on a pull request that touches nothing Pyright reads, as it did before.
+`make typecheck-changed` checks only the files whose content changed since Pyright last passed plus
+everything that transitively imports them, but its fallbacks below can check nearly every file, so
+prefer targeted runs while iterating. It records what passed under your git directory, so the record
+is per-worktree and never committed. CI runs the same target, and there it checks everything:
+GitHub Actions always sets `CI`, and on seeing it `make typecheck-changed` narrows nothing and hands
+the whole project to `make typecheck-pyright`.
 
-Locally it follows the imports Pyright resolves statically, and falls back to the full run whenever
-something could leave that set incomplete: a first run; an interpreter older than Python 3.11, which
-is what it needs to read `pyproject.toml`; a new Pyright or Python version, including one asked for
-through `PYRIGHT_PYTHON`; a change to
+Locally it follows the imports Pyright resolves statically, and never checks a file under `tests/`
+that did not itself change since the run it recorded. Tests are two thirds of the project's lines
+and most of them import `pydantic_ai`, so checking them here would put the whole project back on the
+command line for any change to the library; CI is the gate for a source change that breaks a test
+file's typing.
+
+It gives up on narrowing whenever something could leave that set incomplete: a first run; a new
+Pyright or Python version, including one asked for through `PYRIGHT_PYTHON`; a change to
 `pyproject.toml`, `uv.lock` or the `Makefile`; an import that would now resolve to a different file
 or a new top-level module that could shadow an installed one; or a change reaching more than half the
-project. A narrowed run only ever considers tracked files, so run `make typecheck` yourself before
-relying on a green hook for a file you have not added; a fallback run hands Pyright the whole project
-and picks untracked files up with it.
+project. It then runs Pyright over every tracked file Pyright reports on, minus the `tests/` files
+that did not change; a first run has no record to compare them against, so it checks all of them.
+Only three things hand the whole project to `make typecheck-pyright`: `CI`, an interpreter older
+than Python 3.11, which is what it needs to read `pyproject.toml`, and a Pyright configuration it
+cannot reproduce.
 
 A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `auto`.
 The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less
-wall time: `auto` is up to one worker per logical core, and a positive integer caps them. A narrowed
-run stays single-process either way.
+wall time: `auto` is up to one worker per logical core, and a positive integer caps them. Only
+`make typecheck-pyright` reads it, so `make typecheck-changed` picks it up only on a run that hands
+the whole project over: `CI`, an interpreter older than Python 3.11, or a Pyright configuration it
+cannot reproduce. A run it narrows, or runs itself over the reduced set, stays single-process.
 
 ```bash
 export PYRIGHT_THREADS=auto
 ```
 
-Export it rather than setting it per command, so a hook run that falls back to the full check picks
-it up too. Every worker is a full Node process, so they pay for themselves only on a machine with
-the memory to hold them; one already near its limit swaps and comes out slower than the default.
-Unset the variable or set it to `1` to go back to a single process: anything Pyright cannot read as
-a positive integer, `0` and `off` included, means `auto`.
+Export it rather than setting it per command, so every `make typecheck` picks it up. Every worker is
+a full Node process, so they pay for themselves only on a machine with the memory to hold them; one
+already near its limit swaps and comes out slower than the default. Unset the variable or set it to
+`1` to go back to a single process: anything Pyright cannot read as a positive integer, `0` and
+`off` included, means `auto`.
 
 ## Documentation Changes
 

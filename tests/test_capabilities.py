@@ -107,9 +107,7 @@ from .conftest import IsDatetime, IsStr, iter_message_parts, message
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 async def test_runtime_capability_contributions_applied():
