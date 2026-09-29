@@ -136,7 +136,7 @@ async def test_current_time_is_read_in_an_activity(client: Client) -> None:
             execution_timeout=timedelta(seconds=25),
         )
 
-    assert 'Current UTC time is `' in output
+    assert 'The current UTC time is within the hour starting `' in output
 
 
 async def test_auth_function_runs_under_temporal(client: Client, whoami_url: str) -> None:
