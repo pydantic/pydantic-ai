@@ -271,7 +271,7 @@ dev = [
     "mongomock-motor>=0.0.36",
     "redis>=8.1.0",
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
-    "cassetter>=0.12.1",
+    "cassetter>=0.13.0",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
