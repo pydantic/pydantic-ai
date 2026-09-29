@@ -11,13 +11,16 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, NoReturn, TypeGuard
+from typing import TYPE_CHECKING, Any, NoReturn, TypeGuard
 
 from typing_extensions import assert_never
 
-from ._utils import await_maybe, get_first_param_type
+from ._utils import await_maybe, get_first_param_type, is_str_dict
 from .exceptions import FallbackExceptionGroup, UserError
 from .messages import ModelResponse
+
+if TYPE_CHECKING:
+    from .models import StreamedResponse
 
 __all__ = (
     'ExceptionHandler',
@@ -42,21 +45,25 @@ Separate from `FALLBACK_MODEL_PIN_KEY` so a `FallbackModel` candidate keeps its 
 """
 
 
-def stamp_continuation_pin(response: Any, model_id: str, *, key: str) -> None:
+def stamp_continuation_pin(response: ModelResponse | StreamedResponse, model_id: str, *, key: str) -> None:
     """Record which model produced a suspended response, so its continuation goes back to it.
 
     Stored in `metadata['__pydantic_ai__']` to keep framework routing state apart from provider data.
     `response` is a `ModelResponse` or a `StreamedResponse`, whose metadata ends up on the response.
     """
-    if response.metadata is None:
-        response.metadata = {}
-    response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})[key] = model_id
+    metadata = response.metadata if response.metadata is not None else {}
+    response.metadata = metadata
+    pydantic_ai_meta = metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    if not is_str_dict(pydantic_ai_meta):
+        pydantic_ai_meta = {}
+        metadata[_PYDANTIC_AI_METADATA_KEY] = pydantic_ai_meta
+    pydantic_ai_meta[key] = model_id
 
 
 def continuation_pin(response: ModelResponse, *, key: str) -> str | None:
     """The model a suspended response was pinned to by `stamp_continuation_pin` under `key`, if any."""
-    pydantic_ai_meta = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
-    model_id = pydantic_ai_meta.get(key) if isinstance(pydantic_ai_meta, dict) else None
+    pydantic_ai_meta = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
+    model_id = pydantic_ai_meta.get(key) if is_str_dict(pydantic_ai_meta) else None
     return model_id if isinstance(model_id, str) else None
 
 

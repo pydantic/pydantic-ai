@@ -36,6 +36,7 @@ from pydantic_ai.capabilities.hooks import (
     OnRunErrorHookFunc,
     OnToolExecuteErrorHookFunc,
     OnToolValidateErrorHookFunc,
+    PrepareModelRequestHookFunc,
     PrepareOutputToolsHookFunc,
     PrepareToolsHookFunc,
     WrapModelRequestHookFunc,
@@ -181,6 +182,7 @@ CoreHookName = Literal[
     'run_event_stream',
     'event',
     'before_model_request',
+    'prepare_model_request',
     'after_model_request',
     'model_request',
     'model_request_error',
@@ -402,6 +404,10 @@ class PluginHost(Generic[DepsT]):
     def on(
         self, name: Literal['before_model_request'], /
     ) -> Callable[[BeforeModelRequestHookFunc], BeforeModelRequestHookFunc]: ...
+    @overload
+    def on(
+        self, name: Literal['prepare_model_request'], /
+    ) -> Callable[[PrepareModelRequestHookFunc], PrepareModelRequestHookFunc]: ...
     @overload
     def on(
         self, name: Literal['after_model_request'], /
