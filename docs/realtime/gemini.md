@@ -247,6 +247,11 @@ drop cut off an exchange the resumed session no longer has (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
 - [Seeded](history.md#seeding-a-session) function calls/results are represented as readable text
   because Live cannot accept function parts in seeded turns.
+- A seeded user turn with retained audio but no transcript is replayed as 16 kHz audio on
+  `gemini-3.1-flash-live-preview` and `gemini-3.8-live`, which recall what was said. The other Live
+  models reject audio in seeded turns, so seeding one raises
+  [`UserError`][pydantic_ai.exceptions.UserError] there, as it does for audio recorded at another
+  sample rate.
 - `send()` sends an [image](audio.md#images) as a live video frame. Spoken turns see video frames,
   but typed turns don't on the Live models. So a typed turn (`send('...')`) also carries the most
   recent image sent in the last 10 seconds in its own content, ahead of the text. That image is sent,

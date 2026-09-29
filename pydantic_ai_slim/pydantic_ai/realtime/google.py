@@ -109,6 +109,7 @@ from ._utils import (
     reconnect_with_backoff,
     require_pcm_audio,
     resolve_advertised_tools,
+    seed_pcm_audio,
     seed_speech_content,
     seed_user_content,
 )
@@ -488,18 +489,21 @@ async def _seed_turns(
     work whose answer text is already retained.
 
     Thinking signatures and `provider_details` are provider-session-bound and are not replayed.
-    `SystemPromptPart`s are routed through `system_instruction`, and `CachePoint`s are ignored. Gemini
-    does not accept audio in seeded turns, so speech requires a transcript. Other unrepresentable
-    content raises [`UserError`][pydantic_ai.exceptions.UserError].
+    `SystemPromptPart`s are routed through `system_instruction`, and `CachePoint`s are ignored. User
+    speech is seeded as its transcript, or as its retained 16 kHz audio on a model whose profile sets
+    `supports_seeding_audio`; Gemini 2.5 rejects audio in seeded turns, so there speech requires a
+    transcript. Other unrepresentable content raises [`UserError`][pydantic_ai.exceptions.UserError].
     """
     turns: list[genai_types.Content | genai_types.ContentDict] = []
     supports_images = profile.get('supports_seeding_images', False)
+    supports_audio = profile.get('supports_seeding_audio', False)
     for message in messages:
         if isinstance(message, ModelRequest):
             parts = await _seed_request_parts(
                 message.parts,
                 provider_name=provider_name,
                 supports_images=supports_images,
+                supports_audio=supports_audio,
             )
             role = 'user'
         else:
@@ -515,6 +519,7 @@ async def _seed_request_parts(
     *,
     provider_name: str,
     supports_images: bool,
+    supports_audio: bool,
 ) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
@@ -529,11 +534,19 @@ async def _seed_request_parts(
                 )
             )
         elif isinstance(part, SpeechPart):
-            # Gemini has no client-content channel for raw audio, so seeding never replays retained
-            # audio regardless of profile flags — the typed result is always a transcript string.
-            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=False)
-            if content:
-                parts.append(genai_types.Part(text=content))
+            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
+            if isinstance(content, str):
+                if content:
+                    parts.append(genai_types.Part(text=content))
+            else:
+                # Seeded audio has to be at the live input rate: 24 kHz audio closes the session with
+                # `1008 Operation is not implemented, or supported, or enabled` (verified live).
+                pcm = seed_pcm_audio(audio=content, provider_name=provider_name, sample_rate=INPUT_SAMPLE_RATE)
+                parts.append(
+                    genai_types.Part(
+                        inline_data=genai_types.Blob(data=pcm, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
+                    )
+                )
         elif isinstance(part, ToolReturnPart):
             output, user_content = part.model_response_str_and_user_content()
             parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} returned: {output}]'))

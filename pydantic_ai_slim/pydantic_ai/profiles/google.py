@@ -310,7 +310,13 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         'supports_text_output': False,
         'supports_session_seeding': True,
         'supports_seeding_images': True,
-        'supports_seeding_audio': False,
+        # Verified live 2026-09-28 by seeding a spoken fact as audio and asking about it:
+        # `gemini-3.1-flash-live-preview` and `gemini-3.8-live` recall it every time, while
+        # `gemini-3.8-live-extended-thinking` recalled it 1 time in 4 and `gemini-2.5-flash-native-audio-latest`
+        # closes the session (`1007 Precondition check failed`). Only the verified models, so a newer Live
+        # model seeds the transcript until its profile says otherwise.
+        'supports_seeding_audio': model_name.startswith(('gemini-3.1-flash-live', 'gemini-3.8-live'))
+        and not is_extended_thinking,
         'audio_input_sample_rate': 16000,
         'audio_output_sample_rate': 24000,
         # Search grounding only. Google's Live tool matrix lists code execution and URL context as
