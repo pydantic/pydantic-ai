@@ -4734,6 +4734,7 @@ def _usage_chunk(
     text: str,
     cached: int | None = None,
     thoughts: int | None = None,
+    web_search_queries: list[str] | None = None,
     with_metadata: bool = True,
 ) -> GenerateContentResponse:
     data: dict[str, Any] = {
@@ -4741,6 +4742,8 @@ def _usage_chunk(
         'model_version': 'gemini-test',
         'candidates': [{'content': {'role': 'model', 'parts': [{'text': text}]}}],
     }
+    if web_search_queries:
+        data['candidates'][0]['grounding_metadata'] = {'web_search_queries': web_search_queries}
     if with_metadata:
         data['usage_metadata'] = GenerateContentResponseUsageMetadata(
             prompt_token_count=20025,
@@ -4826,6 +4829,21 @@ _USAGE_RETENTION_CASES = [
                 cache_read_tokens=16365,
                 output_tokens=10,
                 details={'cached_content_tokens': 16365, 'thoughts_tokens': 100},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
+        id='web_searches_dropped_by_later_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(candidates=5, text='hel', web_search_queries=['pydantic', 'pydantic-ai', 'pricing']),
+            _usage_chunk(candidates=10, text='lo'),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                output_tokens=10,
+                details={'web_search_requests': 3},
+                web_searches=3,
             )
         ),
     ),
