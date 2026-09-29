@@ -1,3 +1,8 @@
+---
+title: Embeddings
+description: "Generate text embeddings with Pydantic AI using OpenAI, Google, Cohere, VoyageAI, Bedrock or local Sentence Transformers, for semantic search and RAG."
+---
+
 # Embeddings
 
 Embeddings are vector representations of text that capture semantic meaning. They're essential for building:
@@ -36,7 +41,7 @@ async def main():
     #> Embedded 3 documents
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 !!! tip "Queries vs Documents"
     Some embedding models optimize differently for queries and documents. Use
@@ -75,7 +80,7 @@ async def main():
     #> Cost: $0.000000
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Choosing a model
 
@@ -152,7 +157,7 @@ Use [Pydantic Evals](evals.md) to track retrieval quality across a dataset of re
 
 ### OpenAI
 
-[`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] works with OpenAI's embeddings API and any [OpenAI-compatible provider](models/openai.md#openai-compatible-models).
+[`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] works with OpenAI's embeddings API and any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers).
 
 #### Install
 
@@ -184,7 +189,7 @@ async def main():
     #> 1536
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See [OpenAI's embedding models](https://platform.openai.com/docs/guides/embeddings) for available models.
 
@@ -208,11 +213,11 @@ async def main():
     #> 256
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 #### OpenAI-Compatible Providers {#openai-compatible}
 
-Since [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] uses the same provider system as [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you can use it with any [OpenAI-compatible provider](models/openai.md#openai-compatible-models):
+Since [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] uses the same provider system as [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you can use it with any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers):
 
 ```python {title="openai_compatible_embeddings.py"}
 # Using Azure OpenAI
@@ -260,7 +265,7 @@ The `vllm:` shorthand uses `VLLM_BASE_URL` and, for authenticated servers, `VLLM
 
 The `sglang:` shorthand uses `SGLANG_BASE_URL` and, for authenticated servers, `SGLANG_API_KEY`. The server must be launched in embedding mode with an [embedding model supported by SGLang](https://docs.sglang.ai/supported_models/embedding_models.html).
 
-See [OpenAI-compatible Models](models/openai.md#openai-compatible-models) for the full list of supported providers.
+See the [provider directory](models/overview.md#provider-directory) for setup guides, and check that your provider serves the embedding model you want to use.
 
 ### Google
 
@@ -296,7 +301,7 @@ async def main():
     #> 3072
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See the [Google Embeddings documentation](https://ai.google.dev/gemini-api/docs/embeddings) for available models.
 
@@ -320,7 +325,7 @@ model = GoogleEmbeddingModel(
 embedder = Embedder(model)
 ```
 
-See the [Google provider documentation](models/google.md#google-cloud-enterprise) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
+See the [Google Cloud documentation](models/google-cloud.md#authentication) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
 
 #### Dimension Control
 
@@ -342,7 +347,7 @@ async def main():
     #> 768
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 #### Task Conditioning
 
@@ -417,7 +422,7 @@ async def main():
     #> 1024
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See the [Cohere Embed documentation](https://docs.cohere.com/docs/cohere-embed) for available models.
 
@@ -473,7 +478,7 @@ async def main():
     #> 1024
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 See the [VoyageAI Embeddings documentation](https://docs.voyageai.com/docs/embeddings) for available models.
 
@@ -653,7 +658,10 @@ Set [`bedrock_inference_profile`][pydantic_ai.embeddings.bedrock.BedrockEmbeddin
 
 ```python {title="bedrock_inference_profile.py"}
 from pydantic_ai import Embedder
-from pydantic_ai.embeddings.bedrock import BedrockEmbeddingModel
+from pydantic_ai.embeddings.bedrock import (
+    BedrockEmbeddingModel,
+    BedrockEmbeddingSettings,
+)
 from pydantic_ai.providers.bedrock import BedrockProvider
 
 provider = BedrockProvider(region_name='us-east-1')
@@ -661,9 +669,9 @@ provider = BedrockProvider(region_name='us-east-1')
 model = BedrockEmbeddingModel(
     'amazon.titan-embed-text-v2:0',
     provider=provider,
-    settings={
-        'bedrock_inference_profile': 'arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
-    },
+    settings=BedrockEmbeddingSettings(
+        bedrock_inference_profile='arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/my-embed-profile',
+    ),
 )
 embedder = Embedder(model)
 ```
@@ -722,7 +730,7 @@ async def main():
     #> 768
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 [`lightonai/DenseOn`](https://huggingface.co/lightonai/DenseOn) is a strong recent 149M-parameter general-purpose model that encodes queries and documents asymmetrically: [`embed_query()`][pydantic_ai.embeddings.Embedder.embed_query] and [`embed_documents()`][pydantic_ai.embeddings.Embedder.embed_documents] automatically apply the model's `query:` / `document:` prompts. See the [Sentence Transformers pretrained models](https://www.sbert.net/docs/sentence_transformer/pretrained_models.html) documentation and the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) for more options; see also [Choosing a model](#choosing-a-model) above.
 
@@ -797,7 +805,7 @@ async def main():
     #> 256
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Token Counting
 
@@ -823,7 +831,7 @@ async def main():
     #> Max tokens: 1024
 ```
 
-_(This example is complete, it can be run "as is" — you'll need to add `asyncio.run(main())` to run `main`)_
+_(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
 ## Testing
 
@@ -850,7 +858,7 @@ async def test_my_rag_system():
 
 Setting [`ALLOW_MODEL_REQUESTS`][pydantic_ai.models.ALLOW_MODEL_REQUESTS] to `False` also blocks embedding requests, so an embedder you forgot to override raises instead of quietly calling the provider. [`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] and [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel] are unaffected, as neither reaches a provider.
 
-This covers [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens] as well, but only where tokenization happens server-side: Google and Cohere count tokens through an API call and are blocked, while OpenAI tokenizes locally with `tiktoken` and is not.
+This also covers [`count_tokens()`][pydantic_ai.embeddings.Embedder.count_tokens], but only when tokenization happens server-side: Google and Cohere count tokens through an API call and are blocked, while OpenAI tokenizes locally with `tiktoken`, so its token counting is not blocked.
 
 ## Instrumentation
 
@@ -898,7 +906,7 @@ async def rerank(query: str, candidates: list[str], top_k: int = 3) -> list[str]
     ranked = await asyncio.to_thread(
         reranker.rank, query, candidates, top_k=top_k, return_documents=True
     )
-    return [item['text'] for item in ranked]
+    return [str(item['text']) for item in ranked]
 ```
 
 Call `rerank()` on the candidates returned by your vector search (for example, in the `retrieve` tool of the [RAG example](examples/rag.md)) before handing the results to the LLM.

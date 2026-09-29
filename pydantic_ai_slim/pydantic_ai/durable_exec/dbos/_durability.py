@@ -54,11 +54,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     engine_spec = DurabilityEngineSpec(
         engine_name='DBOS',
         durable_unit_noun='step',
+        durable_unit_plural='steps',
         durable_container_noun='workflow',
         codec=IDENTITY_CODEC,
         unsupported_runtime_toolset_kinds=frozenset({'mcp', 'dynamic'}),
         wrapped_toolset_kinds=frozenset({'mcp', 'dynamic'}),
-        toolset_lifecycles={'mcp': 'enter-never', 'dynamic': 'enter-never'},
+        toolset_lifecycles={'mcp': 'enter-in-durable-unit', 'dynamic': 'enter-never'},
         tool_call_result_upgrade_lenient=True,
         journal_discovery=True,
         sequential_tools_in_durable_context=False,
@@ -111,6 +112,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             parallel_execution_mode: Tool-call execution mode applied for the duration
                 of every run. Defaults to `'parallel_ordered_events'` so events
                 replay deterministically. Set to `'sequential'` for strict ordering.
+                A run with a workspace always runs its tool calls sequentially.
             register_legacy_workflows: Register the workflow names used by the deprecated
                 `DBOSAgent` so in-flight wrapper-era workflows can recover during migration.
         """
@@ -205,6 +207,15 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return DBOS.workflow_id is not None and DBOS.step_id is None
 
+    def _default_run_id(self) -> str | None:
+        if not self.in_durable_context:
+            return None
+        from dbos._context import get_local_dbos_context
+
+        context = get_local_dbos_context()
+        assert context is not None and context.workflow_id is not None
+        return f'{context.workflow_id}:{context.function_id + 1}'
+
     def _durable_run_context(self, ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
         # A DBOS step degrades to a plain inline call outside a workflow, where enqueueing is
         # safe, so only guard once actually inside a workflow.
@@ -258,5 +269,10 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         agent = self._agent
         if agent is None:  # pragma: no cover
             return await handler()
-        with agent.parallel_tool_call_execution_mode(self._parallel_execution_mode):
+        # DBOS numbers steps as they start; parallel tools making several workspace steps each could
+        # replay recorded results into the wrong calls on recovery.
+        mode = self._parallel_execution_mode
+        if self.in_durable_context and ctx.workspace.attached:
+            mode = 'sequential'
+        with agent.parallel_tool_call_execution_mode(mode):
             return await handler()

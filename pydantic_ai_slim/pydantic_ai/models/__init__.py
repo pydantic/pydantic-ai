@@ -26,7 +26,7 @@ from typing_extensions import Self, TypeAliasType, TypedDict, deprecated
 from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
-from .._cost import preload_pricing_data
+from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
@@ -66,6 +66,7 @@ from ..messages import (
     ToolSearchCallPart,
     ToolSearchReturnPart,
     UploadedFile,
+    UserContent,
     UserPromptPart,
     VideoUrl,
     _compaction_part_is_wire_boundary,  # pyright: ignore[reportPrivateUsage]
@@ -130,6 +131,7 @@ OpenAIChatCompatibleProvider = TypeAliasType(
         'deepseek',
         'fireworks',
         'github',
+        'github-copilot',
         'heroku',
         'litellm',
         'moonshotai',
@@ -153,6 +155,7 @@ OpenAIResponsesCompatibleProvider = TypeAliasType(
         'deepseek',
         'fireworks',
         'nebius',
+        'openai-codex',
         'openrouter',
         'ovhcloud',
         'sambanova',
@@ -378,8 +381,28 @@ class ModelSelectionContext(ModelResolutionContext[ModelContextDepsT]):
     run_step: int
     """The request step being selected, starting at `1`."""
 
+    prompt: str | Sequence[UserContent] | None = None
+    """The run's user prompt, as [`RunContext.prompt`][pydantic_ai.tools.RunContext.prompt] holds it.
+
+    When a run resumes from a history ending in a request, without a new prompt, this is that request's prompt.
+    """
+
     messages: list[ModelMessage]
-    """The message history available before this request step."""
+    """The messages the selected model will be sent for this step, ending with the request being routed.
+
+    This is what [`RunContext.messages`][pydantic_ai.tools.RunContext.messages] holds for the step, minus
+    what is only added once the model is selected: the request's
+    [`instructions`][pydantic_ai.messages.ModelRequest.instructions] and, on a fresh run's first step,
+    its system prompt parts. Earlier requests keep the instructions they were sent with.
+
+    When a run resumes from a response with tool calls still to run, the step's request is their
+    results, which don't exist before the model is selected, so the messages end with that response.
+    They also end with the response when it's a suspended one being continued, as no request is sent.
+
+    It's a new list, so adding or removing messages doesn't change the run's. Don't change the
+    messages in it: they're the run's own, except for the request being routed on a run's first
+    step, which is built for selection, so changing it has no effect on what's sent.
+    """
 
     usage: RunUsage
     """Usage accumulated by the run before this request step."""
@@ -465,19 +488,58 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """Get the model settings."""
         return self._settings
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # TODO(v3): remove along with `resolve_prompt_cache_retention`.
+        legacy = cls.__dict__.get('resolve_prompt_cache_retention')
+        if legacy is not None and 'resolve_cache_retention' not in cls.__dict__:
+            warnings.warn(
+                f'`{cls.__name__}` overrides `resolve_prompt_cache_retention`, which is deprecated; '
+                'override `resolve_cache_retention` instead.',
+                PydanticAIDeprecationWarning,
+                # Past `ABCMeta.__new__`, to the class statement.
+                stacklevel=3,
+            )
+            # Pydantic AI calls `resolve_cache_retention`, so route it to the legacy override.
+            cls.resolve_cache_retention = legacy
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve prompt cache retention requested by provider-specific model settings.
 
         The model's default settings are merged with the per-request `model_settings`. Only provider-specific settings
         are currently considered; a future unified cache setting is not yet an input. If multiple active settings
         request different retention periods, the longest period wins because any longer-lived cache breakpoint can
         keep the corresponding prompt prefix available. Models without a provider-specific retention setting return
-        `None`.
+        `None`, in which case the provider's
+        [`default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention] applies.
         """
         return None
 
+    @deprecated(
+        '`resolve_prompt_cache_retention` is deprecated, use `resolve_cache_retention` instead.',
+        category=PydanticAIDeprecationWarning,
+    )
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Deprecated alias of [`resolve_cache_retention`][pydantic_ai.models.Model.resolve_cache_retention]."""
+        # A subclass that still overrides this name reaches this base implementation only through its
+        # own `super()` call, and `__init_subclass__` routed `resolve_cache_retention` to that override,
+        # so dispatching on `self` would recurse. Continue with the implementation above the outermost
+        # legacy override instead, which is what that `super()` call means.
+        legacy_owner = next(
+            (
+                klass
+                for klass in reversed(type(self).__mro__)
+                if klass is not Model and 'resolve_prompt_cache_retention' in klass.__dict__
+            ),
+            None,
+        )
+        if legacy_owner is None:
+            return self.resolve_cache_retention(model_settings)
+        # `super()` with a class found at runtime is untyped, but that class is a `Model` subclass.
+        return cast('Model[Any]', super(legacy_owner, self)).resolve_cache_retention(model_settings)
+
     @staticmethod
-    def _max_prompt_cache_retention(
+    def _max_cache_retention(
         *cache_settings: bool | Literal['5m', '1h'] | None,
     ) -> timedelta | None:
         if '1h' in cache_settings:
@@ -614,6 +676,55 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
         return model_request_parameters
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether this request will think, judged from the unified `thinking` setting and the profile.
+
+        Reads `params.thinking`, falling back to `model_settings` for callers that run before
+        `prepare_request` moves the setting over. Adapters with provider-specific thinking settings
+        override this, since those take precedence.
+        """
+        thinking = model_request_parameters.thinking
+        if thinking is None:
+            thinking = (model_settings or {}).get('thinking')
+        if thinking is False and not self.profile.get('thinking_always_enabled', False):
+            return False
+        if thinking:
+            return True
+        return self.profile.get('thinking_always_enabled', False) or self.profile.get(
+            'thinking_enabled_by_default', False
+        )
+
+    def _forced_tool_choice_disables_thinking(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        """Whether forcing a tool call would stop this request from thinking.
+
+        See [`forced_tool_choice_disables_thinking`][pydantic_ai.profiles.ModelProfile.forced_tool_choice_disables_thinking].
+        """
+        return self.profile.get('forced_tool_choice_disables_thinking', False) and self._request_thinks(
+            model_settings, model_request_parameters
+        )
+
+    def _default_structured_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        """The output mode for a structured `output_type` that doesn't pick one.
+
+        Tool Output forces a call to the output tool on every request that can't end with text, so where that
+        would stop the model from thinking, Native Output is used instead if the model supports it.
+        """
+        mode = self.profile.get('default_structured_output_mode', 'tool')
+        if (
+            mode == 'tool'
+            and model_request_parameters.output_tools
+            and self.profile.get('supports_json_schema_output', False)
+            and self._forced_tool_choice_disables_thinking(model_settings, model_request_parameters)
+        ):
+            return 'native'
+        return mode
+
     def prepare_request(
         self,
         model_settings: ModelSettings | None,
@@ -652,7 +763,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 native_tools=list({tool.unique_id: tool for tool in native_tools}.values()),
             )
 
-        params = params.with_default_output_mode(self.profile.get('default_structured_output_mode', 'tool'))
+        params = params.with_default_output_mode(self._default_structured_output_mode(model_settings, params))
 
         # Reset irrelevant fields
         if params.output_tools and params.output_mode != 'tool':
@@ -687,6 +798,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             raise UserError('Native structured output is not supported by this model.')
         if params.output_mode == 'tool' and not self.profile.get('supports_tools', True):
             raise UserError('Tool output is not supported by this model.')
+        if params.allow_text_output and not self.profile.get('supports_text_output', True):
+            raise UserError(
+                'Text output is not supported by this model. Give the agent one structured `output_type`, '
+                'such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.'
+            )
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
@@ -882,6 +998,11 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         """
         return frozenset()
 
+    @property
+    def context_window(self) -> int | None:
+        """The resolved profile's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window]."""
+        return self.profile.get('context_window')
+
     @cached_property
     def profile(self) -> ModelProfile:
         """The model profile.
@@ -890,7 +1011,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
           1. `DEFAULT_PROFILE` — base values for every key in `ModelProfile`.
           2. The provider's `model_profile(model_name)` result — provider-specific defaults
              for this model.
-          3. The user's `profile=` argument — partial dict merged on top, OR a callable
+          3. A best-effort `context_window` value from
+             [genai-prices](https://github.com/pydantic/genai-prices), unless the provider or a
+             partial user profile explicitly set the field (including to `None`).
+          4. The user's `profile=` argument — partial dict merged on top, OR a callable
              `(default) -> profile` for full control.
 
         After resolution we compute the intersection of the profile's `supported_native_tools`
@@ -903,19 +1027,30 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             provider_profile = provider.model_profile(self.model_name) or {}
         resolved = merge_profile(DEFAULT_PROFILE, provider_profile)
 
-        # Step 3: user override
+        # Step 3: fill `context_window` from genai-prices when no provider or partial user layer set it.
         user = self._profile
+        context_window_set = 'context_window' in provider_profile or (
+            user is not None and not callable(user) and 'context_window' in user
+        )
+        if not context_window_set:
+            context_window = lookup_context_window(self)
+            if context_window is not None:
+                resolved = merge_profile(resolved, ModelProfile(context_window=context_window))
+
+        # Step 4: user override
         if user is None:
             pass
         elif callable(user):
             # The callable form's result bypasses `merge_profile`, so translate deprecated key
-            # spellings here too.
-            resolved = _translate_legacy_profile_keys(user(resolved))
+            # spellings here too. It starts from `resolved`, so a current spelling it carries
+            # over unchanged doesn't count as set.
+            base = ModelProfile(**resolved)  # the callable may mutate its argument in place
+            resolved = _translate_legacy_profile_keys(user(resolved), base)
         else:
             # Partial dict — merge on top
             resolved = merge_profile(resolved, user)
 
-        # Step 4: native tools intersection — profile's allowed tools & model's implemented tools
+        # Step 5: native tools intersection — profile's allowed tools & model's implemented tools
         model_supported = self.__class__.supported_native_tools()
         profile_supported = resolved.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         effective_tools = profile_supported & model_supported
@@ -926,11 +1061,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
 
     def _validate_uploaded_file_provider(self, item: UploadedFile) -> None:
         """Raise `UserError` if an `UploadedFile` references a different provider than this model."""
-        if item.provider_name != self.system:
-            raise UserError(
-                f'UploadedFile with `provider_name={item.provider_name!r}` cannot be used with {type(self).__name__}. '
-                f'Expected `provider_name` to be `{self.system!r}`.'
-            )
+        _utils.validate_uploaded_file_provider(item, system=self.system, model_type_name=type(self).__name__)
 
     @staticmethod
     def _get_instruction_parts(
@@ -1414,8 +1545,9 @@ This global setting allows you to disable request to most models, e.g. to make s
 make costly requests to a model during tests.
 
 The testing models [`TestModel`][pydantic_ai.models.test.TestModel],
-[`FunctionModel`][pydantic_ai.models.function.FunctionModel] and
-[`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] are not affected by this setting, nor is
+[`FunctionModel`][pydantic_ai.models.function.FunctionModel],
+[`TestEmbeddingModel`][pydantic_ai.embeddings.TestEmbeddingModel] and
+[`TestImageGenerationModel`][pydantic_ai.images.TestImageGenerationModel] are not affected by this setting, nor is
 [`SentenceTransformerEmbeddingModel`][pydantic_ai.embeddings.sentence_transformers.SentenceTransformerEmbeddingModel],
 which runs inference locally and so has no per-call provider cost.
 """
@@ -1429,8 +1561,9 @@ def check_allow_model_requests() -> None:
     [`Model.request_stream`][pydantic_ai.models.Model.request_stream],
     [`Model.count_tokens`][pydantic_ai.models.Model.count_tokens],
     [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages],
-    [`EmbeddingModel.embed`][pydantic_ai.embeddings.EmbeddingModel.embed] and
-    [`EmbeddingModel.count_tokens`][pydantic_ai.embeddings.EmbeddingModel.count_tokens].
+    [`EmbeddingModel.embed`][pydantic_ai.embeddings.EmbeddingModel.embed],
+    [`EmbeddingModel.count_tokens`][pydantic_ai.embeddings.EmbeddingModel.count_tokens] and
+    [`ImageGenerationModel.generate`][pydantic_ai.images.ImageGenerationModel.generate].
 
     Methods that produce their result locally don't need it — for example
     [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel]'s `count_tokens`, which tokenizes with
@@ -1518,7 +1651,8 @@ def _suggest_known_model_id_from_provider_error(  # pyright: ignore[reportUnused
 def infer_model_profile(model: str) -> ModelProfile:
     """Infer the model profile from a model id string without constructing a provider.
 
-    Uses `Provider.model_profile` to look up the profile for the given model.
+    Uses `Provider.model_profile` to look up the profile for the given model, then fills an unset
+    `context_window` from genai-prices when available.
     Returns `DEFAULT_PROFILE` for unknown or unrecognized providers.
 
     Note: This returns the raw provider profile **without** intersecting with
@@ -1536,6 +1670,12 @@ def infer_model_profile(model: str) -> ModelProfile:
     provider, model_name = parse_model_id(model)
     if provider is None:
         return DEFAULT_PROFILE
+    if provider.startswith('gateway/'):
+        # Resolve the gateway prefix once, here: `infer_provider_class` would do it for the class lookup,
+        # but genai-prices needs the upstream name too, and `gateway/chat` doesn't contain one.
+        from ..providers.gateway import normalize_gateway_provider
+
+        provider = normalize_gateway_provider(provider)
 
     try:
         provider_class = infer_provider_class(provider)
@@ -1543,9 +1683,16 @@ def infer_model_profile(model: str) -> ModelProfile:
         return DEFAULT_PROFILE
 
     try:
-        return provider_class.model_profile(model_name) or DEFAULT_PROFILE
+        provider_profile = provider_class.model_profile(model_name)
     except (ValueError, UserError):
         return DEFAULT_PROFILE
+    profile = provider_profile or DEFAULT_PROFILE
+
+    if 'context_window' not in (provider_profile or {}):
+        context_window = lookup_context_window(model_name, provider_name=provider)
+        if context_window is not None:
+            profile = merge_profile(profile, ModelProfile(context_window=context_window))
+    return profile
 
 
 def infer_model(  # noqa: C901
@@ -1602,8 +1749,9 @@ def infer_model(  # noqa: C901
             return BedrockMantleChatModel(model_name, provider=provider)
         return BedrockMantleResponsesModel(model_name, provider=provider)
 
-    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI and Snowflake need to be checked before OpenAI,
-    # as they are in `OpenAIChatCompatibleProvider` but have their own model classes.
+    # OpenRouter, Cerebras, Crusoe, Ollama, Z.AI, Snowflake, GitHub Copilot and OpenAI Codex need to
+    # be checked before OpenAI, as they are in `OpenAIChatCompatibleProvider` or
+    # `OpenAIResponsesCompatibleProvider` but have their own model classes.
     if model_kind == 'openrouter':
         from .openrouter import OpenRouterModel
 
@@ -1628,6 +1776,14 @@ def infer_model(  # noqa: C901
         from .zai import ZaiModel
 
         return ZaiModel(model_name, provider=provider)
+    elif model_kind == 'github-copilot':
+        from .github_copilot import GitHubCopilotModel
+
+        return GitHubCopilotModel(model_name, provider=provider)
+    elif model_kind == 'openai-codex':
+        from .openai_codex import OpenAICodexModel
+
+        return OpenAICodexModel(model_name, provider=provider)
     elif model_kind in ('openai', 'openai-responses', 'azure-responses'):
         from .openai import OpenAIResponsesModel
 
@@ -1652,6 +1808,10 @@ def infer_model(  # noqa: C901
         from .mistral import MistralModel
 
         return MistralModel(model_name, provider=provider)
+    elif model_kind == 'typesafe':
+        from .typesafe import TypeSafeModel
+
+        return TypeSafeModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
@@ -2476,9 +2636,8 @@ def _synthesize_tool_availability_delta_messages(
     the model ran a search.
 
     The exchange spans a turn boundary — an assistant call, then its return — so a request holding
-    other parts alongside the delta has to be split at the delta's position. Emitting the whole
-    rebuilt request after the synthetic `ModelResponse` instead would hoist an assistant turn ahead
-    of a user prompt that originally preceded the delta, reordering the conversation.
+    other parts alongside the delta has to be split around it. When parallel tool results and deltas
+    are interleaved, all results stay together before the synthetic exchanges. No other parts move.
     """
     transformed: list[ModelMessage] = []
     changed = False
@@ -2505,6 +2664,11 @@ def _synthesize_tool_availability_delta_messages(
         for part in message.parts
         if isinstance(part, BaseToolCallPart | BaseToolReturnPart | RetryPromptPart)
     }
+
+    def is_tool_result(part: ModelRequestPart) -> bool:
+        # A retry without a tool name is output-validation feedback, not a tool result.
+        return isinstance(part, ToolReturnPart) or (isinstance(part, RetryPromptPart) and part.tool_name is not None)
+
     for message in messages:
         if not isinstance(message, ModelRequest) or not any(
             isinstance(part, ToolAvailabilityDeltaPart) for part in message.parts
@@ -2513,12 +2677,30 @@ def _synthesize_tool_availability_delta_messages(
             continue
 
         changed = True
-        # Parts accumulated since the last split; flushed as their own `ModelRequest` before each
-        # synthetic assistant turn so everything keeps the order it was authored in.
-        pending: list[ModelRequestPart] = []
-        for part in message.parts:
+        # Find the leading group containing only tool results and deltas. Its stable sort moves
+        # deltas after all results without reordering either group or any later parts.
+        first_unrelated_part_index = next(
+            (
+                index
+                for index, part in enumerate(message.parts)
+                if not isinstance(part, ToolAvailabilityDeltaPart) and not is_tool_result(part)
+            ),
+            len(message.parts),
+        )
+        parallel_results_and_deltas = message.parts[:first_unrelated_part_index]
+        parts = [
+            *sorted(
+                parallel_results_and_deltas,
+                key=lambda part: isinstance(part, ToolAvailabilityDeltaPart),
+            ),
+            *message.parts[first_unrelated_part_index:],
+        ]
+
+        # Parts to emit before the next synthetic call.
+        request_parts: list[ModelRequestPart] = []
+        for part in parts:
             if not isinstance(part, ToolAvailabilityDeltaPart):
-                pending.append(part)
+                request_parts.append(part)
                 continue
             added = [name for name in part.tools_added if deferred_tool_names is None or name in deferred_tool_names]
             if not added:
@@ -2540,19 +2722,19 @@ def _synthesize_tool_availability_delta_messages(
                     if tool_call_id not in synthesized_ids and tool_call_id not in history_call_ids:
                         break
             synthesized_ids.add(tool_call_id)
-            if pending:
-                transformed.append(replace(message, parts=pending))
-                pending = []
+            if request_parts:
+                transformed.append(replace(message, parts=request_parts))
+                request_parts = []
             transformed.append(
                 ModelResponse(parts=[ToolSearchCallPart(args={'queries': added}, tool_call_id=tool_call_id)])
             )
-            pending.append(
+            request_parts.append(
                 ToolSearchReturnPart(
                     content={'discovered_tools': [{'name': name} for name in added]},
                     tool_call_id=tool_call_id,
                 )
             )
-        if pending:
-            transformed.append(replace(message, parts=pending))
+        if request_parts:
+            transformed.append(replace(message, parts=request_parts))
 
     return transformed if changed else messages

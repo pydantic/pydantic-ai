@@ -1,0 +1,97 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "518"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 4096
+        messages:
+        - role: user
+          content:
+          - text: >-
+              Take the country that borders both France and Austria and whose capital is not
+              its largest city. Give me information about its largest city.
+            type: text
+        model: claude-sonnet-5-5
+        output_config:
+          format:
+            type: json_schema
+            schema:
+              type: object
+              properties:
+                city:
+                  type: string
+                country:
+                  type: string
+                population:
+                  type: integer
+              additionalProperties: false
+              required:
+              - city
+              - country
+              - population
+        stream: false
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-95554983881206f67d46bd58ac7ef840-f2355a75887c6dc8-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: json
+      content:
+        model: claude-sonnet-5-5
+        id: msg_011CfWbB5mxbfnNv8mWDrVZb
+        type: message
+        role: assistant
+        content:
+        - type: thinking
+          thinking: ""
+          signature: >-
+            CAQSlQcKEAgSGAI4AUIIdGhpbmtpbmcSDFoHmgVZcD6ZAcccVxoMph+jtxJfPjIF6w9iIjCMDoqF6bv9MdFC7wp2wtBeVLH8lhcZqOztd4/uJJriPPftA0WqZvgEU82eNaoBi0cqsgZ04AT/IETEVWU6drIRuTnEYB4cXwtguoyReo9GmDYPwuFJ32K4yPMB6EQscmZyeezX3xUSZQdTkhv7IzhgxYZlTuxqd47vfrEdQFFZ18G7v55LLd0xZSXoK6rsicVZAQVHGrGpD4ThC1uF+mSccpVHqG1+F3oub4nL0WqCnbljcgLiWRfsEjBBoeTMAp/YCddY//kKkrBRUkzKVJeiy6hl3c2Sh48m9kNecnfW8muxqALgHVHCXiAp7QlaPv+CA3E42wmZ6vbJR92ke3EYnrZ9RJ/xO9TlxJ5ytyYYDPOt/BqM7A+FojRQAtyRXhIkCNQ3elJAQgztUpgvEWb64koeEbmauAxwiLNS+OBSdRHgRffs+o0dFeKGPiAMyjmlmScnXD+Rcj8IGS+QiO2CA0+YAfDdPZItIjSTZmyDSkjNRh9nJnhSbqejxaCeL9kmEim3w6O5ZkQHOKLDpCciZnVxeM5fTX2qOIdUYnq8wV5GA99fyL+vvwSxSEqz/hRWhlLZfdLIXq8WBQmw/dDyjfwnTGX7R8rIt9k90F9CvDNNFVsE4IADKLfWYtAAnajJM3rlVbQCa+KtN2hVV8KJmSLuvLSBdA6BQDpTopV/fmuZED8LoqvKZomsFydFxltUvZh/8Xm8Yild65hB9ipTw7nb11rPjYng/Dloce1/qGjI6NAouuGEh0At/pOs9MUYeFO71lcnEdyTuLta/OsXA5uv9h/fjPpMz3D8fEc2tamxn4E02equd2dmEQmN5Fl0vqzBhTFwaIPWBgHuFDF0Fys4UWNHqrDzKpilsH9MY9DxeqTadUrFulsMrOsTtCF5i7tCMT7pkNEz+fP7ZLdIBfG0FNgKaS7jn6pMN64UGk8jVn6wk7w5lNszl6iBwUIGCWuZKXAiqO8J83cwwYJRKlX3sl41bYQGHASY5KcHVyLJS7Dzfew2D62hPQvQI+75+IraxKelRKa2XTnzq1Bz0hsaRn6Oa9Td/ROrNb9j7/kuQuMvhWl/IxWDJVfbJnzj2V4cgrdGK6orIY86yZuyDjCzPwSkSZAsmLwmiREW3xBtfOKUWQzHZLwk+X113Vf3g7nd+BgB
+        - type: text
+          text: "{\"city\":\"Zurich\",\"country\":\"Switzerland\",\"population\":447000}"
+        container: null
+        stop_reason: end_turn
+        stop_sequence: null
+        stop_details: null
+        usage:
+          input_tokens: 273
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          cache_creation:
+            ephemeral_5m_input_tokens: 0
+            ephemeral_1h_input_tokens: 0
+          output_tokens: 186
+          output_tokens_details:
+            thinking_tokens: 160
+          service_tier: standard
+          inference_geo: global
+        diagnostics: null
+  recorded_at: 2026-09-28T22:00:50.906301+00:00

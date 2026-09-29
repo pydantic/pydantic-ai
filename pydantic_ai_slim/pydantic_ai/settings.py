@@ -130,6 +130,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -159,6 +160,8 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot (not sent for the Anthropic models that reject sampling settings, e.g.
+      `claude-opus-4.8`)
     * Ollama
     * OpenRouter
     * Snowflake
@@ -186,6 +189,8 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot (not sent for the Anthropic models that reject sampling settings, e.g.
+      `claude-opus-4.8`)
     * Ollama
     * OpenRouter
     * Snowflake
@@ -216,17 +221,20 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI Codex
     * Anthropic
     * Google (numeric seconds only, not `httpx.Timeout`)
     * Groq
     * Mistral (numeric seconds only, not `httpx.Timeout`)
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
     * Z.AI
     * Bedrock Mantle
+    * TypeSafe
     """
 
     parallel_tool_calls: bool
@@ -235,12 +243,14 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI (some models, not o1)
+    * OpenAI Codex
     * Anthropic
     * Groq
     * Mistral
     * xAI
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -283,6 +293,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama (sent, but Ollama documents `tool_choice` as unsupported)
     * OpenRouter
     * Snowflake
@@ -304,6 +315,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -325,6 +337,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -346,6 +359,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -362,6 +376,7 @@ class ModelSettings(TypedDict, total=False):
     * Groq
     * HuggingFace
     * Crusoe
+    * GitHub Copilot
     * Ollama (sent, but Ollama documents `logit_bias` as unsupported)
     * OpenRouter
     * Snowflake
@@ -386,6 +401,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
@@ -399,17 +415,20 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI Codex
     * Anthropic
     * Google
     * Groq
     * Bedrock
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
     * Z.AI
     * Bedrock Mantle
+    * TypeSafe
     """
 
     thinking: ThinkingLevel
@@ -442,6 +461,8 @@ class ModelSettings(TypedDict, total=False):
     * Cerebras (only `False` is forwarded, as `reasoning_effort='none'`; the enable levels are not
       sent because Cerebras models reason by default, and `gpt-oss` ignores the disable too)
     * Crusoe
+    * GitHub Copilot (as `reasoning_effort`; which ids accept it, and which levels, is per-model and
+      enforced by Copilot, so an unsupported value comes back as a `400 invalid_reasoning_effort`)
     * Ollama
     * OpenRouter (as `extra_body['reasoning']`)
     * Snowflake (as `extra_body['reasoning']` on Claude models, otherwise as `reasoning_effort`)
@@ -461,12 +482,14 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI Codex
     * Anthropic
     * Google (Gemini API and Google Cloud)
     * Bedrock
     * Cerebras (sent and enum-validated — HTTP 200 on an ordinary key; the tiers are in private
       preview, so no effect is observable without access)
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake (sent, but Snowflake Cortex rejects `service_tier` with an error)
@@ -483,16 +506,19 @@ class ModelSettings(TypedDict, total=False):
     Supported by:
 
     * OpenAI
+    * OpenAI Codex
     * Anthropic
     * Groq
     * HuggingFace
     * Cerebras
     * Crusoe
+    * GitHub Copilot
     * Ollama
     * OpenRouter
     * Snowflake
     * Z.AI
     * Bedrock Mantle
+    * TypeSafe
 
     On the OpenAI-derived models that build their own `extra_body` (Cerebras, OpenRouter, Snowflake,
     Z.AI), the model's own derived keys overwrite yours when the keys collide.

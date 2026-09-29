@@ -19,7 +19,9 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
+from ._on_event import collect_on_event_methods, marked_listens_to
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -43,6 +45,11 @@ if TYPE_CHECKING:
     from pydantic_ai.models import KnownModelName, Model, ModelRequestContext, ModelResolutionContext
     from pydantic_ai.output import OutputContext
     from pydantic_ai.run import AgentRunResult
+
+
+def _registers_children(wrapped: AbstractCapability[Any], collected: Sequence[AbstractCapability[Any]]) -> bool:
+    """Whether `collected` -- what `wrapped.apply` yielded -- is more than `wrapped` itself."""
+    return len(collected) != 1 or collected[0] is not wrapped
 
 
 @dataclass
@@ -81,14 +88,46 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         visitor(self)
-        # A wrapper over a leaf capability is the registered proxy for that leaf. A wrapper
-        # over a container still needs the container's leaves registered for child-owned hooks
-        # and toolsets to resolve their capability ids.
+        # Collected once and replayed rather than walking the subtree twice: two walks per level
+        # turns a chain of `n` wrappers into `2**n` traversals, so a stack of `prefix_tools()`
+        # calls stops resolving in any reasonable time. One walk per level keeps the cost of the
+        # chain linear in its depth.
         wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
         self.wrapped.apply(wrapped_capabilities.append)
-        if len(wrapped_capabilities) != 1 or wrapped_capabilities[0] is not self.wrapped:
+        if _registers_children(self.wrapped, wrapped_capabilities):
             for capability in wrapped_capabilities:
                 visitor(capability)
+
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
+    ) -> AbstractCapability[AgentDepsT] | None:
+        """Visit the wrapper first; a replaced or removed wrapper takes its subtree with it.
+
+        When the wrapper survives, the visit descends into `wrapped` and this wrapper is rebuilt
+        around whatever remains; see
+        [`AbstractCapability.visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace]
+        for the tree-walking contract.
+        """
+        replacement = visitor(self)
+        if replacement is not self:
+            # The wrapper is what's registered for the subtree, so replacing or removing it takes
+            # the subtree with it — visiting children the caller just discarded would be pointless.
+            return replacement
+        # A wrapper over a leaf capability is the registered proxy for that leaf: if the wrapped
+        # subtree registers nothing of its own, there is nothing beneath this wrapper to visit.
+        wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self.wrapped.apply(wrapped_capabilities.append)
+        if not _registers_children(self.wrapped, wrapped_capabilities):
+            return self
+        new_wrapped = self.wrapped.visit_and_replace(visitor)
+        if new_wrapped is None:
+            # `wrapped` is required, and a wrapper whose subtree is gone has nothing left to modify.
+            return None
+        if new_wrapped is self.wrapped:
+            return self
+        new_self = replace_no_init(self, wrapped=new_wrapped)
+        new_self.__adopt_wrapped_identity()
+        return new_self
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -128,6 +167,28 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             type(self).wrap_run_event_stream is not WrapperCapability.wrap_run_event_stream
             or self.wrapped.has_wrap_run_event_stream
         )
+
+    @property
+    def has_on_event(self) -> bool:
+        return (
+            type(self).on_event is not WrapperCapability.on_event
+            or bool(collect_on_event_methods(type(self)))
+            or self.wrapped.has_on_event
+        )
+
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        return (
+            type(self).on_event is not WrapperCapability.on_event
+            or marked_listens_to(type(self), event)
+            or self.wrapped.listens_to(event)
+        )
+
+    @property
+    def _emits_app_events(self) -> bool:
+        # The `RunContext.emit` gate must see through wrappers: wrapping an app-facing
+        # `Hooks`/`ProcessEventStream` must not revoke its user callbacks' permission to emit
+        # `CustomEvent`s.
+        return self.wrapped._emits_app_events
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = self.wrapped.for_agent(agent)
@@ -195,6 +256,16 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         return self.wrapped.get_wrapper_toolset(toolset)
+
+    @property
+    def _has_get_workspace(self) -> bool:
+        return type(self).get_workspace is not WrapperCapability.get_workspace or self.wrapped._has_get_workspace
+
+    def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        return self.wrapped.get_workspace(ctx, ref=ref)
+
+    def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+        return self.wrapped._prepare_workspace(ctx, workspace, explicit=explicit)
 
     async def prepare_tools(
         self,
@@ -276,7 +347,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     ) -> NodeResult[AgentDepsT]:
         return await self.wrapped.on_node_run_error(ctx, node=node, error=error)
 
-    # --- Event stream hook ---
+    # --- Event hooks ---
+
+    async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
+        await super().on_event(ctx, event=event)
+        if self.wrapped.listens_to(event):
+            await self.wrapped.on_event(ctx, event=event)
 
     async def wrap_run_event_stream(
         self,

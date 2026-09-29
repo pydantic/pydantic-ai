@@ -1,9 +1,8 @@
 """DeepSeek's OpenAI-compatible Responses API, driven by `OpenAIResponsesModel` + `DeepSeekProvider`.
 
-DeepSeek exposes a Responses endpoint at `https://api.deepseek.com/responses`, currently for
-`deepseek-v4-flash` only (the V4-Flash-0731 backend). It is stateless — every response reports
-`store: false`, and there is no server-side conversation to resume — so `previous_response_id`
-continuation is not available and is not exercised here.
+DeepSeek exposes a Responses endpoint at `https://api.deepseek.com/responses` for both V4 models.
+It is stateless — every response reports `store: false`, and there is no server-side conversation to
+resume — so `previous_response_id` continuation is not available and is not exercised here.
 
 Each case snapshots both the resulting messages and the bodies that actually went out, captured by an
 `httpx2` event hook so the wire assertions run against what the client built rather than what the
@@ -13,6 +12,8 @@ cassette happens to hold. The request bodies are what pin the facts this pairing
 - DeepSeek's raw chain-of-thought going back as `reasoning_text` content on a follow-up request
 - the `phase` DeepSeek labels its output with being surfaced in `provider_details` but never sent
   back, since `openai_supports_phase` stays off for a provider that doesn't document accepting it
+- `NativeOutput` working here while it is refused on Chat Completions, the one capability DeepSeek
+  splits between its two endpoints
 """
 
 from __future__ import annotations as _annotations
@@ -32,6 +33,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeOutput,
     RetryPromptPart,
     TextPart,
     ThinkingPart,
@@ -53,7 +55,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -71,15 +72,18 @@ def get_temperature(city: str) -> float:
     return 21.0
 
 
-# DeepSeek V4 prices vary by request time. These response-shape cases assert that a cost was
-# calculated without duplicating genai-prices' time-dependent pricing tests.
+# DeepSeek V4 prices vary by request time: genai-prices doubles the rate during 01:00-04:00 and
+# 06:00-10:00 UTC, and a cost is priced from `ModelResponse.timestamp`, which the model stamps with
+# the wall clock rather than replaying it off the cassette. So these response-shape cases assert
+# that a cost was calculated without duplicating genai-prices' time-dependent pricing tests — a
+# literal pin here holds only for the pricing tier and window it was recorded in.
 @dataclass(frozen=True)
 class Case:
     id: str
     prompt: str
     follow_up_prompt: str | None = None
     stream: bool = False
-    output_type: type[str] | type[City] = str
+    output_type: type[str] | type[City] | NativeOutput[City] = str
     tools: Sequence[Callable[..., Any]] = ()
     model_settings: OpenAIResponsesModelSettings | None = None
     expected_output: str | City = ''
@@ -126,7 +130,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='2e532992-cac2-41fd-80b5-c98ad79215f3',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -183,7 +191,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                    provider_details={
+                        'timestamp': IsDatetime(),
+                        'finish_reason': 'completed',
+                        'service_tier': 'default',
+                    },
                     provider_response_id='bf5e7791-6c05-44ca-b7e0-56aa217150b1',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -244,7 +256,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='49d254fd-deb4-4207-a85a-038a3893db25',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -286,7 +302,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='cad18dc8-ce7a-4247-8cd7-d9574926a924',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -365,7 +385,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='92471b7c-94ad-452f-a3f5-c29aa74a95e1',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -405,7 +429,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='7f3d6c65-b8c2-410e-87ce-987bc467aef6',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -527,7 +555,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                    provider_details={
+                        'timestamp': IsDatetime(),
+                        'finish_reason': 'completed',
+                        'service_tier': 'default',
+                    },
                     provider_response_id='1235b7ba-fdc9-4a1c-bfe4-6137c207baf3',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -567,7 +599,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'timestamp': IsDatetime(), 'finish_reason': 'completed'},
+                    provider_details={
+                        'timestamp': IsDatetime(),
+                        'finish_reason': 'completed',
+                        'service_tier': 'default',
+                    },
                     provider_response_id='33df88f0-9f36-4616-95b0-ead91a37f7f1',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -690,7 +726,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='4333ebf8-e16c-4969-b5ac-fde1294e642a',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -777,7 +817,11 @@ CASES = [
                     timestamp=IsDatetime(),
                     provider_name='deepseek',
                     provider_url='https://api.deepseek.com',
-                    provider_details={'finish_reason': 'completed', 'timestamp': IsDatetime()},
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
                     provider_response_id='7a293ad0-b030-4055-a857-894eec88f488',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -796,6 +840,84 @@ CASES = [
             ]
         ),
     ),
+    Case(
+        id='native_output',
+        prompt='What is the capital of Mexico?',
+        output_type=NativeOutput(City),
+        expected_output=snapshot(City(city='Mexico City', country='Mexico')),
+        expected_messages=snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='What is the capital of Mexico?', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        ThinkingPart(
+                            content='',
+                            id='45058da2-f6c2-482f-a8ef-40ce3701e03d',
+                            provider_name='deepseek',
+                            provider_details={
+                                'raw_content': [
+                                    'We need to answer the capital of Mexico. The schema requires city and country. So city: Mexico City, country: Mexico.'
+                                ]
+                            },
+                        ),
+                        TextPart(
+                            content='{"city": "Mexico City", "country": "Mexico"}',
+                            id='153730a1-af42-4a99-b704-f406054ac191',
+                            provider_name='deepseek',
+                            provider_details={'phase': 'final_answer'},
+                        ),
+                    ],
+                    usage=RequestUsage(
+                        details={'reasoning_tokens': 26},
+                        input_tokens=148,
+                        output_reasoning_tokens=26,
+                        output_tokens=40,
+                        cost=IsDecimal(),
+                    ),
+                    model_name='deepseek-v4-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='deepseek',
+                    provider_url='https://api.deepseek.com',
+                    provider_details={
+                        'finish_reason': 'completed',
+                        'timestamp': IsDatetime(),
+                        'service_tier': 'default',
+                    },
+                    provider_response_id='3dd7f44c-de93-47d7-b2cb-d2269c3e29c4',
+                    finish_reason='stop',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        ),
+        expected_request_bodies=snapshot(
+            [
+                {
+                    'input': [{'role': 'user', 'content': 'What is the capital of Mexico?'}],
+                    'model': 'deepseek-v4-flash',
+                    'stream': False,
+                    'text': {
+                        'format': {
+                            'type': 'json_schema',
+                            'name': City.__qualname__,
+                            'schema': {
+                                'properties': {'city': {'type': 'string'}, 'country': {'type': 'string'}},
+                                'required': ['city', 'country'],
+                                'type': 'object',
+                                'additionalProperties': False,
+                            },
+                            'strict': True,
+                        }
+                    },
+                }
+            ]
+        ),
+    ),
 ]
 
 
@@ -803,12 +925,13 @@ CASES = [
 async def test_deepseek_responses(case: Case, allow_model_requests: None, deepseek_api_key: str):
     """`OpenAIResponsesModel('deepseek-v4-flash', provider=DeepSeekProvider())` against the live API.
 
-    Every case snapshots the request bodies as the httpx hook saw them, so the two recorded facts
-    the pairing depends on stay pinned to what the client builds rather than to the cassette: the
-    `tool_choice: 'auto'` that DeepSeek's `openai_supports_tool_choice_required=False` profile
-    forces even where the run would otherwise force a tool, and the `phase` label DeepSeek puts on
-    its output being surfaced in `provider_details` while never going back out (the off side of
-    `openai_supports_phase`, which stays off because DeepSeek doesn't document accepting it).
+    Every case snapshots the request bodies as the httpx hook saw them, so the recorded facts the
+    pairing depends on stay pinned to what the client builds rather than to the cassette: the
+    `tool_choice: 'auto'` that DeepSeek's thinking-conditional forcing restriction produces while
+    thinking is on (its default) even where the run would otherwise force a tool, and the `phase`
+    label DeepSeek puts on its output being surfaced in `provider_details` while never going back
+    out (the off side of `openai_supports_phase`, which stays off because DeepSeek doesn't document
+    accepting it).
     """
     sent_bodies: list[dict[str, Any]] = []
 

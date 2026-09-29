@@ -1,3 +1,7 @@
+---
+description: "A multi-agent Pydantic AI example: a flight search agent delegates extraction to a second agent, then hands off to a third that parses the user's seat choice."
+---
+
 Example of a multi-agent flow where one agent delegates work to another, then hands off control to a third agent.
 
 Demonstrates:

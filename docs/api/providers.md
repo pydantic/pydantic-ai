@@ -2,6 +2,10 @@
 
 ::: pydantic_ai.providers.Provider
 
+::: pydantic_ai.providers.infer_provider
+
+::: pydantic_ai.providers.infer_provider_class
+
 ::: pydantic_ai.providers.gateway.gateway_provider
 
 ::: pydantic_ai.providers.anthropic.AnthropicProvider
@@ -11,6 +15,10 @@
 ::: pydantic_ai.providers.google_cloud
 
 ::: pydantic_ai.providers.openai
+
+::: pydantic_ai.providers.openai_codex
+    options:
+      inherited_members: true
 
 ::: pydantic_ai.providers.xai
 
@@ -42,6 +50,14 @@
 
 ::: pydantic_ai.providers.github.GitHubProvider
 
+::: pydantic_ai.providers.github_copilot.GitHubCopilotProvider
+
+::: pydantic_ai.providers.github_copilot.GitHubCopilotOAuthFlow
+
+::: pydantic_ai.providers.github_copilot.GitHubCopilotDeviceAuthorization
+
+::: pydantic_ai.providers.github_copilot.GitHubCopilotCredentials
+
 ::: pydantic_ai.providers.openrouter.OpenRouterProvider
 
 ::: pydantic_ai.providers.vercel.VercelProvider
@@ -69,5 +85,7 @@
 ::: pydantic_ai.providers.sambanova.SambaNovaProvider
 
 ::: pydantic_ai.providers.snowflake.SnowflakeProvider
+
+::: pydantic_ai.providers.typesafe.TypeSafeProvider
 
 ::: pydantic_ai.providers.zai.ZaiProvider
