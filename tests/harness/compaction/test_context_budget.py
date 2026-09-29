@@ -1171,6 +1171,17 @@ class TestCompactNow:
 
         assert seen == ['the auth refactor']
 
+    async def test_suppresses_lifecycle_events_for_composed_strategies(self):
+        strategy: TieredCompaction[None] = TieredCompaction(
+            tiers=[SlidingWindowCompaction(max_tokens=1, keep_messages=2)],
+            target_tokens=1,
+        )
+
+        with patch.object(RunContext, 'emit', new_callable=AsyncMock) as emit:
+            await compact_now(strategy, _history(4), model=TestModel())
+
+        emit.assert_not_awaited()
+
 
 class TestCompactNowSummarizes:
     """`compact_now` driving a strategy that really calls a model."""

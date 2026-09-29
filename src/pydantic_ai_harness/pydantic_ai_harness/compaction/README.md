@@ -522,6 +522,12 @@ fallback chain.
 before/after message and token counts. The event is a live coordination signal; compaction receipts
 remain an in-history note for the model.
 
+If you write a custom strategy, declare a stable `strategy_id = '...'` class attribute. Events and
+the `compaction.strategy` span attribute carry this value. Without it, the Harness derives the
+identifier from the snake-cased class name with any trailing `Compaction` suffix removed, so
+renaming the class also changes the identifier. Always declare an explicit ID when consumers
+persist it or branch on it.
+
 `compact_now` emits neither event. It runs between agent runs, where there is no run event stream
 to dispatch on and so no listener that could cancel it. It still records the `compact_messages`
 span.
