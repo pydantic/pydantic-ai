@@ -14,6 +14,16 @@
 # launcher just sets up the uv cache dirs (the default cache dir from
 # setup-uv isn't writable by the sandbox user UID 1001).
 set -euo pipefail
+
+# This shim has no persisted Claude session. Outer retries are disabled in the
+# main engine config, and this guard rejects unsupported continuation if that
+# configuration drifts.
+for arg in "$@"; do
+  if [ "$arg" = "--continue" ]; then
+    exit 1
+  fi
+done
+
 export UV_CACHE_DIR=/tmp/gh-aw/uv/cache
 export UV_PYTHON_INSTALL_DIR=/tmp/gh-aw/uv/python
 export UV_TOOL_DIR=/tmp/gh-aw/uv/tool

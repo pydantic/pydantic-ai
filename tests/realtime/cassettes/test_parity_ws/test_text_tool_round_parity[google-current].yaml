@@ -1,0 +1,211 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  data:
+    setup:
+      model: models/gemini-3.1-flash-live-preview
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Always call get_weather for a weather question, then answer in one
+            short sentence.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Look up the weather for a city.
+          name: get_weather
+          parameters:
+            properties:
+              city:
+                type: STRING
+            required:
+            - city
+            type: OBJECT
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: What is the weather in London?
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  data:
+    toolCall:
+      functionCalls:
+      - name: get_weather
+        args:
+          city: London
+        id: fc_3880303533621599938
+- kind: message
+  direction: sent
+  data:
+    tool_response:
+      functionResponses:
+      - id: fc_3880303533621599938
+        name: get_weather
+        response:
+          output: It is foggy and 12 degrees in London.
+- kind: message
+  direction: received
+  data:
+    sessionResumptionUpdate:
+      newHandle: 95e91930-b35b-482b-8880-17efc49ec2f2
+      resumable: true
+- kind: message
+  direction: received
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: bQBxAHYAeQB8AIQAiQCKAI0AkwCVAJUAnACdAKIApwCr
+      outputTranscription:
+        text: It is
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: KP5G/mb+Gf+f/yQAxwCwAHEALgDB/8X/EQCpAJgBrQG/
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 5g//+9oKhQbG/mUJ8gFTB4kFpP8qCNkC7AAWBqP9gQ41
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: LgIPArT9NQfw/979EvniC+T5IgEKAQ8AeQErBt//v/4X
+      outputTranscription:
+        text: ' foggy'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: gwG5AtUCuQLpAZQBrwEmAaYAbf/J/pT+tf+aApgEngUS
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: zyyCLSkucC8RMmUyBDKHMiQxGDFnMKUu9SvhJ8ImOiaw
+      outputTranscription:
+        text: ' and 12'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: SBksD10HLwJg/fn3N/G46gPlouHl4NjgvuFp4jXin+I6
+      outputTranscription:
+        text: ' degrees'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ReN54zPl8ucv6mLrlusL7Ebtju4L8ODxWfON9YH4kPpS
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: SwgoFMMJ1wevDjAHPQ/xFxsHZgurE+0K4A1CF4sQFgfv
+      outputTranscription:
+        text: ' in London.'
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 4QH5AewBBwLFAQwBSwCM/yv/2v56/u/9av0T/RH9Rf0e
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Dfj19+f31Pe29433Xfcr9wP33PbL9sb2uPbF9rP2k/aB
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: R/9d/17/Zf9l/3P/af9k/2r/Yv9l/2L/WP9j/2v/Zf95
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 482
+      responseTokenCount: 69
+      totalTokenCount: 551
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 360
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 57

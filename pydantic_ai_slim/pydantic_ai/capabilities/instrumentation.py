@@ -2,36 +2,51 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
 from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode, get_current_span
-from pydantic_core import to_json
+from pydantic_core import ValidationError, to_json
 
-from pydantic_ai import _utils
+from pydantic_ai import _usage_attribution, _utils
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
+    MessageJsonCache,
     get_agent_run_baggage_attributes,
     get_instructions,
+    has_stale_message_json,
     open_model_request_span,
+    record_exception as _record_exception,
+    record_uncaught_errors as _record_uncaught_errors,
+    redact_binary_content,
     safe_to_json,
     serialize_any,
     time_to_first_chunk_ctx,
 )
 from pydantic_ai._utils import UNSET, Unset
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolRetryError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, tool_return_ta
+from pydantic_ai.exceptions import (
+    ApprovalRequired,
+    CallDeferred,
+    MessageHistoryMutatedWarning,
+    ModelRetry,
+    ToolFailedError,
+    ToolRetryError,
+)
+from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, ToolCallPart, tool_return_ta
 from pydantic_ai.profiles import _max_cache_point_ttl  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.usage import RunUsage
 
 from .abstract import (
     AbstractCapability,
     CapabilityOrdering,
+    RawToolArgs,
     ValidatedToolArgs,
     WrapModelRequestHandler,
     WrapOutputProcessHandler,
@@ -61,7 +76,7 @@ def _cache_hit_ratio(cache_read_tokens: int, input_tokens: int) -> float:
 def _prompt_cache_retention(model: Model) -> timedelta | None:
     """The model's documented prompt-cache retention window, or `None` when it can't be determined."""
     try:
-        return model.profile.get('prompt_cache_retention')
+        return model.profile.get('default_cache_retention')
     except NotImplementedError:
         # `FallbackModel` has no profile of its own: it resolves a model per request and applies that
         # model's profile during dispatch, and the resolved model isn't reachable from here — the
@@ -102,6 +117,12 @@ class Instrumentation(AbstractCapability[Any]):
     prefix moved while it should still have been warm.
     """
 
+    _safe_at_runtime: ClassVar[bool] = True
+    """Workflow-side only — no toolsets, native tools, or model wrapping introduced — so safe
+    to attach per-run even when a durability capability is bound. Internal flag read by the
+    bundled durable-execution integrations.
+    """
+
     settings: InstrumentationSettings = field(default_factory=lambda: _default_settings())
     """OTel/Logfire instrumentation settings. Defaults to `InstrumentationSettings()`,
     which uses the global `TracerProvider` (typically configured by `logfire.configure()`)."""
@@ -113,12 +134,31 @@ class Instrumentation(AbstractCapability[Any]):
     # these fields would race.
     _agent_name: str = field(default='agent', repr=False, init=False)
     _new_message_index: int = field(default=0, repr=False, init=False)
+    _run_usage: RunUsage = field(default_factory=RunUsage, repr=False, init=False)
+    """Usage this run recorded while its span was open, credited by `_usage_attribution`.
+
+    A nested run's `accumulate` replaces the active accumulator for the length of its own span, so
+    what a delegate records is the delegate's; this holds only what this run recorded itself.
+    """
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
     _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
     """Last formatted instructions sent to the model, or `UNSET` before the first request."""
     _variable_instructions: bool = field(default=False, repr=False, init=False)
     """Whether agent-level instructions varied across requests in this run."""
+
+    _: KW_ONLY
+
+    id: str | None = 'instrumentation'
+    """One-off: an agent has a single instrumentation configuration, so the id is fixed by default.
+
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
+    which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
+    """
+    _message_json_cache: MessageJsonCache = field(default_factory=MessageJsonCache, repr=False, init=False)
+    """Per-run cache of input messages' serialized OTel JSON fragments (see `MessageJsonCache`).
+    `for_run`'s `replace(self)` re-runs the factory, so each run starts with an empty cache
+    that's discarded when the run ends."""
     _cache_marks: dict[tuple[str | None, str | None], _CacheMark] = field(
         default_factory=lambda: {}, repr=False, init=False
     )
@@ -137,14 +177,25 @@ class Instrumentation(AbstractCapability[Any]):
         return CapabilityOrdering(position='outermost')
 
     @classmethod
-    def from_spec(cls, **kwargs: Any) -> Instrumentation:
+    def from_spec(
+        cls,
+        *,
+        include_binary_content: bool = True,
+        include_content: bool = True,
+        include_model_request_parameters: bool = True,
+        version: Literal[2, 3, 4, 5, 6] = DEFAULT_INSTRUMENTATION_VERSION,
+        use_aggregated_usage_attribute_names: bool = True,
+    ) -> Instrumentation:
         """Build an `Instrumentation` capability from a YAML/JSON spec.
 
-        Accepts the serializable subset of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
-        kwargs (`include_binary_content`, `include_content`, `version`,
-        `use_aggregated_usage_attribute_names`). The OTel `tracer_provider` and `meter_provider`
-        fields can't be expressed in YAML and default to the global providers (typically configured
-        via `logfire.configure()`).
+        Accepts every serializable
+        [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings]
+        option. The OTel `tracer_provider` and `meter_provider` fields can't be expressed in YAML
+        and default to the global providers (typically configured via `logfire.configure()`).
+
+        `id` is deliberately not accepted. An agent has one instrumentation configuration -- which
+        is what the class-level default `id` says -- so there is nothing for a spec to name, and two
+        `Instrumentation` capabilities resolve to one rather than colliding.
 
         YAML form:
 
@@ -156,13 +207,24 @@ class Instrumentation(AbstractCapability[Any]):
         """
         from pydantic_ai.models.instrumented import InstrumentationSettings
 
-        return cls(settings=InstrumentationSettings(**kwargs))
+        return cls(
+            settings=InstrumentationSettings(
+                include_binary_content=include_binary_content,
+                include_content=include_content,
+                include_model_request_parameters=include_model_request_parameters,
+                version=version,
+                use_aggregated_usage_attribute_names=use_aggregated_usage_attribute_names,
+            ),
+        )
 
     async def for_run(self, ctx: RunContext[Any]) -> Instrumentation:
         """Return a fresh copy for per-run state isolation."""
         inst = replace(self)
         inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
         inst._new_message_index = len(ctx.messages)
+        # Usage this run's span is accountable for, credited by `_usage_attribution` for as long as
+        # the span is open in `wrap_run`; see `_run_span_end_attributes`.
+        inst._run_usage = RunUsage()
         # `replace` is shallow, so mutable per-run state must be reset explicitly.
         inst._cache_marks = {}
         return inst
@@ -177,6 +239,12 @@ class Instrumentation(AbstractCapability[Any]):
         *,
         handler: WrapRunHandler,
     ) -> AgentRunResult[Any]:
+        # `RealtimeSession` owns its session and per-response spans; a second run span here would
+        # duplicate the session's canonical `invoke_agent` span. See the capability-owned span
+        # direction documented in `realtime/_session.py`.
+        if ctx.realtime:
+            return await handler()
+
         settings = self.settings
         names = self._instrumentation_names
         agent_name = self._agent_name
@@ -191,15 +259,27 @@ class Instrumentation(AbstractCapability[Any]):
             'logfire.msg': f'{agent_name} run',
         }
 
+        if (workspace_ref := ctx.workspace.ref) is not None:
+            span_attributes['pydantic_ai.workspace.provider'] = workspace_ref.provider
+            span_attributes['pydantic_ai.workspace.id'] = workspace_ref.id
+
         if ctx.agent is not None:  # pragma: no branch
             rendered = ctx.agent.render_description(ctx.deps)
             if rendered is not None:
                 span_attributes['gen_ai.agent.description'] = rendered
 
-        with settings.tracer.start_as_current_span(
-            names.get_agent_run_span_name(agent_name),
-            attributes=span_attributes,
-        ) as span:
+        with (
+            settings.tracer.start_as_current_span(
+                names.get_agent_run_span_name(agent_name),
+                attributes=span_attributes,
+                record_exception=False,
+                set_status_on_exception=False,
+            ) as span,
+            _record_uncaught_errors(span, include_content=settings.include_content),
+            # Entered with the span and exited with it, so `_run_usage` ends up holding exactly
+            # the usage this run recorded — nested runs report their own on their own spans.
+            _usage_attribution.accumulate(self._run_usage),
+        ):
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
             otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
@@ -214,7 +294,7 @@ class Instrumentation(AbstractCapability[Any]):
                         (
                             result.output
                             if isinstance(result.output, str)
-                            else safe_to_json(serialize_any(result.output)).decode()
+                            else safe_to_json(serialize_any(redact_binary_content(result.output, settings))).decode()
                         ),
                     )
 
@@ -222,6 +302,10 @@ class Instrumentation(AbstractCapability[Any]):
             finally:
                 _otel_detach(token)
                 if span.is_recording():
+                    # A lazy sandbox may acquire its ref only after the span starts.
+                    if (workspace_ref := ctx.workspace.ref) is not None:
+                        span.set_attribute('pydantic_ai.workspace.provider', workspace_ref.provider)
+                        span.set_attribute('pydantic_ai.workspace.id', workspace_ref.id)
                     # Get current messages and metadata from the result (which holds the up-to-date state).
                     # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
                     if result is not None:
@@ -232,6 +316,22 @@ class Instrumentation(AbstractCapability[Any]):
                         message_history = self._last_messages or ctx.messages
                         metadata = ctx.metadata
                     span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
+                    if result is not None:
+                        # One O(history) pass per run: turn any silent staleness the per-request
+                        # fragment cache may have recorded into a loud signal. Skipped when the run
+                        # errored: with warnings configured as errors, warning here in the `finally`
+                        # would displace the propagating run exception.
+                        if self._message_json_cache and has_stale_message_json(
+                            settings, message_history, self._message_json_cache
+                        ):
+                            warnings.warn(
+                                'In-place mutation of messages already in the history was detected during this run: '
+                                "the `gen_ai.input.messages` attribute recorded on the run's model request spans may "
+                                'not match the messages actually sent to the model. Mutating history messages in '
+                                'place is not supported; build new message or part objects instead, e.g. via a '
+                                'history processor.',
+                                MessageHistoryMutatedWarning,
+                            )
 
     def _run_span_end_attributes(
         self,
@@ -258,21 +358,17 @@ class Instrumentation(AbstractCapability[Any]):
             attrs['pydantic_ai.variable_instructions'] = True
 
         if metadata is not None:
-            attrs['metadata'] = safe_to_json(serialize_any(metadata)).decode()
+            attrs['metadata'] = safe_to_json(serialize_any(redact_binary_content(metadata, settings))).decode()
 
-        usage_attrs: dict[str, int | float] = {
-            **(
-                {
-                    k.replace('gen_ai.usage.', 'gen_ai.aggregated_usage.', 1): v
-                    for k, v in ctx.usage.opentelemetry_attributes().items()
-                }
-                if settings.use_aggregated_usage_attribute_names
-                else ctx.usage.opentelemetry_attributes()
-            )
-        }
-        if ctx.usage.cache_read_tokens > 0:
+        # What this run spent, which is what `gen_ai.aggregated_usage.*` means and what lets the
+        # agent-run spans in a trace be summed without counting a nested run twice. Not `ctx.usage`:
+        # that is the object the caller passed in, accumulated into in place, so it holds the whole
+        # conversation when usage is carried across runs and a delegate's tokens when it is shared.
+        # The per-request `chat` spans are unaffected either way.
+        usage_attrs: dict[str, int | float] = {**settings.aggregated_usage_attributes(self._run_usage)}
+        if self._run_usage.cache_read_tokens > 0:
             usage_attrs['pydantic_ai.cache.hit_ratio'] = _cache_hit_ratio(
-                ctx.usage.cache_read_tokens, ctx.usage.input_tokens
+                self._run_usage.cache_read_tokens, self._run_usage.input_tokens
             )
 
         return {
@@ -304,7 +400,10 @@ class Instrumentation(AbstractCapability[Any]):
         # (ctx.messages may be stale because UserPromptNode replaces the list reference).
         self._last_messages = request_context.messages
 
-        with open_model_request_span(self.settings, request_context) as (finish, prepared_request_context):
+        with open_model_request_span(self.settings, request_context, message_json_cache=self._message_json_cache) as (
+            finish,
+            prepared_request_context,
+        ):
             # Stash for `_run_span_end_attributes`: feeding the parameters into
             # `get_instructions` lets it use the canonical `instruction_parts` source
             # (which includes prompted-output template instructions and is properly sorted)
@@ -408,6 +507,49 @@ class Instrumentation(AbstractCapability[Any]):
     # wrap_tool_execute — tool execution span
     # ------------------------------------------------------------------
 
+    async def on_tool_validate_error(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: RawToolArgs,
+        error: ValidationError | ModelRetry,
+    ) -> ValidatedToolArgs:
+        """Emit an error span for a tool call whose argument validation failed.
+
+        Runs only after every other capability has declined to recover the error, so a
+        recovered validation failure produces no span. The span keeps the `execute_tool`
+        operation name so tracing backends group it with other tool spans, and sets
+        `pydantic_ai.tool.failure_stage: 'validation'` to distinguish it from execution
+        failures.
+
+        With content capture enabled, the span records the retry prompt built from the
+        error as the tool result. That is the exact message the model receives when the
+        agent loop handles the failure; raw-mode callers (e.g. sandboxed dispatch via
+        `handle_call(wrap_validation_errors=False)`) surface the raw exception to the
+        calling code instead, and the recorded prompt is just the rendered description
+        of the failure.
+        """
+        names = self._instrumentation_names
+        attributes = self._tool_span_attributes(call)
+        # The tool never ran: keep the `execute_tool` operation name so backends find the
+        # span, but say so in the message and mark the failure stage for querying.
+        attributes['logfire.msg'] = f'invalid tool call: {call.tool_name}'
+        attributes[names.tool_failure_stage_attr] = 'validation'
+        with self.settings.tracer.start_as_current_span(
+            names.get_tool_span_name(call.tool_name),
+            attributes=attributes,
+            record_exception=False,
+            set_status_on_exception=False,
+        ) as span:
+            if self.settings.include_content and span.is_recording():
+                retry = RetryPromptPart.from_error(error, tool_name=call.tool_name, tool_call_id=call.tool_call_id)
+                span.set_attribute(names.tool_result_attr, retry.model_response())
+            _record_exception(span, error, include_content=self.settings.include_content)
+            span.set_status(StatusCode.ERROR)
+        raise error
+
     def _tool_span_attributes(self, call: ToolCallPart) -> dict[str, Any]:
         """Build the span attributes shared by `wrap_tool_execute` and `wrap_output_process`.
 
@@ -479,7 +621,7 @@ class Instrumentation(AbstractCapability[Any]):
                 result = await action()
             except (CallDeferred, ApprovalRequired) as exc:
                 if not handle_tool_control_flow:
-                    span.record_exception(exc, escaped=True)
+                    _record_exception(span, exc, include_content=include_content)
                     span.set_status(StatusCode.ERROR)
                     raise
                 # Deferrals are control flow, not errors: capture the deferral name (and
@@ -487,13 +629,14 @@ class Instrumentation(AbstractCapability[Any]):
                 # ERROR for older instrumentation versions that expected that shape.
                 span.set_attribute(names.tool_deferral_name_attr, type(exc).__name__)
                 if include_content and span.is_recording() and exc.metadata is not None:
+                    redacted_metadata = redact_binary_content(exc.metadata, settings)
                     try:
-                        metadata_str = to_json(exc.metadata).decode()
+                        metadata_str = to_json(redacted_metadata).decode()
                     except (TypeError, ValueError):
-                        metadata_str = repr(exc.metadata)
+                        metadata_str = repr(redacted_metadata)
                     span.set_attribute(names.tool_deferral_metadata_attr, metadata_str)
                 if settings.version < 5:
-                    span.record_exception(exc, escaped=True)
+                    _record_exception(span, exc, include_content=include_content)
                     span.set_status(StatusCode.ERROR)
                 raise
             except ToolRetryError as e:
@@ -501,11 +644,17 @@ class Instrumentation(AbstractCapability[Any]):
                     # Tool retries are surfaced as model-visible errors; record the prompt
                     # the model will see as the tool result before re-raising.
                     span.set_attribute(names.tool_result_attr, e.tool_retry.model_response())
-                span.record_exception(e, escaped=True)
+                _record_exception(span, e, include_content=include_content)
+                span.set_status(StatusCode.ERROR)
+                raise
+            except ToolFailedError as e:
+                if handle_tool_control_flow and include_content and span.is_recording():
+                    span.set_attribute(names.tool_result_attr, e.tool_failed.model_response_str(wrap_if_error=False))
+                _record_exception(span, e, include_content=include_content)
                 span.set_status(StatusCode.ERROR)
                 raise
             except BaseException as e:
-                span.record_exception(e, escaped=True)
+                _record_exception(span, e, include_content=include_content)
                 span.set_status(StatusCode.ERROR)
                 raise
 
@@ -526,11 +675,19 @@ class Instrumentation(AbstractCapability[Any]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
+        attributes = self._tool_span_attributes(call)
+        if ctx.realtime:
+            # Realtime spans all carry this marker (see `docs/realtime/observability.md`) so
+            # backends can recognize the session tree; the tool span is shared with classic runs,
+            # which stay unmarked.
+            attributes['pydantic_ai.realtime'] = True
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
-            attributes=self._tool_span_attributes(call),
+            attributes=attributes,
             action=lambda: handler(args),
-            serialize_result=lambda value: tool_return_ta.dump_json(value).decode(),
+            serialize_result=lambda value: tool_return_ta.dump_json(
+                redact_binary_content(value, self.settings)
+            ).decode(),
             handle_tool_control_flow=True,
         )
 
@@ -574,7 +731,7 @@ class Instrumentation(AbstractCapability[Any]):
         if tool_call is not None and tool_call.tool_call_id:
             attributes['gen_ai.tool.call.id'] = tool_call.tool_call_id
         if include_content:
-            attributes[names.tool_arguments_attr] = safe_to_json(output).decode()
+            attributes[names.tool_arguments_attr] = safe_to_json(redact_binary_content(output, self.settings)).decode()
 
         attributes['logfire.json_schema'] = to_json(
             {
@@ -598,5 +755,7 @@ class Instrumentation(AbstractCapability[Any]):
             span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
             action=lambda: handler(output),
-            serialize_result=lambda value: safe_to_json(serialize_any(value)).decode(),
+            serialize_result=lambda value: safe_to_json(
+                serialize_any(redact_binary_content(value, self.settings))
+            ).decode(),
         )

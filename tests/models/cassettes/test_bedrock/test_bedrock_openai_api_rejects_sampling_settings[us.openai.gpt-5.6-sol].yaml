@@ -1,0 +1,32 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 2+2?"}]}], "inferenceConfig": {"maxTokens": 64, "temperature":
+      0.2}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        YWFjMGQwYjAtOTgwYy00NTQ2LWFiYjAtZDMzNDE4OWE1Mzg4
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '129'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.openai.gpt-5.6-sol/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '98'
+      content-type:
+      - application/json
+    parsed_body:
+      message: This model doesn't support the temperature field. Remove temperature and try again.
+    status:
+      code: 400
+      message: Bad Request
+version: 1

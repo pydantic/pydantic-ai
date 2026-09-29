@@ -12,6 +12,7 @@ import anyio
 import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
+from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import remove_bedrock_geo_prefix
 from pydantic_ai.usage import RequestUsage
@@ -196,7 +197,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     `amazon.nova-2-multimodal-embeddings-v1:0`
 
     When embedding multiple texts with models that only support single-text requests,
-    this controls how many requests run in parallel. Defaults to 5.
+    this controls how many requests run in parallel. Defaults to 5 and must be at least 1.
     """
 
 
@@ -572,6 +573,7 @@ class BedrockEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs_list, settings_dict = self.prepare_embed(inputs, settings)
         settings_typed = cast(BedrockEmbeddingSettings, settings_dict)
 
@@ -611,6 +613,8 @@ class BedrockEmbeddingModel(EmbeddingModel):
     ) -> EmbeddingResult:
         """Embed inputs concurrently with controlled parallelism and combine results."""
         max_concurrency = settings.get('bedrock_max_concurrency', 5)
+        if max_concurrency < 1:
+            raise UserError(f'bedrock_max_concurrency must be >= 1, got {max_concurrency}.')
         semaphore = anyio.Semaphore(max_concurrency)
 
         results: list[tuple[Sequence[float], int]] = [None] * len(inputs)  # type: ignore[list-item]
@@ -658,9 +662,15 @@ class BedrockEmbeddingModel(EmbeddingModel):
                 )
             )
         except ClientError as e:
-            status_code = e.response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+            metadata = e.response.get('ResponseMetadata', {})
+            status_code = metadata.get('HTTPStatusCode')
             if isinstance(status_code, int):
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.response) from e
+                raise ModelHTTPError(
+                    status_code=status_code,
+                    model_name=self.model_name,
+                    body=e.response,
+                    headers=metadata.get('HTTPHeaders'),
+                ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
 
         # Extract input token count from HTTP headers

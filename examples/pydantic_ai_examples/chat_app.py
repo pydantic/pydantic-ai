@@ -212,10 +212,10 @@ class Database:
     async def _asyncify(
         self, func: Callable[P, R], *args: P.args, **kwargs: P.kwargs
     ) -> R:
-        return await self._loop.run_in_executor(  # type: ignore
+        return await self._loop.run_in_executor(  # pyright: ignore[reportUnknownVariableType]
             self._executor,
             partial(func, **kwargs),
-            *args,  # type: ignore
+            *args,  # pyright: ignore[reportCallIssue]
         )
 
 

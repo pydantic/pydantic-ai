@@ -1,3 +1,7 @@
+---
+description: "Debug and monitor Pydantic AI agents with Pydantic Logfire or any OpenTelemetry backend, tracing the model requests, tool calls and token usage of every run."
+---
+
 # Pydantic Logfire Debugging and Monitoring
 
 Applications that use LLMs have some challenges that are well known and understood: LLMs are **slow**, **unreliable** and **expensive**.
@@ -99,6 +103,10 @@ To demonstrate how Logfire can let you visualise the flow of a Pydantic AI run, 
 
 {{ video('a764aff5840534dc77eba7d028707bfa', 25) }}
 
+[Realtime (speech-to-speech) sessions](realtime/observability.md) are instrumented by the same
+`logfire.instrument_pydantic_ai()` call: a session appears as an agent run whose child spans mark
+each model response, tool call, and turn boundary as the live conversation unfolds.
+
 ### Monitoring Performance
 
 We can also query data with SQL in Logfire to monitor the performance of an application. Here's a real world example of using Logfire to monitor Pydantic AI runs inside Logfire itself:
@@ -110,7 +118,7 @@ We can also query data with SQL in Logfire to monitor the performance of an appl
 As per Hamel Husain's influential 2024 blog post ["Fuck You, Show Me The Prompt."](https://hamel.dev/blog/posts/prompt/)
 (bear with the capitalization, the point is valid), it's often useful to be able to view the raw HTTP requests and responses made to model providers.
 
-To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/) since all provider SDKs (except for [Bedrock](models/bedrock.md)) use the [HTTPX](https://www.python-httpx.org/) library internally:
+To observe raw HTTP requests made to model providers, you can use Logfire's [HTTPX instrumentation](https://logfire.pydantic.dev/docs/integrations/http-clients/httpx/). Provider SDKs use either `httpx` or [`httpx2`](https://httpx2.pydantic.dev/) internally, except for [Bedrock](models/bedrock.md), which uses boto3:
 
 
 ```py {title="with_logfire_instrument_httpx.py" hl_lines="7"}
@@ -128,7 +136,9 @@ print(result.output)
 #> The capital of France is Paris.
 ```
 
-1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] more details, `capture_all=True` means both headers and body are captured for both the request and response.
+1. See the [`logfire.instrument_httpx` docs][logfire.Logfire.instrument_httpx] for more details. `capture_all=True` means both headers and body are captured for both the request and response.
+
+    `httpx2` instrumentation requires `opentelemetry-instrumentation-httpx>=0.65b0`, which the [`logfire` extra](install.md#slim-install) installs for you. If you pin OpenTelemetry yourself and end up below that version, `logfire.instrument_httpx()` reports the missing requirement and emits no `httpx2` spans.
 
 ![Logfire with HTTPX instrumentation](img/logfire-with-httpx.png)
 
@@ -140,7 +150,7 @@ This means you can debug and monitor Pydantic AI with any OpenTelemetry backend.
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), so while we think you'll have the best experience using the Logfire platform :wink:, you should be able to use any OTel service with GenAI support.
 
-### Logfire with an alternative OTel backend
+### Logfire with an alternative OTel backend {#otel}
 
 You can use the Logfire SDK completely freely and send the data to any OpenTelemetry backend.
 
@@ -237,15 +247,15 @@ The following providers have dedicated documentation on Pydantic AI:
 - [Arize](https://arize.com/docs/ax/observe/tracing-integrations-auto/pydantic-ai)
 - [Openlayer](https://www.openlayer.com/docs/integrations/pydantic-ai)
 - [LangWatch](https://docs.langwatch.ai/integration/python/integrations/pydantic-ai)
-- [Patronus AI](https://docs.patronus.ai/docs/percival/integrations/pydantic)
 - [Opik](https://www.comet.com/docs/opik/tracing/integrations/pydantic-ai)
-- [mlflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
+- [MLflow](https://mlflow.org/docs/latest/genai/tracing/integrations/listing/pydantic_ai)
 - [Agenta](https://docs.agenta.ai/observability/integrations/pydanticai)
 - [Braintrust](https://www.braintrust.dev/docs/integrations/sdk-integrations/pydantic-ai)
 - [SigNoz](https://signoz.io/docs/pydantic-ai-observability/)
 - [Laminar](https://docs.laminar.sh/tracing/integrations/pydantic-ai)
 - [Respan](https://respan.ai/docs/integrations/pydantic-ai)
 - [Raindrop](https://raindrop.ai/docs/integrations/pydantic-ai)
+- [Sentry](https://docs.sentry.io/platforms/python/integrations/pydantic-ai/)
 
 ## Advanced usage
 
@@ -295,7 +305,9 @@ Each metric point carries the `gen_ai.provider.name` (and legacy `gen_ai.system`
 
 By default, model request spans use the standard `gen_ai.usage.input_tokens` and `gen_ai.usage.output_tokens` attributes, while agent run spans use `gen_ai.aggregated_usage.input_tokens`, `gen_ai.aggregated_usage.output_tokens`, and `gen_ai.aggregated_usage.details.*`.
 
-This avoids double-counting in observability backends that aggregate usage attributes across parent and child spans, since agent run spans report the sum of their child model request spans' usage.
+This avoids double-counting in observability backends that aggregate usage attributes across parent and child spans, since an agent run span reports the sum of its own model request spans' usage.
+
+An agent run span reports what that run spent. A run that [delegates to another agent](multi-agent-applications.md#agent-delegation) does not include the delegate's tokens, whether or not the delegate is instrumented: if it is, its own run span reports them. So the agent run spans in a trace can be added up as they are — the total matches the sum of the `gen_ai.usage.*` attributes on the model request spans underneath them.
 
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
@@ -316,6 +328,8 @@ Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI sy
 **The default is `version=5`**.
 
 Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these versions to [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] emits a [`PydanticAIDeprecationWarning`][pydantic_ai.agent.PydanticAIDeprecationWarning]; use version 5 unless you are temporarily preserving an older telemetry pipeline.
+
+Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
 
 #### Version 2 (deprecated)
 
@@ -361,6 +375,15 @@ Builds on version 4 with improved handling of deferred tool calls:
 
 - [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] and [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] exceptions no longer record an exception event or set the span status to ERROR — the span is left as UNSET, since deferrals are control flow, not errors.
 
+#### Version 6 (opt-in)
+
+Builds on version 5 by giving tool results the message role the [GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/model/gen-ai/gen-ai-input-messages.json) pair with the `tool_call_response` parts they carry:
+
+- Old (v2-5): a tool result is a `tool_call_response` part inside a `{"role": "user"}` message
+- New (v6): it moves to a `{"role": "tool"}` message
+
+This applies to tool returns and to retries that answer a tool call. A retry that answers nothing — output validation, a `ModelRetry` from a validator — stays on `user`, which is the role it reaches the model as. A request whose parts span both roles is emitted as consecutive messages in part order rather than one merged message.
+
 ---
 
 Note that the OpenTelemetry Semantic Conventions are still experimental and are likely to change.
@@ -386,6 +409,10 @@ Agent.instrument_all(instrumentation_settings)
 
 ### Excluding binary content
 
+When `include_binary_content=False`, Pydantic AI excludes binary file data, including images, audio, and documents, from telemetry for user prompts, model responses, tool returns, the agent's output, output-function arguments, and run and tool deferral metadata. The media type remains recorded everywhere. When a value is recorded as a file rather than a message part, its vendor metadata and identifier are recorded too; Pydantic AI derives the identifier from the content when you do not set one.
+
+Binary content is found inside dictionaries, lists and [`ToolReturn`][pydantic_ai.messages.ToolReturn]s, but not inside your own types: a [`BinaryContent`][pydantic_ai.messages.BinaryContent] held as a field of a model or dataclass you define is still recorded in full.
+
 ```python {title="excluding_binary_content.py"}
 from pydantic_ai import Agent, InstrumentationSettings
 from pydantic_ai.capabilities import Instrumentation
@@ -401,7 +428,7 @@ Agent.instrument_all(instrumentation_settings)
 
 For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from telemetry while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content.
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run and tool spans keep only their type, since their message and stack trace can quote that content.
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent
@@ -435,8 +462,55 @@ Agent.instrument_all(instrumentation_settings)
 
 The `gen_ai.tool.definitions` attribute (tool name, description, and parameters) is emitted regardless of this setting, so observability platforms that read the available tools from it are unaffected.
 
+### Decision model spans
+
+A [decision model][pydantic_ai.models.decision.DecisionModel], such as [TypeSafe's Jev](models/typesafe.md), answers typed questions about the conversation instead of generating text. With more than one route on offer, such as a union `output_type` or tools, one request asks which route the text calls for, and asks the fields of every route it can fill beside it. When those questions would cost more than a second request, the route is picked first and its fields are filled in a second request instead. The model request span shows the agent-level request and response, so each request gets a `decide {model}` span of its own underneath it, recording exactly what was asked and answered.
+
+A `decide` span is only emitted inside an instrumented model request, and only for a request that is actually sent: when there is one route left and nothing to fill in, the model takes it without asking, and there is no span. Under [durable execution](durable_execution/overview.md), it sits inside the engine's step, task or activity span for the model request. With Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) to carry the trace into the activity, and the agent's own instrumentation (`Agent.instrument_all()`, or an `Instrumentation` capability on the agent) to say how to record it.
+
+| Attribute | Value |
+|-----------|-------|
+| `gen_ai.operation.name` | `decide` |
+| `gen_ai.provider.name`, `gen_ai.request.model`, `server.address`, ... | The same model attributes as the model request span |
+| `gen_ai.response.model` | The model that answered |
+| `gen_ai.response.id` | The provider's ID for the request, when it returns one |
+| `pydantic_ai.decision.thresholds` | The thresholds applied: `{"boolean": ...}` for `decision_boolean_threshold`, plus `"route"` for `decision_route_threshold` when it's set |
+| `pydantic_ai.decision.usage.input_tokens`, `pydantic_ai.decision.usage.output_tokens` | This request's usage |
+| `pydantic_ai.decision.questions` | The questions as sent: `{name: {"type": ..., "instructions": ..., "criteria": ...}}`, where `type` is `noul` (yes/no), `choice` or `score` |
+| `pydantic_ai.decision.state` | The state as sent: the text being judged, or a JSON object that adds the conversation's `history` |
+| `pydantic_ai.decision.answers` | The answers as received: `{"type": "noul", "noul": ...}` for a yes/no, whose `noul` is the probability of yes, `{"type": "choice", "choice": ..., "confidence": ..., "probabilities": {...}}` for a pick, and `{"type": "score", "score": ..., "confidence": ..., "probabilities": {...}, "legend": {...}}` for a rubric |
+| `pydantic_ai.decision.route` | When the request fills a route picked by an earlier request, or the one route left, that route's label |
+| `pydantic_ai.decision.confidence` | When the request asks field questions and their answers are used, each question's confidence as Pydantic AI derived it after applying `decision_boolean_threshold`, keyed like the questions and answers. Each option of a `list` or mapping gets its own entry under `field.option`, where `provider_details['confidence']` on the response gives the field the least sure of its options. A `float` field that asks for a probability has no entry, since the probability is the answer |
+| `pydantic_ai.decision.route_question` | When the request asks which route to take, the key of that question: `route` |
+| `pydantic_ai.decision.route_options` | When the request asks which route to take, the labels of the routes offered, in order, as a JSON array |
+| `pydantic_ai.decision.route_questions` | When the request asks routes' fields beside the route question, the keys of each route's questions, by the route's label: `{"Refund": ["Refund.reason", "Refund.full_refund"], ...}` |
+
+Questions and answers share their keys, so an answer can be matched to the question it answers. A field's question is keyed by the field's name, a nested model's fields as `outer.inner`, and each option of a `list` or of a mapping from options to `bool` as `field.option`, since the model is asked about each option separately. A field asked beside the route question is keyed under its route's label, as `Refund.reason`. The question that picks between routes is keyed by `pydantic_ai.decision.route_question`, and its options are the labels in `pydantic_ai.decision.route_options`. A label and a nested field's name can both contain dots, so use `pydantic_ai.decision.route_questions` to tell which route a question belongs to, rather than splitting its key.
+
+Every route attribute names a route by its [label](models/decision.md#routes-which-thing-to-do), the name the route question offered it under: an output type's class name such as `Refund`, `None` for the `None` member of a union, or a tool's or output function's name. These are the names `provider_details['route']` uses on the response, whose `choice` and `offered` match the route question's answer and `pydantic_ai.decision.route_options`.
+
+The route the model picks is the route the step takes, unless the step can't take it. A pick less likely than `decision_route_threshold` raises [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute], and a picked route whose fields the model can't fill raises [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], both before any request to fill it. Both are [`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff]s. Either is recorded on the `decide` span that asked the route question, as an error with an `exception` event that carries the picked route's label as `pydantic_ai.decision.route`. With a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] behind the decision model, the model behind it takes the step, and the model request span ends without an error, so the `decide` span is where the hand-off shows. Without one, the model request span records the same error.
+
+The fields asked beside the route question are asked before it's known which route will be picked. Only the picked route's answers are used: `pydantic_ai.decision.confidence` covers only its questions, and the other routes' answers were discarded. A route picked in one request and filled in the next gets a second `decide` span beside the first, whose `route` is the first span's pick.
+
+With [`include_content=False`](#excluding-prompts-and-completions), strings are left out and numbers are kept:
+
+- `pydantic_ai.decision.state` is left out.
+- `pydantic_ai.decision.questions` keeps only each question's `type`, since the instructions and criteria are your own words.
+- `pydantic_ai.decision.answers` keeps only each answer's `type` and its numbers: a yes/no's `noul`, a pick's `confidence`, and a rubric's `score`, `confidence` and `probabilities`, which are keyed by level number. A pick's `choice` and its `probabilities`, keyed by option, and a rubric's `legend` are left out, since options and level descriptions can quote the text being judged. The answer to the route question keeps its `choice` and `probabilities` too, since its options are route labels, but only under the labels the request offered: anything else the backend answered is left out.
+
+Question keys, route labels, and the option names a question key carries for one option of a `list` or mapping are identifiers from your schema, the names of your fields, output types, tools and options, so they're always recorded, in the keys of `pydantic_ai.decision.questions`, `pydantic_ai.decision.answers` and `pydantic_ai.decision.confidence`, and in the route attributes. That includes the options of a [`Choices`][pydantic_ai.output.Choices] set built at run time, which reach the model in the schema just as a `Literal` does.
+
+Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage.*`, and no metrics are recorded for `decide` spans: the model request span above them already reports the total of its `decide` spans' usage, and a backend that adds up usage across spans would count it twice.
+
 ### Adding Custom Metadata
 
 Use the agent's `metadata` parameter to attach additional data to the agent's span.
 When instrumentation is enabled, the computed metadata is recorded on the agent span under the `metadata` attribute.
 See the [usage and metadata example in the agents guide](agent.md#run-metadata) for details and usage.
+
+### The first-run banner
+
+Until instrumentation is configured, the first agent run in a process prints a short banner to `stderr` describing the run and pointing here. It's shown only where someone is there to read it: when `stderr` is a terminal, or when a coding agent is running the process and reads back what it writes. It's never shown when instrumentation is configured, under `pytest`, or when `CI` is set to any value. To turn it off entirely, set `PYDANTIC_AI_NO_BANNER` to any value in the environment, or set `pydantic_ai.BANNER_ENABLED = False` before the first agent run.
+
+Coding agents are recognized by the environment variables they set for the purpose. That list is best-effort and will always be behind, so a harness it doesn't recognize — including one built on Pydantic AI — can set `AI_AGENT` (or `AGENT`) to be treated the same way, naming itself in the value.

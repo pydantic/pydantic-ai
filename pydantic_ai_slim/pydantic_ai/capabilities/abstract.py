@@ -1,15 +1,31 @@
 from __future__ import annotations
 
 from abc import ABC
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections import Counter
+from collections.abc import AsyncIterable, Awaitable, Callable, Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
+from itertools import chain
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias
 
 from pydantic import ValidationError
+from typing_extensions import deprecated
 
-from pydantic_ai._instructions import AgentInstructions
-from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai import _utils
+from pydantic_ai._instructions import (
+    AgentInstruction,
+    AgentInstructions,
+    SourcedInstruction,
+    normalize_instructions,
+    sourced_instruction,
+)
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    CapabilityInstructionSource,
+    ModelResponse,
+    ToolCallPart,
+)
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -20,12 +36,22 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
+
+from ._merge import merge_capability_fields
+from ._on_event import collect_on_event_methods, marked_listens_to
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
-    from pydantic_ai.agent.abstract import AgentModelSettings
+    from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
-    from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.models import (
+        KnownModelName,
+        Model,
+        ModelRequestContext,
+        ModelResolutionContext,
+        ModelSelectionContext,
+    )
     from pydantic_ai.output import OutputContext
     from pydantic_ai.result import FinalResult
     from pydantic_ai.run import AgentRunResult
@@ -49,6 +75,15 @@ WrapNodeRunHandler: TypeAlias = 'Callable[[_agent_graph.AgentNode[AgentDepsT, An
 WrapModelRequestHandler: TypeAlias = 'Callable[[ModelRequestContext], Awaitable[ModelResponse]]'
 """Handler type for [`wrap_model_request`][pydantic_ai.capabilities.AbstractCapability.wrap_model_request]."""
 
+ModelSelection: TypeAlias = 'Model | KnownModelName | str'
+"""A concrete model selection, before model ID resolution."""
+
+ModelSelector: TypeAlias = 'Callable[[ModelSelectionContext[AgentDepsT]], ModelSelection | Awaitable[ModelSelection]]'
+"""A sync or async per-step model selector."""
+
+AgentModel: TypeAlias = 'ModelSelection | ModelSelector[AgentDepsT]'
+"""A static model selection or a callable evaluated for every request step."""
+
 RawToolArgs: TypeAlias = str | dict[str, Any]
 """Type alias for raw (pre-validation) tool arguments."""
 
@@ -69,7 +104,6 @@ WrapOutputValidateHandler: TypeAlias = Callable[[RawOutput], Awaitable[Any]]
 
 WrapOutputProcessHandler: TypeAlias = Callable[[Any], Awaitable[Any]]
 """Handler type for wrap_output_process."""
-
 
 CapabilityPosition = Literal['outermost', 'innermost']
 """Position tier for a capability in the middleware chain.
@@ -149,20 +183,43 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
     Lifecycle: capabilities are passed to an [`Agent`][pydantic_ai.Agent] at construction time, where
     most `get_*` methods are called to collect static configuration (instructions, model
-    settings, toolsets, native tools). The exception is
+    settings, toolsets, native tools). When [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
+    returns a replacement instance, that configuration is re-extracted from the replacement at run
+    setup. The exception is
     [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset],
-    which is called per-run during toolset assembly. Then, on each model request during a
+    which is always called per-run during toolset assembly. Then, on each model request during a
     run, the [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request]
     and [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request]
     hooks are called to allow dynamic adjustments.
 
-    See the [capabilities documentation](capabilities.md) for built-in capabilities.
+    See the [capabilities documentation](../capabilities/overview.md) for built-in capabilities.
 
     [`get_serialization_name`][pydantic_ai.capabilities.AbstractCapability.get_serialization_name]
     and [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] support
     YAML/JSON specs (via `Agent.from_spec`); they have
     sensible defaults and typically don't need to be overridden.
     """
+
+    _safe_at_runtime: ClassVar[bool] = False
+    """Whether this capability can be added per-run when a durability capability is bound.
+
+    Internal, in-tree only. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
+    is the only built-in capability that sets this to `True`; the bundled `durable_exec`
+    integrations read it to allow `Instrumentation` to attach per-run despite the
+    blanket restriction on runtime capability additions.
+
+    A first-class extension point that derives this from a capability's overridden
+    hooks (so third-party capabilities don't need to set a flag manually) is tracked
+    in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
+    """
+
+    @property
+    def _emits_app_events(self) -> bool:
+        """Whether this app-facing capability may emit `CustomEvent`s while dispatching callbacks.
+
+        A property rather than a flag so wrappers can derive it from the capability they wrap.
+        """
+        return False
 
     _: KW_ONLY
 
@@ -173,7 +230,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     run — including the fresh instance a [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run]
     override may return — rather than a specific object.
 
-    Required when `defer_loading=True`. If omitted for an always-available
+    Required when `defer_loading=True`. If omitted for an always-on
     capability, the run derives a local id from the class name.
     """
 
@@ -194,6 +251,39 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     override is optional and only adds routing context to the load catalog.
     """
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Combine capabilities that resolved to the same `id` into the one the run will use.
+
+        Two capabilities under one `id` name the same thing, so exactly one of them can be what
+        that `id` refers to. The default merges them field by field: a value only one of them
+        states is kept, and a value both state takes the later one.
+
+        That default needs no thought from most capabilities, because it follows from the `id`.
+        Declaring a default `id` *is* the statement that an agent has one of these, so a repeat is
+        one configuration stated twice and merging is what it meant. A capability that can
+        legitimately appear several times declares no default `id` instead -- and then this is
+        never reached, because the run tells anonymous capabilities apart itself, and an `id` the
+        *user* passed to such a capability is a name they chose, so passing it twice is reported as
+        a collision rather than merged.
+
+        Override it when composing takes more than merging fields: `NativeOrLocalTool` rebuilds its
+        native tool from the merged configuration, because that tool, not the capability, is what
+        reaches the provider.
+
+        Only reached *within* one layer: a capability supplied for a run overrides its agent-level
+        namesake outright rather than composing with it.
+
+        Args:
+            capabilities: The two or more capabilities sharing an `id`, in application order.
+                All are instances of `cls`; a shared `id` across *different* classes is always
+                rejected, since no one class can say how it composes.
+
+        Returns:
+            The single capability the `id` refers to for this run.
+        """
+        return merge_capability_fields(capabilities)
+
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         """Run a visitor function on all leaf capabilities in this tree.
 
@@ -203,15 +293,80 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         visitor(self)
 
+    def visit_and_replace(
+        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
+    ) -> AbstractCapability[AgentDepsT] | None:
+        """Run a visitor function on the same capabilities as `apply`, and replace them in this tree with its result.
+
+        Analogous to
+        [`AbstractToolset.visit_and_replace`][pydantic_ai.toolsets.AbstractToolset.visit_and_replace],
+        except that returning `None` removes the visited capability instead of replacing it.
+
+        Rewrites in place: containers and wrappers rebuild only the branches that changed, so what
+        survives keeps its position in the hierarchy and a wrapper goes on wrapping whatever is left
+        of its subtree. Rebuilding a tree from the flat list `apply` produces does neither: it loses
+        the nesting, and re-adds a container's children next to the wrapper that already contributes
+        them.
+
+        Returns `self` when nothing changed, and `None` when the visitor removed everything.
+
+        For a single capability, returns the visitor's result for itself. Overridden by
+        [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] and
+        [`WrapperCapability`][pydantic_ai.capabilities.WrapperCapability] to rebuild their children;
+        a custom capability that overrides `apply` because it holds children of its own should
+        override this alongside it, or those children are invisible to callers rewriting the tree.
+        """
+        return visitor(self)
+
     @property
+    @deprecated(
+        '`has_wrap_node_run` is deprecated: `wrap_node_run` now runs under every way of driving a run, '
+        'so there is nothing left to test for.',
+        category=PydanticAIDeprecationWarning,
+    )
     def has_wrap_node_run(self) -> bool:
-        """Whether this capability (or any sub-capability) overrides wrap_node_run."""
+        """Whether this capability (or any sub-capability) overrides wrap_node_run.
+
+        Deprecated: `wrap_node_run` runs under every way of driving a run, so there is nothing left to test for.
+        """
+        return self._has_wrap_node_run
+
+    @property
+    def _has_wrap_node_run(self) -> bool:
         return type(self).wrap_node_run is not AbstractCapability.wrap_node_run
+
+    @property
+    def _has_on_node_run_error(self) -> bool:
+        return type(self).on_node_run_error is not AbstractCapability.on_node_run_error
+
+    @property
+    def _has_wrap_model_request(self) -> bool:
+        return type(self).wrap_model_request is not AbstractCapability.wrap_model_request
+
+    @property
+    def _has_on_model_request_error(self) -> bool:
+        return type(self).on_model_request_error is not AbstractCapability.on_model_request_error
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
         """Whether this capability (or any sub-capability) overrides wrap_run_event_stream."""
         return type(self).wrap_run_event_stream is not AbstractCapability.wrap_run_event_stream
+
+    @property
+    def has_on_event(self) -> bool:
+        """Whether this capability handles run events dynamically or with marked methods."""
+        return type(self).on_event is not AbstractCapability.on_event or bool(collect_on_event_methods(type(self)))
+
+    def listens_to(self, event: AgentStreamEvent) -> bool:
+        """Whether [`on_event`][pydantic_ai.capabilities.AbstractCapability.on_event] would reach a listener for `event`.
+
+        Dispatch asks this before descending, so a capability that listens to a few event classes
+        isn't woken for every event in the run. The default reports `True` for any event a
+        [`@on_event`][pydantic_ai.capabilities.on_event]-marked method accepts, and for every event
+        when `on_event` is overridden directly, since what an override dispatches to isn't knowable
+        here. Override this alongside `on_event` when you can report something narrower.
+        """
+        return type(self).on_event is not AbstractCapability.on_event or marked_listens_to(type(self), event)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -241,14 +396,55 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
+        """Return the capability instance to use with an agent.
+
+        Called after the agent's own configuration is available and before capability
+        contributions are extracted. Constructor capabilities are bound once during agent
+        construction; static run capabilities are bound once per run. Override this to inspect
+        the agent and return an agent-bound copy. The default returns `self`.
+
+        A [`CapabilityFunc`][pydantic_ai.capabilities.CapabilityFunc] result is also bound before
+        its own [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] hook. A specialized
+        run-bound value returned by an ordinary capability's `for_run()` is not bound again.
+
+        Capabilities in the `innermost` ordering tier (see
+        [`get_ordering`][pydantic_ai.capabilities.AbstractCapability.get_ordering]), i.e. durability
+        capabilities, bind in a second phase, after the other capabilities' contributed toolsets have
+        been extracted, so `agent.toolsets` is complete when their `for_agent` wraps it. The flip side
+        is that `innermost` capabilities can't contribute toolsets of their own.
+        """
+        return self
+
+    def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Install private per-run state before any capability lifecycle hook runs.
+
+        Durable dispatch tables must be available before every capability's `before_run`, because
+        one capability may call another capability's durable operation from its hook. This setup
+        therefore cannot be implemented as a `before_run` hook itself. It stays private pending the
+        capability surface decisions tracked in #5477.
+        """
+
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """Return the capability instance to use for this agent run.
 
         Called once per run, before `get_*()` re-extraction and before any hooks fire.
         Override to return a fresh instance for per-run state isolation.
+        Under durable execution, worker processes re-derive this instance from the deserialized
+        run context, so all per-run state must be derivable from `ctx`.
         Default: return `self` (shared across runs).
         """
         return self
+
+    def _validate_runtime_capabilities(
+        self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
+    ) -> None:
+        """Validate capabilities contributed specifically for this run.
+
+        Deliberately private: whether this becomes part of the public runtime extension
+        surface (and in what shape) will be decided as part of
+        [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
+        """
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Return instructions to include in the system prompt, or None.
@@ -263,6 +459,53 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         `load_capability` tool for this capability.
         """
         return None
+
+    def _collect_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        """Return this capability's instructions, each paired with the id to address it by.
+
+        The agent uses this instead of [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions]
+        so a capability with an [`id`][pydantic_ai.capabilities.AbstractCapability.id] gets its own
+        [`InstructionPart`][pydantic_ai.messages.InstructionPart]s rather than being folded into the
+        agent's — computed contributions included, since addressing the capability means addressing
+        everything it tells the model. Container capabilities override this to keep each leaf's
+        contribution attributed; every other capability inherits this default, so overriding
+        `get_instructions` is enough.
+        """
+        return self._collect_own_instructions()
+
+    def _collect_own_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        """Collect this capability's public contribution without container recursion."""
+        return [
+            self._attribute_instruction(instruction) for instruction in normalize_instructions(self.get_instructions())
+        ]
+
+    def _attribute_instruction(self, instruction: AgentInstruction[AgentDepsT]) -> SourcedInstruction[AgentDepsT]:
+        """Attribute one instruction recipe to this capability."""
+        return sourced_instruction(instruction, CapabilityInstructionSource(self.id) if self.id is not None else None)
+
+    def _attribute_container_instructions(
+        self,
+        authored: Sequence[AgentInstruction[AgentDepsT]],
+        relayed: Sequence[SourcedInstruction[AgentDepsT]],
+    ) -> list[SourcedInstruction[AgentDepsT]]:
+        """Attribute what an overriding container returned, keeping what it merely passed along.
+
+        Public container overrides return bare recipes, so identity is the only information that
+        connects a relayed recipe to the child that authored it. An object appearing under more
+        than one child is deliberately not connected: equal interned strings can be the same
+        object, and leaving their keys unidentified is safer than assigning either child at random.
+        """
+        occurrences = Counter(id(sourced.instruction) for sourced in relayed)
+        relayed_by_identity = {
+            id(sourced.instruction): sourced for sourced in relayed if occurrences[id(sourced.instruction)] == 1
+        }
+        # `relayed` keeps every recipe alive for the whole call, so these identities stay meaningful.
+        return [
+            self._attribute_instruction(instruction)
+            if (sourced := relayed_by_identity.get(id(instruction))) is None
+            else sourced
+            for instruction in authored
+        ]
 
     def get_description(self) -> CapabilityDescription[AgentDepsT] | None:
         """Return a human-readable description of this capability, or None.
@@ -293,6 +536,45 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    def _default_run_id(self) -> str | None:
+        return None
+
+    def get_model(self) -> AgentModel[AgentDepsT] | None:
+        """Return a static model, a per-step model selector, or `None` to make no selection.
+
+        A selector receives
+        [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] and may be
+        synchronous or asynchronous. Static selections are resolved once per run; selectors
+        are evaluated before each new logical model request step. When several capabilities
+        contribute a model, the last non-`None` selection wins. This differs from
+        [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id],
+        where the first resolver to return a model wins.
+
+        See [Selecting the model](../capabilities/custom.md#selecting-the-model) for precedence,
+        bootstrap, and deferred-capability semantics.
+        """
+        return None
+
+    @property
+    def has_resolve_model_id(self) -> bool:
+        """Whether this capability or a wrapped capability overrides `resolve_model_id`."""
+        return type(self).resolve_model_id is not AbstractCapability.resolve_model_id
+
+    async def resolve_model_id(
+        self,
+        ctx: ModelResolutionContext[AgentDepsT],
+        *,
+        model_id: KnownModelName | str,
+    ) -> Model | None:
+        """Resolve a model ID, or return `None` to defer.
+
+        Capabilities are tried in user-supplied order. When every capability returns `None`, the ID
+        is passed to [`infer_model`][pydantic_ai.models.infer_model]. The context provides
+        the agent and actual run dependencies, so resolution can configure tenant-specific
+        providers or look up models in a registry.
+        """
+        return None
+
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Return a toolset to register with the agent, or None."""
         return None
@@ -300,6 +582,30 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         """Return native tools to register with the agent."""
         return []
+
+    @property
+    def _has_get_workspace(self) -> bool:
+        """Whether this capability or a wrapped capability overrides `get_workspace`."""
+        return type(self).get_workspace is not AbstractCapability.get_workspace
+
+    def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """Return the run's workspace backend for `ref`, or `None` to leave it to another capability.
+
+        `ref` names an environment to continue in (from `workspace=` or the message history); `None`
+        asks for a fresh one. Build the backend only, without I/O or side effects: it creates or
+        attaches on first use. Capabilities passed to the run are asked before the agent's, each list in
+        order, before `for_run`; the first answer wins. Return `None` for a `ref` you don't own. A
+        workspace is chosen when the run starts, so a capability that supplies one can't be deferred.
+        Return a `Workspace` around the backend, such as `ReadOnlyWorkspace(Workspace(backend))`, to apply a policy.
+        """
+        return None
+
+    def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+        """Prepare the run's selected workspace for the run; called once per selection.
+
+        Private: durability capabilities use it to route workspace calls through durable units.
+        """
+        return workspace
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.
@@ -339,6 +645,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Return a filtered or modified list. The result flows into both the model's request
         parameters and `ToolManager.tools`, so filtering also blocks tool execution.
+
+        On a deferred capability this runs only once the capability is loaded, and then receives
+        every function tool, as an always-on capability does. There is nothing to govern
+        before that: an unloaded capability's tools are neither advertised to the model nor
+        callable, so no filtering here could change what the model can reach.
         """
         return tool_defs
 
@@ -364,7 +675,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
     ) -> None:
-        """Called before the agent run starts. Observe-only; use wrap_run for modification."""
+        """Called before the agent run starts. Observe-only; use `wrap_run` for modification.
+
+        A realtime session is a run. ContextVars set here are ambient in its instruction
+        resolution, pump and tool tasks, and the caller's `async with` block.
+        """
 
     async def after_run(
         self,
@@ -372,7 +687,18 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         result: AgentRunResult[Any],
     ) -> AgentRunResult[Any]:
-        """Called after the agent run completes. Can modify the result."""
+        """Called after the agent run produces a result. Can modify the result.
+
+        Not called when the run ends without a result (e.g. a cancellation that nothing
+        recovered from). It IS called when a result was produced while a cancellation was
+        pending or absorbed upstream — but before the backstop's cancellation re-check, so the
+        cancellation still propagates after this hook returns and the run still ends cancelled.
+        Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
+        (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+
+        For a realtime session, the result is produced when the session closes; a transformed result
+        becomes `session.result` before the caller leaves the `async with` boundary.
+        """
         return result
 
     async def wrap_run(
@@ -392,7 +718,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Note: if the caller cancels the run (e.g. by breaking out of an
         `iter()` loop), this method receives an `asyncio.CancelledError`.
-        Implementations that hold resources should handle cleanup accordingly.
+        Implementations that hold resources should handle cleanup accordingly. Cancellation is
+        terminal: the hook may observe it and clean up, but cannot recover the run to success.
+
+        A realtime session is a run: `handler()` resolves when the session closes. ContextVars set
+        before calling it are ambient in instruction resolution, pumps, tool tasks, and the caller's
+        block. Downward ContextVar propagation is one-way; keep bidirectional per-run state on the
+        `for_run` copy's instance attributes. Suppression and result transformation apply at the
+        session's `async with` boundary, after the caller may have observed events in real time.
         """
         return await handler()
 
@@ -414,7 +747,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         **Return** an [`AgentRunResult`][pydantic_ai.run.AgentRunResult] to suppress
         the error and recover the run.
 
+        Cancellation is terminal: the hook may observe it and clean up, but cannot recover the
+        run to success.
+
         Not called for `GeneratorExit` or `KeyboardInterrupt`.
+
+        For a realtime session, returning a recovery result sets `session.result` and suppresses the
+        error at the caller's `async with` boundary, after events may already have been observed.
         """
         raise error
 
@@ -436,7 +775,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         node: AgentNode[AgentDepsT],
         result: NodeResult[AgentDepsT],
     ) -> NodeResult[AgentDepsT]:
-        """Called after each graph node succeeds. Can modify the result (next node or `End`)."""
+        """Called after each graph node succeeds. Can modify the result (next node or `End`).
+
+        Not called for a node interrupted by cancellation — including a cancellation the node
+        itself absorbed and completed through, which the framework re-asserts at the node
+        boundary: cancellation skips downstream hooks. Put cancellation-safe cleanup in
+        [`wrap_node_run`][pydantic_ai.capabilities.AbstractCapability.wrap_node_run]
+        (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
+        (A hook that catches the `CancelledError` *and* calls `Task.uncancel()` takes over the
+        cancellation bookkeeping for that boundary, so this hook does fire for that node —
+        the run itself still ends cancelled at the next boundary.)
+        """
         return result
 
     async def wrap_node_run(
@@ -456,17 +805,23 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         the returned next node, call `handler` multiple times (retry), or
         return a different node to redirect graph progression.
 
-        Note: this hook fires when using `agent.run()`,
-        `agent.run_stream()`, and when manually driving
-        an `agent.iter()` run with `agent_run.next()`, but it does **not** fire when
-        iterating over the run with bare `async for` (which yields stream events, not
-        node results).
+        Note: this hook fires however the run is driven -- [`agent.run()`][pydantic_ai.agent.AbstractAgent.run],
+        [`agent.run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], an
+        [`agent.iter()`][pydantic_ai.agent.Agent.iter] run advanced with
+        [`agent_run.next()`][pydantic_ai.run.AgentRun.next], and a bare `async for node in agent_run:`
+        loop, which advances through `next()` too. The one exception is the final
+        [`ModelRequestNode`][pydantic_ai.agent.ModelRequestNode] under `run_stream()`, which hands back
+        the result mid-stream and so only fires `before_node_run`.
 
         When using `agent.run()` with `event_stream_handler`, the handler wraps both
         streaming and graph advancement (i.e. the model call happens inside the wrapper).
         When using `agent.run_stream()`, the handler wraps only graph advancement — streaming
         happens before the wrapper because `run_stream()` must yield the stream to the caller
         while the stream context is still open, which cannot happen from inside a callback.
+
+        A cancelled run delivers `asyncio.CancelledError` through `handler()`. Cancellation is
+        terminal: the hook may observe it and clean up, but cannot recover the run to success —
+        even a returned `End` result is discarded once a cancellation is pending.
         """
         return await handler(node)
 
@@ -491,7 +846,23 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         raise error
 
-    # --- Event stream hook ---
+    # --- Event hooks ---
+
+    async def on_event(self, ctx: RunContext[AgentDepsT], *, event: AgentStreamEvent) -> None:
+        """React to every event in the run's event stream.
+
+        This includes model response stream events, tool events, deferred and enqueued-message events,
+        [`CustomEvent`][pydantic_ai.messages.CustomEvent]s, and
+        [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent]s. The default implementation dispatches
+        to methods marked with [`on_event`][pydantic_ai.capabilities.on_event], in definition order.
+
+        Override this method for fully dynamic handling. Call `super().on_event(...)` to retain marked
+        method dispatch. A capability receives events it emits itself. Events emitted by a listener
+        enter the stream after the event being handled.
+        """
+        for method in collect_on_event_methods(type(self)):
+            if not method.event_types or isinstance(event, method.event_types):
+                await method.__get__(self, type(self))(ctx, event)
 
     async def wrap_run_event_stream(
         self,
@@ -499,15 +870,27 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         *,
         stream: AsyncIterable[AgentStreamEvent],
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Wraps the event stream for a streamed node. Can observe or transform events.
+        """Wrap a run or realtime session's consumer-facing event stream.
+
+        For classic runs, the wrapper is applied where each node's stream is produced, so it fires
+        however the run is driven — including under [`agent.iter()`][pydantic_ai.agent.Agent.iter]
+        and when the caller streams a node itself with `node.stream()`. For realtime sessions, it
+        wraps the `async for event in session` view. A wrapper must yield events appropriate for the
+        stream it wraps.
+
+        Transformations affect only what the stream consumer sees. They never change realtime
+        session history, tool execution, or the classic run's accumulated response and output.
 
         Note: when this method is overridden (or [`Hooks.on.event`][pydantic_ai.capabilities.hooks.Hooks.on]
         / [`Hooks.on.run_event_stream`][pydantic_ai.capabilities.hooks.Hooks.on] are registered),
-        `agent.run()` automatically enables streaming mode so this hook
-        fires even without an explicit `event_stream_handler`.
+        `agent.run()` and [`AgentRun.next()`][pydantic_ai.run.AgentRun.next] automatically enable
+        streaming mode so this hook fires even without an explicit `event_stream_handler`.
         """
-        async for event in stream:
-            yield event
+        try:
+            async for event in stream:
+                yield event
+        finally:
+            await _utils.aclose_if_supported(stream)
 
     # --- Model request lifecycle hooks ---
 
@@ -516,7 +899,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Called before each model request. Can modify messages, settings, and parameters."""
+        """Called before each model request. Can modify messages, settings, and parameters.
+
+        [`model_request_parameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts]
+        is the source of truth for the instructions: rewriting them here changes what the model
+        receives, and the request recorded in message history is re-rendered from them afterwards.
+        Assigning to a [`ModelRequest.instructions`][pydantic_ai.messages.ModelRequest] in
+        `request_context.messages` is not propagated the other way, so it does not reach the model.
+        """
         return request_context
 
     async def after_model_request(
@@ -586,6 +976,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip validation and
         ask the model to redo the tool call.
+
+        A tool call can only be deferred once its arguments have been validated, so raising
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] here is a `UserError`. Defer
+        from [`after_tool_validate`][pydantic_ai.capabilities.AbstractCapability.after_tool_validate],
+        a tool's `args_validator`, or
+        [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute].
         """
         return args
 
@@ -601,6 +998,17 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the validated args
         and ask the model to redo the tool call.
+
+        The arguments are valid by this point, so raising
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] here defers the call — the tool
+        isn't executed, and the deferral joins the run's
+        [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] with the validated arguments.
+
+        This hook also runs when the tool's `args_validator` (or `wrap_tool_validate`) already
+        deferred the call, so it stays a reliable gate on validated arguments: rejecting here wins
+        over that deferral, deferring here replaces it, and the args returned here are the ones the
+        deferred call carries.
         """
         return args
 
@@ -613,7 +1021,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: RawToolArgs,
         handler: WrapToolValidateHandler,
     ) -> ValidatedToolArgs:
-        """Wraps tool argument validation. handler() runs the validation."""
+        """Wraps tool argument validation. handler() runs the validation.
+
+        Deferring with [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] is allowed *after* `handler()`
+        has returned, when the arguments are known to be valid; raising one before that is a
+        `UserError`.
+        """
         return await handler(args)
 
     async def on_tool_validate_error(
@@ -635,7 +1049,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         **Raise** the original `error` (or a different exception) to propagate it.
         **Return** validated args to suppress the error and continue as if validation passed.
 
-        Not called for [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation].
+        Not called for [`SkipToolValidation`][pydantic_ai.exceptions.SkipToolValidation], or when a
+        tool's `args_validator` raises [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] or
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] — those are control flow, not
+        errors, and the call is deferred instead of executed.
+
+        Raising a deferral *from this hook* is a `UserError`: it only runs because validation failed,
+        so there are no valid arguments to show whoever would resolve the deferral.
         """
         raise error
 
@@ -653,6 +1073,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip execution and
         ask the model to redo the tool call.
+
+        This is the hook to defer from: raising
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] or
+        [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] here defers the call *before* the tool
+        function runs, so nothing happens until it's resolved.
         """
         return args
 
@@ -669,6 +1094,11 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to reject the tool result
         and ask the model to redo the tool call.
+
+        Deferring from here is accepted but rarely what you want: the tool function has already run,
+        so its side effects happened and `result` is discarded. Defer from
+        [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute]
+        instead.
         """
         return result
 
@@ -681,7 +1111,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> Any:
-        """Wraps tool execution. handler() runs the tool."""
+        """Wraps tool execution. handler() runs the tool.
+
+        Defer before calling `handler()`: a deferral raised after it has returned is accepted, but
+        the tool function already ran and its result is discarded. Defer from
+        [`before_tool_execute`][pydantic_ai.capabilities.AbstractCapability.before_tool_execute]
+        instead.
+        """
         return await handler(args)
 
     async def on_tool_execute_error(
@@ -706,11 +1142,13 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Not called for control flow exceptions
         ([`SkipToolExecution`][pydantic_ai.exceptions.SkipToolExecution],
         [`CallDeferred`][pydantic_ai.exceptions.CallDeferred],
-        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired])
-        or retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
-        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]).
+        [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired]),
+        retry signals ([`ToolRetryError`][pydantic_ai.exceptions.ToolRetryError]
+        from [`ModelRetry`][pydantic_ai.exceptions.ModelRetry]), or failure signals
+        ([`ToolFailedError`][pydantic_ai.exceptions.ToolFailedError]
+        from [`ToolFailed`][pydantic_ai.exceptions.ToolFailed]).
         Use [`wrap_tool_execute`][pydantic_ai.capabilities.AbstractCapability.wrap_tool_execute]
-        to intercept retries.
+        to intercept retries or failures.
         """
         raise error
 
@@ -912,3 +1350,223 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         from .prefix_tools import PrefixTools
 
         return PrefixTools(wrapped=self, prefix=prefix)
+
+
+def leaf_capabilities(capability: AbstractCapability[AgentDepsT]) -> list[AbstractCapability[AgentDepsT]]:
+    """Collect the leaf capabilities in a capability tree, in application order."""
+    leaves: list[AbstractCapability[AgentDepsT]] = []
+    capability.apply(leaves.append)
+    return leaves
+
+
+def _combination_roots(capability: AbstractCapability[AgentDepsT]) -> Sequence[AbstractCapability[AgentDepsT]]:
+    """Return the branches a surrounding combined capability retains after flattening."""
+    from .combined import CombinedCapability
+
+    return capability.capabilities if isinstance(capability, CombinedCapability) else [capability]
+
+
+def select_workspace(
+    capability: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    *,
+    ref: WorkspaceRef | None,
+    run_layer: AbstractCapability[AgentDepsT] | None = None,
+) -> Workspace | None:
+    """The workspace the capabilities supply for `ref`, as a `Workspace`, or `None` if none does.
+
+    The run's own capabilities (`run_layer`, part of `capability`) are asked first, as every other run
+    argument overrides the agent's; then `capability`, where the first to return one wins.
+    """
+    selected = run_layer.get_workspace(ctx, ref=ref) if run_layer is not None else None
+    if selected is None:
+        selected = capability.get_workspace(ctx, ref=ref)
+    if ref is not None and selected is not None and selected.ref != ref:
+        # A resolver must not replace an expired or unauthorized environment with a fresh one; a backend
+        # without a ref would create one on first use.
+        raise UserError(
+            "A workspace capability's `get_workspace` returned a different workspace than requested: "
+            f'asked for {ref!r}, got {selected.ref!r}'
+        )
+    return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
+
+
+@dataclass(frozen=True)
+class _CapabilityOccurrence(Generic[AgentDepsT]):
+    capability: AbstractCapability[AgentDepsT]
+    occurrence_index: int
+    layer_index: int
+    position: int
+
+
+def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
+    capability: AbstractCapability[AgentDepsT],
+    layers: Sequence[Sequence[AbstractCapability[AgentDepsT]]],
+) -> AbstractCapability[AgentDepsT]:
+    """Resolve capabilities sharing an `id` in a tree down to one each.
+
+    Two capabilities under one `id` mean different things depending on where they came from, so the
+    rule is different in each direction:
+
+    * **Within a layer** they are one configuration stated twice, and
+      [`combine`][pydantic_ai.capabilities.AbstractCapability.combine] decides what that means.
+      `Agent(capabilities=[Coder(), Researcher()])` brings two `WebSearch` capabilities with
+      different allow-lists, and the agent should be able to reach both sets of domains.
+    * **Across layers** the later layer *overrides* the earlier one outright, and `combine` is not
+      consulted at all. `agent.run(capabilities=[WebSearch(allowed_domains=[...])])` states what
+      this run may reach; merging it into the agent's list would widen the very restriction it was
+      passed to impose. A run-level capability replaces its agent-level namesake, whole.
+
+    `Agent.__init__` also runs this over the capabilities the agent was constructed with -- one
+    layer, so within-layer rules -- because it goes on to bind them and read what they contribute
+    long before a run exists, and two that will merge into one must not be read as two.
+
+    Keeping both is not an option: `_build_run_capabilities` maps the id to exactly one of them, so
+    the other would go on contributing tools and instructions while nothing could name it --
+    `resolve_capability_id` wouldn't find it, and it would be missing from
+    `RunContext.active_capability_ids`.
+
+    Rewrites the tree in place with
+    [`visit_and_replace`][pydantic_ai.capabilities.AbstractCapability.visit_and_replace] rather than
+    rebuilding it from the flat leaf list, which would drop the nesting and re-add a container's
+    children beside the wrapper that already contributes them.
+
+    Capabilities with `id=None` are left alone: the run tells those apart itself.
+
+    `layers` is the application layers in order, each holding the capabilities supplied to it. The
+    composed tree cannot answer either question: `CombinedCapability` sorts its leaves into ordering
+    tiers, so a capability supplied later but positioned `'outermost'` moves ahead of one supplied
+    earlier, and reading "last" off the tree would turn a run-level override into the agent-level
+    capability winning.
+    """
+    from .wrapper import WrapperCapability
+
+    # `CombinedCapability` may sort top-level branches, but it retains each non-combined branch as
+    # the object supplied by its source layer. Associate provenance with that branch before walking
+    # its leaves: a wrapper can move ahead of an earlier layer while the same leaf object appears
+    # both inside that wrapper and on its own.
+    root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
+    position = 0
+    for layer_index, layer in enumerate(layers):
+        for root in chain.from_iterable(map(_combination_roots, layer)):
+            leaf_positions: dict[int, list[int]] = {}
+            for leaf in leaf_capabilities(root):
+                leaf_positions.setdefault(id(leaf), []).append(position)
+                position += 1
+            root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
+
+    occurrence_counts: dict[int, int] = {}
+    by_id: dict[str, list[_CapabilityOccurrence[AgentDepsT]]] = {}
+    for root in _combination_roots(capability):
+        layer_index, leaf_positions = root_locations[id(root)].pop(0)
+        for leaf in leaf_capabilities(root):
+            if leaf.id is not None:
+                occurrence_index = occurrence_counts.get(id(leaf), 0)
+                occurrence_counts[id(leaf)] = occurrence_index + 1
+                position = leaf_positions[id(leaf)].pop(0)
+                occurrence = _CapabilityOccurrence(leaf, occurrence_index, layer_index, position)
+                by_id.setdefault(leaf.id, []).append(occurrence)
+    # Stable, so duplicates the application order does not distinguish keep their tree order.
+    duplicate_groups = {
+        capability_id: sorted(duplicates, key=lambda occurrence: occurrence.position)
+        for capability_id, duplicates in by_id.items()
+        if len(duplicates) > 1
+    }
+
+    # The combined capability takes the last occurrence's place, so what survives keeps the position
+    # the run's last word on that id had; the earlier occurrences are removed.
+    #
+    # Keyed by occurrence rather than by object: the same instance may be registered twice (on the
+    # agent and passed again for the run), and a plain `id()` -> replacement map would hand every
+    # occurrence of it the same answer, leaving the survivor in the tree as many times as it went in.
+    # `visit_and_replace` walks the nodes `apply` yields, in that order, so consuming one decision
+    # per visit lines the decisions up with the occurrences they were made for.
+    replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
+    for capability_id, duplicates in duplicate_groups.items():
+        # Only the last layer to state this id has a say; everything an earlier layer said under it
+        # is overridden, not merged in. `combine` then settles what the survivors within that one
+        # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
+        last_layer = max(duplicate.layer_index for duplicate in duplicates)
+        surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
+        # Transparent wrappers name the same capability across layers, not the same mergeable class
+        # within a layer, so a group confined to one layer is compared as written: there, a wrapper
+        # and what it wraps are two capabilities claiming one id. Across layers they are one
+        # capability named twice, so the wrappers come off and the comparison is between what they
+        # hold. Explicitly renamed wrappers keep their own identity either way.
+        spans_layers = last_layer != duplicates[0].layer_index
+        identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
+        for duplicate in duplicates:
+            identity = duplicate.capability
+            while spans_layers and isinstance(identity, WrapperCapability) and identity.id == identity.wrapped.id:
+                identity = identity.wrapped
+            identity_types.add(type(identity))
+        _reject_class_crossing_id(capability_id, identity_types)
+        # With a single survivor there is nothing to settle, so `combine` isn't called.
+        combined_duplicate = surviving[-1]
+        if len(surviving) > 1:
+            _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
+            if not _declares_default_id(type(combined_duplicate)):
+                raise UserError(_repeated_id_message(capability_id))
+            combined_duplicate = combined_duplicate.combine(surviving)
+        replacements.update(
+            {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
+        )
+        last_duplicate = duplicates[-1]
+        replacements[id(last_duplicate.capability)][last_duplicate.occurrence_index] = combined_duplicate
+
+    if not replacements:
+        return capability
+
+    def replace_occurrence(cap: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT] | None:
+        decisions = replacements.get(id(cap))
+        if not decisions:
+            return cap
+        return decisions.pop(0)
+
+    combined = capability.visit_and_replace(replace_occurrence)
+    # Every duplicated id keeps one occurrence, so the tree can never be emptied.
+    assert combined is not None, 'combining duplicate capabilities cannot empty the tree'
+    return combined
+
+
+def _repeated_id_message(capability_id: str) -> str:
+    """Why an `id` the user chose for two capabilities cannot resolve to one.
+
+    Shared by `Agent(...)` validation and the run's own resolution so the two report it the same
+    way, whichever notices first.
+    """
+    return (
+        f'Capability id {capability_id!r} is used by multiple capabilities. '
+        'Ids identify one capability within a run, so give each a distinct `id`.'
+    )
+
+
+def _declares_default_id(capability_type: type[AbstractCapability[Any]]) -> bool:
+    """Whether the class itself names the `id` its instances carry, rather than the user.
+
+    A default `id` is a class saying "an agent has one of me", which is what makes a repeat
+    something to combine rather than a collision. Without one, an `id` exists only because the user
+    passed it, and two they passed the same are two capabilities they meant to tell apart.
+
+    Read off the class attribute, so declaring a default means writing one -- `id: str | None =
+    'web_search'` in the class body. A capability that only passes `id=` up from inside its own
+    `__init__` has not declared anything a reader or this check can see, and is treated as
+    anonymous; two of it collide, loudly, and the fix is to hoist the default into the class body.
+    """
+    return getattr(capability_type, 'id', None) is not None
+
+
+def _reject_class_crossing_id(capability_id: str, types: Collection[type[AbstractCapability[Any]]]) -> None:
+    """Reject an `id` two different capability classes both claim.
+
+    No class can be asked to combine another's instances, so a shared id across classes is never
+    resolvable however they were ordered. Shared with `Agent(...)` validation so the two report the
+    same thing: construction sees only the capabilities it was handed, and this pass sees the tree
+    a run resolves to, but neither one is a case the other should describe differently.
+    """
+    if len(types) > 1:
+        names = ', '.join(sorted(cls.__name__ for cls in types))
+        raise UserError(
+            f'Capability id {capability_id!r} is used by capabilities of different types ({names}). '
+            'Ids identify one capability within a run, so give each a distinct `id`.'
+        )

@@ -10,15 +10,15 @@ bigger bill and higher latency (the PR #4338 class of bug).
 Each test records a real conversation, round-trips the resulting history through an adapter,
 then sends the same follow-up prompt twice — once with the original history, once with the
 round-tripped one — and compares the two recorded request bodies. Note the comparison is over
-the re-serialized JSON, not the raw wire bytes: the project's cassette serializer stores each
-JSON body as a parsed structure and replays it via `json.dumps` (see `tests/json_body_serializer`),
-so whitespace-only differences are normalized away. What survives — and what these tests guard —
+the re-serialized JSON, not the raw wire bytes: cassetter stores each JSON body as a parsed
+structure and `tests/cassette_utils.py` reads it back through `json.dumps`, so whitespace-only
+differences are normalized away. What survives — and what these tests guard —
 is the structural and field-value drift a lossy round-trip actually produces: dropped or reordered
 blocks, a changed tool-arg representation, a missing thinking signature. Coverage targets the
 PR #5873 wire-fidelity risks: tool-call arg serialization and thinking signatures.
 
 On real provider data these round-trips are faithful, so the equality tests are regression guards.
-The one real change is AG-UI < 0.1.13 dropping `ThinkingPart` (no reasoning carrier before 0.1.13);
+The one real change is AG-UI < 0.1.11 dropping `ThinkingPart` (no reasoning carrier before 0.1.11);
 that test asserts the request *changes*, documenting the protocol-version limitation.
 """
 
@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
@@ -39,8 +39,8 @@ with try_import() as ag_ui_imports_successful:
     from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 with try_import() as ag_ui_reasoning_successful:
-    # `ReasoningMessage` (the 0.1.13 reasoning carrier) landed in ag-ui-protocol 0.1.13; older installs
-    # (e.g. the `lowest-versions` CI job, pinned to 0.1.10) lack it, so the thinking-at-0.1.13 dump path is skipped.
+    # `ReasoningMessage`, the reasoning carrier, landed in ag-ui-protocol 0.1.11; older installs
+    # (e.g. the `lowest-versions` CI job, pinned to 0.1.10) lack it, so that dump path is skipped.
     from ag_ui.core import ReasoningMessage  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 with try_import() as openai_imports_successful:
@@ -51,12 +51,12 @@ with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 
-def _post_bodies(vcr: Cassette) -> list[bytes | str]:
+def _post_bodies(vcr: Cassette) -> list[bytes | str | None]:
     """Bodies of the POST requests recorded in `vcr`, in order."""
-    return [request.body for request in vcr.requests if request.method == 'POST']  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    return [request.body for request in vcr.requests if request.method == 'POST']
 
 
 def _vercel_roundtrip(history: list[ModelMessage]) -> list[ModelMessage]:
@@ -64,7 +64,7 @@ def _vercel_roundtrip(history: list[ModelMessage]) -> list[ModelMessage]:
 
 
 def _ag_ui_roundtrip_latest(history: list[ModelMessage]) -> list[ModelMessage]:
-    return AGUIAdapter.load_messages(AGUIAdapter.dump_messages(history, ag_ui_version='0.1.13'))
+    return AGUIAdapter.load_messages(AGUIAdapter.dump_messages(history, ag_ui_version='0.1.11'))
 
 
 def _ag_ui_roundtrip_0_1_10(history: list[ModelMessage]) -> list[ModelMessage]:
@@ -118,9 +118,9 @@ async def test_openai_tool_call_roundtrip_wire_stable(
         pytest.param(_vercel_roundtrip, id='vercel'),
         pytest.param(
             _ag_ui_roundtrip_latest,
-            id='ag_ui-0_1_13',
+            id='ag_ui-0_1_11',
             marks=pytest.mark.skipif(
-                not ag_ui_reasoning_successful(), reason='ag-ui-protocol < 0.1.13 (no ReasoningMessage)'
+                not ag_ui_reasoning_successful(), reason='ag-ui-protocol < 0.1.11 (no ReasoningMessage)'
             ),
         ),
     ],
@@ -147,12 +147,16 @@ async def test_anthropic_thinking_roundtrip_wire_stable(
 
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 @pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed')
+@pytest.mark.moves_cache_prefix(
+    reason='AG-UI < 0.1.11 has no reasoning carrier, so the round-trip deliberately drops the '
+    'ThinkingPart and moves the prefix; this test asserts that documented limitation.'
+)
 async def test_anthropic_thinking_agui_0_1_10_drops_prefix(
     allow_model_requests: None,
     anthropic_api_key: str,
     vcr: Cassette,
 ):
-    """AG-UI < 0.1.13 has no reasoning carrier, so dump drops the `ThinkingPart` and the re-sent
+    """AG-UI < 0.1.11 has no reasoning carrier, so dump drops the `ThinkingPart` and the re-sent
     prefix changes. Documents the protocol-version limitation (verified, not a defect to fix)."""
     settings = AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 1024})
     model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))

@@ -4,6 +4,7 @@ from typing import Literal, cast
 
 from pydantic_ai import _utils
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.usage import RequestUsage
 
@@ -121,6 +122,7 @@ class OpenAIEmbeddingModel(EmbeddingModel):
     async def embed(
         self, inputs: str | Sequence[str], *, input_type: EmbedInputType, settings: EmbeddingSettings | None = None
     ) -> EmbeddingResult:
+        check_allow_model_requests()
         inputs, settings = self.prepare_embed(inputs, settings)
         settings = cast(OpenAIEmbeddingSettings, settings)
 
@@ -134,7 +136,9 @@ class OpenAIEmbeddingModel(EmbeddingModel):
             )
         except APIStatusError as e:
             if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(status_code=status_code, model_name=self.model_name, body=e.body) from e
+                raise ModelHTTPError(
+                    status_code=status_code, model_name=self.model_name, body=e.body, headers=dict(e.response.headers)
+                ) from e
             raise  # pragma: lax no cover
         except APIConnectionError as e:  # pragma: no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e

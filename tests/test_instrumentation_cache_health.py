@@ -100,7 +100,7 @@ def cache_spans(
             provider_name=usage.provider_name,
         )
 
-    profile = ModelProfile(prompt_cache_retention=retention) if retention is not None else None
+    profile = ModelProfile(default_cache_retention=retention) if retention is not None else None
     model = ResponseNameFunctionModel(model_function, model_name='cache-model', profile=profile)
     agent = Agent(
         FallbackModel(model) if use_fallback else model,

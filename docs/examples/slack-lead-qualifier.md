@@ -1,3 +1,7 @@
+---
+description: "Build and deploy a Pydantic AI agent on Modal that researches new Slack community members, qualifies them as leads, and posts daily summaries to Slack."
+---
+
 # Slack Lead Qualifier with Modal
 
 In this example, we're going to build an agentic app that:
@@ -30,7 +34,7 @@ If you just want to see the code without actually going through the effort of se
 
 You need to have a Slack workspace and the necessary permissions to create apps.
 
-2. Create a new Slack app using the instructions at <https://docs.slack.dev/quickstart>.
+1. Create a new Slack app using the instructions at <https://docs.slack.dev/quickstart>.
     1. In step 2, "Requesting scopes", request the following scopes:
         - [`users.read`](https://docs.slack.dev/reference/scopes/users.read)
         - [`users.read.email`](https://docs.slack.dev/reference/scopes/users.read.email)

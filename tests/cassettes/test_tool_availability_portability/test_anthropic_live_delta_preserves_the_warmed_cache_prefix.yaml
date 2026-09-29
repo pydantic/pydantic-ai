@@ -1,0 +1,174 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '420'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Reply only with: ready'
+          type: text
+        role: user
+      model: claude-opus-4-8
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - defer_loading: true
+        description: Look up an exchange rate.
+        input_schema:
+          type: object
+        name: lookup_exchange_rate
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '530'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-7b64ecbb9bb694c4094f404f63f60d47-a1628416cd6277c5-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: ready
+        type: text
+      id: msg_011CdgAuiBKZcoiT3y9FPAsY
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 661
+        output_tokens: 4
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '681'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: 'Reply only with: ready'
+          type: text
+        role: user
+      - content:
+        - text: ready
+          type: text
+        role: assistant
+      - content:
+        - text: .
+          type: text
+        role: user
+      - content:
+        - tool:
+            name: lookup_exchange_rate
+            type: tool_reference
+          type: tool_addition
+        role: system
+      model: claude-opus-4-8
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - defer_loading: true
+        description: Look up an exchange rate.
+        input_schema:
+          type: object
+        name: lookup_exchange_rate
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '530'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-caf5806b8051c29e1d0b63e88b95fc91-f64e5524e446fc54-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: ready
+        type: text
+      id: msg_011CdgAundDJNYxm219zLSbz
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 763
+        output_tokens: 4
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

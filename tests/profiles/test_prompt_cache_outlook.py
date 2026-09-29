@@ -1,4 +1,4 @@
-"""Tests for `ModelProfile.prompt_cache_retention` and the `prompt_cache_outlook()` helper.
+"""Tests for `ModelProfile.default_cache_retention` and the `prompt_cache_outlook()` helper.
 
 These are pure-data / pure-function tests (no provider requests), so they're unit tests rather
 than VCR tests: the retention boundaries are documented provider facts and the outlook is a
@@ -24,6 +24,7 @@ from pydantic_ai.profiles.openai import openai_model_profile
 from ..conftest import try_import
 
 with try_import() as anthropic_imports:
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
 with try_import() as bedrock_imports:
@@ -57,7 +58,7 @@ def _cache_point_history(idle: timedelta, ttl: Literal['5m', '1h']) -> list[Mode
 
 def _retention(profile: ModelProfile | None) -> timedelta | None:
     assert profile is not None
-    return profile.get('prompt_cache_retention')
+    return profile.get('default_cache_retention')
 
 
 # ---- Documented provider retention boundaries --------------------------------------------
@@ -109,7 +110,7 @@ def test_model_family_profiles_leave_retention_unset():
 )
 def test_undocumented_providers_leave_retention_unset(profile: ModelProfile | None):
     assert profile is not None
-    assert profile.get('prompt_cache_retention') is None
+    assert profile.get('default_cache_retention') is None
 
 
 # ---- Outlook: warm / cold boundaries -----------------------------------------------------
@@ -140,13 +141,13 @@ def test_outlook_just_past_boundary_is_cold():
 
 
 def test_outlook_uses_profile_retention():
-    profile = ModelProfile(prompt_cache_retention=timedelta(minutes=5))
+    profile = ModelProfile(default_cache_retention=timedelta(minutes=5))
     assert prompt_cache_outlook(_history(timedelta(minutes=30)), profile=profile, now=NOW) == 'cold'
     assert prompt_cache_outlook(_history(timedelta(minutes=2)), profile=profile, now=NOW) == 'warm'
 
 
 def test_explicit_retention_overrides_profile():
-    profile = ModelProfile(prompt_cache_retention=timedelta(minutes=5))
+    profile = ModelProfile(default_cache_retention=timedelta(minutes=5))
     # A 30-minute idle gap is cold under the 5m floor but warm under an explicit 1h override.
     assert prompt_cache_outlook(_history(timedelta(minutes=30)), profile=profile, now=NOW) == 'cold'
     assert (
@@ -157,13 +158,13 @@ def test_explicit_retention_overrides_profile():
 
 def test_one_hour_cache_point_extends_profile_retention():
     history = _cache_point_history(timedelta(minutes=30), '1h')
-    profile = ModelProfile(prompt_cache_retention=timedelta(minutes=5))
+    profile = ModelProfile(default_cache_retention=timedelta(minutes=5))
     assert prompt_cache_outlook(history, profile=profile, now=NOW) == 'warm'
 
 
 def test_five_minute_cache_point_does_not_shorten_profile_retention():
     history = _cache_point_history(timedelta(minutes=8), '5m')
-    profile = ModelProfile(prompt_cache_retention=timedelta(minutes=10))
+    profile = ModelProfile(default_cache_retention=timedelta(minutes=10))
     assert prompt_cache_outlook(history, profile=profile, now=NOW) == 'warm'
 
 
@@ -172,10 +173,34 @@ def test_cache_point_without_profile_retention_is_unknown():
     assert prompt_cache_outlook(history, profile=ModelProfile(), now=NOW) == 'unknown'
 
 
-def test_explicit_retention_overrides_cache_point():
+def test_cache_point_extends_explicit_retention():
+    # Requested retention replaces the profile's default, but cache points still extend it: they are
+    # facts of the history, whichever boundary they extend.
     history = _cache_point_history(timedelta(minutes=30), '1h')
-    profile = ModelProfile(prompt_cache_retention=timedelta(minutes=5))
-    assert prompt_cache_outlook(history, profile=profile, retention=timedelta(minutes=10), now=NOW) == 'cold'
+    profile = ModelProfile(default_cache_retention=timedelta(minutes=5))
+    assert prompt_cache_outlook(history, profile=profile, retention=timedelta(minutes=10), now=NOW) == 'warm'
+    assert prompt_cache_outlook(_history(timedelta(minutes=30)), retention=timedelta(minutes=10), now=NOW) == 'cold'
+
+
+@pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+@pytest.mark.parametrize(
+    ('settings', 'expected'),
+    [
+        (None, 'cold'),
+        (AnthropicModelSettings(anthropic_cache=True), 'cold'),
+        (AnthropicModelSettings(anthropic_cache='1h'), 'warm'),
+    ],
+)
+def test_outlook_with_resolved_retention(settings: AnthropicModelSettings | None, expected: str):
+    """The resolver and the profile default compose: settings that request nothing leave the default in place."""
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
+    outlook = prompt_cache_outlook(
+        _history(timedelta(minutes=30)),
+        profile=model.profile,
+        retention=model.resolve_cache_retention(settings),
+        now=NOW,
+    )
+    assert outlook == expected
 
 
 # ---- Outlook: unknown cases --------------------------------------------------------------

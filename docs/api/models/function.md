@@ -44,7 +44,7 @@ async def model_function(
         output_tools=[],
         model_settings=None,
         model_request_parameters=ModelRequestParameters(
-            function_tools=[], native_tools=[], output_tools=[]
+            function_tools=[], native_tools=[], tool_visibility={}, output_tools=[]
         ),
         instructions=None,
     )
@@ -58,6 +58,40 @@ async def test_my_agent():
         result = await my_agent.run('Testing my agent...')
         assert result.output == 'hello world'
 ```
+
+The function can be any callable with the right signature, not just a plain function. An instance whose
+`__call__` is `async def` is awaited directly like an `async def` function, and can carry state or
+configuration between requests:
+
+```py {title="function_model_callable_instance.py"}
+from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+class CannedResponses:
+    def __init__(self, *responses: str):
+        self.responses = list(responses)
+
+    async def __call__(
+        self, messages: list[ModelMessage], info: AgentInfo
+    ) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(self.responses.pop(0))])
+
+
+model = FunctionModel(CannedResponses('hello', 'world'))
+agent = Agent(model)
+
+print(agent.run_sync('First').output)
+#> hello
+print(agent.run_sync('Second').output)
+#> world
+print(model.model_name)  # (1)!
+#> function:CannedResponses:
+```
+
+1. A callable instance has no `__name__`, so the generated model name uses its class name instead.
+
+_(This example is complete, it can be run "as is")_
 
 See [Unit testing with `FunctionModel`](../../testing.md#unit-testing-with-functionmodel) for detailed documentation.
 

@@ -52,7 +52,7 @@ dependencies = [
     "logfire-api>=3.14.1",
     "pydantic>=2.12",
     "pydantic-ai-slim=={{ version }}",
-    "anyio>=0",
+    "anyio>=4.7.0",
     "pyyaml>=6.0.2",
 ]
 
@@ -60,9 +60,9 @@ dependencies = [
 logfire = ["logfire>=3.14.1"]
 
 [project.urls]
-Homepage = "https://ai.pydantic.dev/evals"
+Homepage = "https://pydantic.dev/docs/ai/evals/evals/"
 Source = "https://github.com/pydantic/pydantic-ai"
-Documentation = "https://ai.pydantic.dev/evals"
+Documentation = "https://pydantic.dev/docs/ai/evals/evals/"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [tool.hatch.build.targets.wheel]

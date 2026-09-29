@@ -8,32 +8,363 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
+from urllib.parse import urlparse
+
+import pytest
+import yaml
+
+from pydantic_ai._utils import is_str_dict
+
+try:
+    from yaml import CSafeLoader as SafeLoader
+except ImportError:  # pragma: no cover
+    from yaml import SafeLoader
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette, RecordedRequest
+
+PrefixBlock = tuple[str, str]
+
+# Cache-write order of the request sections; a lower value is matched earlier in the provider's prompt
+# cache, so when two requests diverge on different sections the earlier one is where the prefix breaks.
+_CACHE_ORDER = {'tools': 0, 'system': 1, 'messages': 2}
+
+
+def _is_list(value: Any) -> TypeGuard[list[Any]]:
+    return isinstance(value, list)
+
+
+@dataclass(frozen=True)
+class CassettePrefixViolation:
+    """A consecutive request pair whose provider-cache wire prefix moved."""
+
+    shape: str
+    pair_index: int
+    level: str
+    block_index: int
+    earlier_block: str
+    later_block: str
+
+
+def check_cache_prefix_stability(node: pytest.Item, cassette: Path | Cassette) -> None:
+    """Fail when a cassette moves its provider-cache wire prefix without an exemption."""
+    if (marker := node.get_closest_marker('moves_cache_prefix')) is not None:
+        reason = marker.kwargs.get('reason')
+        if not (isinstance(reason, str) and reason.strip()):
+            pytest.fail(
+                '@pytest.mark.moves_cache_prefix requires reason=... (a non-empty string) explaining why '
+                'this test deliberately moves the cache prefix'
+            )
+        return
+
+    violations = list(iter_cassette_prefix_violations(cassette))
+    if violations:
+        cassette_path = cassette if isinstance(cassette, Path) else cassette.path
+        details = '\n'.join(
+            f'{cassette_path} [{violation.shape}] pair {violation.pair_index}, {violation.level} block '
+            f'{violation.block_index}:\n  earlier: {violation.earlier_block}\n  later:   {violation.later_block}'
+            for violation in violations
+        )
+        pytest.fail(
+            f"{details}\nA moving wire prefix busts the provider prompt cache on every turn; if this test's behavior is "
+            'deliberately prefix-moving (compaction, dynamic tool disclosure, history rewriting), add '
+            '@pytest.mark.moves_cache_prefix(reason=...) to the test'
+        )
+
+
+def canonical_prefix_blocks(body: dict[str, Any], url: str) -> tuple[str, list[PrefixBlock]] | None:
+    """Flatten a provider request into cache-ordered JSON blocks.
+
+    The supported shapes cover the multi-request endpoints in the 2026-07-15 cassette corpus.
+    Blocks deliberately use insertion-order `json.dumps` output because wire order is the invariant.
+    """
+    parsed_url = urlparse(url)
+    host, path = parsed_url.hostname or '', parsed_url.path
+    blocks: list[PrefixBlock] = []
+
+    def add(level: str, items: Any) -> None:
+        if items is None:
+            return
+        # Some fields hold a single block rather than a list: a plain-string system prompt
+        # (Anthropic/Bedrock), or Google's `systemInstruction`, which is one Content *dict* --
+        # iterating it would silently reduce it to its keys and blind the check to content changes.
+        block_items: list[Any] = items if _is_list(items) else [items]
+        for item in block_items:
+            blocks.append((level, json.dumps(item)))
+
+    if path.endswith('/v1/messages') or (host == 'api.anthropic.com' and '/messages' in path):
+        tools = body.get('tools')
+        # Anthropic excludes deferred tool declarations from its prompt-cache key: appending an
+        # entry with `defer_loading: true` preserves the cached prefix (measured). They are
+        # therefore outside this cache-key model — but their wire contract is still append-only
+        # in first-reveal order, which `iter_cassette_prefix_violations` enforces separately via
+        # `anthropic_deferred_tool_blocks`.
+        if _is_list(tools):
+            tools = [tool for tool in tools if not (is_str_dict(tool) and tool.get('defer_loading') is True)]
+        add('tools', tools)
+        add('system', body.get('system'))
+        add('messages', body.get('messages'))
+        return 'anthropic', blocks
+    if path.endswith('/chat/completions'):
+        add('tools', body.get('tools'))
+        add('messages', body.get('messages'))
+        return 'openai-chat', blocks
+    if path.endswith('/responses'):
+        # Only the create endpoint (`.../responses`) carries a cacheable prefix. Auxiliary sub-paths
+        # (`/responses/compact`, `/responses/input_tokens`, `/responses/{id}`) have unrelated bodies and
+        # must not be pooled with it, so match the endpoint exactly rather than as a substring. The
+        # trailing segment keeps every host's create endpoint (`api.openai.com`, Azure, OpenRouter).
+        add('system', body.get('instructions'))
+        add('tools', body.get('tools'))
+        input_ = body.get('input')
+        add('messages', input_ if isinstance(input_, list) else [input_] if input_ is not None else None)
+        return 'openai-responses', blocks
+    if 'generativelanguage' in host or ':generateContent' in path or ':streamGenerateContent' in path:
+        add('tools', body.get('tools'))
+        add('system', body.get('systemInstruction') or body.get('system_instruction'))
+        add('messages', body.get('contents'))
+        return 'google', blocks
+    if '/converse' in path:
+        tool_config = body.get('toolConfig')
+        add('tools', tool_config.get('tools') if is_str_dict(tool_config) else None)
+        add('system', body.get('system'))
+        add('messages', body.get('messages'))
+        return 'bedrock', blocks
+    return None
+
+
+def anthropic_deferred_tool_blocks(body: dict[str, Any]) -> list[str]:
+    """Serialized `defer_loading: true` tool entries, in wire order.
+
+    Excluded from the cache-key model in `canonical_prefix_blocks` (Anthropic ignores them in
+    its prompt-cache key), but the wire contract for them is append-only in first-reveal order:
+    a reorder, edit, or removal is a behavior bug the cache-key exclusion alone cannot see.
+    """
+    tools = body.get('tools')
+    if not _is_list(tools):
+        return []
+    return [json.dumps(tool) for tool in tools if is_str_dict(tool) and tool.get('defer_loading') is True]
+
+
+def is_new_user_turn(block: str) -> bool:
+    """True when a `messages` block is a fresh user prompt rather than a tool/function result.
+
+    A new user turn beyond the previous request's history marks a new conversation turn or run (a
+    fresh `agent.run()`), where a legitimately different toolset -- including none -- is expected.
+    Within a single run the agent loop only appends assistant and tool-result messages, never a new
+    user prompt, so a genuine user turn is the reliable boundary signal. Tool and function results are
+    carried on user-role messages by several providers (Anthropic/Bedrock `tool_result`/`toolResult`
+    content, Google `functionResponse` parts, OpenAI Responses `function_call_output`); those are part
+    of the same turn, so they are not counted as a new one.
+    """
+    try:
+        message = json.loads(block)
+    except json.JSONDecodeError:
+        return False
+    if not is_str_dict(message) or message.get('role') != 'user':
+        return False
+    content = message.get('content')
+    parts = content if _is_list(content) else message.get('parts')
+    if _is_list(parts):
+        return not any(
+            is_str_dict(part)
+            and (
+                part.get('type') in ('tool_result', 'function_call_output')
+                or 'toolResult' in part
+                or 'functionResponse' in part
+            )
+            for part in parts
+        )
+    return True
+
+
+def classify_prefix_pair(a: list[PrefixBlock], b: list[PrefixBlock]) -> tuple[str, int]:
+    """Classify how the cache-ordered blocks change between consecutive requests."""
+    if a == b:
+        return 'identical', -1
+    shared_length = min(len(a), len(b))
+    divergent_index = next((i for i in range(shared_length) if a[i] != b[i]), shared_length)
+    if divergent_index == len(a) and len(b) > len(a):
+        return 'extension', -1
+    if divergent_index == len(b) and len(a) > len(b):
+        return 'shrunk', divergent_index
+
+    # Both blocks exist here: a run of equal blocks that exhausts the shorter request is an `extension`
+    # or `shrunk` above, so a divergence within the shared range is the only way to reach this point.
+    a_level, b_level = a[divergent_index][0], b[divergent_index][0]
+    # The prefix breaks at the earliest-ordered section that changed. When the requests diverge on
+    # different sections -- e.g. one inserts a tools block where the other already had messages -- the
+    # inserted tools block (earlier in cache order) is the real change, not the messages it shifted back.
+    level = a_level if _CACHE_ORDER[a_level] <= _CACHE_ORDER[b_level] else b_level
+    first_message_index = next((i for i, (block_level, _) in enumerate(a) if block_level == 'messages'), None)
+    # A genuinely new conversation diverges within the message history itself (a different first user
+    # message), not because a tools or system block was inserted ahead of an otherwise-unchanged history.
+    if a_level == 'messages' and b_level == 'messages' and divergent_index == first_message_index:
+        return 'new-conversation', divergent_index
+
+    def conversation_identity(blocks: list[PrefixBlock]) -> str | None:
+        for block_level, block in blocks:
+            if block_level != 'messages':
+                continue
+            try:
+                role = json.loads(block).get('role')
+            except (AttributeError, TypeError, json.JSONDecodeError):
+                role = None
+            if role not in ('system', 'developer'):
+                return block
+        return None
+
+    a_identity = conversation_identity(a)
+    b_identity = conversation_identity(b)
+    if a_identity is not None and b_identity is not None and a_identity != b_identity:
+        return 'different-conversation', divergent_index
+
+    # A request that drops the entire toolset as a new user turn begins is a new conversation turn or
+    # run (a fresh agent reusing an earlier run's history, e.g. a tool-using generator followed by a
+    # tool-free probe), not a moved prefix. This is only a boundary when a genuine new user turn is
+    # appended: within a single run the toolset is constant and only assistant/tool-result messages
+    # are appended, so a tools-drop *without* a new user turn -- a tool-search or deferred-loading bug
+    # wrongly clearing the tools mid-run -- still falls through to `tools-divergent` and is flagged.
+    if level == 'tools' and not any(block_level == 'tools' for block_level, _ in b):
+        a_messages = [block for block_level, block in a if block_level == 'messages']
+        b_messages = [block for block_level, block in b if block_level == 'messages']
+        if b_messages[: len(a_messages)] == a_messages and any(
+            is_new_user_turn(block) for block in b_messages[len(a_messages) :]
+        ):
+            return 'different-conversation', -1
+
+    return f'{level}-divergent', divergent_index
+
+
+def recorded_request_body(request: dict[str, Any]) -> Any:
+    """The decoded body of a request mapping read straight from a cassette file.
+
+    Cassettes recorded under vcrpy carry the parsed JSON as `parsed_body` (and the raw text as `body`);
+    cassetter writes a typed `body: {type: json | text | binary | none, content: ...}` mapping.
+    """
+    if (parsed_body := request.get('parsed_body')) is not None:
+        return parsed_body
+    body = request.get('body')
+    if is_str_dict(body) and 'type' in body:
+        return body.get('content') if body['type'] in ('json', 'text') else None
+    return body
+
+
+def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any]]:
+    """Yield `(method, uri, body)` for each request in a cassette file on disk."""
+    cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
+    if not is_str_dict(cassette):
+        return
+    raw_interactions = cassette.get('interactions')
+    if not _is_list(raw_interactions):
+        return
+    for interaction in raw_interactions:
+        if is_str_dict(interaction) and is_str_dict(request := interaction.get('request')):
+            yield request.get('method'), request.get('uri'), recorded_request_body(request)
+
+
+def _loaded_cassette_requests(cassette: Cassette) -> Iterator[tuple[Any, Any, Any]]:
+    """Yield `(method, uri, body)` for each request cassetter already parsed, so the file is not read again."""
+    for interaction in cassette.interactions:
+        request = interaction.request
+        body = request.body.content if request.body.body_type == 'json' else None
+        yield request.method, request.uri, body
+
+
+def iter_cassette_prefix_violations(cassette: Path | Cassette) -> Iterator[CassettePrefixViolation]:
+    """Yield prompt-cache prefix violations from one cassette, either a file on disk or one cassetter loaded.
+
+    Across 1,177 cassettes on 2026-07-15, this found 15 deliberately prefix-moving pairs in ten
+    cassettes. Requests are grouped by host and provider shape so unrelated endpoints are not paired.
+    """
+    requests = _yaml_cassette_requests(cassette) if isinstance(cassette, Path) else _loaded_cassette_requests(cassette)
+    # Group by (host, path, shape): only requests to the same endpoint share a provider cache, so the
+    # path must be part of the key. Otherwise a token-count or compaction sub-endpoint, a different
+    # model or deployment carried in the path, or any other sibling endpoint on the same host would be
+    # pooled with generation requests and compared as if consecutive -- a spurious divergence.
+    requests_by_endpoint: dict[tuple[str, str, str], list[tuple[list[PrefixBlock], list[str]]]] = defaultdict(list)
+
+    for method, uri, body in requests:
+        if not isinstance(method, str) or method.upper() != 'POST':
+            continue
+        if not is_str_dict(body):
+            continue
+        if not isinstance(uri, str):
+            continue
+        canonical = canonical_prefix_blocks(body, uri)
+        if canonical is None:
+            continue
+        shape, blocks = canonical
+        deferred_tools = anthropic_deferred_tool_blocks(body) if shape == 'anthropic' else []
+        parsed_uri = urlparse(uri)
+        requests_by_endpoint[(parsed_uri.hostname or '', parsed_uri.path, shape)].append((blocks, deferred_tools))
+
+    for (_, _, shape), requests in requests_by_endpoint.items():
+        for pair_index, ((earlier, earlier_deferred), (later, later_deferred)) in enumerate(
+            zip(requests, requests[1:])
+        ):
+            classification, block_index = classify_prefix_pair(earlier, later)
+            # Within a continuing conversation, Anthropic's deferred tail must be append-only in
+            # first-reveal order: earlier entries an exact serialized prefix of later ones. Only
+            # 'identical'/'extension' pairs are continuations — new/different-conversation pairs
+            # legitimately reset the tail alongside everything else.
+            if (
+                classification in ('identical', 'extension')
+                and earlier_deferred != later_deferred[: len(earlier_deferred)]
+            ):
+                deferred_index = next(
+                    (i for i, (a, b) in enumerate(zip(earlier_deferred, later_deferred)) if a != b),
+                    min(len(earlier_deferred), len(later_deferred)),
+                )
+                yield CassettePrefixViolation(
+                    shape=shape,
+                    pair_index=pair_index,
+                    level='deferred-tools',
+                    block_index=deferred_index,
+                    earlier_block=(
+                        earlier_deferred[deferred_index] if deferred_index < len(earlier_deferred) else '<missing>'
+                    )[:200],
+                    later_block=(
+                        later_deferred[deferred_index] if deferred_index < len(later_deferred) else '<missing>'
+                    )[:200],
+                )
+            if classification != 'shrunk' and not classification.endswith('-divergent'):
+                continue
+            level = classification.removesuffix('-divergent')
+            earlier_block = earlier[block_index][1] if block_index < len(earlier) else '<missing>'
+            later_block = later[block_index][1] if block_index < len(later) else '<missing>'
+            yield CassettePrefixViolation(
+                shape=shape,
+                pair_index=pair_index,
+                level=level,
+                block_index=block_index,
+                earlier_block=earlier_block[:200],
+                later_block=later_block[:200],
+            )
 
 
 def get_first_post_body(cassette: Cassette) -> dict[str, Any]:
-    """Return the first POST request body in a VCR cassette, parsed as JSON.
-
-    Some VCR serializers (e.g. the project's custom JSON body serializer used for
-    huggingface cassettes) deserialize `request.body` to a dict ahead of time;
-    others leave it as raw bytes/str. Handle both shapes.
-    """
-    for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        if request.method != 'POST':  # pyright: ignore[reportUnknownMemberType]
+    """Return the first POST request body in a cassette, parsed as JSON."""
+    for request in cassette.requests:
+        if request.method != 'POST':
             continue
-        body = request.body  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        body = request.body
         if not body:
             continue  # pragma: no cover
-        if isinstance(body, dict):
-            return body  # pyright: ignore[reportUnknownVariableType]
-        parsed: dict[str, Any] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
+        parsed: dict[str, Any] = json.loads(body)
         return parsed
     return {}  # pragma: no cover
+
+
+def request_json(request: RecordedRequest) -> Any:
+    """Decode the JSON body of one recorded request."""
+    assert request.body is not None, f'Expected the recorded {request.method} {request.uri} to carry a body'
+    return json.loads(request.body)
 
 
 def single_request_body(cassette: Cassette) -> dict[str, Any]:
@@ -44,9 +375,9 @@ def single_request_body(cassette: Cassette) -> dict[str, Any]:
     translation). Asserts the single-request invariant — tests with intentional
     multi-request cassettes should access `cassette.requests` directly.
     """
-    requests = cassette.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    assert len(requests) == 1, f'Expected 1 request, got {len(requests)}'  # pyright: ignore[reportUnknownArgumentType]
-    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    requests = cassette.requests
+    assert len(requests) == 1, f'Expected 1 request, got {len(requests)}'
+    return request_json(requests[0])
 
 
 # Provider-specific cassette extractors — group new ones under this header so the module
@@ -71,36 +402,28 @@ def get_cohere_tool_names_from_cassette(cassette: Cassette) -> list[str]:
 
 
 def _get_cassette_request_bodies(cassette: Cassette) -> list[str]:
-    """Get all request bodies from a VCR cassette as strings."""
+    """Get all request bodies from a cassette as strings."""
     bodies: list[str] = []
-    for request in cassette.requests:  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        raw_body = request.body  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    for request in cassette.requests:
+        raw_body = request.body
         if raw_body:
-            body = raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body  # pyright: ignore[reportUnknownVariableType]
-            bodies.append(body)  # pyright: ignore[reportUnknownArgumentType]
-        elif getattr(request, 'parsed_body', None):  # pyright: ignore[reportUnknownArgumentType]  # pragma: no cover
-            bodies.append(json.dumps(request.parsed_body))  # pyright: ignore[reportUnknownMemberType]
+            bodies.append(raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body)
     return bodies
 
 
 def _get_cassette_bodies_from_yaml(path: Path) -> list[str]:
-    """Read request bodies from a VCR cassette YAML file on disk.
+    """Read request bodies from a cassette YAML file on disk.
 
-    Used as fallback when the VCR cassette object is not available (e.g. CI playback).
+    Used as fallback when the cassette object is not available (e.g. CI playback).
     """
-    import yaml
-
     data: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
     bodies: list[str] = []
     for interaction in data.get('interactions', []):
-        request = interaction.get('request', {})
-        parsed_body = request.get('parsed_body') or request.get('body')
-        if parsed_body is None:
-            continue
-        if isinstance(parsed_body, dict | list):
-            bodies.append(json.dumps(parsed_body))
-        elif isinstance(parsed_body, str) and parsed_body:
-            bodies.append(parsed_body)
+        body = recorded_request_body(interaction.get('request', {}))
+        if isinstance(body, dict | list):
+            bodies.append(json.dumps(body))
+        elif isinstance(body, str) and body:
+            bodies.append(body)
     return bodies
 
 
@@ -145,9 +468,9 @@ def _pattern_in_bodies(pattern: str, bodies: list[str]) -> bool:
 
 @dataclass
 class CassetteContext:
-    """Unified cassette verification context for VCR and XAI cassettes.
+    """Unified cassette verification context for HTTP and XAI cassettes.
 
-    Encapsulates provider-specific cassette handling (VCR vs XAI proto format)
+    Encapsulates provider-specific cassette handling (cassetter vs XAI proto format)
     and provides a uniform verification interface.
     """
 
@@ -192,8 +515,7 @@ class CassetteContext:
             AssertionError: If a pattern is not found.
         """
         bodies = self._get_bodies()
-        if not bodies:
-            return
+        assert bodies, f'No recorded request bodies to verify for {self.test_name}'
 
         for pattern in patterns:
             if isinstance(pattern, tuple):
@@ -214,8 +536,7 @@ class CassetteContext:
             AssertionError: If ordering is violated or a pattern is not found.
         """
         bodies = self._get_bodies()
-        if not bodies:
-            return
+        assert bodies, f'No recorded request bodies to verify for {self.test_name}'
 
         content = ''.join(bodies)
         last_index = -1
