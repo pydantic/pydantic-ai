@@ -423,7 +423,8 @@ workflow.reveal(fixer)
 The revealed sub-agent becomes callable on the next step. The model learns about it through a short
 announcement message that carries the new function's signature. The `run_workflow` description itself
 stays frozen at the agents present when the run started, so even a runtime reveal never moves the
-prompt-cache prefix.
+prompt-cache prefix. If compaction or a history processor removes the announcement, the capability
+announces the sub-agent again on the next step.
 
 > **Note**
 >

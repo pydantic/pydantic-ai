@@ -17,6 +17,7 @@ from pydantic_ai import Agent, RunContext, capture_run_messages
 from pydantic_ai.capabilities import AbstractCapability, PrefixTools
 from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1003,7 +1004,6 @@ async def test_worker_crash_becomes_model_retry(monkeypatch: pytest.MonkeyPatch)
 async def test_worker_crash_after_budget_exhaustion_returns_terminal_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-
     monkeypatch.setattr(
         'pydantic_ai_harness._monty_exec.AsyncMonty', functools.partial(AsyncMonty, request_timeout=0.5)
     )
@@ -1416,7 +1416,52 @@ async def test_reveal_is_idempotent_across_steps() -> None:
 
     workflow.reveal(_sub_agent('e', 'extra'))
     await ts.get_tools(ctx)
-    await ts.get_tools(ctx)  # re-resolving tools must not re-announce an already-revealed agent
+    await ts.get_tools(ctx)
+    assert _enqueued_text(ctx).count('async def extra') == 1
+    assert ctx.pending_messages is not None
+    [announcement] = ctx.pending_messages[0].messages
+    assert isinstance(announcement, ModelRequest)
+    ctx.messages.append(announcement)
+    ctx.pending_messages.clear()
+    ctx.run_step += 1
+
+    await ts.get_tools(ctx)
+
+    assert ctx.pending_messages == []
+
+
+async def test_compaction_allows_reveal_announcement_again() -> None:
+    workflow = DynamicWorkflow[object](agents=[_sub_agent('b', 'base')])
+    ts = workflow.get_toolset()
+    ctx = _ctx_with_queue()
+
+    workflow.reveal(_sub_agent('e', 'extra'))
+    await ts.get_tools(ctx)
+    assert ctx.pending_messages is not None
+    [announcement] = ctx.pending_messages[0].messages
+    assert isinstance(announcement, ModelRequest)
+    ctx.messages.extend([announcement, ModelResponse(parts=[CompactionPart()])])
+    ctx.pending_messages.clear()
+    ctx.run_step += 1
+
+    await ts.get_tools(ctx)
+
+    assert _enqueued_text(ctx).count('async def extra') == 1
+
+
+async def test_dropped_reveal_announcement_is_enqueued_again() -> None:
+    workflow = DynamicWorkflow[object](agents=[_sub_agent('b', 'base')])
+    ts = workflow.get_toolset()
+    ctx = _ctx_with_queue()
+
+    workflow.reveal(_sub_agent('e', 'extra'))
+    await ts.get_tools(ctx)
+    assert ctx.pending_messages is not None
+    ctx.pending_messages.clear()
+    ctx.run_step += 1
+
+    await ts.get_tools(ctx)
+
     assert _enqueued_text(ctx).count('async def extra') == 1
 
 
