@@ -544,23 +544,6 @@ def _sanitize_tool_name(name: str) -> str:
     return sanitized or '_'
 
 
-def _warn_missing_return_schemas(names: Sequence[str]) -> None:
-    """Warn once for every tool whose sandbox signature will show `-> Any`.
-
-    Without a return schema the model gets no type information about the return shape,
-    which limits code mode effectiveness. MCP servers commonly omit output schemas, so the
-    tools are named in one warning rather than one warning each.
-    """
-    if not names:
-        return
-    if len(names) == 1:
-        message = f'CodeMode: tool {names[0]!r} has no return schema; its signature will show `-> Any`'
-    else:
-        listed = ', '.join(repr(name) for name in names)
-        message = f'CodeMode: {len(names)} tools have no return schema ({listed}); their signatures will show `-> Any`'
-    warnings.warn(f'{message}, which may reduce code mode effectiveness.', UserWarning, stacklevel=3)
-
-
 def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
     """Whether the run-scoped execution mode forces sandbox tool calls to run sequentially.
 
@@ -817,10 +800,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # `get_instructions` in the same step. Empty when there's nothing to surface.
     _last_catalog: str = field(default='', init=False, repr=False)
 
-    # Tracks deferred-tool names we've already warned about so we don't spam the
-    # logs every step. Reset on `for_run` because each run gets a fresh instance.
-    _warned_deferred: set[str] = field(default_factory=set[str], init=False, repr=False)
-
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
@@ -837,7 +816,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return self
         new_self = replace(self, wrapped=new_wrapped)
         new_self._run_state = self._run_state
-        new_self._warned_deferred = self._warned_deferred
         new_self._last_catalog = self._last_catalog
         return new_self
 
@@ -1295,7 +1273,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         """
         callable_defs: dict[str, ToolDefinition] = {}
         sanitized_to_original: dict[str, str] = {}
-        missing_return_schema: list[str] = []
         for name, tool in wrapped_tools.items():
             td = tool.tool_def
 
@@ -1314,17 +1291,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     stacklevel=2,
                 )
                 continue
-            if td.return_schema is None and name not in self._warned_deferred:
-                missing_return_schema.append(name)
-
             if safe_name != name:
                 sanitized_to_original[safe_name] = name
                 td = replace(td, name=safe_name)
 
             callable_defs[safe_name] = td
-        _warn_missing_return_schemas(missing_return_schema)
-        # Recorded only once warned, so a warning escalated to an error is raised again next time.
-        self._warned_deferred.update(missing_return_schema)
         return callable_defs, sanitized_to_original
 
     @staticmethod
