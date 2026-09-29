@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any, Literal
 
+import yaml
 from google.genai import _live_converters as live_converters, types as genai_types
 from websockets.exceptions import ConnectionClosedOK
 
@@ -42,6 +43,7 @@ _MODULE_PROTOCOLS: dict[str, Protocol] = {
     'test_xai_ws': 'xai',
     'test_google_ws': 'gemini',
     'test_openai_live_ws': 'openai-live',
+    'test_openai_live_ws_sideband': 'openai-live',
 }
 _PARITY_PROTOCOLS: dict[str, Protocol] = {
     'openai': 'openai',
@@ -54,8 +56,12 @@ _PARITY_PROTOCOLS: dict[str, Protocol] = {
 }
 
 
-def cassette_protocol(path: Path) -> Protocol | None:
-    """Which adapter a cassette's provider frames are meant for, or `None` for a non-WebSocket recording."""
+def cassette_protocol(path: Path) -> Protocol:
+    """Which adapter a WebSocket cassette's provider frames are meant for.
+
+    Raises `KeyError` for a cassette directory with no mapping, so a new one fails its conformance case
+    instead of silently dropping out.
+    """
     module = path.parent.name
     if module == 'test_gateway_ws':
         return 'gemini' if 'gemini' in path.stem else 'openai'
@@ -66,18 +72,20 @@ def cassette_protocol(path: Path) -> Protocol | None:
             for prefix, protocol in sorted(_PARITY_PROTOCOLS.items(), key=lambda item: -len(item[0]))
             if variant.startswith(prefix)
         )
-    return _MODULE_PROTOCOLS.get(module)
+    return _MODULE_PROTOCOLS[module]
 
 
 def websocket_cassettes() -> list[Path]:
     """Every WebSocket cassette (the same directories also hold HTTP recordings of WebRTC signaling)."""
-    return sorted(
-        path
-        for path in CASSETTES_DIR.glob('*/*.yaml')
-        # A WebSocket recording's interactions are frames (`kind: message`); an HTTP one (WebRTC signaling,
-        # GPT-Live's session setup) records requests, in the same `version: 1` format.
-        if cassette_protocol(path) is not None and '\n- kind: ' in path.read_text(encoding='utf-8')
-    )
+    return sorted(path for path in CASSETTES_DIR.glob('*/*.yaml') if _is_websocket(path))
+
+
+def _is_websocket(path: Path) -> bool:
+    # Both formats can open with `version:`, so tell them apart by their interactions: HTTP recordings
+    # (e.g. WebRTC signaling) hold `request`/`response` pairs, WebSocket ones hold frames and closes.
+    raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
+    interactions: list[dict[str, Any]] = raw.get('interactions') or [{}]
+    return 'request' not in interactions[0]
 
 
 def _segments(cassette: RealtimeCassette) -> Iterator[list[dict[str, Any]]]:
@@ -154,7 +162,6 @@ def _connection(protocol: Protocol, frames: list[dict[str, Any]]) -> RealtimeCon
 async def replay_codec_events(path: Path) -> list[list[RealtimeCodecEvent]]:
     """The codec events each recorded socket's provider frames make, per socket."""
     protocol = cassette_protocol(path)
-    assert protocol is not None
     events: list[list[RealtimeCodecEvent]] = []
     for frames in _segments(RealtimeCassette.load(path)):
         connection = _connection(protocol, frames)
@@ -170,7 +177,6 @@ async def replay_lifecycle_events(path: Path) -> list[list[RealtimeCodecEvent | 
     Empty for a protocol whose connection is still on version 1 of the lifecycle contract.
     """
     protocol = cassette_protocol(path)
-    assert protocol is not None
     events: list[list[RealtimeCodecEvent | LifecycleEvent]] = []
     for frames in _segments(RealtimeCassette.load(path)):
         connection = _connection(protocol, frames)
