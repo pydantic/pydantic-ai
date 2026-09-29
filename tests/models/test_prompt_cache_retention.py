@@ -224,11 +224,13 @@ def test_openrouter_resolve_cache_retention_ignores_unsupported_settings(
 # `resolve_prompt_cache_retention` was renamed to `resolve_cache_retention`. These are unit tests
 # rather than VCR tests: the deprecation shim is pure method dispatch, and no request would exercise it.
 
-_ONE_HOUR = AnthropicModelSettings(anthropic_cache='1h')
+
+def _one_hour() -> AnthropicModelSettings:
+    return AnthropicModelSettings(anthropic_cache='1h')
 
 
-def _anthropic(model_type: type[AnthropicModel] = AnthropicModel) -> AnthropicModel:
-    return model_type('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
+def _anthropic(model_type: type[AnthropicModel] | None = None) -> AnthropicModel:
+    return (model_type or AnthropicModel)('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'))
 
 
 def test_resolve_prompt_cache_retention_is_a_deprecated_alias() -> None:
@@ -238,7 +240,7 @@ def test_resolve_prompt_cache_retention_is_a_deprecated_alias() -> None:
         PydanticAIDeprecationWarning,
         match='`resolve_prompt_cache_retention` is deprecated, use `resolve_cache_retention` instead',
     ):
-        assert model.resolve_prompt_cache_retention(_ONE_HOUR) == timedelta(hours=1)  # pyright: ignore[reportDeprecated]
+        assert model.resolve_prompt_cache_retention(_one_hour()) == timedelta(hours=1)  # pyright: ignore[reportDeprecated]
 
 
 def test_legacy_override_is_honored_under_the_new_name() -> None:
@@ -270,7 +272,7 @@ def test_legacy_override_can_extend_its_parent_through_super() -> None:
 
     model = _anthropic(LegacyModel)
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
-        assert model.resolve_cache_retention(_ONE_HOUR) == timedelta(hours=1)
+        assert model.resolve_cache_retention(_one_hour()) == timedelta(hours=1)
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
         assert model.resolve_cache_retention(None) == timedelta(hours=2)
 
@@ -293,7 +295,7 @@ def test_stacked_legacy_overrides_chain_through_super() -> None:
 
     model = _anthropic(LegacierModel)
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
-        assert model.resolve_cache_retention(_ONE_HOUR) == timedelta(hours=2)
+        assert model.resolve_cache_retention(_one_hour()) == timedelta(hours=2)
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
         assert model.resolve_cache_retention(None) == timedelta(hours=4)
 
@@ -312,7 +314,7 @@ def test_new_override_below_a_legacy_override_chains_through_it() -> None:
 
     model = _anthropic(MigratedModel)
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
-        assert model.resolve_cache_retention(_ONE_HOUR) == timedelta(hours=1)
+        assert model.resolve_cache_retention(_one_hour()) == timedelta(hours=1)
     with pytest.warns(PydanticAIDeprecationWarning, match='`resolve_prompt_cache_retention` is deprecated'):
         assert model.resolve_cache_retention(None) == timedelta(hours=2)
 
@@ -343,6 +345,6 @@ def test_overriding_both_names_keeps_the_new_one() -> None:
 
 
 def test_wrapper_model_forwards_resolve_cache_retention() -> None:
-    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'), settings=_ONE_HOUR)
+    model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key='test-key'), settings=_one_hour())
 
     assert WrapperModel(model).resolve_cache_retention(None) == timedelta(hours=1)
