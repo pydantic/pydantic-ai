@@ -138,9 +138,10 @@ try:
     from logfire._internal.config import LogfireConfig
     from logfire._internal.tracer import _ProxyTracer  # pyright: ignore[reportPrivateUsage]
     from logfire.testing import CaptureLogfire
-    from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.trace import SpanLimits, TracerProvider as SDKTracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.sdk.trace.id_generator import RandomIdGenerator
     from opentelemetry.trace import ProxyTracer
 except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
@@ -590,6 +591,30 @@ def test_replay_safe_sdk_tracer_provider_forwards_flush_to_shared_processor():
     assert replay_safe_provider.force_flush()
     assert [span.name for span in exporter.get_finished_spans()] == ['batched']
     replay_safe_provider.shutdown()
+
+
+def test_replay_safe_sdk_tracer_provider_keeps_host_provider_settings():
+    """Outside a workflow, spans keep the host provider's ID generator and span limits."""
+
+    class FixedIdGenerator(RandomIdGenerator):
+        def generate_span_id(self) -> int:
+            return 0x1234
+
+    exporter = InMemorySpanExporter()
+    provider = SDKTracerProvider(
+        id_generator=FixedIdGenerator(), span_limits=SpanLimits(max_attributes=1), shutdown_on_exit=False
+    )
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    with ReplaySafeSDKTracerProvider(provider).get_tracer('test').start_as_current_span('span') as span:
+        span.set_attributes({'first': 1, 'second': 2})
+
+    [exported] = exporter.get_finished_spans()
+    assert exported.context is not None
+    assert exported.context.span_id == 0x1234
+    assert exported.attributes is not None
+    assert len(exported.attributes) == 1
+    provider.shutdown()
 
 
 def test_logfire_plugin_restores_replay_safety_after_reconfigure(

@@ -20,19 +20,25 @@ class ReplaySafeSDKTracerProvider(SDKTracerProvider):
     """
 
     def __init__(self, provider: SDKTracerProvider):
-        # OpenTelemetry does not expose a span processor accessor. Replace this private access if Logfire
-        # adds a public way to share its configured processor with another tracer provider.
+        # OpenTelemetry does not expose accessors for the span processor or span limits. Replace these private
+        # accesses if Logfire adds a public way to share its configured provider's settings.
         active_span_processor = provider._active_span_processor
+        span_limits = provider._span_limits
+        # Temporal wraps the host's ID generator, using it outside workflows and deterministic IDs inside them.
         self._replay_safe_provider = create_tracer_provider(
             resource=provider.resource,
             sampler=provider.sampler,
             active_span_processor=active_span_processor,
+            id_generator=provider.id_generator,
+            span_limits=span_limits,
             shutdown_on_exit=False,
         )
         super().__init__(
             resource=provider.resource,
             sampler=provider.sampler,
             active_span_processor=active_span_processor,
+            id_generator=provider.id_generator,
+            span_limits=span_limits,
             shutdown_on_exit=False,
         )
 
