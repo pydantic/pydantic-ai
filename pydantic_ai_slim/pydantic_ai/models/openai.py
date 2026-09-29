@@ -1287,13 +1287,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
+        if missing_finish_reason:
+            # Restore the missing value after validation, so it's not reported as the provider's.
+            choice.finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
 
         # Moderation and service tier are top-level fields, so they're read here rather than in the choice-scoped
         # `_process_provider_details` hook that subclasses may override.
         provider_details = self._process_provider_details(response) or {}
-        if missing_finish_reason and provider_details.get('finish_reason') == 'stop':
-            # Only the substituted value; a subclass may report a finish reason from another field.
-            del provider_details['finish_reason']
         if response.moderation:
             provider_details['moderation'] = response.moderation.model_dump()
         if response.service_tier:
@@ -1354,7 +1354,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_response_id=response.id or None,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
-            finish_reason=self._map_finish_reason(choice.finish_reason),
+            finish_reason=self._map_finish_reason(choice.finish_reason or 'stop'),
         )
 
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
