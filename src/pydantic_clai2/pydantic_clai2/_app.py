@@ -81,7 +81,7 @@ if TYPE_CHECKING:
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
-_PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload')
+_PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'configure', 'remove', 'reload')
 
 
 DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
@@ -97,6 +97,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='logfire', factory='pydantic_clai2.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
+    PluginSettings(id='linear', factory='pydantic_clai2.linear', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 

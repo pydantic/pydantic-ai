@@ -6,6 +6,7 @@ import re
 import sqlite3
 from collections.abc import Generator
 from contextlib import closing, contextmanager
+from types import EllipsisType
 from typing import Protocol
 
 from prompt_toolkit import PromptSession
@@ -26,23 +27,31 @@ class KeyReference(BaseModel):
     name: str = Field(min_length=1)
 
 
-def resolve_key(*, token: SecretStr | KeyReference) -> str:
-    """Resolve at use time and fail closed when a referenced key was deleted."""
+def resolve_key(*, token: SecretStr | KeyReference, reconfigure: str = '/add_model') -> str:
+    """Resolve at use time and fail closed when a referenced key was deleted.
+
+    `reconfigure` names the command that picks another key for this consumer.
+    """
     if isinstance(token, SecretStr):
         return token.get_secret_value()
     keys = load_keys()
     if token.name not in keys:
         raise UserError(
-            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure through /add_model.'
+            f'Saved API key {token.name} is missing. Restore it in /keys or reconfigure through {reconfigure}.'
         )
     return keys[token.name].get_secret_value()
 
 
-def save_key_connection(*, account: str, token: SecretStr | KeyReference, value: str) -> None:
-    """Validate references and save atomically with respect to key renames and deletions."""
+def save_key_connection(
+    *, account: str, token: SecretStr | KeyReference, value: str, reconfigure: str = '/add_model'
+) -> None:
+    """Validate references and save atomically with respect to key renames and deletions.
+
+    `reconfigure` names the command that picks another key for this consumer.
+    """
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
-            raise UserError('The selected API key no longer exists. Select a saved key again through /add_model.')
+            raise UserError(f'The selected API key no longer exists. Select a saved key again through {reconfigure}.')
         save_codex_credentials(account=account, value=value)
 
 
@@ -91,14 +100,20 @@ def _load_keys() -> dict[str, SecretStr]:
         raise UserError('Stored API keys are invalid. Repair the api-keys credential bundle.') from None
 
 
-def save_key(*, name: str, value: str) -> str:
-    """Save one key without touching unrelated credentials or SQLite."""
+def save_key(*, name: str, value: str, replaces: SecretStr | None | EllipsisType = ...) -> str:
+    """Save one key without touching unrelated credentials or SQLite.
+
+    `replaces` is the value the caller saw, or `None` for no key. If another process changed the key since,
+    saving fails instead of overwriting a value the user never confirmed replacing.
+    """
     name = normalize_name(name=name)
     value = value.strip()
     if not value:
         raise ValueError('An API key is required.')
     with key_transaction():
         keys = _load_keys()
+        if replaces is not ... and keys.get(name) != replaces:
+            raise UserError(f'{name} changed in /keys while you were entering a key. Nothing was saved; try again.')
         keys[name] = SecretStr(value)
         _save_keys(keys=keys)
     path = credentials_path(account='api-keys')
@@ -120,7 +135,7 @@ class _Credential(BaseModel):
 def key_users(*, name: str) -> list[str]:
     """Find saved provider references without exposing their inline credentials."""
     users: list[str] = []
-    for account in ('vllm', 'openrouter'):
+    for account in ('vllm', 'openrouter', 'linear'):
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:
