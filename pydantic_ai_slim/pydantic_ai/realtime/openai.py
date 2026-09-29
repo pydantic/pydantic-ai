@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 
 from .._http import AsyncHTTPClient
 from .._instrumentation import get_instructions
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import UserError
 from ..messages import (
     BinaryAudio,
     BinaryImage,
@@ -107,7 +107,13 @@ from ._openai_protocol import (
     user_message_item,
     with_realtime_query,
 )
-from ._openai_webrtc import answer_webrtc_offer as _answer_webrtc_offer, mint_client_secret as _mint_client_secret
+from ._openai_webrtc import (
+    HANG_UP_MAX_RETRIES,
+    HANG_UP_TIMEOUT,
+    answer_webrtc_offer as _answer_webrtc_offer,
+    ignore_ended_call,
+    mint_client_secret as _mint_client_secret,
+)
 from ._utils import (
     DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
@@ -1347,15 +1353,14 @@ class OpenAIRealtimeModel(RealtimeModel):
             session_config=self._webrtc_session_config(instructions, tools, model_settings),
         )
 
-    async def hang_up(self, session: RealtimeProviderSession) -> None:
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
         self._check_webrtc_session_provider(session)
-        try:
-            with map_openai_api_errors(self.model_name):
-                await self.client.realtime.calls.hangup(session.session_id)
-        except ModelHTTPError as e:
-            # A call that has already ended is gone: nothing is left to hang up.
-            if e.status_code != 404:
-                raise
+
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_hang_up(session)
+        client = self.client.with_options(timeout=HANG_UP_TIMEOUT, max_retries=HANG_UP_MAX_RETRIES)
+        with ignore_ended_call('call_id_not_found'), map_openai_api_errors(self.model_name):
+            await client.realtime.calls.hangup(session.session_id)
 
     @asynccontextmanager
     async def connect_webrtc(

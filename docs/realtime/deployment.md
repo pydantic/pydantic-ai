@@ -94,8 +94,8 @@ Closing a sideband session, or leaving its `async with` block, only detaches you
 browser's call stays up, and billed, until the browser hangs up. To end the call from the server,
 call [`hang_up()`][pydantic_ai.realtime.RealtimeSession.hang_up] instead (it works from a
 [tool](tools.md#ending-the-session-from-a-tool) too), or
-[`hang_up(answer.session)`][pydantic_ai.realtime.RealtimeModel.hang_up] on the model when no sideband
-is attached. OpenAI supports this for both gpt-realtime and GPT-Live; Azure OpenAI doesn't yet.
+[`hang_up(answer.session)`][pydantic_ai.agent.AgentRealtime.hang_up] on `agent.realtime(model)` when
+no sideband is attached. OpenAI supports this for both gpt-realtime and GPT-Live; Azure OpenAI doesn't yet.
 
 The [realtime WebRTC example](../examples/realtime-webrtc.md) demonstrates the full FastAPI and
 browser flow. Provider-specific setup (Azure's Microsoft Entra ID and `webrtcfilter`) lives on the

@@ -2243,6 +2243,23 @@ class AgentRealtime(Generic[AgentDepsT]):
                     model_settings=resolved.model_settings,
                 )
 
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        """End a call started by [`answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer], for everyone on it.
+
+        Takes the answer's [`session`][pydantic_ai.realtime.WebRTCAnswer.session], so the server can end the
+        call whether or not a sideband is attached; a sideband session can call
+        [`RealtimeSession.hang_up`][pydantic_ai.realtime.RealtimeSession.hang_up] instead. Unlike signaling,
+        this doesn't resolve the agent's configuration: it only needs the model.
+
+        This delegates to [`hang_up`][pydantic_ai.realtime.RealtimeModel.hang_up], which is implemented by
+        the OpenAI gpt-realtime and GPT-Live models. Other models raise
+        [`UserError`][pydantic_ai.exceptions.UserError].
+        """
+        from pydantic_ai.realtime import RealtimeModel, infer_realtime_model
+
+        model = self._model if isinstance(self._model, RealtimeModel) else infer_realtime_model(self._model)
+        await model.hang_up(session)
+
     async def create_client_secret(self, *, expires_after_seconds: int | None = None) -> RealtimeClientSecret:
         """Resolve this agent's realtime configuration and mint a browser client secret.
 

@@ -443,5 +443,5 @@ async def test_webrtc_hang_up_ends_the_call(
         await session.hang_up()
     assert session.closed
 
-    # The call is gone now: hanging it up again, from the model, finds nothing to end.
-    await model.hang_up(answer.session)
+    # The call is gone now: hanging it up again, without a sideband, finds nothing to end.
+    await realtime.hang_up(answer.session)

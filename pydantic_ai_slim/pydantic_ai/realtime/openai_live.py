@@ -49,7 +49,7 @@ from .. import _utils
 from .._genai_prices import best_effort_price
 from .._instrumentation import get_instructions
 from .._run_context import get_current_run_context
-from ..exceptions import ModelHTTPError, UserError
+from ..exceptions import UserError
 from ..messages import (
     BinaryImage,
     ModelMessage,
@@ -83,6 +83,7 @@ from ._openai_protocol import (
     realtime_websocket_url,
     tool_choice_config,
 )
+from ._openai_webrtc import HANG_UP_MAX_RETRIES, HANG_UP_TIMEOUT, ignore_ended_call
 from ._utils import inject_trace_context, resolve_advertised_tools
 from .codec import (
     AudioDelta,
@@ -1382,15 +1383,14 @@ class OpenAILiveModel(RealtimeModel):
             session=WebRTCSession(provider_name=self.system, session_id=created.session.id),
         )
 
-    async def hang_up(self, session: RealtimeProviderSession) -> None:
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
         self._check_webrtc_session_provider(session)
-        try:
-            with map_openai_api_errors(self.model_name):
-                await self.client.live.sessions.hangup(session.session_id)
-        except ModelHTTPError as e:
-            # A call that has already ended is gone: nothing is left to hang up.
-            if e.status_code != 404:
-                raise
+
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_hang_up(session)
+        client = self.client.with_options(timeout=HANG_UP_TIMEOUT, max_retries=HANG_UP_MAX_RETRIES)
+        with ignore_ended_call('session_id_not_found'), map_openai_api_errors(self.model_name):
+            await client.live.sessions.hangup(session.session_id)
 
     @asynccontextmanager
     async def connect_webrtc(

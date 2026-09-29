@@ -30,10 +30,12 @@ from pydantic_ai.realtime import (
     RealtimeClientSecret,
     RealtimeModel,
     RealtimeModelSettings,
+    RealtimeProviderSession,
     RealtimeSession,
     WebRTCAnswer,
     WebRTCSession,
 )
+from pydantic_ai.realtime._session import _chain_context  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ToolCall
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
@@ -740,8 +742,9 @@ def test_openai_family_webrtc_profiles() -> None:
 class _OpenCall(RealtimeConnection):
     """A sideband connection that stays open until it is closed, like one attached to a live call."""
 
-    def __init__(self, events: Sequence[RealtimeCodecEvent] = ()) -> None:
+    def __init__(self, events: Sequence[RealtimeCodecEvent] = (), *, error: Exception | None = None) -> None:
         self._events = events
+        self._error = error
 
     async def send(self, content: RealtimeInput) -> None:
         pass
@@ -749,17 +752,28 @@ class _OpenCall(RealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
+        if self._error is not None:
+            raise self._error
         await asyncio.Event().wait()
 
 
 class _CallModel(RealtimeModel):
     """A network-free model whose calls can be attached to and hung up, recording each hangup."""
 
-    def __init__(self, *, hang_up_error: Exception | None = None, events: Sequence[RealtimeCodecEvent] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        hang_up_error: Exception | None = None,
+        events: Sequence[RealtimeCodecEvent] = (),
+        connection_error: Exception | None = None,
+        can_hang_up: bool = True,
+    ) -> None:
         self.settings = None
+        self._can_hang_up = can_hang_up
         self.hung_up: list[str] = []
-        self._hang_up_error = hang_up_error
+        self.hang_up_error = hang_up_error
         self._events = events
+        self._connection_error = connection_error
 
     @property
     def model_name(self) -> str:
@@ -780,11 +794,11 @@ class _CallModel(RealtimeModel):
 
     @asynccontextmanager
     async def _open(self) -> AsyncGenerator[RealtimeConnection]:
-        yield _OpenCall(self._events)
+        yield _OpenCall(self._events, error=self._connection_error)
 
     def connect_webrtc(
         self,
-        session: Any,
+        session: RealtimeProviderSession,
         *,
         messages: Sequence[ModelMessage],
         model_settings: RealtimeModelSettings | None,
@@ -792,10 +806,27 @@ class _CallModel(RealtimeModel):
     ) -> AbstractAsyncContextManager[RealtimeConnection]:
         return self._open()
 
-    async def hang_up(self, session: Any) -> None:
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
+        if not self._can_hang_up:
+            super()._check_hang_up(session)
+
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
         self.hung_up.append(session.session_id)
-        if self._hang_up_error is not None:
-            raise self._hang_up_error
+        if self.hang_up_error is not None:
+            # Raised from a lower-level error, as a mapped provider error is, so its context is taken.
+            try:
+                raise RuntimeError('transport')
+            except RuntimeError as e:
+                raise self.hang_up_error from e
+
+
+def _context_chain(error: BaseException) -> list[BaseException]:
+    chain: list[BaseException] = []
+    context = error.__context__
+    while context is not None:
+        chain.append(context)
+        context = context.__context__
+    return chain
 
 
 _CALL = WebRTCSession(provider_name='test', session_id='rtc_call')
@@ -852,9 +883,65 @@ async def test_a_refused_hang_up_is_raised_and_can_be_retried() -> None:
         async with Agent().realtime(model).session(provider_session=_CALL) as session:
             sessions.append(session)
             await session.hang_up()
-    model._hang_up_error = None  # pyright: ignore[reportPrivateUsage]
+    # Retried on a closed session, where nothing but the hangup is left to fail.
+    with pytest.raises(ModelHTTPError, match='boom') as exc_info:
+        await sessions[0].hang_up()
+    assert _context_chain(exc_info.value)[0].args == ('transport',)
+    model.hang_up_error = None
     await sessions[0].hang_up()
-    assert model.hung_up == ['rtc_call', 'rtc_call']
+    assert model.hung_up == ['rtc_call', 'rtc_call', 'rtc_call']
+
+
+async def test_a_failed_hang_up_keeps_the_error_that_ended_the_session() -> None:
+    """The failed hangup is raised, since the call is still up, with the session's own failure behind it."""
+    model = _CallModel(
+        hang_up_error=ModelHTTPError(status_code=500, model_name='call-model', body='boom'),
+        connection_error=RuntimeError('sideband broke'),
+    )
+    with pytest.raises(ModelHTTPError, match='boom') as exc_info:
+        async with Agent().realtime(model).session(provider_session=_CALL) as session:
+            await session.send('hello')
+            await asyncio.sleep(0.01)
+            await session.hang_up()
+    assert any(str(error) == 'sideband broke' for error in _context_chain(exc_info.value))
+    assert model.hung_up == ['rtc_call']
+
+
+@pytest.mark.parametrize('hang_up_fails', [False, True])
+async def test_hang_up_ends_the_call_even_when_closing_raises(hang_up_fails: bool) -> None:
+    """A watchdog's `close()` was cancelled before it collected the session's error, so `hang_up()` gets it.
+
+    The call must still end: raising the session's error without hanging up would leave it up and billed.
+    A hangup that fails there too is what's raised, with the session's error behind it.
+    """
+    model = _CallModel(connection_error=RuntimeError('sideband broke'))
+    async with Agent().realtime(model).session(provider_session=_CALL) as session:
+        await session.send('hello')
+        await asyncio.sleep(0.01)
+        closing = asyncio.create_task(session.close())
+        await asyncio.sleep(0)
+        closing.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        if hang_up_fails:
+            model.hang_up_error = ModelHTTPError(status_code=500, model_name='call-model', body='boom')
+            with pytest.raises(ModelHTTPError, match='boom') as exc_info:
+                await session.hang_up()
+            assert any(str(error) == 'sideband broke' for error in _context_chain(exc_info.value))
+        else:
+            with pytest.raises(RuntimeError, match='sideband broke'):
+                await session.hang_up()
+    assert model.hung_up == ['rtc_call']
+
+
+async def test_hang_up_is_refused_before_anything_closes() -> None:
+    """A model that can't end the call says so, and the session carries on."""
+    model = _CallModel(can_hang_up=False)
+    async with Agent().realtime(model).session(provider_session=_CALL) as session:
+        with pytest.raises(UserError, match='cannot end a call from the server'):
+            await session.hang_up()
+        assert not session.closed
+    assert model.hung_up == []
 
 
 async def test_hang_up_on_a_websocket_session_closes_it() -> None:
@@ -881,13 +968,47 @@ async def test_hang_up_is_refused_where_the_provider_cannot_end_a_call() -> None
         await azure.hang_up(call)
 
 
-async def test_hang_up_of_a_call_that_already_ended_is_not_an_error() -> None:
+@pytest.mark.parametrize(
+    'live,path,code',
+    [
+        (False, '/v1/realtime/calls/rtc_gone/hangup', 'call_id_not_found'),
+        (True, '/v1/live/sessions/rtc_gone/hangup', 'session_id_not_found'),
+    ],
+    ids=['gpt-realtime', 'gpt-live'],
+)
+async def test_hang_up_of_a_call_that_already_ended_is_not_an_error(live: bool, path: str, code: str) -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
-        assert request.url.path == '/v1/realtime/calls/rtc_gone/hangup'
-        return httpx2.Response(404, json={'error': {'message': 'Call not found', 'type': 'invalid_request_error'}})
+        assert request.url.path == path
+        return httpx2.Response(
+            404, json={'error': {'message': 'Not found', 'type': 'invalid_request_error', 'code': code}}
+        )
 
-    model = OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler))
+    provider = _mock_provider(handler)
+    model = (
+        OpenAILiveModel('gpt-live-1', provider=provider)
+        if live
+        else OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    )
     await model.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_gone'))
+
+
+async def test_any_other_not_found_hang_up_is_an_error() -> None:
+    """Only the provider's "no such call" means the call is gone: a 404 from a wrong URL is a real failure."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(404, json={'error': {'message': 'Unknown route', 'type': 'invalid_request_error'}})
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await OpenAIRealtimeModel('gpt-realtime', provider=_mock_provider(handler)).hang_up(
+            WebRTCSession(provider_name='openai', session_id='rtc_x')
+        )
+    assert exc_info.value.status_code == 404
+
+
+async def test_agent_realtime_hangs_up_without_resolving_the_agent() -> None:
+    """A model named by string is inferred just to hang up; the provider check still applies."""
+    with pytest.raises(UserError, match="negotiated by provider 'azure'"):
+        await Agent().realtime('openai:gpt-realtime').hang_up(WebRTCSession(provider_name='azure', session_id='rtc_x'))
 
 
 @pytest.mark.parametrize('live', [False, True], ids=['gpt-realtime', 'gpt-live'])
@@ -904,3 +1025,17 @@ async def test_a_hang_up_the_provider_refuses_is_an_http_error(live: bool) -> No
     with pytest.raises(ModelHTTPError) as exc_info:
         await model.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
     assert exc_info.value.status_code == 403
+
+
+def test_chaining_a_hang_up_error_never_repeats_or_loops() -> None:
+    session_error = RuntimeError('session')
+    already_chained = ValueError('hangup')
+    already_chained.__context__ = session_error
+    _chain_context(already_chained, session_error)
+    assert _context_chain(already_chained) == [session_error]
+
+    looped = ValueError('looped')
+    inner = RuntimeError('inner')
+    looped.__context__, inner.__context__ = inner, looped
+    _chain_context(looped, session_error)
+    assert looped.__context__ is inner and inner.__context__ is looped
