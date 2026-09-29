@@ -556,7 +556,7 @@ class TestDelegation:
 
 
 class TestRunControls:
-    async def test_usage_limits_isolate_child_accounting(self) -> None:
+    async def test_usage_limits_isolate_child_accounting_and_aggregate_usage(self) -> None:
         captured: dict[str, Any] = {}
         parent_usage: dict[str, Any] = {}
 
@@ -579,8 +579,9 @@ class TestRunControls:
 
         result = await parent.run('go')
         assert result.output == 'all done'
-        # A per-child usage_limits forces isolated accounting even though forward_usage defaults to True.
+        # The child's own limit needs isolated accounting, but its request still counts toward the parent total.
         assert captured['usage_is_parent'] is False
+        assert result.usage().requests == 3
 
     async def test_usage_budget_reached_is_soft(self) -> None:
         counter = {'n': 0}
