@@ -810,8 +810,15 @@ class TestMarkdownConverter:
 
     def test_ordered_list_start_growth_past_digit_limit(self):
         """Numbering can cross the integer digit limit after the initial value parses."""
-        html = '<ol start="' + '9' * 4300 + '"><li>x</li><li>x</li></ol>'
-        assert _convert_html(html)[1] == '1. x\n2. x'
+        start = '9' * 4300
+        html = f'<ol start="{start}"><li>x</li><li>x</li></ol>'
+        assert _convert_html(html)[1] == f'{start}. x\n2. x'
+
+    def test_empty_trailing_list_item_preserves_large_start(self):
+        """An empty item never formats its index or changes an earlier marker."""
+        start = '9' * 4300
+        html = f'<ol start="{start}"><li>x</li><li></li></ol>'
+        assert _convert_html(html)[1] == f'{start}. x'
 
     def test_ordered_list_start_is_scanned_once(self):
         """A shared invalid start attribute is parsed once for the whole list."""
@@ -928,6 +935,19 @@ class TestMarkdownConverter:
         html = '<div>' * 300 + f'<a href="{value}">{value}</a>' + '</div>' * 300
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 350_000):
             assert _convert_html(html)[1] == f'<{value}>'
+
+    @pytest.mark.parametrize('child', ['{value}', '<code>{value}</code>'])
+    def test_deep_non_autolink_is_rejected_before_conversion(self, child: str):
+        """The rendered link or raw fallback charges copies above the anchor before conversion."""
+        value = 'x' * 2000
+        html = '<div>' * 300 + '<a href="/x">' + child.format(value=value) + '</a>' + '</div>' * 300
+        with (
+            patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 350_000),
+            patch('pydantic_ai.common_tools.web_fetch._MarkdownConverter.convert_soup') as convert_soup,
+        ):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+            convert_soup.assert_not_called()
 
     def test_wrapped_deep_autolink_is_not_overcharged(self):
         """Transparent descendants preserve the converter's autolink shortcut."""

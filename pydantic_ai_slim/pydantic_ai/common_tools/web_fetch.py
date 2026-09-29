@@ -206,18 +206,18 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     nodes: list[PageElement] = []
     contentful: set[int] = set()
     direct_link_text: dict[int, str] = {}
-    ordered_list_marker_widths: dict[int, int] = {}
+    anchor_text_lengths: dict[int, int] = {}
     anchors: list[tuple[Tag, int, bool, bool]] = []
     videos: list[tuple[Tag, int, bool]] = []
     rows: list[Tag] = []
-    pending: list[tuple[PageElement, int, int, int, bool, bool, bool, bool]] = [
-        (soup, 0, 0, 0, False, False, False, False)
+    pending: list[tuple[PageElement, int, int, int, bool, bool, bool, int | None]] = [
+        (soup, 0, 0, 0, False, False, False, None)
     ]
     while pending:
-        node, depth, indent_depth, indent_width, inline, noformat, in_pre, in_anchor = pending.pop()
+        node, depth, indent_depth, indent_width, inline, noformat, in_pre, anchor_id = pending.pop()
         nodes.append(node)
         if node.next_sibling is not None:
-            pending.append((node.next_sibling, depth, indent_depth, indent_width, inline, noformat, in_pre, in_anchor))
+            pending.append((node.next_sibling, depth, indent_depth, indent_width, inline, noformat, in_pre, anchor_id))
         if isinstance(node, (Comment, Doctype)):
             continue
         if isinstance(node, Tag):
@@ -226,23 +226,18 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 indent_depth += 1
                 if node.name == 'li' and isinstance(node.parent, Tag) and node.parent.name == 'ol':
                     parent_id = id(node.parent)
-                    marker_width = ordered_list_marker_widths.get(parent_id)
-                    if marker_width is None:
-                        start = _ordered_list_start(node.parent)
-                        item_count = sum(
-                            1 for child in node.parent.children if isinstance(child, Tag) and child.name == 'li'
-                        )
-                        try:
-                            marker_width = len(str(start + item_count - 1)) + 3
-                        except ValueError:
-                            # Adding items can cross Python's integer-to-string digit limit.
-                            start = 1
-                            marker_width = len(str(item_count)) + 3
+                    if parent_id not in converter.ordered_list_starts:
+                        start_attr = node.parent.get('start')
+                        start = 1
+                        if isinstance(start_attr, str) and start_attr.isdecimal():
+                            try:
+                                start = int(start_attr)
+                            except ValueError:
+                                # Python limits decimal integer conversion length independently of HTML size.
+                                pass
                         converter.ordered_list_starts[parent_id] = start
-                        ordered_list_marker_widths[parent_id] = marker_width
-                    indent_width += marker_width
-                else:
-                    indent_width += 4
+                    # `convert_li` bounds the actual marker before indenting lines.
+                indent_width += 4
             # A tag can emit line breaks even without any text children (for example, `<br>`).
             cost += indent_width + indent_depth
             work = 8 * (indent_depth + 1)
@@ -253,7 +248,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 # A first-row cell can also generate two full-width header lines.
                 work += 8 * colspan
                 cost += 8 * colspan
-            if node.name == 'a' and depth > 16:
+            if node.name == 'a' and depth > 16 and anchor_id is None:
                 anchors.append((node, depth, noformat, inline))
             elif node.name == 'video':
                 videos.append((node, depth, inline))
@@ -263,7 +258,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 child_inline = inline or node.name in ('td', 'th') or _HTML_HEADING_RE.match(node.name) is not None
                 child_noformat = noformat or node.name in ('pre', 'code', 'kbd', 'samp')
                 child_in_pre = in_pre or node.name == 'pre'
-                child_in_anchor = in_anchor or node.name == 'a'
+                child_anchor_id = anchor_id if anchor_id is not None else id(node) if node.name == 'a' else None
                 pending.append(
                     (
                         node.contents[0],
@@ -273,7 +268,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                         child_inline,
                         child_noformat,
                         child_in_pre,
-                        child_in_anchor,
+                        child_anchor_id,
                     )
                 )
             cost += max(depth - 16, 0) * work
@@ -288,10 +283,12 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             # sees them; the converter's output meter charges what actually survives.
             if not inline and not in_pre:
                 cost += (indent_depth + indent_width) * converted_text.count('\n')
-                # Autolinks can discard escaped text before ancestors scan it. The output
-                # meter charges actual copies once the anchor's rendering is known.
-                if not in_anchor:
+                # An anchor can discard escaped text before ancestors scan it. Charge the
+                # rendered anchor after probing, or let the output meter handle inner tags.
+                if anchor_id is None:
                     text_scan_cost += max(depth - 16, 0) * len(converted_text)
+                else:
+                    anchor_text_lengths[anchor_id] = anchor_text_lengths.get(anchor_id, 0) + len(converted_text)
         if cost > _MAX_HTML_CONVERSION_COST or text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
             raise ModelRetry('the document is too complex')
 
@@ -363,9 +360,11 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     }
     for node, depth, noformat, inline in anchors:
         href = node.get('href')
-        if href and not noformat and any(id(child) in contentful for child in node.contents):
+        has_content = any(id(child) in contentful for child in node.contents)
+        rendered_length = anchor_text_lengths.get(id(node), 0) if has_content else 0
+        if href and not noformat and has_content:
             title = str(node.get('title') or '')
-            autolink = False
+            rendered_length += len(str(href)) + len(title) + title.count('"')
             if not title:
                 # Keep only direct child references. Flattening text fragments at every
                 # transparent ancestor would retain depth * fragment-count references.
@@ -442,11 +441,15 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                     link_probe_cost += len(candidate)
                     if link_probe_cost > _MAX_HTML_TEXT_SCAN_COST:
                         raise ModelRetry('the document is too complex')
-                    autolink = candidate.strip().replace(r'\_', '_') == href
-            if not autolink:
-                text_scan_cost += (depth - 16) * (len(str(href)) + len(title) + title.count('"'))
-            if text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
-                raise ModelRetry('the document is too complex')
+                    conversion = _upstream_get_conv_fn(converter, 'a')
+                    assert conversion is not None
+                    rendered_length = len(conversion(node, candidate, {'_inline'} if inline else set()))
+                    link_probe_cost += rendered_length
+                    if link_probe_cost > _MAX_HTML_TEXT_SCAN_COST:
+                        raise ModelRetry('the document is too complex')
+        text_scan_cost += (depth - 16) * rendered_length
+        if text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
+            raise ModelRetry('the document is too complex')
 
     for row in rows:
         cost += 8 * subtree_sizes[id(row)]
@@ -476,17 +479,6 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             if cost > _MAX_HTML_CONVERSION_COST or text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
                 raise ModelRetry('the document is too complex')
     return _extract_title(html), converter.convert_soup(soup)
-
-
-def _ordered_list_start(parent: Tag) -> int:
-    start_attr = parent.get('start')
-    if isinstance(start_attr, str) and start_attr.isdecimal():
-        try:
-            return int(start_attr)
-        except ValueError:
-            # Python limits decimal integer conversion length independently of HTML size.
-            pass
-    return 1
 
 
 class _MarkdownConverter(MarkdownConverter):
@@ -566,13 +558,12 @@ class _MarkdownConverter(MarkdownConverter):
                 if isinstance(child, Tag) and child.name == 'li':
                     self._ol_indexes[id(child)] = index
                     index += 1
-        start = self.ordered_list_starts.get(id(parent))
-        if start is None:
-            # Upstream checks `isnumeric()` before `int()`, which raises on digits like `²`; treat
-            # those as no start rather than letting the page abort the run.
-            start = _ordered_list_start(parent)
-            self.ordered_list_starts[id(parent)] = start
-        bullet = f'{start + self._ol_indexes[id(el)]}. '
+        start = self.ordered_list_starts[id(parent)]
+        try:
+            bullet = f'{start + self._ol_indexes[id(el)]}. '
+        except ValueError:
+            self.ordered_list_starts[id(parent)] = 1
+            bullet = f'{1 + self._ol_indexes[id(el)]}. '
         bullet_indent = ' ' * len(bullet)
         if len(bullet_indent) * text.count('\n') > _MAX_HTML_CONVERSION_COST:
             raise ModelRetry('the document is too complex')
