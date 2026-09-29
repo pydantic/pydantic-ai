@@ -58,19 +58,22 @@ class SlackAccount:
                     self.cancelled = True
             if isinstance(answer, UserError):
                 raise answer
-            signed = signed_in_tokens(answer, client_id=session.client.client_id)
+            signed = signed_in_tokens(answer, client_id=session.client.client_id, scopes=session.client.scopes)
             save_codex_credentials(account=slack_app.ACCOUNT, value=signed.stored())
             return signed
 
         monkeypatch.setattr(PKCESignIn, 'sign_in', sign_in)
 
 
-def signed_in_tokens(access: str = 'xoxe.xoxp-signed', *, client_id: str = APP) -> Tokens:
+def signed_in_tokens(
+    access: str = 'xoxe.xoxp-signed', *, client_id: str = APP, scopes: tuple[str, ...] = slack_app.READ_SCOPES
+) -> Tokens:
     return Tokens(
         client_id=client_id,
         access_token=SecretStr(access),
         refresh_token=SecretStr('xoxe-1-refresh'),
         expires_at=time.time() + 43200,
+        scopes=scopes,
     )
 
 
@@ -182,6 +185,19 @@ async def test_a_refused_sign_in_is_reported(monkeypatch: pytest.MonkeyPatch) ->
     set_up(monkeypatch, UNTIL_CLOSED)
     app = await shell()
     assert (await app.plugins.command(['configure', 'slack'])).splitlines()[-1] == 'Authorization failed: access_denied'
+    await app.plugins.close('exit')
+
+
+async def test_allowing_writes_without_signing_in_again_fails_closed_with_the_fix() -> None:
+    app = await browser_shell(signed_in=True)  # A read-only sign-in.
+    assert await app.turn_token() == 'xoxe.xoxp-signed'
+    app.host().save_settings(slack_plugin.SlackSettings(auth='browser', client_id=APP, read_only=False))
+    await app.plugins.reload('slack')
+    assert await app.turn_token() is None, 'a token that cannot post must not back the write tools'
+    assert (
+        'Slack tools are off. The Slack sign-in does not grant what this setup needs. '
+        'Run /plugins configure slack to sign in again.'
+    ) in app.output.getvalue()
     await app.plugins.close('exit')
 
 

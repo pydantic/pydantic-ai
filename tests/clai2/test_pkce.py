@@ -58,10 +58,12 @@ class TokenEndpoint:
         return httpx.MockTransport(self)
 
 
-def granted(access: str = 'at-1', refresh_token: str | None = 'rt-1') -> httpx.Response:
+def granted(access: str = 'at-1', refresh_token: str | None = 'rt-1', scope: str | None = None) -> httpx.Response:
     body: dict[str, object] = {'access_token': access, 'token_type': 'user', 'expires_in': 3600}
     if refresh_token:
         body['refresh_token'] = refresh_token
+    if scope is not None:
+        body['scope'] = scope
     return httpx.Response(200, json=body)
 
 
@@ -117,12 +119,19 @@ def store(tokens: Tokens) -> None:
     save_codex_credentials(account=ACCOUNT, value=tokens.stored())
 
 
-def tokens(*, expires_in: float | None, refresh_token: str | None = 'rt-old', client_id: str = 'app-1') -> Tokens:
+def tokens(
+    *,
+    expires_in: float | None,
+    refresh_token: str | None = 'rt-old',
+    client_id: str = 'app-1',
+    scopes: tuple[str, ...] = ('read', 'write'),
+) -> Tokens:
     return Tokens(
         client_id=client_id,
         access_token=SecretStr('at-old'),
         refresh_token=None if refresh_token is None else SecretStr(refresh_token),
         expires_at=None if expires_in is None else time.time() + expires_in,
+        scopes=scopes,
     )
 
 
@@ -171,6 +180,7 @@ async def test_sign_in_proves_the_verifier_without_a_secret_and_stores_the_token
     assert form['grant_type'] == 'authorization_code' and form['code'] == 'the-code'
     assert result.refresh_token == SecretStr('rt-1')
     assert result.expires_at is not None and abs(result.expires_at - (time.time() + 3600)) < 60
+    assert result.scopes == ('read', 'write'), 'a response without `scope` granted what was asked'
     assert shown == []
     assert sign_in.signed_in()
     assert await sign_in.token() == 'at-1'
@@ -279,6 +289,26 @@ async def test_refresh_uses_a_rotated_token_or_keeps_the_old_one(rotated: str | 
     renewed = await refresh(client(), tokens(expires_in=0), service='Example', transport=endpoint.transport)
     assert endpoint.forms == [{'grant_type': 'refresh_token', 'refresh_token': 'rt-old', 'client_id': 'app-1'}]
     assert renewed.access_token == SecretStr('at-new') and renewed.refresh_token == SecretStr(kept)
+
+
+async def test_the_granted_scopes_are_what_the_service_reports() -> None:
+    endpoint = TokenEndpoint(granted(scope='read, extra'), granted(access='at-2'))
+    signed = await session(endpoint, open_browser=browser(approve)).sign_in()
+    assert signed.scopes == ('read', 'extra')
+    renewed = await refresh(client(), signed, service='Example', transport=endpoint.transport)
+    assert renewed.scopes == ('read', 'extra'), 'a refresh without `scope` keeps what was granted'
+
+
+async def test_a_sign_in_without_the_scopes_the_client_now_asks_for_is_not_used() -> None:
+    store(tokens(expires_in=3600, scopes=('read',)))
+    narrow = session(TokenEndpoint(), app=client(scopes=('read',)))
+    assert narrow.signed_in() and await narrow.token() == 'at-old'
+    wider = session(TokenEndpoint())
+    assert not wider.signed_in()
+    with pytest.raises(
+        UserError, match=r'does not grant what this setup needs\. Run /plugins configure example to sign in again'
+    ):
+        await wider.token()
 
 
 async def test_token_is_reused_until_close_to_expiry_then_refreshed_and_saved() -> None:

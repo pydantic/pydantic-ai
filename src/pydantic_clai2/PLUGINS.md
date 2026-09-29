@@ -634,7 +634,9 @@ goes unused for 30 days, the refresh token expires and you sign in again.
 
 A read-only sign-in asks Slack for read scopes only, so the token itself cannot
 post. After switching Tools to read and write, press Enter on **Browser sign-in**
-to sign in again with the write scopes. The redirect is fixed at
+to sign in again with the write scopes. Until you do, turns have no Slack tools
+and CLAI says to sign in again, rather than offering write tools the token cannot
+use. The redirect is fixed at
 `http://localhost:53118/slack/callback`, because Slack matches the registered URL
 exactly. Workspaces that require admin approval for new apps need that approval
 first. `R` on Browser sign-in signs out; `R` on Slack app also forgets the app.
@@ -1166,7 +1168,8 @@ turn its tools off with that message. Refreshes are serialized across CLAI
 processes, because a service that rotates refresh tokens invalidates the old one.
 Token responses may report errors the standard way or, like Slack, with HTTP 200
 and an `error` field; both are handled. The tokens are stored under `account` in
-the credential store, tied to the Client ID, so changing the app means signing in
+the credential store with the scopes the service granted, tied to the Client ID.
+Changing the app, or asking for scopes the sign-in did not grant, means signing in
 again. Services with Dynamic Client Registration need none of this: add them as
 `/mcp` servers with OAuth.
 

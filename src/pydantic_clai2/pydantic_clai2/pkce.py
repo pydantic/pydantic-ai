@@ -55,6 +55,12 @@ class Tokens(BaseModel):
     access_token: SecretStr
     refresh_token: SecretStr | None = None
     expires_at: float | None = None
+    scopes: tuple[str, ...] = ()
+    """What the service granted; a sign-in saved without them grants nothing a client asks for."""
+
+    def grants(self, client: PublicClient) -> bool:
+        """Whether these tokens are for `client` and carry every scope it asks for."""
+        return self.client_id == client.client_id and set(client.scopes) <= set(self.scopes)
 
     def stale(self, now: float) -> bool:
         """Whether the access token expires within `REFRESH_MARGIN` seconds."""
@@ -67,6 +73,7 @@ class Tokens(BaseModel):
             access_token=self.access_token.get_secret_value(),
             refresh_token=None if self.refresh_token is None else self.refresh_token.get_secret_value(),
             expires_at=self.expires_at,
+            scopes=self.scopes,
         ).model_dump_json(exclude_none=True)
 
 
@@ -75,6 +82,7 @@ class _Stored(BaseModel):
     access_token: str
     refresh_token: str | None
     expires_at: float | None
+    scopes: tuple[str, ...]
 
 
 class _TokenResponse(BaseModel):
@@ -83,12 +91,19 @@ class _TokenResponse(BaseModel):
     access_token: str | None = None
     refresh_token: str | None = None
     expires_in: float | None = None
+    scope: str | None = None
     error: str | None = None
 
 
 async def _request_tokens(
-    client: PublicClient, form: Mapping[str, str], *, service: str, transport: httpx.AsyncBaseTransport | None
+    client: PublicClient,
+    form: Mapping[str, str],
+    *,
+    requested: tuple[str, ...],
+    service: str,
+    transport: httpx.AsyncBaseTransport | None,
 ) -> Tokens:
+    """A token response as `Tokens`; one without `scope` granted what was `requested` (RFC 6749 section 5.1)."""
     async with httpx.AsyncClient(transport=transport, timeout=30) as http:
         try:
             response = await http.post(client.token_url, data=dict(form), headers={'Accept': 'application/json'})
@@ -102,7 +117,12 @@ async def _request_tokens(
         access_token=SecretStr(body.access_token),
         refresh_token=SecretStr(body.refresh_token) if body.refresh_token else None,
         expires_at=None if body.expires_in is None else time.time() + body.expires_in,
+        scopes=requested if body.scope is None else _split_scope(body.scope, client.scope_separator),
     )
+
+
+def _split_scope(scope: str, separator: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in scope.split(separator) if part.strip())
 
 
 class PKCEFlow(OAuthFlow[Tokens]):
@@ -145,7 +165,9 @@ class PKCEFlow(OAuthFlow[Tokens]):
             'client_id': self.client.client_id,
             'code_verifier': self.code_verifier,
         }
-        return await _request_tokens(self.client, form, service=self.service, transport=self.transport)
+        return await _request_tokens(
+            self.client, form, requested=self.client.scopes, service=self.service, transport=self.transport
+        )
 
 
 async def refresh(
@@ -158,7 +180,7 @@ async def refresh(
         'refresh_token': tokens.refresh_token.get_secret_value(),
         'client_id': client.client_id,
     }
-    renewed = await _request_tokens(client, form, service=service, transport=transport)
+    renewed = await _request_tokens(client, form, requested=tokens.scopes, service=service, transport=transport)
     return renewed if renewed.refresh_token else renewed.model_copy(update={'refresh_token': tokens.refresh_token})
 
 
@@ -233,7 +255,7 @@ class PKCESignIn:
         tokens = self._load()
         return (
             tokens is not None
-            and tokens.client_id == self.client.client_id
+            and tokens.grants(self.client)
             and (tokens.refresh_token is not None or not tokens.stale(time.time()))
         )
 
@@ -292,19 +314,27 @@ class PKCESignIn:
         Refresh runs under a cross-process lock and re-reads first, because a rotating service invalidates the
         old refresh token: two sessions refreshing at once would sign each other out.
         """
-        tokens = await asyncio.to_thread(self._load)
-        if tokens is None or tokens.client_id != self.client.client_id:
-            raise UserError(f'Not signed in to {self.service}. Run {self.setup} to sign in.')
+        tokens = self._usable(await asyncio.to_thread(self._load))
         if not tokens.stale(time.time()):
             return tokens.access_token.get_secret_value()
         if tokens.refresh_token is None:
             raise UserError(f'The {self.service} sign-in expired. Run {self.setup} to sign in again.')
         return await asyncio.to_thread(self._refresh_locked)
 
+    def _usable(self, tokens: Tokens | None) -> Tokens:
+        """`tokens`, when they are this client's and grant everything it asks for now; otherwise raise."""
+        if tokens is None or tokens.client_id != self.client.client_id:
+            raise UserError(f'Not signed in to {self.service}. Run {self.setup} to sign in.')
+        if not tokens.grants(self.client):
+            raise UserError(
+                f'The {self.service} sign-in does not grant what this setup needs. Run {self.setup} to sign in again.'
+            )
+        return tokens
+
     def _refresh_locked(self) -> str:
         with self._lock():
-            tokens = self._load()
-            if tokens is None or tokens.client_id != self.client.client_id or tokens.refresh_token is None:
+            tokens = self._usable(self._load())
+            if tokens.refresh_token is None:
                 raise UserError(f'Not signed in to {self.service}. Run {self.setup} to sign in.')
             if tokens.stale(time.time()):
                 try:
