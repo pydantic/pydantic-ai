@@ -872,6 +872,12 @@ class TestMarkdownConverter:
         html = '<div>' * 30 + '<a href="/x">link</a>' + '</div>' * 30
         assert _convert_html(html)[1] == '[link](/x)'
 
+    def test_deep_autolink_is_not_overcharged(self):
+        """Autolink syntax replaces its text with the URL rather than appending a copy."""
+        value = 'x' * 9_000_000
+        html = '<div>' * 300 + f'<a href="{value}">{value}</a>' + '</div>' * 300
+        assert _convert_html(html)[1] == f'<{value}>'
+
     def test_inline_video_does_not_use_src(self):
         """A video in a table cell keeps its text and ignores its source URL."""
         html = (
@@ -896,6 +902,14 @@ class TestMarkdownConverter:
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
 
+    def test_repeated_table_row_search_is_bounded(self):
+        """Rows under thead must not each rescan all of their siblings."""
+        html = '<table><thead>' + '<tr><td>x</td></tr>' * 5000 + '</thead></table>'
+        started = time.perf_counter()
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+        assert time.perf_counter() - started < 3
+
     def test_small_table_colspan_converts(self):
         """Small decimal colspans retain the converter's output."""
         html = '<table><tr><td colspan="002">x</td></tr></table>'
@@ -908,6 +922,25 @@ class TestMarkdownConverter:
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
         assert time.perf_counter() - started < 3
+
+    @pytest.mark.parametrize(('tag', 'character'), [('code', '`'), ('h1', 'x')])
+    def test_generated_text_growth_is_bounded(self, tag: str, character: str):
+        """Code delimiters and underlined headings multiply long child text."""
+        html = '<div>' * 300 + f'<{tag}>' + character * 16_000_000 + f'</{tag}>' + '</div>' * 300
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+
+    @pytest.mark.parametrize('element', ['<pre><code>x</code></pre>', '<table><tr><td><h1>x</h1></td></tr></table>'])
+    def test_nested_formatted_text_is_not_overcharged(self, element: str):
+        """Code in pre and headings in table cells do not add format growth."""
+        html = '<div>' * 20 + element + '</div>' * 20
+        assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
+
+    def test_escaped_link_title_is_bounded(self):
+        """Every quote in a link title adds an escape character."""
+        html = '<div>' * 300 + "<a href='/x' title='" + '"' * 17_000_000 + "'>link</a>" + '</div>' * 300
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
 
     def test_anchor_in_code_does_not_use_href(self):
         """A link inside code keeps only its text, even when deeply nested."""
