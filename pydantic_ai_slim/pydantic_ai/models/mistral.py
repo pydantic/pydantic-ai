@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, cast
 
+import httpx2
 import pydantic_core
 from pydantic import JsonValue
 from typing_extensions import assert_never
@@ -114,7 +115,6 @@ except ImportError as e:  # pragma: lax no cover
 
 # Below the guard on purpose: `mistralai` requires `httpx`, so without the extra the error above
 # is what users should see, not `ModuleNotFoundError: httpx`.
-import httpx2
 from httpx import Timeout
 
 
