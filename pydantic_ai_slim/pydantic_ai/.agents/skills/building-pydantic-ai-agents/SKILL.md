@@ -293,16 +293,16 @@ Key facts for building realtime agents:
   A string sent during a reply queues on OpenAI/Azure/xAI and Gemini 2.5, but interrupts the active
   reply on Gemini 3.1. On OpenAI GPT-Live a string is never a user turn at all: it is context the model
   relays or answers (even with `respond=False`, which only doesn't *request* speech), it only lands
-  while audio is flowing, and text over 500 tokens raises `UserError`. Gemini speech models reject text output before connect; the Vertex
-  `gemini-live-2.5-flash` half-cascade can opt in with `profile={'supports_text_output': True}`.
+  while audio is flowing, and text over 500 tokens raises `UserError`. Gemini speech models reject text output before connect, except the Vertex
+  `gemini-live-2.5-flash` half-cascade, which answers in text.
 - **History handoff is the marquee integration**: `session.all_messages()` / `session.new_messages()`
   return real `ModelMessage`s; seed with `realtime(model, message_history=...).session()`. Transcripts
   stay attached to the user turn they describe even when they arrive after its response, and a turn
   started while the model is still answering (barge-in) is recorded after that answer. A reported
   speech segment whose transcript never arrives remains represented by retained audio or a content-less
-  `SpeechPart` when the session closes. Transcripts are what carry over; OpenAI and Azure can also
-  replay retained transcript-less *user* audio, Gemini,
-  xAI, and OpenAI GPT-Live (which seeds from text only) cannot, and assistant audio is never replayed. Streamed images all reach the provider, but
+  `SpeechPart` when the session closes. Transcripts are what carry over; a model whose profile sets
+  `supports_seeding_audio` can also replay retained transcript-less *user* audio recorded at its input
+  rate, and assistant audio is never replayed. Streamed images all reach the provider, but
   history keeps a sampled (`retain_images_every_n`) and bounded (`retain_images_max`, default `100`,
   oldest evicted first) record.
 - **Usage and cost**: each recorded `ModelResponse` carries its response usage, while `session.usage`

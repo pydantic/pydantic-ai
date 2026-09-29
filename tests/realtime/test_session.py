@@ -11236,3 +11236,28 @@ async def test_run_context_context_window_used_in_a_session() -> None:
             pass
 
     assert observed == [0.4]
+
+
+async def test_user_turn_anchored_to_refused_content_is_still_recorded() -> None:
+    """The user started speaking right after content the provider then refused: their turn outlives its anchor.
+
+    The refusal takes the content back out of history, so the place the turn was anchored to is gone; the turn is
+    kept anyway, at the end, rather than lost.
+    """
+
+    def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
+        return [
+            RealtimeInputSpeechStartEvent(item_id='item_u1'),
+            InputRejected(index, refused='content'),
+            _REFUSAL,
+            InputTranscript('hello', is_final=True, item_id='item_u1'),
+        ]
+
+    session = RealtimeSession(_AnswersEachInput(answer))
+    async with session:
+        await session.send('refused', respond=False)
+        for _ in range(20):  # let the pump read everything
+            await asyncio.sleep(0)
+        assert session.all_messages() == snapshot(
+            [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello')], timestamp=IsDatetime())]
+        )
