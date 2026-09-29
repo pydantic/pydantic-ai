@@ -389,12 +389,12 @@ class RedisSpendStore:
         }
 
     # `_before_hash_tags` and `_legacy_name` carry counters written before the keys gained a
-    # hash tag. Delete both and their three call sites (`get_many` and the two in `add_many`)
-    # in 0.28.0 -- but not as a bare deletion: a `total` window never expires and a
+    # hash tag. Removing them means deleting both and their three call sites (`get_many` and
+    # the two in `add_many`), but not as a bare deletion: a `total` window never expires and a
     # `retain='forever'` one does not either, so whatever is still under the old name is
-    # subtracted from the enforced total the moment the fallback goes. What that release owes
-    # an operator is settled in
-    # <https://github.com/pydantic/pydantic-ai-harness/issues/694>.
+    # subtracted from the enforced total the moment the fallback goes. The release that drops
+    # them has to point operators at `fold_untagged_counters` in the spend docs first; see
+    # <https://github.com/pydantic/pydantic-ai/issues/9253>.
     async def _before_hash_tags(self, key: str) -> Spent:
         """What this budget key accumulated under the name an earlier release used.
 
