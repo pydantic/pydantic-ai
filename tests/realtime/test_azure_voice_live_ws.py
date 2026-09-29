@@ -499,6 +499,52 @@ async def test_openai_audio_settings_apply_on_voice_live(
     assert isinstance(response.parts[0], TextPart)
 
 
+async def test_cascade_model_speaks_with_azure_voice(
+    azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette],
+) -> None:
+    """A cascade model speaks with the Azure voice chosen by `azure_voice_live_voice`.
+
+    Cascade models like `gpt-5` reject an OpenAI voice ("Only Azure voice is supported"), so before this
+    setting their voice couldn't be chosen, and setting `openai_voice` failed the session at startup.
+    """
+    provider, cassette = azure_voice_live_ws_cassette
+    model = AzureRealtimeModel(
+        'gpt-5',
+        provider=provider,
+        settings=AzureRealtimeModelSettings(azure_voice_live_voice='en-US-AvaMultilingualNeural'),
+    )
+    agent = Agent(instructions='Answer in two or three words.')
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Say a short greeting.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch - breaks on the recorded terminal event
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [session_update] = sent_frames_containing(cassette, 'Answer in two or three words.')
+    assert session_update['session']['voice'] == snapshot(
+        {'type': 'azure-standard', 'name': 'en-US-AvaMultilingualNeural'}
+    )
+    assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
+    # The server echoes the voice it will speak with.
+    [updated] = [
+        message.data
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage)
+        and message.direction == 'received'
+        and message.data.get('type') == 'session.updated'
+    ]
+    assert updated['session']['voice']['name'] == 'en-US-AvaMultilingualNeural'
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    part = response.parts[0]
+    assert isinstance(part, SpeechPart)
+    assert part.transcript == snapshot('Hello there!')
+
+
 async def test_gpt_realtime_2_is_served_by_voice_live(
     azure_voice_live_ws_cassette: tuple[AzureProvider, RealtimeCassette],
 ) -> None:

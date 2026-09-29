@@ -13,6 +13,7 @@ from anyio.to_thread import run_sync
 from openai import AsyncOpenAI
 from openai.types.realtime.realtime_audio_config_output import VoiceID
 from pydantic import BaseModel
+from typing_extensions import Required, TypedDict
 
 from ..exceptions import UserError
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
@@ -55,6 +56,7 @@ __all__ = (
     'AzureRealtimeModelProfile',
     'AzureRealtimeModelSettings',
     'AzureTokenCredential',
+    'AzureVoiceLiveVoice',
 )
 
 LatestAzureRealtimeModelNames = Literal['gpt-realtime']
@@ -206,15 +208,51 @@ class AzureTokenCredential(Protocol):
 _ENTRA_SCOPE = 'https://ai.azure.com/.default'
 
 
+class AzureVoiceLiveVoice(TypedDict, total=False):
+    """An Azure voice for an [Azure AI Voice Live](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to#audio-output-through-azure-text-to-speech) session.
+
+    Sent as the session's `voice` object as-is, so it takes the fields Voice Live documents for each
+    voice `type`. Set it with
+    [`azure_voice_live_voice`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_voice].
+    """
+
+    type: Required[Literal['azure-standard', 'azure-custom', 'azure-personal', 'azure-realtime-native']]
+    """The kind of voice: an Azure text-to-speech `azure-standard` (including HD) voice, an `azure-custom`
+    or `azure-personal` voice, or one of the `azure-realtime-native` voices of the `azure-realtime` model."""
+    name: Required[str]
+    """The voice name, e.g. `en-US-AvaMultilingualNeural`, `en-US-Ava:DragonHDLatestNeural`, or `ava`
+    for `azure-realtime-native`."""
+    endpoint_id: str
+    """The deployment endpoint ID of an `azure-custom` voice."""
+    model: str
+    """The base model of an `azure-personal` voice, e.g. `DragonLatestNeural`."""
+    temperature: float
+    """Variability in intonation and prosody, for Azure HD voices."""
+    rate: str
+    """Speaking rate, from `'0.5'` to `'1.5'`."""
+    pitch: str
+    """Pitch adjustment, e.g. `'+5%'`."""
+    volume: str
+    """Volume, e.g. `'loud'`."""
+    style: str
+    """Speaking style, e.g. `'cheerful'`, for voices that support styles."""
+    locale: str
+    """Locale to speak in, e.g. `'en-US'`, for multilingual voices."""
+    prefer_locales: list[str]
+    """Locales to prefer when a multilingual voice detects the language, e.g. `['en-US', 'en-GB']`."""
+    custom_lexicon_url: str
+    """URL of a custom lexicon that sets how the voice pronounces specific words."""
+
+
 class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     """Settings specific to Azure realtime models.
 
     This inherits every [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]
     field. When [`azure_voice_live`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live]
     is set, the Voice Live session config is built from the fields Voice Live's beta session object
-    has a counterpart for: `instructions`, `openai_voice` (by name), `turn_detection` (or
-    `openai_turn_detection`, or `azure_voice_live_turn_detection`), `openai_input_noise_reduction`,
-    `thinking` (as `reasoning_effort`, on models whose profile reports
+    has a counterpart for: `instructions`, `openai_voice` (by name, unless `azure_voice_live_voice` is
+    set), `turn_detection` (or `openai_turn_detection`, or `azure_voice_live_turn_detection`),
+    `openai_input_noise_reduction`, `thinking` (as `reasoning_effort`, on models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]),
     `input_transcription_model`, `output_modality`, `max_tokens`, `tool_choice`, and tools, plus the
     `azure_voice_live_*` settings.
@@ -239,6 +277,18 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     model (see [`azure_voice_live_cascade`][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade]),
     which rejects OpenAI's semantic VAD, it's sent as Voice Live's own `azure_semantic_vad`, which has
     no `eagerness` setting.
+    """
+    azure_voice_live_voice: str | AzureVoiceLiveVoice
+    """The Azure voice for a Voice Live session; only applies when the session uses Voice Live.
+
+    A string is an Azure text-to-speech standard voice name, such as `'en-US-AvaMultilingualNeural'` or
+    the HD `'en-US-Ava:DragonHDLatestNeural'`. Pass an
+    [`AzureVoiceLiveVoice`][pydantic_ai.realtime.azure.AzureVoiceLiveVoice] for a custom, personal, or
+    `azure-realtime-native` voice, or to tune the rate, pitch, style, and so on.
+
+    Cascade models (e.g. `gpt-5`, `gpt-4.1`) and `phi4-mm-realtime` speak only through Azure voices and
+    reject `openai_voice`, so this is how to choose their voice. It takes precedence over
+    `openai_voice`, which native-audio models like `gpt-realtime` also accept under Voice Live.
     """
     azure_voice_live_temperature: float
     """Sampling temperature for a Voice Live session, from 0 to 2; only applies when the session uses Voice Live.
@@ -573,7 +623,13 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             config['input_audio_transcription'] = {'model': transcription_model}
         if (noise_reduction := settings.get('openai_input_noise_reduction')) is not None:
             config['input_audio_noise_reduction'] = {'type': noise_reduction}
-        if voice := settings.get('openai_voice'):
+        if (azure_voice := settings.get('azure_voice_live_voice')) is not None:
+            config['voice'] = (
+                AzureVoiceLiveVoice(type='azure-standard', name=azure_voice)
+                if isinstance(azure_voice, str)
+                else azure_voice
+            )
+        elif voice := settings.get('openai_voice'):
             if isinstance(voice, VoiceID):
                 # Voice Live's session schema addresses a voice by provider + *name*, with no place for
                 # an OpenAI custom-voice id, so accepting one would silently drop it.
