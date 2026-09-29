@@ -380,6 +380,16 @@ class OpenAIModelProfile(ModelProfile, total=False):
     Responses APIs. When disabled, `CachePoint` markers are filtered out.
     """
 
+    openai_responses_supports_prompt_cache_diagnostics: bool
+    """Whether the Responses endpoint serves prompt cache diagnostics for this model. Default: `False`.
+
+    When `True`, requests pass the most recent response from the same provider as
+    `prompt_cache_options.comparison_response_id`, unless the
+    [`openai_prompt_cache_diagnostics`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_prompt_cache_diagnostics]
+    setting is `False`. Set by `OpenAIProvider` for GPT-5.6 and later models; OpenAI-compatible Responses
+    endpoints may reject the field (OpenRouter does), so it stays off for them.
+    """
+
     openai_responses_requires_streaming: bool
     """Whether the Responses endpoint serves streaming responses only. Default: `False`.
 
