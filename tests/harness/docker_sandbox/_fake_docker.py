@@ -68,9 +68,12 @@ exec)
     shift
     [ -f "$state/$name" ] || { echo "Error response from daemon: No such container: $name" >&2; exit 1; }
     [ "$name" != silent ] || exit 1
-    # In a `readonly` container the wrapper's PID directory isn't writable.
-    if [ "$name" = readonly ]; then
-        script=$(printf '%s' "$3" | sed 's#/tmp/#/nonexistent-pydantic-ai-dir/#')
+    # Each container gets a `/tmp` of its own for the backend's PID files; a `readonly` one's isn't writable.
+    if [ "$1" = sh ] && [ "$2" = -c ]; then
+        tmp="$state/$name.tmp"
+        [ "$name" != readonly ] || tmp=/nonexistent-pydantic-ai-dir
+        mkdir -p "$state/$name.tmp"
+        script=$(printf '%s' "$3" | sed "s#/tmp/\\.pydantic-ai-#$tmp/.pydantic-ai-#g")
         shift 3
         set -- sh -c "$script" "$@"
     fi
@@ -123,6 +126,13 @@ class FakeDocker:
         (state / name).write_text(str(working_dir))
         if labeled:
             (state / f'{name}.labeled').touch()
+
+    def pid_files(self, name: str) -> set[Path]:
+        """The backend's PID files in the container's `/tmp`."""
+        return set((self.bin_dir / 'containers' / f'{name}.tmp').glob('.pydantic-ai-*.pid'))
+
+    def tmp_files(self, name: str) -> list[Path]:
+        return list((self.bin_dir / 'containers' / f'{name}.tmp').glob('.pydantic-ai-*'))
 
     def hang_stops(self, name: str) -> None:
         (self.bin_dir / 'containers' / f'{name}.hang-stop').touch()

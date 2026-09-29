@@ -19,10 +19,16 @@ LIVE_IMAGE = 'python:3.13-slim'
 
 
 @pytest.mark.skipif(
-    os.getenv('PYDANTIC_AI_HARNESS_DOCKER_LIVE') != '1', reason='set PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 to use Docker'
+    os.name != 'posix' or os.getenv('PYDANTIC_AI_HARNESS_DOCKER_LIVE') != '1',
+    reason='set PYDANTIC_AI_HARNESS_DOCKER_LIVE=1 on a POSIX machine to use Docker',
 )
 class TestLiveDocker(WorkspaceBackendSuite):
     """Runs against real containers; each test's containers are removed afterwards."""
+
+    @pytest.fixture
+    def can_detect_exit_with_inherited_output_pipes(self) -> bool:
+        # Docker's `exec` waits until every copy of the command's output is closed (Podman's doesn't).
+        return False
 
     @pytest.fixture
     async def created(self) -> AsyncIterator[list[WorkspaceBackend]]:
