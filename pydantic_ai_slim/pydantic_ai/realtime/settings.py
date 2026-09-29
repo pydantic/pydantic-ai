@@ -68,13 +68,13 @@ class RealtimeModelSettings(TypedDict, total=False):
     max_tokens: int
     """The maximum number of tokens to generate per response before stopping.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    Supported by: OpenAI, Azure OpenAI, and Gemini. xAI accepts it but ignores it.
     """
 
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 
-    Supported by: OpenAI, Azure OpenAI, and xAI.
+    Supported by: OpenAI and Azure OpenAI. xAI accepts it but ignores it.
     """
 
     async_tool_calls: bool | None

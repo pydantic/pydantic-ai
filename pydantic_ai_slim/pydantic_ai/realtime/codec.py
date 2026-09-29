@@ -397,7 +397,7 @@ class InputRejected:
     from a handle that can predate a typed turn) yields it too, ahead of the
     [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent]. It is also
     yielded for a request for a response the connection doesn't send, because the provider would ignore
-    it without a word (xAI, once it has answered committed audio by itself). The session uses it to take
+    it without a word (xAI, once it has answered the latest committed audio). The session uses it to take
     back what it assumed the input did: a refused request for a response releases the reply
     [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] would otherwise wait for
     forever, and refused content is removed from history.

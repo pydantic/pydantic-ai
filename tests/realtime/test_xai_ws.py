@@ -236,14 +236,14 @@ async def test_audio_in_server_vad_turn(
 
 
 @pytest.mark.realtime_ws_hold_open
-async def test_push_to_talk_create_response_after_the_commit_reply(
-    xai_ws_cassette: tuple[XaiProvider, RealtimeCassette], assets_path: Path
+async def test_push_to_talk_replies_only_when_asked(
+    xai_ws_cassette: tuple[XaiProvider, RealtimeCassette], assets_path: Path, realtime_recording: bool
 ) -> None:
-    """A `create_response()` after xAI has answered a committed turn by itself doesn't leave `wait_for_reply()` hanging.
+    """With turn detection off, committed audio gets a reply only when `create_response()` asks for one.
 
-    With turn detection off, xAI still replies as soon as audio is committed, and then silently drops a
-    `response.create` that follows the reply: it sends no response and no error. The request is refused
-    locally instead of sent, so the session stops waiting for a reply that would never come.
+    xAI answers a commit by itself, so the commit is held back and sent in place of `response.create`. Text
+    sent in between reaches xAI first. A second `create_response()` with nothing new behind it, which xAI
+    would drop without a word, is refused, so `wait_for_reply()` returns rather than waiting for ever.
     """
     provider, cassette = xai_ws_cassette
     model = XaiRealtimeModel(MODEL, provider=provider, settings=XaiRealtimeModelSettings(turn_detection=False))
@@ -254,26 +254,36 @@ async def test_push_to_talk_create_response_after_the_commit_reply(
         for start in range(0, len(pcm), 4800):
             await session.send_audio(pcm[start : start + 4800])
         await session.commit_audio()
+        await session.send('Greet me by name.', respond=False)
+        if realtime_recording:  # pragma: no cover
+            # Long enough for a reply to the commit to have started, had the commit been sent.
+            await anyio.sleep(3)
+        await session.create_response()
         with anyio.fail_after(30):
-            async for event in session:  # pragma: no branch
-                if isinstance(event, RealtimeTurnCompleteEvent):
-                    break
-        # The reply xAI started on its own has finished, so this request asks for nothing new.
+            await session.wait_for_reply()
         await session.create_response()
         with anyio.fail_after(10):
             await session.wait_for_reply()
 
-    assert [type(m).__name__ for m in session.all_messages()] == snapshot(['ModelRequest', 'ModelResponse'])
-    sent_types = [
-        message.data['type']
-        for message in cassette.interactions
-        if isinstance(message, CassetteMessage) and message.direction == 'sent'
-    ]
-    # The request is never sent: the clear that follows it only wakes the receive loop, on a buffer the
-    # commit already emptied.
-    assert sent_types[sent_types.index('input_audio_buffer.commit') :] == snapshot(
-        ['input_audio_buffer.commit', 'input_audio_buffer.clear']
+    interactions = [message for message in cassette.interactions if isinstance(message, CassetteMessage)]
+    commit_at = next(
+        index
+        for index, message in enumerate(interactions)
+        if message.direction == 'sent' and message.data['type'] == 'input_audio_buffer.commit'
     )
+    # Nothing was answered before the request, and the commit went out after the text, in its place.
+    assert not any(message.data['type'] == 'response.created' for message in interactions[:commit_at])
+    sent_types = [message.data['type'] for message in interactions if message.direction == 'sent']
+    assert sent_types[sent_types.index('conversation.item.create') :] == snapshot(
+        ['conversation.item.create', 'input_audio_buffer.commit', 'input_audio_buffer.clear']
+    )
+    # History follows what xAI was sent: the text, then the committed speech, then the one reply.
+    messages = session.all_messages()
+    assert [[type(part).__name__ for part in message.parts] for message in messages] == snapshot(
+        [['UserPromptPart'], ['SpeechPart'], ['SpeechPart']]
+    )
+    assert isinstance(messages[1], ModelRequest)
+    assert isinstance(messages[2], ModelResponse)
 
 
 async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:

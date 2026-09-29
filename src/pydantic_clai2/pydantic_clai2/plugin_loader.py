@@ -212,13 +212,19 @@ class PluginLoader(Generic[DepsT]):
         return [spinner for host in self._loaded.values() for spinner in host.spinners]
 
     async def load_all(self, *, fresh: bool = False) -> None:
-        """Load enabled plugins, re-importing after a shell reload so host event types match."""
+        """Load enabled plugins, re-importing after a shell reload so host event types match.
+
+        A declaration whose own module is not installed, such as a built-in saved by another CLAI
+        version, is skipped quietly: `/plugins list` still shows the failure. Loading it explicitly
+        with `/plugins enable`, `add`, or `reload` still raises.
+        """
         for entry in self._registration_order():
             if entry.declaration.enabled and entry.host is None:
                 try:
                     await self.load(entry.name, fresh=fresh)
                 except PluginError as exc:
-                    self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+                    if not _module_absent(entry, exc.error):
+                        self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
 
     async def load(self, name: str, *, fresh: bool = False) -> None:
         """Import, activate, and fire `session_start`. A failure leaves nothing registered."""
@@ -232,6 +238,9 @@ class PluginLoader(Generic[DepsT]):
             full_screen=self._full_screen,
             conversation=self._conversation,
             status=self._status,
+            save_settings=lambda settings: self._store.save_plugin(
+                entry.declaration.model_copy(update={'settings': settings, 'enabled': True})
+            ),
         )
         try:
             module = self._import(entry, fresh=fresh)
@@ -339,6 +348,33 @@ class PluginLoader(Generic[DepsT]):
         await self.unload(name)
         await self.load(name, fresh=True)
 
+    async def configure(self, name: str) -> str:
+        """Open the plugin's settings menu, then load it again if its saved settings changed."""
+        host = self._entry(name).host
+        if host is None:
+            raise ValueError(f'Plugin {name} is not loaded; enable it before configuring.')
+        if host.configurer is None:
+            raise ValueError(f'Plugin {name} has no settings menu; replace its declaration with /plugins add.')
+        before = self._entry(name).declaration.settings
+        try:
+            return await host.configurer()
+        finally:
+            # Also when the menu fails after saving, so the running plugin matches what is saved.
+            if self._entry(name).declaration.settings != before:
+                await self.unload(name)
+                await self.load(name)
+
+    def configurable(self, name: str) -> bool:
+        """Whether the plugin is loaded and registered a settings menu with `configure`."""
+        host = self._entry(name).host
+        return host is not None and host.configurer is not None
+
+    async def _configure_new(self, name: str, message: str) -> str:
+        """After enable or add, open a newly loaded plugin's settings menu, if it has one."""
+        if not self.configurable(name):
+            return message
+        return f'{message}\n{await self.configure(name)}'
+
     async def command(self, args: list[str]) -> str:
         """Back `/plugins` with arguments; changes apply now and are saved."""
         if not args or args == ['list']:
@@ -355,15 +391,22 @@ class PluginLoader(Generic[DepsT]):
             plugins_command(self._store, args)
             await self.load(rest[0])
             if existing is None:
-                return f'Added and loaded {rest[0]}.'
-            return f'Replaced {"project" if existing.project else "built-in"} {rest[0]}.'
+                return await self._configure_new(rest[0], f'Added and loaded {rest[0]}.')
+            kind = 'project' if existing.project else 'built-in'
+            return await self._configure_new(rest[0], f'Replaced {kind} {rest[0]}.')
         if len(rest) != 1:
             raise ValueError(
-                'Usage: /plugins [list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID]'
+                'Usage: /plugins [list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID'
+                '|configure ID]'
             )
         name = rest[0]
         if action == 'remove':
             return await self.remove(name)
+        if action == 'configure':
+            return await self.configure(name)
+        if action == 'enable' and self._entry(name).host is None:
+            await self.enable(name)
+            return await self._configure_new(name, f'Enabled {name}.')
         actions = {
             'enable': (self.enable, 'Enabled'),
             'disable': (self.disable, 'Disabled'),
@@ -381,6 +424,14 @@ class PluginLoader(Generic[DepsT]):
         module_name = entry.declaration.factory.partition(':')[0]
         module = importlib.import_module(module_name)
         return importlib.reload(module) if fresh else module
+
+
+def _module_absent(entry: PluginEntry[DepsT], error: BaseException) -> bool:
+    """Whether the plugin's own module (or a parent package) is missing, not one of its imports."""
+    if entry.path is not None or not isinstance(error, ModuleNotFoundError) or error.name is None:
+        return False
+    module_name = entry.declaration.factory.partition(':')[0]
+    return module_name == error.name or module_name.startswith(f'{error.name}.')
 
 
 def _same_plugin(declaration: PluginSettings, shipped: PluginSettings | None) -> bool:

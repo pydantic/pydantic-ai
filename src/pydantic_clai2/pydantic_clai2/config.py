@@ -50,6 +50,9 @@ class Settings(BaseModel):
     grep_lines: int = Field(
         default=20, ge=0, le=1000, description='Grep preview lines when display.tool_output is enabled.'
     )
+    tool_arg_chars: int = Field(
+        default=40, ge=0, le=1000, description='Characters shown per tool argument value; 0 hides arguments.'
+    )
     smooth_seconds: float = Field(
         default=0.5,
         ge=0.1,
@@ -77,6 +80,7 @@ SETTING_FIELDS = {
     'display.tool_output': 'tool_output',
     'display.shell_lines': 'shell_lines',
     'display.grep_lines': 'grep_lines',
+    'display.tool_arg_chars': 'tool_arg_chars',
     'display.smooth_seconds': 'smooth_seconds',
     'run.tool_retries': 'tool_retries',
     'run.speculative_code_mode': 'speculative_code_mode',

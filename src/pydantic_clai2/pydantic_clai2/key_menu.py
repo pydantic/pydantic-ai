@@ -12,7 +12,7 @@ from pydantic_ai.exceptions import UserError
 from . import api_keys
 from ._rendering import markdown_style
 from .credential_store import credentials_path
-from .field_menu import TERMINAL, FieldMenu, FieldRow, Runners
+from .field_menu import TERMINAL, FieldMenu, FieldRow, Runners, picked, save_and_close_item
 from .menu_worker import menu_key, run_worker
 
 _NOTE = (
@@ -69,6 +69,7 @@ def build_keys_menu(*, names: list[str], message: str = '') -> Menu:
     items.append(MenuItem('Add API key...', value=KeyAction(action='add')))
     if message:
         items.append(MenuItem(message, disabled=True))
+    items.append(save_and_close_item())
 
     def action(kind: Literal['rename', 'delete'], item: MenuItem) -> MenuResult | None:
         if not item.disabled and isinstance(item.value, str):
@@ -156,11 +157,11 @@ def run_keys_flow(*, runners: Runners = TERMINAL) -> None:
             if path.is_file()
             else 'Storage: OS keyring preferred; private plaintext fallback if unavailable.'
         )
-        result = runners.run_list(build_keys_menu(names=names, message=f'{message}\n{storage}'))
-        if result.cancelled or result.item is None:
+        item = picked(runners.run_list(build_keys_menu(names=names, message=f'{message}\n{storage}')))
+        if item is None:
             return
         try:
-            message = _act(value=result.item.value, source=source, runners=runners)
+            message = _act(value=item.value, source=source, runners=runners)
         except (ValueError, UserError) as exc:
             message = str(exc)
         except (OSError, KeyringError):

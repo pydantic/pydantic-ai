@@ -39,6 +39,7 @@ from .commands import (
     config_completions,
     expand_bare_command,
     is_command_input,
+    is_silent,
     set_completions,
 )
 from .config import PluginSettings, Settings
@@ -795,10 +796,14 @@ def _report_interrupt(completed: bool, console: Console) -> None:
 
 async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status) -> None:
     try:
-        console.print(await commands.execute_async(text), markup=False)
+        result = await commands.execute_async(text)
+        # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
+        if not is_silent(result):
+            console.print(result, markup=False)
+            console.print()
     except Exception as exc:
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
-    console.print()
+        console.print()
     _reset_status(text, status)
 
 
@@ -838,6 +843,7 @@ async def _run_prompt(
         show_tool_output=settings.tool_output,
         shell_lines=settings.shell_lines,
         grep_lines=settings.grep_lines,
+        tool_arg_chars=settings.tool_arg_chars,
         renderers=renderers,
     )
     status.streamed_chars = 0

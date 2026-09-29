@@ -50,16 +50,14 @@ model = XaiRealtimeModel('grok-voice-latest', settings=settings)
 ```
 
 `xai_voice` selects the provider voice; when unset, xAI picks its own server-side default
-(currently `eve`). For exact server-VAD threshold or
-automatic-response behavior, set `xai_turn_detection=` with
-[`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]; it fully overrides shared
-[`turn_detection`](turns.md#automatic-turn-detection).
-Set `turn_detection=False` for [push-to-talk](turns.md#push-to-talk). Grok Voice still answers
-audio as soon as it is committed, and ignores a request for a response made after that answer
-finishes, until you send something new. Pydantic AI refuses such a
-[`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response] instead of sending it,
-so [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] returns rather than
-waiting for a reply that never comes.
+(currently `eve`). For an exact server-VAD threshold, prefix padding, or silence duration, set
+`xai_turn_detection=` with [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]; it fully overrides
+shared [`turn_detection`](turns.md#automatic-turn-detection). xAI echoes `create_response: False`
+back but still responds when the user stops speaking, so use `turn_detection=False` for
+[push-to-talk](turns.md#push-to-talk) instead.
+
+xAI accepts the shared `max_tokens` and `parallel_tool_calls` settings but ignores them: replies
+aren't capped, and the model can still call several tools at once.
 
 [Input transcription](audio.md#input-transcription) defaults to `'auto'`. Unlike the incremental
 deltas described in [live captions](audio.md#live-captions), xAI sends cumulative transcript
@@ -78,13 +76,13 @@ Other Grok Voice models ignore the setting.
 
 | Feature | Support | Notes |
 | --- | --- | --- |
-| Audio format | Full feature support | Mono PCM16, 24 kHz input and output |
+| Audio format | Limited parameter support | Mono PCM16 at 24 kHz by default, input and output; the other PCM rates xAI lists (8 to 48 kHz) by setting `audio_input_sample_rate` and `audio_output_sample_rate` through [`profile=`](overview.md#provider-support). The API also offers G.711 and Opus, which Pydantic AI does not expose |
 | Text output | Unsupported | Grok Voice always produces audio |
-| Image input | Unsupported | xAI does not document image input; currently accepted frames are silently ignored rather than rejected |
+| Image input | Unsupported | Grok Voice doesn't see images: xAI accepts an image item but ignores it, so [`send()`][pydantic_ai.realtime.RealtimeSession.send] rejects images with a `UserError` before sending |
 | Manual turns | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk) |
-| Interruption | Limited parameter support | [`interrupt()`](turns.md#barge-in) works; output truncation with `played_ms` does not |
+| Interruption | Limited parameter support | [`interrupt()`](turns.md#barge-in) works, and `played_bytes=` also discards the unheard audio; `played_ms` raises, because [xAI's truncation](#provider-specific-quirks) is unreliable at barge-in |
 | Input transcription | Full feature support | [Dedicated provider path](audio.md#input-transcription); `'auto'` by default |
-| Native tools | Unsupported | Configure [local fallbacks](tools.md#native-tools) for web capabilities |
+| Native tools | Unsupported | xAI offers web search, X search, file search, and MCP tools, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Async tool calls | Full feature support | Grok Voice keeps talking, and answers the user, while a [tool runs](tools.md#concurrent-tool-execution) |
 | Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
 | State-restoring reconnect | Full feature support | Native [resumption](#session-resumption) is automatic with a reconnect policy |
@@ -101,15 +99,20 @@ through `provider='xai'` or an `XaiProvider`.
 
 With a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy], xAI automatically enables native
 resumption for [state-restoring reconnects](lifecycle.md#state-restoration): it restores prior
-turns and suppresses the provider's replay burst from the local event stream. The handle stays in
-memory and cannot resume in another process.
+turns and suppresses the provider's replay burst from the local event stream. The handle is xAI's
+conversation ID, and xAI keeps the conversation for 30 minutes of inactivity, but Pydantic AI holds
+the ID only in memory, so another process can't resume it yet
+([#7302](https://github.com/pydantic/pydantic-ai/issues/7302)).
 
 ## Provider-specific quirks
 
 - Grok Voice always speaks: its profile reports `supports_text_output=False`, so `output_modality='text'`
   raises a `UserError` before connecting. Read the answer from the transcript on the `SpeechPart`.
-- Pydantic AI reports output truncation as unsupported because xAI does not document it. The API
-  currently accepts `conversation.item.truncate` silently, but does not confirm or document its
-  effect, so flush local playback and call `interrupt()` without `played_ms`.
+- xAI documents `conversation.item.truncate` and confirms it with `conversation.item.truncated`,
+  but in our testing it only takes effect once the response has ended, and not reliably even then.
+  Sent just before the cancel, as barge-in needs, it changes nothing, so the profile reports
+  `supports_output_truncation=False`. `interrupt(played_bytes=...)` still discards the unheard audio
+  and cancels the response, while a plain `interrupt()` only cancels. Either way xAI keeps everything
+  generated up to the cancel, which can be more than the user heard.
 - The protocol resembles OpenAI Realtime, but feature support comes from the xAI model profile;
   avoid assuming every OpenAI behavior is available.
