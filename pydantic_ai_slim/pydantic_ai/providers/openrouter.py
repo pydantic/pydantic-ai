@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import os
+from datetime import timedelta
 from typing import overload
 
 from pydantic_ai import ModelProfile
@@ -54,13 +55,10 @@ class OpenRouterModelProfile(OpenAIModelProfile, total=False):
     Anthropic enforces a limit of 4. When set, excess breakpoints are silently removed
     from messages (newest kept first). `None` means no limit."""
     openrouter_supports_forced_tool_choice_with_thinking: bool
-    """Whether the downstream provider accepts a forced `tool_choice` while thinking is enabled.
+    """Deprecated: use [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking] instead.
 
-    Anthropic rejects `tool_choice` `any`/`tool` alongside extended thinking, but OpenRouter swallows the
-    incompatibility by dropping `reasoning` from the request instead of erroring, so the response silently
-    comes back with no reasoning at all. When False and thinking is enabled, a resolved `required` tool
-    choice falls back to `auto` (filtering tools to the requested set), and an explicit
-    `tool_choice='required'` (or an explicit list of tools) raises a `UserError`."""
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
 
 
 class _OpenRouterGoogleJsonSchemaTransformer(JsonSchemaTransformer):
@@ -215,7 +213,12 @@ class OpenRouterProvider(_OpenAICompatibleProvider):
                 # Anthropic errors on a forced `tool_choice` with thinking enabled; OpenRouter instead
                 # drops `reasoning` from the request and returns a response with no reasoning at all.
                 # https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
-                openrouter_supports_forced_tool_choice_with_thinking=provider != 'anthropic',
+                supports_forced_tool_choice_with_thinking=provider != 'anthropic',
+                # OpenRouter documents cache TTLs for the providers whose cache control it passes through:
+                # Anthropic's 5-minute default (1-hour opt-in via `CachePoint`) and Gemini's 5-minute cache
+                # writes. Other routed caches have no OpenRouter-level retention commitment.
+                # https://openrouter.ai/docs/features/prompt-caching
+                default_cache_retention=timedelta(minutes=5) if supports_cache_control else None,
             ),
         )
 

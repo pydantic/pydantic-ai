@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '538'
+      - '882'
       content-type:
       - application/json
       host:
@@ -17,71 +17,25 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
+        output.urgent:
+          instructions:
+            field: urgent
+            premise: 'If the user''s request calls for output: Classify a message that does not request a navigation action.'
+            question: Is this message urgent?
+          type: noul
         route:
           criteria:
             output: Classify a message that does not request a navigation action.
             set_direction: Set the navigation direction requested in the message.
           instructions: Which of these does this call for?
           type: choice
-        urgent:
-          instructions:
-            field: urgent
-            goal: Classify a message that does not request a navigation action.
-            question: Is this message urgent?
-          type: noul
-      state: At the fork, take the left path. Set our direction accordingly.
-    uri: https://api.typesafe.ai/v1/systemone
-  response:
-    headers:
-      content-length:
-      - '262'
-      content-type:
-      - application/json
-    parsed_body:
-      answers:
-        route:
-          choice: set_direction
-          confidence: 1.0
-          probabilities:
-            output: 0.0
-            set_direction: 1.0
-          type: choice
-        urgent:
-          noul: 0.09
-          type: noul
-      model: jev-1.13.0
-      usage:
-        input_tokens: 389
-        output_tokens: 49
-    status:
-      code: 200
-      message: OK
-- request:
-    headers:
-      accept:
-      - application/json
-      accept-encoding:
-      - gzip, deflate, br, zstd
-      connection:
-      - keep-alive
-      content-length:
-      - '371'
-      content-type:
-      - application/json
-      host:
-      - api.typesafe.ai
-    method: POST
-    parsed_body:
-      model: jev-latest
-      questions:
-        direction:
+        set_direction.direction:
           criteria:
             left: null
             right: null
           instructions:
-            chosen: set_direction
             field: direction
-            goal: Set the navigation direction requested in the message.
+            premise: 'If the user''s request calls for set_direction: Set the navigation direction requested in the message.'
             question: Which direction should be taken?
           type: choice
       state: At the fork, take the left path. Set our direction accordingly.
@@ -89,12 +43,22 @@ interactions:
   response:
     headers:
       content-length:
-      - '205'
+      - '399'
       content-type:
       - application/json
     parsed_body:
       answers:
-        direction:
+        output.urgent:
+          noul: 0.12
+          type: noul
+        route:
+          choice: set_direction
+          confidence: 1.0
+          probabilities:
+            output: 0.0
+            set_direction: 1.0
+          type: choice
+        set_direction.direction:
           choice: left
           confidence: 1.0
           probabilities:
@@ -103,8 +67,8 @@ interactions:
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 341
-        output_tokens: 31
+        input_tokens: 469
+        output_tokens: 82
     status:
       code: 200
       message: OK

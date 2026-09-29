@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '459'
+      - '509'
       content-type:
       - application/json
       host:
@@ -17,42 +17,42 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
+        Ticket.urgent:
+          instructions:
+            field: urgent
+            premise: 'If the user''s request calls for Ticket: Triage a support ticket.'
+            question: Does this need a reply within the hour?
+          type: noul
         route:
           criteria:
             Ticket: Triage a support ticket.
             refund: Return a payment to the customer.
           instructions: Which of these does this call for?
           type: choice
-        urgent:
-          instructions:
-            field: urgent
-            goal: Triage a support ticket.
-            question: Does this need a reply within the hour?
-          type: noul
       state: You charged my card twice for the same month. Put the second one back.
     uri: https://api.typesafe.ai/v1/systemone
   response:
     headers:
       content-length:
-      - '251'
+      - '256'
       content-type:
       - application/json
     parsed_body:
       answers:
+        Ticket.urgent:
+          noul: 0.52
+          type: noul
         route:
           choice: refund
           confidence: 0.99
           probabilities:
-            Ticket: 0.01
-            refund: 0.99
+            Ticket: 0.0
+            refund: 1.0
           type: choice
-        urgent:
-          noul: 0.55
-          type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 378
-        output_tokens: 47
+        input_tokens: 388
+        output_tokens: 50
     status:
       code: 200
       message: OK

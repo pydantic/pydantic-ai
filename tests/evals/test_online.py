@@ -146,7 +146,6 @@ if TYPE_CHECKING or imports_successful():
             return [self._data[s.span_id] for s in spans]
 
 
-@pytest.mark.anyio
 async def test_callback_sink_sync():
     """CallbackSink works with sync callbacks."""
     collected: list[tuple[list[Any], list[Any], Any]] = []
@@ -172,7 +171,6 @@ async def test_callback_sink_sync():
     assert collected[0][2] is ctx
 
 
-@pytest.mark.anyio
 async def test_callback_sink_async():
     """CallbackSink works with async callbacks."""
     collector = Collector()
@@ -186,7 +184,6 @@ async def test_callback_sink_async():
     assert len(collector.calls) == 1
 
 
-@pytest.mark.anyio
 async def test_callback_sink_ignores_span_reference():
     """CallbackSink does not pass span_reference to the callback."""
     collector = Collector()
@@ -201,7 +198,6 @@ async def test_callback_sink_ignores_span_reference():
     assert collector.result_count == 0
 
 
-@pytest.mark.anyio
 async def test_span_reference():
     """SpanReference stores trace and span IDs."""
     ref = SpanReference(trace_id='abc123', span_id='def456')
@@ -209,7 +205,6 @@ async def test_span_reference():
     assert ref.span_id == 'def456'
 
 
-@pytest.mark.anyio
 async def test_online_evaluator_defaults():
     """OnlineEvaluator has sensible defaults."""
     evaluator = AlwaysTrue()
@@ -220,7 +215,6 @@ async def test_online_evaluator_defaults():
     assert online.max_concurrency == 10
 
 
-@pytest.mark.anyio
 async def test_online_evaluator_custom_config():
     """OnlineEvaluator accepts custom configuration."""
     evaluator = AlwaysTrue()
@@ -244,7 +238,6 @@ def test_online_evaluator_invalid_max_concurrency(max_concurrency: int):
         OnlineEvaluator(evaluator=AlwaysTrue(), max_concurrency=max_concurrency)
 
 
-@pytest.mark.anyio
 async def test_run_evaluators_success():
     """run_evaluators returns results from all evaluators."""
     ctx = _make_context(output=42)
@@ -256,7 +249,6 @@ async def test_run_evaluators_success():
     assert results[1].value is True
 
 
-@pytest.mark.anyio
 async def test_run_evaluators_with_failure():
     """run_evaluators collects failures separately from results."""
     ctx = _make_context(output=42)
@@ -268,7 +260,6 @@ async def test_run_evaluators_with_failure():
     assert 'Simulated evaluator failure' in failures[0].error_message
 
 
-@pytest.mark.anyio
 async def test_run_evaluators_empty():
     """run_evaluators handles empty evaluator list."""
     ctx = _make_context(output=42)
@@ -277,7 +268,6 @@ async def test_run_evaluators_empty():
     assert failures == []
 
 
-@pytest.mark.anyio
 async def test_run_evaluators_multi_result():
     """run_evaluators handles evaluators that return multiple results."""
     ctx = _make_context(output=42)
@@ -289,7 +279,6 @@ async def test_run_evaluators_multi_result():
     assert result_names == {'accuracy', 'score', 'label'}
 
 
-@pytest.mark.anyio
 async def test_run_evaluators_async_evaluator():
     """run_evaluators works with async evaluators."""
     ctx = _make_context(output=42)
@@ -300,7 +289,6 @@ async def test_run_evaluators_async_evaluator():
     assert len(failures) == 0
 
 
-@pytest.mark.anyio
 async def test_evaluate_decorator_async_basic():
     """evaluate() decorator runs evaluators on async function calls."""
     collector = Collector()
@@ -324,7 +312,6 @@ async def test_evaluate_decorator_async_basic():
     assert ctx.inputs == {'x': 21}
 
 
-@pytest.mark.anyio
 async def test_evaluate_decorator_async_callable_instance():
     """An async callable instance is awaited; this local wrapper dispatch has no provider boundary to record."""
     collector = Collector()
@@ -353,7 +340,6 @@ async def test_evaluate_decorator_async_callable_instance():
     assert inspect.isawaitable(ctx.output) is False
 
 
-@pytest.mark.anyio
 async def test_evaluate_decorator_async_preserves_signature():
     """evaluate() decorator preserves the function's name and docs."""
 
@@ -367,7 +353,6 @@ async def test_evaluate_decorator_async_preserves_signature():
     assert await my_func(42) == 42
 
 
-@pytest.mark.anyio
 async def test_evaluate_decorator_multiple_evaluators():
     """evaluate() decorator runs multiple evaluators."""
     collector = Collector()
@@ -386,7 +371,6 @@ async def test_evaluate_decorator_multiple_evaluators():
     assert collector.result_count == 2
 
 
-@pytest.mark.anyio
 async def test_evaluate_decorator_async_default_skips_dispatch_on_exception():
     """By default, evaluators are not dispatched when the decorated async function raises."""
     collector = Collector()
@@ -403,7 +387,6 @@ async def test_evaluate_decorator_async_default_skips_dispatch_on_exception():
     assert collector.calls == []
 
 
-@pytest.mark.anyio
 async def test_evaluate_decorator_async_run_on_errors_dispatches():
     """`run_on_errors=True` dispatches the evaluator with the raised exception as `output`."""
     collector = Collector()
@@ -426,7 +409,6 @@ async def test_evaluate_decorator_async_run_on_errors_dispatches():
     assert ctx.inputs == {'x': 42}
 
 
-@pytest.mark.anyio
 async def test_evaluate_decorator_async_run_on_errors_filters_evaluators():
     """When some evaluators opt in and some don't, only the opted-in ones run on error."""
     collector = Collector()
@@ -449,7 +431,6 @@ async def test_evaluate_decorator_async_run_on_errors_filters_evaluators():
     assert results[0].value is True
 
 
-@pytest.mark.anyio
 async def test_evaluate_decorator_sync_run_on_errors_dispatches():
     """Sync decorator: `run_on_errors=True` dispatches with the exception as `output`."""
     collector = Collector()
@@ -469,7 +450,6 @@ async def test_evaluate_decorator_sync_run_on_errors_dispatches():
     assert isinstance(ctx.output, RuntimeError)
 
 
-@pytest.mark.anyio
 async def test_evaluate_decorator_sync_run_on_errors_no_event_loop():
     """Sync `run_on_errors=True` without a running loop dispatches via background thread."""
     collector = Collector()
@@ -496,7 +476,6 @@ async def test_evaluate_decorator_sync_run_on_errors_no_event_loop():
     assert isinstance(ctx.output, RuntimeError)
 
 
-@pytest.mark.anyio
 async def test_evaluate_decorator_with_failure():
     """evaluate() decorator handles evaluator failures gracefully."""
     collector = Collector()
@@ -518,7 +497,6 @@ async def test_evaluate_decorator_with_failure():
     assert 'Simulated evaluator failure' in failures[0].error_message
 
 
-@pytest.mark.anyio
 async def test_sample_rate_zero_skips_evaluation():
     """sample_rate=0.0 skips all evaluations."""
     collector = Collector()
@@ -535,7 +513,6 @@ async def test_sample_rate_zero_skips_evaluation():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_sample_rate_one_always_evaluates():
     """sample_rate=1.0 always evaluates."""
     collector = Collector()
@@ -552,7 +529,6 @@ async def test_sample_rate_one_always_evaluates():
     assert len(collector.calls) == 5
 
 
-@pytest.mark.anyio
 async def test_sample_rate_callable():
     """sample_rate as a callable is evaluated each time."""
     call_count = 0
@@ -576,7 +552,6 @@ async def test_sample_rate_callable():
     assert len(collector.calls) == 1
 
 
-@pytest.mark.anyio
 async def test_sample_rate_callable_returning_bool():
     """sample_rate callable can return bool."""
     collector = Collector()
@@ -591,7 +566,6 @@ async def test_sample_rate_callable_returning_bool():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_disable_evaluation_context_manager():
     """disable_evaluation() suppresses all evaluators."""
     collector = Collector()
@@ -609,7 +583,6 @@ async def test_disable_evaluation_context_manager():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_disable_evaluation_restores():
     """disable_evaluation() restores evaluation after exiting."""
     collector = Collector()
@@ -628,7 +601,6 @@ async def test_disable_evaluation_restores():
     assert len(collector.calls) == 1
 
 
-@pytest.mark.anyio
 async def test_config_enabled_false():
     """OnlineEvalConfig.enabled=False disables all evaluation."""
     collector = Collector()
@@ -645,7 +617,6 @@ async def test_config_enabled_false():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_per_evaluator_sink_override():
     """OnlineEvaluator.sink overrides config's default_sink."""
     default_collector = Collector()
@@ -667,7 +638,6 @@ async def test_per_evaluator_sink_override():
     assert len(override_collector.calls) == 1
 
 
-@pytest.mark.anyio
 @needs_logfire
 async def test_no_sink_still_emits_otel_events(capfire: CaptureLogfire):
     """When no sink is configured, evaluators still run and emit OTel events.
@@ -692,7 +662,6 @@ async def test_no_sink_still_emits_otel_events(capfire: CaptureLogfire):
     assert attrs['gen_ai.evaluation.score.label'] == 'pass'
 
 
-@pytest.mark.anyio
 @needs_logfire
 async def test_emit_otel_events_false_disables_emission(capfire: CaptureLogfire):
     """`emit_otel_events=False` suppresses the default OTel emission."""
@@ -720,7 +689,6 @@ async def test_emit_otel_events_false_disables_emission(capfire: CaptureLogfire)
     assert list(capfire.log_exporter.get_finished_logs()) == []
 
 
-@pytest.mark.anyio
 async def test_configure_updates_default_config():
     """configure() updates the global DEFAULT_CONFIG."""
     original_enabled = DEFAULT_CONFIG.enabled
@@ -757,7 +725,6 @@ async def test_configure_updates_default_config():
         DEFAULT_CONFIG.include_baggage = True
 
 
-@pytest.mark.anyio
 async def test_configure_can_reset_to_none():
     """configure() can explicitly set fields to None to clear them."""
     collector = Collector()
@@ -778,7 +745,6 @@ async def test_configure_can_reset_to_none():
         DEFAULT_CONFIG.metadata = original_metadata
 
 
-@pytest.mark.anyio
 async def test_module_level_evaluate():
     """Module-level evaluate() delegates to DEFAULT_CONFIG."""
     collector = Collector()
@@ -799,7 +765,6 @@ async def test_module_level_evaluate():
         DEFAULT_CONFIG.default_sink = original_sink
 
 
-@pytest.mark.anyio
 async def test_context_source_fetch():
     """EvaluatorContextSource.fetch retrieves stored context data."""
     source = MockContextSource(
@@ -822,7 +787,6 @@ async def test_context_source_fetch():
     assert ctx.duration == 1.5
 
 
-@pytest.mark.anyio
 async def test_context_source_fetch_many():
     """EvaluatorContextSource.fetch_many retrieves multiple contexts in batch."""
     source = MockContextSource(
@@ -845,7 +809,6 @@ async def test_context_source_fetch_many():
     assert contexts[1].output == 'b'
 
 
-@pytest.mark.anyio
 async def test_fetch_and_run_evaluators():
     """EvaluatorContextSource.fetch + run_evaluators works end-to-end."""
     source = MockContextSource(
@@ -862,7 +825,6 @@ async def test_fetch_and_run_evaluators():
     assert all(r.value is True for r in results)
 
 
-@pytest.mark.anyio
 async def test_config_metadata_passed_to_context():
     """OnlineEvalConfig.metadata is included in the EvaluatorContext."""
     collected_contexts: list[EvaluatorContext[Any, Any, Any]] = []
@@ -890,7 +852,6 @@ async def test_config_metadata_passed_to_context():
     assert collected_contexts[0].metadata == {'service': 'test-app', 'version': '1.0'}
 
 
-@pytest.mark.anyio
 async def test_max_concurrency_respected():
     """OnlineEvaluator.max_concurrency limits concurrent evaluations."""
     active = 0
@@ -926,7 +887,6 @@ async def test_max_concurrency_respected():
     assert max_active <= 2
 
 
-@pytest.mark.anyio
 async def test_custom_sink_protocol():
     """Custom EvaluationSink implementations work."""
 
@@ -953,7 +913,6 @@ async def test_custom_sink_protocol():
     assert results[0].value is True
 
 
-@pytest.mark.anyio
 async def test_bare_evaluator_uses_config_defaults():
     """Bare Evaluator passed to evaluate() uses config's default_sample_rate."""
     collector = Collector()
@@ -968,7 +927,6 @@ async def test_bare_evaluator_uses_config_defaults():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_bare_evaluator_late_binds_config_defaults():
     """Config defaults are resolved at call time, not decoration time."""
     collector = Collector()
@@ -1003,7 +961,6 @@ async def test_bare_evaluator_late_binds_config_defaults():
     assert len(collector2.calls) == 0  # still 0 because OnlineEvaluator has explicit sample_rate=0.0
 
 
-@pytest.mark.anyio
 async def test_multiple_sinks():
     """Multiple sinks receive all results."""
     collector1 = Collector()
@@ -1022,7 +979,6 @@ async def test_multiple_sinks():
     assert len(collector2.calls) == 1
 
 
-@pytest.mark.anyio
 async def test_fractional_sample_rate():
     """Fractional sample_rate evaluates a subset of calls."""
     collector = Collector()
@@ -1041,7 +997,6 @@ async def test_fractional_sample_rate():
     assert 5 < len(collector.calls) < 45
 
 
-@pytest.mark.anyio
 async def test_sample_rate_callable_exception_propagates():
     """Exception in sample_rate callable propagates — it's the user's responsibility."""
     collector = Collector()
@@ -1059,7 +1014,6 @@ async def test_sample_rate_callable_exception_propagates():
         await my_func(42)
 
 
-@pytest.mark.anyio
 async def test_sample_rate_callable_exception_calls_on_sampling_error():
     """When on_sampling_error is set, sample_rate exceptions are routed there instead of propagating."""
     errors: list[tuple[Exception, Evaluator]] = []
@@ -1086,7 +1040,6 @@ async def test_sample_rate_callable_exception_calls_on_sampling_error():
     assert str(errors[0][0]) == 'rate error'
 
 
-@pytest.mark.anyio
 async def test_on_sampling_error_handler_exception_suppressed():
     """If on_sampling_error itself raises, the exception is suppressed and the evaluator is skipped."""
     collector = Collector()
@@ -1108,7 +1061,6 @@ async def test_on_sampling_error_handler_exception_suppressed():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_sink_exception_does_not_propagate():
     """Exception in a sink is logged but does not break other sinks."""
 
@@ -1131,7 +1083,6 @@ async def test_sink_exception_does_not_propagate():
     assert len(collector.calls) == 1
 
 
-@pytest.mark.anyio
 async def test_on_max_concurrency_exception_suppressed_when_no_on_error():
     """`on_max_concurrency` raising with no `on_error` configured is silently swallowed."""
 
@@ -1165,7 +1116,6 @@ async def test_on_max_concurrency_exception_suppressed_when_no_on_error():
     await wait_for_evaluations()
 
 
-@pytest.mark.anyio
 async def test_sink_exception_suppressed_when_no_on_error():
     """A sink raising with no `on_error` configured is silently swallowed."""
 
@@ -1185,7 +1135,6 @@ async def test_sink_exception_suppressed_when_no_on_error():
     await wait_for_evaluations()
 
 
-@pytest.mark.anyio
 async def test_shared_on_error_across_evaluators_fires_once_per_sink_failure():
     """When multiple evaluators in a group share the same `on_error` handler, a single
     sink failure still only fires it once — dedup by handler identity."""
@@ -1217,7 +1166,6 @@ async def test_shared_on_error_across_evaluators_fires_once_per_sink_failure():
     assert fires == ['sink']
 
 
-@pytest.mark.anyio
 async def test_evaluator_returning_empty_mapping_emits_nothing():
     """An evaluator returning `{}` produces no results — the empty-batch branch skips the submit."""
     collector = Collector()
@@ -1239,7 +1187,6 @@ async def test_evaluator_returning_empty_mapping_emits_nothing():
     assert collector.calls == []
 
 
-@pytest.mark.anyio
 async def test_sync_function_from_async_context():
     """Sync decorated function called from async context dispatches via background thread."""
     collector = Collector()
@@ -1262,7 +1209,6 @@ async def test_sync_function_from_async_context():
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_span_reference_with_configured_logfire(capfire: CaptureLogfire):
     """Decorator produces valid SpanReference when logfire is configured."""
     span_refs: list[SpanReference | None] = []
@@ -1290,7 +1236,6 @@ async def test_span_reference_with_configured_logfire(capfire: CaptureLogfire):
     assert int(ref.span_id, 16) != 0
 
 
-@pytest.mark.anyio
 async def test_sync_decorated_function_dispatch():
     """Sync decorated function dispatches evaluators when called from async context."""
     collector = Collector()
@@ -1313,7 +1258,6 @@ async def test_sync_decorated_function_dispatch():
     assert ctx.inputs == {'x': 21}
 
 
-@pytest.mark.anyio
 async def test_sync_decorated_function_disabled():
     """Disabled config doesn't dispatch evaluators for sync decorated functions."""
     collector = Collector()
@@ -1330,7 +1274,6 @@ async def test_sync_decorated_function_disabled():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_sync_decorated_function_sample_rate_zero():
     """sample_rate=0 doesn't dispatch evaluators for sync decorated functions."""
     collector = Collector()
@@ -1347,7 +1290,6 @@ async def test_sync_decorated_function_sample_rate_zero():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_sync_function_no_event_loop():
     """Sync decorated function called without an event loop dispatches via background thread."""
     collector = Collector()
@@ -1373,7 +1315,6 @@ async def test_sync_function_no_event_loop():
     assert ctx.inputs == {'x': 21}
 
 
-@pytest.mark.anyio
 async def test_wait_for_evaluations_joins_background_thread():
     """wait_for_evaluations() joins a background thread that is still running when the wait begins."""
     started = threading.Event()
@@ -1426,7 +1367,6 @@ async def test_wait_for_evaluations_joins_background_thread():
     assert ctx.inputs == {'x': 21}
 
 
-@pytest.mark.anyio
 async def test_wait_for_evaluations_warns_on_background_thread_timeout():
     """wait_for_evaluations(timeout=...) warns when a background thread outlives the timeout."""
     started = threading.Event()
@@ -1473,7 +1413,6 @@ async def test_wait_for_evaluations_warns_on_background_thread_timeout():
     assert results[0].value is True
 
 
-@pytest.mark.anyio
 async def test_mixed_list_sink():
     """A list containing both a bare callable and a CallbackSink exercises _normalize_single_sink."""
     collector1 = Collector()
@@ -1494,7 +1433,6 @@ async def test_mixed_list_sink():
     assert len(collector2.calls) == 1
 
 
-@pytest.mark.anyio
 async def test_on_max_concurrency_callback():
     """on_max_concurrency is called when evaluations are dropped."""
     dropped_contexts: list[EvaluatorContext[Any, Any, Any]] = []
@@ -1531,7 +1469,6 @@ async def test_on_max_concurrency_callback():
     assert len(dropped_contexts) + len(collector.calls) == 5
 
 
-@pytest.mark.anyio
 async def test_on_max_concurrency_async_callback():
     """on_max_concurrency works with async callbacks."""
     dropped_count = 0
@@ -1569,7 +1506,6 @@ async def test_on_max_concurrency_async_callback():
     assert dropped_count + len(collector.calls) == 5
 
 
-@pytest.mark.anyio
 async def test_on_max_concurrency_config_default():
     """OnlineEvalConfig.on_max_concurrency is used when OnlineEvaluator doesn't set one."""
     dropped_contexts: list[EvaluatorContext[Any, Any, Any]] = []
@@ -1599,7 +1535,6 @@ async def test_on_max_concurrency_config_default():
     assert len(dropped_contexts) + len(collector.calls) == 5
 
 
-@pytest.mark.anyio
 async def test_on_max_concurrency_evaluator_overrides_config():
     """OnlineEvaluator.on_max_concurrency overrides the config default."""
     config_drops: list[EvaluatorContext[Any, Any, Any]] = []
@@ -1642,7 +1577,6 @@ async def test_on_max_concurrency_evaluator_overrides_config():
 # --- on_error tests ---
 
 
-@pytest.mark.anyio
 async def test_on_error_sink_exception():
     """on_error is called with 'sink' location when sink raises."""
     errors: list[tuple[Exception, OnErrorLocation]] = []
@@ -1675,7 +1609,6 @@ async def test_on_error_sink_exception():
     assert len(good_collector.calls) == 1
 
 
-@pytest.mark.anyio
 async def test_on_error_on_max_concurrency_exception():
     """on_error is called with 'on_max_concurrency' when on_max_concurrency callback raises."""
     errors: list[tuple[Exception, OnErrorLocation]] = []
@@ -1720,7 +1653,6 @@ async def test_on_error_on_max_concurrency_exception():
     assert all(loc == 'on_max_concurrency' for _, loc in errors)
 
 
-@pytest.mark.anyio
 async def test_on_error_handler_exception_suppressed():
     """on_error handler that raises is silently suppressed."""
 
@@ -1753,7 +1685,6 @@ async def test_on_error_handler_exception_suppressed():
     assert len(good_collector.calls) == 1
 
 
-@pytest.mark.anyio
 async def test_on_error_per_evaluator_overrides_config():
     """Per-evaluator on_error overrides the config default."""
     evaluator_errors: list[OnErrorLocation] = []
@@ -1793,7 +1724,6 @@ async def test_on_error_per_evaluator_overrides_config():
     assert evaluator_errors[0] == 'sink'
 
 
-@pytest.mark.anyio
 async def test_on_error_async_callback():
     """Async on_error callback works."""
     errors: list[OnErrorLocation] = []
@@ -1824,7 +1754,6 @@ async def test_on_error_async_callback():
     assert errors[0] == 'sink'
 
 
-@pytest.mark.anyio
 async def test_configure_on_sampling_error():
     """configure() can set on_sampling_error on DEFAULT_CONFIG."""
     original = DEFAULT_CONFIG.on_sampling_error
@@ -1842,7 +1771,6 @@ async def test_configure_on_sampling_error():
         DEFAULT_CONFIG.on_sampling_error = original
 
 
-@pytest.mark.anyio
 async def test_configure_on_error():
     """configure() can set on_error on DEFAULT_CONFIG."""
     original = DEFAULT_CONFIG.on_error
@@ -1868,7 +1796,6 @@ async def test_configure_on_error():
 # --- SamplingContext tests ---
 
 
-@pytest.mark.anyio
 async def test_sampling_context_passed_to_callable():
     """SamplingContext is passed to sample_rate callables with correct data."""
     captured_contexts: list[SamplingContext] = []
@@ -1898,7 +1825,6 @@ async def test_sampling_context_passed_to_callable():
     assert 0.0 <= ctx.call_seed < 1.0
 
 
-@pytest.mark.anyio
 async def test_sampling_context_call_seed_shared_across_evaluators():
     """call_seed is the same for all evaluators in a single call."""
     captured_seeds: list[float] = []
@@ -1924,7 +1850,6 @@ async def test_sampling_context_call_seed_shared_across_evaluators():
     assert captured_seeds[0] == captured_seeds[1]
 
 
-@pytest.mark.anyio
 async def test_sampling_context_input_based_sampling():
     """sample_rate callable can use inputs to decide whether to evaluate."""
     collector = Collector()
@@ -1949,7 +1874,6 @@ async def test_sampling_context_input_based_sampling():
 # --- correlated sampling tests ---
 
 
-@pytest.mark.anyio
 async def test_correlated_sampling_subset_property(monkeypatch: pytest.MonkeyPatch):
     """In correlated mode, lower-rate evaluator calls are a subset of higher-rate ones."""
     # Seed the sampler so the test is deterministic. Without a seed this test
@@ -1981,7 +1905,6 @@ async def test_correlated_sampling_subset_property(monkeypatch: pytest.MonkeyPat
     assert len(collector_low.calls) > 0
 
 
-@pytest.mark.anyio
 async def test_correlated_sampling_max_overhead(monkeypatch: pytest.MonkeyPatch):
     """In correlated mode, total overhead probability equals max(rate_i)."""
     # Seed the sampler so the `5 < calls < 40` window is deterministic.
@@ -2011,7 +1934,6 @@ async def test_correlated_sampling_max_overhead(monkeypatch: pytest.MonkeyPatch)
     assert 5 < len(collector1.calls) < 40
 
 
-@pytest.mark.anyio
 async def test_independent_sampling_is_default(monkeypatch: pytest.MonkeyPatch):
     """Independent mode is the default — evaluators sample independently."""
     # Seed the sampler so `>0` for both collectors is deterministic.
@@ -2039,7 +1961,6 @@ async def test_independent_sampling_is_default(monkeypatch: pytest.MonkeyPatch):
     assert len(collector2.calls) > 0
 
 
-@pytest.mark.anyio
 async def test_configure_sampling_mode():
     """configure() can set sampling_mode on DEFAULT_CONFIG."""
     original = DEFAULT_CONFIG.sampling_mode
@@ -2056,7 +1977,6 @@ async def test_configure_sampling_mode():
 # --- attributes/metrics tests ---
 
 
-@pytest.mark.anyio
 async def test_set_eval_attribute_in_async_function():
     """set_eval_attribute in an async decorated function propagates to EvaluatorContext."""
     collector = Collector()
@@ -2078,7 +1998,6 @@ async def test_set_eval_attribute_in_async_function():
     assert ctx.attributes == {'model': 'gpt-4o', 'region': 'us-east-1'}
 
 
-@pytest.mark.anyio
 async def test_increment_eval_metric_in_async_function():
     """increment_eval_metric in an async decorated function propagates to EvaluatorContext."""
     collector = Collector()
@@ -2101,7 +2020,6 @@ async def test_increment_eval_metric_in_async_function():
     assert ctx.metrics == {'tokens': 200, 'requests': 1}
 
 
-@pytest.mark.anyio
 async def test_set_eval_attribute_in_sync_function():
     """set_eval_attribute in a sync decorated function propagates to EvaluatorContext."""
     collector = Collector()
@@ -2122,7 +2040,6 @@ async def test_set_eval_attribute_in_sync_function():
     assert ctx.attributes == {'model': 'gpt-4o'}
 
 
-@pytest.mark.anyio
 async def test_increment_eval_metric_in_sync_function():
     """increment_eval_metric in a sync decorated function propagates to EvaluatorContext."""
     collector = Collector()
@@ -2143,7 +2060,6 @@ async def test_increment_eval_metric_in_sync_function():
     assert ctx.metrics == {'tokens': 100}
 
 
-@pytest.mark.anyio
 async def test_attributes_and_metrics_empty_by_default():
     """When no attributes/metrics are set, context has empty dicts."""
     collector = Collector()
@@ -2162,7 +2078,6 @@ async def test_attributes_and_metrics_empty_by_default():
     assert ctx.metrics == {}
 
 
-@pytest.mark.anyio
 async def test_online_eval_suppressed_inside_task_run():
     """Online evaluation is suppressed when already inside `CURRENT_TASK_RUN`."""
     from pydantic_evals._task_run import CURRENT_TASK_RUN, TaskRun
@@ -2188,7 +2103,6 @@ async def test_online_eval_suppressed_inside_task_run():
     assert len(collector.calls) == 0
 
 
-@pytest.mark.anyio
 async def test_metadata_not_shared_between_contexts():
     """config.metadata is copied so sinks can't corrupt the config."""
     collected_contexts: list[EvaluatorContext[Any, Any, Any]] = []
@@ -2229,7 +2143,6 @@ async def test_metadata_not_shared_between_contexts():
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_call_span_default_name_and_no_args(capfire: CaptureLogfire):
     """Each decorated call opens a span named after the function; args/return are not recorded by default."""
     config = OnlineEvalConfig(emit_otel_events=False)
@@ -2250,7 +2163,6 @@ async def test_call_span_default_name_and_no_args(capfire: CaptureLogfire):
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_call_span_extract_args_true_records_all(capfire: CaptureLogfire):
     """`extract_args=True` records every bound argument."""
     config = OnlineEvalConfig(emit_otel_events=False)
@@ -2271,7 +2183,6 @@ async def test_call_span_extract_args_true_records_all(capfire: CaptureLogfire):
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_call_span_extract_args_subset(capfire: CaptureLogfire):
     """Passing a list to `extract_args` records only the named arguments."""
     config = OnlineEvalConfig(emit_otel_events=False)
@@ -2292,7 +2203,6 @@ async def test_call_span_extract_args_subset(capfire: CaptureLogfire):
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_call_span_record_return(capfire: CaptureLogfire):
     """`record_return=True` records the function's return value on the span."""
     config = OnlineEvalConfig(emit_otel_events=False)
@@ -2311,7 +2221,6 @@ async def test_call_span_record_return(capfire: CaptureLogfire):
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_call_span_msg_template_and_span_name(capfire: CaptureLogfire):
     """`msg_template` formats against call args (logfire convention); `span_name` overrides the span name."""
     config = OnlineEvalConfig(emit_otel_events=False)
@@ -2333,7 +2242,6 @@ async def test_call_span_msg_template_and_span_name(capfire: CaptureLogfire):
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_evaluation_events_parented_to_call_span(capfire: CaptureLogfire):
     """Emitted `gen_ai.evaluation.result` events parent to the decorated call's span."""
     config = OnlineEvalConfig()  # default emit_otel_events=True
@@ -2387,7 +2295,6 @@ def test_extract_args_unknown_parameter_raises():
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_extract_args_accepts_single_string(capfire: CaptureLogfire):
     """A bare string is treated as a one-element list of arg names."""
     config = OnlineEvalConfig(default_sink=Collector(), emit_otel_events=False)
@@ -2408,7 +2315,6 @@ async def test_extract_args_accepts_single_string(capfire: CaptureLogfire):
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_extract_args_empty_iterable_records_nothing(capfire: CaptureLogfire):
     """An empty iterable for `extract_args` is treated as `False`."""
     config = OnlineEvalConfig(default_sink=Collector(), emit_otel_events=False)
@@ -2427,7 +2333,6 @@ async def test_extract_args_empty_iterable_records_nothing(capfire: CaptureLogfi
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_sync_call_span_with_extract_args(capfire: CaptureLogfire):
     """Sync decorated functions also open a span and honour `extract_args`."""
     config = OnlineEvalConfig(emit_otel_events=False)
@@ -2451,7 +2356,6 @@ async def test_sync_call_span_with_extract_args(capfire: CaptureLogfire):
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_dispatch_skipped_when_emit_off_and_no_sinks(capfire: CaptureLogfire):
     """Skip evaluator dispatch entirely when results would have nowhere to go."""
     config = OnlineEvalConfig(emit_otel_events=False)  # no sinks either
@@ -2472,7 +2376,6 @@ async def test_dispatch_skipped_when_emit_off_and_no_sinks(capfire: CaptureLogfi
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_evaluator_span_nested_under_call_span(capfire: CaptureLogfire):
     """The `evaluator: {name}` span created in `run_evaluator` parents to the call span."""
     # Need a sink (or `emit_otel_events=True`) to keep dispatch active — see
@@ -2498,7 +2401,6 @@ async def test_evaluator_span_nested_under_call_span(capfire: CaptureLogfire):
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_baggage_attached_to_evaluation_event(capfire: CaptureLogfire):
     """Baggage set in the calling context propagates onto emitted evaluation events."""
     from opentelemetry import baggage as ot_baggage, context as ot_context
@@ -2524,7 +2426,6 @@ async def test_baggage_attached_to_evaluation_event(capfire: CaptureLogfire):
 
 
 @needs_logfire
-@pytest.mark.anyio
 async def test_baggage_disabled_via_config(capfire: CaptureLogfire):
     """`include_baggage=False` keeps baggage out of emitted events."""
     from opentelemetry import baggage as ot_baggage, context as ot_context

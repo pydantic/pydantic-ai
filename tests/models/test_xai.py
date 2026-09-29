@@ -1,8 +1,8 @@
 """Tests for xAI model integration.
 
 The xAI SDK uses gRPC for all calls (including executing built-in tools like `code_execution`,
-`web_search`, and `mcp_server` server-side). Since VCR doesn't support gRPC, we cannot
-record/replay these interactions like we do with HTTP APIs.
+`web_search`, and `mcp_server` server-side), so these calls don't go through the HTTP cassettes
+the other model tests use.
 
 Instead, we use two strategies:
 - A **custom recorder** for xAI SDK interactions where possible (gRPC-aware recording/replay)
@@ -61,7 +61,7 @@ from pydantic_ai import (
     WebSearchTool,
 )
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
     AgentStreamEvent,
     CachePoint,
@@ -98,6 +98,7 @@ from .mock_xai import (
 )
 
 with try_import() as imports_successful:
+    import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
@@ -115,7 +116,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1087,7 +1087,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     """Test that tool_choice falls back to 'auto' when 'required' is not supported."""
     # Create a profile that doesn't support tool_choice='required'
-    profile = GrokModelProfile(grok_supports_tool_choice_required=False)
+    profile = GrokModelProfile(supports_forced_tool_choice=False)
 
     response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
     mock_client = MockXai.create_mock([response])
@@ -6049,6 +6049,26 @@ async def test_xai_builtin_tool_failed_without_error_in_history(allow_model_requ
             }
         ]
     )
+
+
+async def test_xai_file_upload_error_is_mapped(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    """A gRPC error from the document upload is mapped like one from the chat request, not raised raw."""
+    mock_client = MockXai.create_mock([create_response(content='unused')])
+
+    async def failing_upload(data: bytes, filename: str) -> Any:
+        raise grpc.aio.AioRpcError(
+            grpc.StatusCode.RESOURCE_EXHAUSTED, grpc.aio.Metadata(), grpc.aio.Metadata(), details='upload quota'
+        )
+
+    monkeypatch.setattr(mock_client, 'files_upload', failing_upload)
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run(['Process this document', BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == 'upload quota'
+    assert isinstance(exc_info.value.__cause__, grpc.aio.AioRpcError)
 
 
 async def test_xai_document_url_without_data_type(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):

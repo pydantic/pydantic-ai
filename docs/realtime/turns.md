@@ -27,7 +27,7 @@ model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
 Use provider-specific settings only when the shared controls are insufficient:
 `openai_turn_detection`, `xai_turn_detection`, and `google_vad` fully override `turn_detection`.
 Their accepted values, defaults, and limitations are documented on the
-[OpenAI](openai.md#settings), [Azure OpenAI](azure.md#settings),
+[OpenAI](openai.md#gpt-realtime-settings), [Azure OpenAI](azure.md#settings),
 [Google Gemini](gemini.md#settings), and [xAI](xai.md#settings) pages.
 
 ## Text turns
@@ -205,6 +205,13 @@ History records a known cutoff on
 response state as interrupted. When this history is sent to a text model, Pydantic AI adds a readable
 interruption note to the prepared request without modifying stored history.
 
+Models generate audio several times faster than it plays, so the reply the user speaks over has
+usually finished generating already. History is append-only, so that reply keeps its full
+transcript and `complete` state. The barge-in still truncates the provider's copy where playback
+stopped, so the model doesn't take the whole reply as heard. With `played_bytes` (or
+`handle_barge_in=True`), the session truncates the reply actually being played, and any reply
+generated after it, which the user never heard, at 0.
+
 ## Speaking first
 
 Send a text turn to have the agent open the conversation, with playback already running. Wait for
@@ -257,7 +264,9 @@ Disable automatic detection with `turn_detection=False` on models whose profile 
 [`commit_audio()`][pydantic_ai.realtime.RealtimeSession.commit_audio] to end the user turn, then
 [`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response]. The explicit
 `create_response()` call is needed because with turn detection off, committing the buffer only
-finalizes the user's input; nothing triggers a reply until you ask for one. Use
+finalizes the user's input; nothing triggers a reply until you ask for one. xAI is the exception:
+it replies as soon as audio is committed, and currently drops a `create_response()` sent after that
+reply has finished, so `wait_for_reply()` doesn't return. Use
 [`clear_audio()`][pydantic_ai.realtime.RealtimeSession.clear_audio] to discard uncommitted input.
 
 ```python

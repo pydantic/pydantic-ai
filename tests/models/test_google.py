@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Any, cast
 
 import pytest
+from cassetter import Cassette
 from httpx import Timeout
 from httpx2 import (
     AsyncClient as HTTPX2AsyncClient,
@@ -25,7 +26,6 @@ from httpx2 import (
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -89,7 +89,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
-from ..cassette_utils import single_request_body
+from ..cassette_utils import request_json, single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 from ..parts_from_messages import part_types_from_messages
 
@@ -139,7 +139,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -996,6 +995,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {'text_prompt_tokens': 14},
                     'cost': '0.00000105',
                     'input_text_tokens': 14,
@@ -1052,6 +1052,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -1728,9 +1729,15 @@ async def test_google_model_receive_web_search_history_from_another_provider(
             [UserPromptPart],
             [
                 NativeToolCallPart,
+                NativeToolCallPart,
                 NativeToolReturnPart,
-                TextPart,
-                TextPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -1760,7 +1767,7 @@ async def test_google_model_receive_web_search_history_from_another_provider(
         ]
     )
 
-    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    google_model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     google_agent = Agent(model=google_model)
     result = await google_agent.run('What day is tomorrow?', message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
@@ -1768,9 +1775,15 @@ async def test_google_model_receive_web_search_history_from_another_provider(
             [UserPromptPart],
             [
                 NativeToolCallPart,
+                NativeToolCallPart,
                 NativeToolReturnPart,
-                TextPart,
-                TextPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -3304,9 +3317,9 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
         usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
     )
 
-    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]
+    assert len(count_requests) == 1
+    assert request_json(count_requests[0])['tools'] == snapshot([{'googleSearch': {}}])
     assert result.output == snapshot('The capital of France is Paris.')
 
 
@@ -4082,8 +4095,8 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
 
     result = await agent.run('Look up the city I live in, then search the web for its weather today.')
 
-    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    request_bodies = [json.loads(request.body) for request in generate_requests]  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]
+    request_bodies = [request_json(request) for request in generate_requests]
     # On the Gemini Developer API these requests carry `toolConfig.includeServerSideToolInvocations`;
     # on Vertex the field is skipped, so it is absent from every request Vertex actually accepted.
     assert [body.get('toolConfig', {}) for body in request_bodies] == snapshot(
@@ -4794,6 +4807,41 @@ _USAGE_RETENTION_CASES = [
         ),
     ),
     _UsageRetentionCase(
+        id='empty_metadata_on_later_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo').model_copy(
+                update={'usage_metadata': GenerateContentResponseUsageMetadata()}
+            ),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=5,
+                details={'cached_content_tokens': 16365},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
+        id='single_field_chunk_extracts_through_guard',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo').model_copy(
+                update={'usage_metadata': GenerateContentResponseUsageMetadata(thoughts_token_count=70)}
+            ),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_reasoning_tokens=70,
+                output_tokens=70,
+                details={'cached_content_tokens': 16365, 'thoughts_tokens': 70},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
         id='details_only_fields_dropped_by_later_chunk',
         make_chunks=lambda: [
             _usage_chunk(cached=16365, thoughts=100, candidates=5, text='hel'),
@@ -4815,7 +4863,7 @@ _USAGE_RETENTION_CASES = [
 async def test_gemini_streamed_response_usage_retained_across_chunks(case: _UsageRetentionCase):
     """Gemini streams usage as cumulative snapshots, but a later chunk can drop a field an earlier one
     carried (#5205): a gateway/proxy omits `cached_content_token_count`, a Vertex-direct stream omits
-    `usage_metadata` entirely, or a `details`-only field like `thoughts_tokens` disappears. The
+    `usage_metadata` or sends it empty, or a `details`-only field like `thoughts_tokens` disappears. The
     accumulated usage must survive instead of resetting to zero.
 
     These are deterministic unit tests rather than VCR tests because the direct Gemini APIs (GLA and
@@ -5788,6 +5836,30 @@ async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model
     assert exc_info.value.body == error_response
     assert isinstance(exc_info.value.__cause__, errors.ClientError)
     assert len(requests) == 1
+
+
+async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: None):
+    """An API error from `count_tokens` is mapped like one from the request, not raised as the SDK's own error."""
+    error_response = {'error': {'code': 429, 'message': 'Resource exhausted', 'status': 'RESOURCE_EXHAUSTED'}}
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(429, json=error_response, headers={'retry-after': '7'})
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(model).run(
+                'test', usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+            )
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == error_response
+    assert exc_info.value.retry_after == 7
+    assert isinstance(exc_info.value.__cause__, errors.ClientError)
 
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):

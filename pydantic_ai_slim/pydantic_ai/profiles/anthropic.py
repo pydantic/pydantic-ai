@@ -63,9 +63,8 @@ class AnthropicModelProfile(ModelProfile, total=False):
     When True, unified `thinking` translates to `{'type': 'adaptive'}`.
     When False, it translates to `{'type': 'enabled', 'budget_tokens': N}`.
 
-    Because adaptive thinking — unlike extended thinking — is compatible with a forced `tool_choice`,
-    this also decides whether unified `thinking` blocks tool forcing and switches Tool Output to
-    Native or Prompted Output.
+    Adaptive thinking, unlike extended thinking, accepts a forced `tool_choice`, so this also decides whether
+    an explicit forcing `tool_choice` raises alongside unified `thinking`.
     """
 
     anthropic_supports_effort: bool
@@ -122,18 +121,31 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """
 
     anthropic_supports_forced_tool_choice: bool
-    """Whether the model accepts a forced `tool_choice` (`{'type': 'any'}` or `{'type': 'tool'}`).
+    """Deprecated: use [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] instead.
 
-    Most Anthropic models only reject forcing alongside extended thinking; Claude Fable 5.1, Claude
-    Mythos 5.1, and Claude Opus 5.5 reject it unconditionally with a 400. When False, a resolved `required` tool choice
-    falls back to `auto` (filtering tools to the requested set), and an explicit `tool_choice='required'`
-    (or an explicit list of tools) raises a `UserError`.
+    Translated (with a deprecation warning) whenever profiles are merged.
+    """
+
+    anthropic_max_output_tokens: int | None
+    """The most output tokens the model can generate in one response, thinking included. Default: `None` (unknown).
+
+    `AnthropicModel` sends it as `max_tokens` when the request doesn't set one, so responses are only cut off at the
+    model's limit, like on APIs where the output limit is optional.
+    """
+
+    anthropic_rejects_max_tokens_beyond_context_window: bool
+    """Whether the model rejects a request whose input plus `max_tokens` exceeds its context window. Default: `False`.
+
+    Claude models older than Claude Sonnet 4.5 answer such a request with a 400, where later models accept it and stop
+    at the context window. When True, a request that doesn't set `max_tokens` gets the lower default of 4096, so a
+    conversation close to the context window still fits. It's also set for Claude 3 and 3.5, whose maximum output
+    (4,096 or 8,192 tokens) is below the higher default.
     """
 
     anthropic_binds_thinking_blocks: bool
     """Whether the model binds each thinking block to the conversation prefix that produced it. Default: `False`.
 
-    Claude Fable 5.1 and Claude Opus 5.5 reject a replayed thinking block once the `system` prompt text changes or a
+    Claude Fable 5.1, Claude Opus 5.5, and Claude Sonnet 5.5 reject a replayed thinking block once the `system` prompt text changes or a
     non-deferred tool joins the `tools` array — both of which Pydantic AI causes by design, through
     dynamic `@agent.instructions` and conditional toolsets. When True, Pydantic AI preserves the
     account's default behavior on the first request; if Anthropic rejects a stale block, it retries
@@ -216,6 +228,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         (
             'claude-fable-5',
             'claude-mythos-5',
+            'claude-mythos-preview',
             'claude-sonnet-4-6',
             'claude-sonnet-5',
             'claude-opus-4-6',
@@ -260,22 +273,75 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         ('claude-fable-5', 'claude-mythos-5', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5', 'claude-sonnet-5')
     )
 
-    # The 5.1 generation and Opus 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
+    # The `max_tokens` Anthropic's Models API reports for each model. Mythos 5 isn't reachable with our credentials;
+    # Anthropic documents Mythos 5.1 as having Fable 5.1's capabilities.
+    if model_name.startswith(
+        (
+            'claude-fable-5',
+            'claude-mythos-5',
+            'claude-opus-4-6',
+            'claude-opus-4-7',
+            'claude-opus-4-8',
+            'claude-opus-5',
+            'claude-sonnet-4-6',
+            'claude-sonnet-5',
+        )
+    ):
+        max_output_tokens: int | None = 128_000
+    elif model_name.startswith(('claude-haiku-4-5', 'claude-opus-4-5', 'claude-sonnet-4-5')):
+        max_output_tokens = 64_000
+    else:
+        max_output_tokens = None
+
+    # Before Claude Sonnet 4.5, Anthropic rejects a request whose input plus `max_tokens` exceeds the context window:
+    # Bedrock's `claude-sonnet-4-20250514` answers 192K input tokens plus 16384 with a 400 (`Input is too long for
+    # requested model.`) and accepts 192K plus 4096, where Haiku 4.5 accepts 192K plus 16384. Claude 3 and 3.5 also
+    # need the lower default, since their maximum output is 4,096 or 8,192 tokens.
+    rejects_max_tokens_beyond_context_window = model_name in (
+        'claude-opus-4',
+        'claude-sonnet-4',
+    ) or model_name.startswith(
+        (
+            'claude-3',
+            'claude-4-',
+            'claude-opus-4-0',
+            'claude-opus-4-1',
+            'claude-opus-4-2',
+            'claude-opus-4@',
+            'claude-sonnet-4-0',
+            'claude-sonnet-4-2',
+            'claude-sonnet-4@',
+        )
+    )
+
+    # Anthropic documents these models as thinking when the request omits `thinking`; Fable 5, Fable 5.1, Opus 5,
+    # Opus 5.5 and Sonnet 5 return thinking tokens live with no thinking parameter, where Opus 4.8 and Sonnet 4.6
+    # return none.
+    thinking_enabled_by_default = model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5', 'claude-sonnet-5')
+    )
+    # Of those, all but Opus 5 and Sonnet 5 reject `thinking={'type': 'disabled'}` with a 400, so thinking
+    # can't be turned off.
+    thinking_always_enabled = model_name.startswith(
+        ('claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview', 'claude-opus-5-5', 'claude-sonnet-5-5')
+    )
+
+    # The 5.1 generation, Opus 5.5, and Sonnet 5.5 reject a forced `tool_choice` (`any`/`tool`) outright, unlike
     # other Anthropic models which only reject forcing alongside extended thinking. Anthropic's
     # forcing-tool-use table names Claude Fable 5.1 and Claude Mythos 5.1, and `claude-fable-5` accepts
     # both forcing shapes live (200 on `any` and `tool`, GA and beta endpoints), so Fable 5, Mythos 5,
     # and Mythos Preview no longer belong here. `claude-opus-5-5` returns a 400 for both shapes where
-    # `claude-opus-5` returns 200.
+    # `claude-opus-5` returns 200, and likewise `claude-sonnet-5-5` where `claude-sonnet-5` returns 200.
     supports_forced_tool_choice = not model_name.startswith(
-        ('claude-fable-5-1', 'claude-mythos-5-1', 'claude-opus-5-5')
+        ('claude-fable-5-1', 'claude-mythos-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5')
     )
 
-    # Claude Fable 5.1 and Opus 5.5 bind thinking blocks to the conversation prefix: Claude Fable 5,
-    # Opus 5, and Sonnet 5 all return 200 for a replayed block under an explicit
-    # `prefix_mismatch_behavior` of `'error'` where Opus 5.5 returns a 400 once the `system` prompt
-    # changes, and Anthropic documents that Claude Mythos 5.1 "doesn't run this check" — the one
-    # capability on which it is not Fable 5.1's mirror.
-    binds_thinking_blocks = model_name.startswith(('claude-fable-5-1', 'claude-opus-5-5'))
+    # Claude Fable 5.1, Opus 5.5, and Sonnet 5.5 bind thinking blocks to the conversation prefix:
+    # Claude Fable 5, Opus 5, and Sonnet 5 all return 200 for a replayed block under an explicit
+    # `prefix_mismatch_behavior` of `'error'` where Opus 5.5 and Sonnet 5.5 return a 400 once the
+    # `system` prompt changes, and Anthropic documents that Claude Mythos 5.1 "doesn't run this
+    # check" — the one capability on which it is not Fable 5.1's mirror.
+    binds_thinking_blocks = model_name.startswith(('claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5'))
 
     supports_dynamic_filtering = model_name.startswith(
         (
@@ -334,6 +400,12 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supports_json_schema_output=supports_json_schema_output,
         anthropic_supports_fast_speed=anthropic_supports_fast_speed,
         supports_thinking=True,
+        thinking_always_enabled=thinking_always_enabled,
+        thinking_enabled_by_default=thinking_enabled_by_default,
+        # A forced `tool_choice` prefills the tool call, so the model answers it without thinking: Opus 5, Sonnet
+        # 4.6 and Sonnet 5 return a thinking block for `auto` but none for `any` or `tool`, with adaptive thinking
+        # on. Extended thinking rejects forcing outright, which `AnthropicModel` handles itself.
+        forced_tool_choice_disables_thinking=True,
         anthropic_supports_adaptive_thinking=supports_adaptive,
         anthropic_supports_effort=supports_effort,
         anthropic_supports_dynamic_filtering=supports_dynamic_filtering,
@@ -344,8 +416,10 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_default_code_execution_tool_version=default_code_execution_tool_version,
         anthropic_supported_code_execution_tool_versions=supported_code_execution_tool_versions,
         anthropic_supports_task_budgets=supports_task_budgets,
-        anthropic_supports_forced_tool_choice=supports_forced_tool_choice,
+        supports_forced_tool_choice=supports_forced_tool_choice,
         anthropic_binds_thinking_blocks=binds_thinking_blocks,
+        anthropic_max_output_tokens=max_output_tokens,
+        anthropic_rejects_max_tokens_beyond_context_window=rejects_max_tokens_beyond_context_window,
         supported_native_tools=supported_native_tools,
     )
     if supports_tool_search:
