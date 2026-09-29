@@ -1315,7 +1315,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 )
                 continue
             if td.return_schema is None and name not in self._warned_deferred:
-                self._warned_deferred.add(name)
                 missing_return_schema.append(name)
 
             if safe_name != name:
@@ -1324,6 +1323,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
             callable_defs[safe_name] = td
         _warn_missing_return_schemas(missing_return_schema)
+        # Recorded only once warned, so a warning escalated to an error is raised again next time.
+        self._warned_deferred.update(missing_return_schema)
         return callable_defs, sanitized_to_original
 
     @staticmethod

@@ -13,10 +13,6 @@ from .splash import Splash
 def main() -> None:
     """Cover heavyweight startup imports with the CLAI splash."""
     os.environ['PYDANTIC_AI_NO_BANNER'] = '1'
-    if not sys.warnoptions:
-        # Library `UserWarning`s are advice for the developer who wired the agent, not the person at
-        # the prompt, and stderr output tears through the live display. `-W` or `PYTHONWARNINGS` restores them.
-        warnings.simplefilter('ignore', UserWarning)
     enabled = len(sys.argv) == 1 and not os.getenv('CLAI_NO_SPLASH')
     database = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
     if enabled and database.exists():
@@ -34,7 +30,13 @@ def main() -> None:
     try:
         from ._cli import run
 
-        run(splash=splash)
+        with warnings.catch_warnings():
+            if not sys.warnoptions:
+                # Library `UserWarning`s are advice for the developer who wired the agent, not the person
+                # at the prompt, and stderr output tears through the live display. `-W` or
+                # `PYTHONWARNINGS` restores them.
+                warnings.simplefilter('ignore', UserWarning)
+            run(splash=splash)
     finally:
         splash.stop()
 

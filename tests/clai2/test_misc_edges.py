@@ -68,5 +68,7 @@ def test_entry_point_quiets_user_warnings_unless_requested(
     monkeypatch.setattr(pydantic_clai2._cli, 'run', run)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
+        filters = list(warnings.filters)
         pydantic_clai2.__main__.main()
+        assert warnings.filters == filters
     assert [str(warning.message) for warning in caught] == shown
