@@ -917,6 +917,12 @@ class TestMarkdownConverter:
         html = '<div>' * 300 + f'<a href="{value}"><span>{value}</span></a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
 
+    def test_wrapped_autolink_with_surrounding_spaces_is_not_overcharged(self):
+        """The autolink shortcut strips surrounding whitespace before comparing the URL."""
+        value = 'x' * 9_000_000
+        html = '<div>' * 300 + f'<a href="{value}"><span> {value} </span></a>' + '</div>' * 300
+        assert _convert_html(html)[1] == f'<{value}>'
+
     def test_wrapped_autolink_with_ignored_comment_is_not_overcharged(self):
         """Ignored comments do not interrupt autolink text in transparent descendants."""
         value = 'x' * 9_000_000
