@@ -28,7 +28,7 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import BackgroundTools
 from tests.harness.conftest import ignore_source_reads_left_open
 
-pytestmark = [pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7253
 TASK_QUEUE = 'pydantic-ai-harness-background-tools'
