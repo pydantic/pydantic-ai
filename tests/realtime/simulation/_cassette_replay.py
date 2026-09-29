@@ -43,6 +43,7 @@ _MODULE_PROTOCOLS: dict[str, Protocol] = {
     'test_google_ws': 'gemini',
     'test_openai_live_ws': 'openai-live',
     'test_openai_live_ws_sideband': 'openai-live',
+    'test_openai_live_ws_and_http': 'openai-live',
 }
 _PARITY_PROTOCOLS: dict[str, Protocol] = {
     'openai': 'openai',
