@@ -74,6 +74,13 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(monkeypa
     await app.plugins.close('exit')
 
 
+async def test_slack_without_a_chosen_key_stays_quiet() -> None:
+    app = await shell()
+    assert await app.turn_token() is None
+    assert app.output.getvalue() == ''
+    await app.plugins.close('exit')
+
+
 async def test_reopening_repicks_a_shared_key_that_stays_live(monkeypatch: pytest.MonkeyPatch) -> None:
     save_key(name='SLACK_USER_TOKEN', value='xoxp-first')
     save_key(name='ACME_SLACK', value='xoxp-acme')

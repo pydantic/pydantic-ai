@@ -262,7 +262,7 @@ async def test_r_signs_out_or_forgets_the_app_and_turns_fail_closed() -> None:
     assert source.reset(client_id) == 'Reset Slack app.'  # Nothing left to sign out of.
     await app.plugins.reload('slack')
     assert await app.turn_token() is None
-    assert 'Slack tools are off. Set up your Slack app: run /plugins configure slack.' in app.output.getvalue()
+    assert 'Set up your Slack app' not in app.output.getvalue(), 'no app yet is not a failure worth a warning'
     await app.plugins.close('exit')
 
 

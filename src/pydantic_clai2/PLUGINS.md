@@ -646,9 +646,11 @@ hold the token, and a pasted `token` setting is rejected. CLAI does not read the
 chosen, CLAI says so and points at the menu.
 
 With a user token, before every turn CLAI reads the chosen key's current value from `/keys`, so
-replacing it there takes effect on the next turn with no reload. When no key is
-chosen, the chosen key was deleted, or the saved choice is invalid, CLAI prints
-why and that turn has no Slack tools. While Slack uses a key, `/keys` will not
+replacing it there takes effect on the next turn with no reload. Until you choose
+a key (or, for browser sign-in, set up the Slack app), turns just have no Slack
+tools, without a warning; the menu rows say what is missing. When the chosen key
+was deleted or the saved choice is invalid, CLAI prints why and that turn has no
+Slack tools. While Slack uses a key, `/keys` will not
 rename it.
 
 | Key | Default | Does |
