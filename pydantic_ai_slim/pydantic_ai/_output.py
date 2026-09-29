@@ -1253,6 +1253,7 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 [
                     {
                         'type': PydanticCustomError(
+                            # A runtime `str` from the original error, not the `LiteralString` the signature asks for.
                             error['type'],  # pyright: ignore[reportArgumentType]
                             '{message}',
                             {'message': error['msg']},
