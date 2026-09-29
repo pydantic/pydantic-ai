@@ -65,6 +65,8 @@ repos:
         args: [run, pytest, "clai/update_readme.py"]
         language: system
         types_or: [python, markdown]
+        # `clai` never imports `pydantic-clai2`, so a commit confined to it cannot change the output.
+        exclude: ^(src/pydantic_clai2|tests/clai2)/
         pass_filenames: false
       - id: format
         name: Format

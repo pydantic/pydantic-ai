@@ -43,6 +43,7 @@ jobs:
       pull-requests: read
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      clai2_only: ${{ steps.classify.outputs.clai2_only }}
       pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
       pyright_changed_files: ${{ steps.classify.outputs.pyright_changed_files }}
     steps:
@@ -54,6 +55,7 @@ jobs:
         run: |
           run_all_checks() {
             echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
             echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
           }
 
@@ -91,6 +93,17 @@ jobs:
             esac
           }
 
+          # Nothing outside `pydantic-clai2` imports it, so a change confined to these paths cannot
+          # break another package's suite: it runs only the `pydantic-clai2` test cells, and skips
+          # the jobs that exercise the rest of the workspace. Shared inputs (`pyproject.toml`,
+          # `uv.lock`, `tests/conftest.py`, ...) are outside them and still run everything.
+          is_clai2() {
+            case "$1" in
+              src/pydantic_clai2/*|tests/clai2/*) ;;
+              *) return 1 ;;
+            esac
+          }
+
           is_pyright_input() {
             # All Python/stub files conservatively cover Pyright's include and import graph;
             # the remaining paths change its command, configuration, dependencies, or this gate.
@@ -101,6 +114,7 @@ jobs:
           }
 
           docs_only=true
+          clai2_only=true
           pyright_changed=false
           pyright_changed_files=()
           for changed_file in "${changed_files[@]}"; do
@@ -108,6 +122,10 @@ jobs:
             if ! is_docs_markdown "$filename" || \
               { [ -n "$previous_filename" ] && ! is_docs_markdown "$previous_filename"; }; then
               docs_only=false
+            fi
+            if ! is_clai2 "$filename" || \
+              { [ -n "$previous_filename" ] && ! is_clai2 "$previous_filename"; }; then
+              clai2_only=false
             fi
             for path in "$filename" "$previous_filename"; do
               if [ -n "$path" ] && is_pyright_input "$path"; then
@@ -117,6 +135,7 @@ jobs:
             done
           done
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
           echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
           # `scripts/typecheck_changed.py` skips whichever of the harness packages and the rest of the
           # project these do not reach. Only a pull request sets it, so every other run checks everything.
@@ -125,37 +144,6 @@ jobs:
             printf '%s\n' "${pyright_changed_files[@]}"
             echo 'PYRIGHT_CHANGED_FILES_EOF'
           } >> "$GITHUB_OUTPUT"
-
-  # The `pydantic-ai-harness` sandbox live tests start real, billed sandboxes, one provider at
-  # a time. The script names the providers this change can affect (their own code, their SDK
-  # in `uv.lock`, or the workspace code every provider runs through) as a JSON list. Separate
-  # from `classify` because it needs a checkout, and independent of `docs_only`: a provider's
-  # docs page is what its live tier runs. Tags skip it and run every provider.
-  sandbox-live-changes:
-    name: select sandbox live tests
-    if: github.event_name == 'pull_request' || github.ref_type == 'branch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      providers: ${{ steps.detect.outputs.providers }}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - id: detect
-        env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
-        # The checkout is shallow, so fetch the base commit on its own: comparing two trees
-        # needs no shared history. A base that cannot be fetched (a new branch's all-zero
-        # `before`, a force-pushed-away head) makes the script select every provider.
-        # An assignment, not `echo "$(...)"`, so a failing script fails the step instead of
-        # writing an empty list that skips the live tests.
-        run: |
-          git fetch --no-tags --depth=1 origin "$BASE_SHA" || true
-          providers="$(python3 .github/scripts/sandbox_live_changes.py changed "$BASE_SHA" "$HEAD_SHA")"
-          echo "providers=${providers}" >> "$GITHUB_OUTPUT"
 
   quality:
     name: quality checks
@@ -202,7 +190,6 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
-          .github/scripts/test_sandbox_live_changes.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -356,7 +343,7 @@ jobs:
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -468,13 +455,27 @@ jobs:
             paths: tests/clai2
           - name: standard
             command: ""
+        # A single-value dimension, so the `exclude` below can drop every cell but
+        # `pydantic-clai2` when `classify` found a change confined to it.
+        clai2_only: ["${{ needs.classify.outputs.clai2_only }}"]
+        exclude:
+          - clai2_only: "true"
+            install: { name: pydantic-ai-slim }
+          - clai2_only: "true"
+            install: { name: pydantic-evals }
+          - clai2_only: "true"
+            install: { name: pydantic-ai-harness }
+          - clai2_only: "true"
+            install: { name: standard }
     env:
       CI: true
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
       # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
-      # every applicable test without duplicate coverage.
-      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
+      # every applicable test without duplicate coverage. A `pydantic-clai2`-only change also
+      # collects it on 3.10: `tests/clai2` has 3.10-only branches that `all-extras` covers otherwise.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.10' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
+      CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -503,6 +504,10 @@ jobs:
       - name: run tests
         shell: bash
         run: |
+          extra=()
+          if [[ -n "$CLAI2_EXTRA" ]]; then
+            extra=(--extra "$CLAI2_EXTRA")
+          fi
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
@@ -510,7 +515,7 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          uv run ${{ matrix.install.command }} "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run ${{ matrix.install.command }} "${extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec ${{ matrix.install.paths }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -520,7 +525,13 @@ jobs:
       # job, which would otherwise merge hundreds of files on the critical path.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
-        run: uv run ${{ matrix.install.command }} coverage combine
+        shell: bash
+        run: |
+          extra=()
+          if [[ -n "$CLAI2_EXTRA" ]]; then
+            extra=(--extra "$CLAI2_EXTRA")
+          fi
+          uv run ${{ matrix.install.command }} "${extra[@]}" coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
@@ -538,7 +549,7 @@ jobs:
   test-all-extras:
     name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/2)
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -677,7 +688,7 @@ jobs:
   test-durable-exec:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -773,7 +784,7 @@ jobs:
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/2)
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -881,7 +892,7 @@ jobs:
   test-temporal-latest:
     name: test Temporal latest on Python 3.10
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -907,7 +918,7 @@ jobs:
   test-examples:
     name: test examples on ${{ matrix.python-version }}
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -936,7 +947,7 @@ jobs:
   test-harness-browser-use:
     name: test harness browser-use
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -965,7 +976,7 @@ jobs:
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1184,37 +1195,12 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     uses: ./.github/workflows/latest-versions-canary.yml
 
-  sandbox-live:
-    name: sandbox live tests
-    needs: [sandbox-live-changes]
-    # The provider tokens are repository secrets that fork and Dependabot pull requests cannot
-    # read, so those skip; `sandbox-live-nightly.yml` covers them on demand. Tags run every
-    # provider but do not wait on the result (see `check`), so a provider outage cannot hold a
-    # release. `always()` because `sandbox-live-changes` skips on tags.
-    if: >-
-      ${{ always()
-          && (github.ref_type == 'tag'
-              || (needs.sandbox-live-changes.outputs.providers != ''
-                  && needs.sandbox-live-changes.outputs.providers != '[]'))
-          && (github.event_name != 'pull_request'
-              || (github.event.pull_request.head.repo.full_name == github.repository
-                  && github.actor != 'dependabot[bot]')) }}
-    # No job-level `concurrency`: the workflow's own group already cancels a superseded pull
-    # request run, live tests included, and a per-ref group here would let GitHub cancel a
-    # pending `main` run's live tests, which `check` would then report as a failure.
-    uses: ./.github/workflows/sandbox-live.yml
-    with:
-      providers: ${{ github.ref_type == 'tag' && 'all' || needs.sandbox-live-changes.outputs.providers }}
-    secrets:
-      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
-      E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
-      SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
-
   coverage:
     runs-on: ubuntu-latest
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4]
-    if: needs.classify.outputs.docs_only != 'true'
+    # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
+    # otherwise skip this job too.
+    if: ${{ !failure() && !cancelled() && needs.classify.outputs.docs_only != 'true' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1234,7 +1220,17 @@ jobs:
 
       - run: uv sync --group dev --group coverage
       - run: uv run --no-sync coverage combine
-      - run: uv run --no-sync coverage report
+      # Only the `pydantic-clai2` cells ran for a change confined to it, so they can only vouch
+      # for its own tests: the rest of the workspace is covered on the full path.
+      - name: coverage report
+        env:
+          CLAI2_ONLY: ${{ needs.classify.outputs.clai2_only }}
+        run: |
+          if [ "$CLAI2_ONLY" = true ]; then
+            uv run --no-sync coverage report --include='tests/clai2/*'
+          else
+            uv run --no-sync coverage report
+          fi
 
       - run: uv run --no-sync strict-no-cover
         env:
@@ -1262,8 +1258,6 @@ jobs:
       - harness-mongodb-integration
       - harness-redis-integration
       - latest-versions-canary
-      - sandbox-live-changes
-      - sandbox-live
       - coverage
     runs-on: ubuntu-latest
 
@@ -1273,21 +1267,21 @@ jobs:
         with:
           # The canary is advisory because it tests dependency versions we do not lock; its failures
           # signal upstream drift rather than release blockers. It runs on tag refs only, and
-          # `docs-only` runs only for Markdown-only PRs.
-          # On tags only `docs-only` and `sandbox-live-changes` may skip; full CI jobs may skip only
-          # on the reduced PR path. The harness integration jobs run only when their paths change (always
-          # on tags), and LocalStack also skips where its secret is unreadable. `sandbox-live` may skip off
-          # tags: when no provider is affected, and on fork and Dependabot PRs, which cannot read its
-          # secrets. It still votes when it runs and fails, except on tags: a Modal, E2B or Sprites
-          # outage must not block a release.
-          allowed-failures: ${{ github.ref_type == 'tag' && 'latest-versions-canary,sandbox-live' || 'latest-versions-canary' }}
+          # `docs-only` runs only for Markdown-only PRs, and a PR confined to `pydantic-clai2` skips the
+          # jobs that exercise the rest of the workspace.
+          # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
+          # The harness integration jobs run only when their paths change (always on tags), and
+          # LocalStack also skips where its secret is unreadable.
+          allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
               needs.classify.outputs.docs_only == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,sandbox-live'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage'
+              || needs.classify.outputs.clai2_only == 'true'
+              && 'docs-only,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || github.ref_type == 'tag'
-              && 'docs-only,harness-integration-changes,harness-localstack-integration,sandbox-live-changes'
-              || 'docs-only,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,sandbox-live'
+              && 'docs-only,harness-integration-changes,harness-localstack-integration'
+              || 'docs-only,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 

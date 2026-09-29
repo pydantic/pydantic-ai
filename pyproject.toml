@@ -211,10 +211,10 @@ logfire-api = false
 # termflow-md 0.9.3 is the first release supporting Python 3.10, which `pydantic-clai2` needs.
 # TODO(Kludex): Remove after 2026-10-01 16:36 UTC.
 termflow-md = "2026-09-24T16:36:46Z"
-# Anthropic 1.8.0 is the first release listing `claude-opus-5-5`.
-# TODO(DouweM): Remove after 2026-09-29 16:25 UTC. https://github.com/pydantic/pydantic-ai/issues/8636
-# This admits only the reviewed 1.8.0 artifacts; later Anthropic artifacts remain quarantined.
-anthropic = "2026-09-22T16:25:39Z"
+# Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
+# TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
+# This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
+anthropic = "2026-09-28T18:04:04Z"
 # OpenAI 3.19.0 is the first release listing `gpt-rosalind-research`, and the `openai` floor.
 # TODO(adtyavrdhn): Remove after 2026-09-30 00:09 UTC.
 openai = "2026-09-23T00:08:49Z"
@@ -336,8 +336,6 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
-    ".github/scripts/sandbox_live_changes.py",
-    ".github/scripts/test_sandbox_live_changes.py",
 ]
 
 [tool.ruff.lint]
@@ -402,7 +400,6 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
-".github/scripts/test_sandbox_live_changes.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]

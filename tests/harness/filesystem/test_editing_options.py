@@ -1,4 +1,4 @@
-"""`FileSystem` options added for single-writer coding agents: `content_hashes`, `max_read_chars`, batch edits, and a root above the working directory."""
+"""`FileSystem` options added for single-writer coding agents: `content_hashes`, `max_read_chars`, batch edits, a root above the working directory, and `max_retries`."""
 
 import os
 from pathlib import Path
@@ -6,11 +6,12 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.filesystem import FILE_SYSTEM_TOOL_NAMES, FileSystem, FileSystemToolset, Replacement
 
-from .._tool_calls import call_tool
+from .._tool_calls import call_tool, call_tools
 
 
 def toolset(root: Path, **settings: object) -> FileSystemToolset[None]:
@@ -288,3 +289,25 @@ class TestRootAboveTheWorkingDirectory:
             f'`{root.parent}/outside.txt` is outside root_dir `{root}`; the file tools only work inside it.' in result
         )
         assert f'Create or clone it inside `{root}`, or use a shell tool if you have one.' in result
+
+
+class TestMaxRetries:
+    """Each denied write asks the model to retry, and the budget bounds how many in a row the run survives."""
+
+    DENIED_WRITE: tuple[str, dict[str, object]] = ('write_file', {'path': '../outside.txt', 'content': 'x'})
+
+    async def test_default_is_the_agent_budget(self, tmp_path: Path) -> None:
+        with pytest.raises(UnexpectedModelBehavior, match="Tool 'write_file' exceeded max retries count of 1"):
+            await call_tools([FileSystem[None]()], [self.DENIED_WRITE] * 2, workspace=LocalWorkspaceBackend(tmp_path))
+
+    async def test_budget_bounds_consecutive_failures(self, tmp_path: Path) -> None:
+        capabilities = [FileSystem[None](max_retries=3)]
+        results = await call_tools(capabilities, [self.DENIED_WRITE] * 3, workspace=LocalWorkspaceBackend(tmp_path))
+        assert len(results) == 3
+        assert all('outside the project root' in result for result in results)
+        with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries count of 3'):
+            await call_tools(capabilities, [self.DENIED_WRITE] * 4, workspace=LocalWorkspaceBackend(tmp_path))
+
+    def test_must_not_be_negative(self) -> None:
+        with pytest.raises(ValueError, match='max_retries must be a non-negative integer, got -1'):
+            FileSystem(max_retries=-1)

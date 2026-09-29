@@ -1,0 +1,64 @@
+interactions:
+- request:
+    body: '{"messages": [{"role": "user", "content": [{"text": "What is 3 + 3?"}]}], "system": [], "inferenceConfig": {},
+      "toolConfig": {"tools": [{"toolSpec": {"name": "final_result", "inputSchema": {"json": {"properties": {"response": {"type":
+      "integer"}}, "required": ["response"], "type": "object"}}, "description": "The final response which ends this conversation"}}],
+      "toolChoice": {"auto": {}}}, "additionalModelRequestFields": {"thinking": {"type": "enabled", "budget_tokens": 10000}}}'
+    headers:
+      amz-sdk-invocation-id:
+      - !!binary |
+        MzliY2YzYWMtNjhlZS00NWM4LWIzZDEtN2QyZTgyZGM2OGE3
+      amz-sdk-request:
+      - !!binary |
+        YXR0ZW1wdD0x
+      content-length:
+      - '482'
+      content-type:
+      - !!binary |
+        YXBwbGljYXRpb24vanNvbg==
+    method: POST
+    uri: https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-sonnet-4-5-20250929-v1%3A0/converse
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1246'
+      content-type:
+      - application/json
+    parsed_body:
+      metrics:
+        latencyMs: 2589
+      output:
+        message:
+          content:
+          - reasoningContent:
+              reasoningText:
+                signature: Eo0DCn4IEhABGAIqQENPF9tOK1NcwVdJOpScpT340Y+AJffvkQ9DjFY9ry5f9C+kxjsK0RyEuZfg4SscVh7HS2NZQ6qCNZXORe8Be1IyGmNsYXVkZS1zb25uZXQtNC01LTIwMjUwOTI5OABCCHRoaW5raW5nWgwyMTExMjU2Nzc4NDUSDGMD67qhhHHW4T1B6RoMn808+UBVZ5qNiOUUIjDR7Jl1tgjTi6M1LehEi4TIwVcXya0ZTBpMJR4wTEGnYvIfx6PiLIW+AR3s3wvwEYAqvAFH0v5UkSJSEL1wkP57U/BehcEf2KeJ419tIX9SIveOZ87Y10qRFh8Pqg1zE/XXJ+V9eLVoLh+25nca2gLG5cdwg7MIEh6Uqz+jwRdIOV4Bt5vnJwwoIrg4oln5mb69w1jAGGloZL23F6RxNGGhTmp/C/d5j6r8li2jvzUSVJBS7r6IVt3aFIBOPKy9e9FNQeH4ICFBc0PhSbewr6vAyti2CYalD5ZEPkxPJFVSE1ZJeUlBIuTerex1gQA2zhgB
+                text: |-
+                  The user is asking for a simple arithmetic calculation: 3 + 3.
+
+                  3 + 3 = 6
+
+                  I need to use the final_result function to provide the answer, which expects an integer response.
+          - toolUse:
+              input:
+                response: 6
+              name: final_result
+              toolUseId: tooluse_sjYaxxWCnlI7F4dsgElTug
+              type: tool_use
+          role: assistant
+      stopReason: tool_use
+      usage:
+        cacheReadInputTokenCount: 0
+        cacheReadInputTokens: 0
+        cacheWriteInputTokenCount: 0
+        cacheWriteInputTokens: 0
+        inputTokens: 597
+        outputTokens: 109
+        serverToolUsage: {}
+        totalTokens: 706
+    status:
+      code: 200
+      message: OK
+version: 1

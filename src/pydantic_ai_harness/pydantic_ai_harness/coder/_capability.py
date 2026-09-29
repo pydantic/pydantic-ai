@@ -36,9 +36,22 @@ MAX_READ_CHARS = 50_000
 MAX_OUTPUT_CHARS = 64000
 """Characters kept from any tool result."""
 
+MAX_FILE_TOOL_RETRIES = 5
+"""Consecutive retries each file tool allows before the run fails.
+
+A denied path or a stale edit is corrected from the error message. With the agent's default
+budget of one, a second consecutive mistake with the same tool ends a long autonomous run
+and discards its work.
+"""
+
 
 def _file_system(*, unrestricted: bool) -> FileSystem[AgentDepsT]:
-    file_system = FileSystem[AgentDepsT](content_hashes=False, max_read_chars=MAX_READ_CHARS, tools=FILE_TOOL_NAMES)
+    file_system = FileSystem[AgentDepsT](
+        content_hashes=False,
+        max_read_chars=MAX_READ_CHARS,
+        tools=FILE_TOOL_NAMES,
+        max_retries=MAX_FILE_TOOL_RETRIES,
+    )
     if unrestricted:
         # Workspace paths are POSIX, so the filesystem root is `/` whatever the host platform.
         return replace(file_system, root_dir='/', read_only_patterns=[])
