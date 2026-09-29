@@ -326,6 +326,8 @@ def test_voice_live_cascade_semantic_vad_uses_azure_semantic_vad(
         ('gpt-5.2', 'low', False),
         # Doesn't reason at all.
         ('gpt-4.1', 'high', True),
+        # A native-audio reasoning model takes a temperature while reasoning (verified live).
+        ('gpt-realtime-2', 'high', True),
     ],
 )
 def test_voice_live_temperature_dropped_while_reasoning(
@@ -338,7 +340,7 @@ def test_voice_live_temperature_dropped_while_reasoning(
         api_key='azure-key',
     )
     model = AzureRealtimeModel(model_name, provider=provider)
-    settings = AzureRealtimeModelSettings(azure_voice_live_temperature=0.5)
+    settings = AzureRealtimeModelSettings(azure_voice_live=True, azure_voice_live_temperature=0.5)
     if thinking is not None:
         settings['thinking'] = thinking
     if temperature_sent:

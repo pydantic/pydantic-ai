@@ -274,7 +274,9 @@ def _cascade_model_is_reasoning(model_name: str, thinking: ThinkingLevel | None)
     """Whether a Voice Live cascade chat model will reason, which rules out a non-default temperature.
 
     Mirrors the standard OpenAI adapter, which drops sampling parameters while reasoning is active:
-    Voice Live accepts the temperature when the session starts, then fails every response.
+    Voice Live accepts the temperature when the session starts, then fails every response. Only asked
+    for a cascade: the native-audio reasoning models (`gpt-realtime-2*`) take a temperature while
+    reasoning.
     """
     profile = openai_model_profile(model_name)
     if not profile.get('openai_supports_reasoning', False):
@@ -589,7 +591,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             config['tool_choice'] = tool_choice_config(tool_choice)
         thinking = settings.get('thinking')
         if (temperature := settings.get('azure_voice_live_temperature')) is not None:
-            if _cascade_model_is_reasoning(self.model, thinking):
+            if cascade and _cascade_model_is_reasoning(self.model, thinking):
                 remedy = (
                     'Set `thinking=False` to use it.'
                     if openai_model_profile(self.model).get('openai_supports_reasoning_effort_none', False)
