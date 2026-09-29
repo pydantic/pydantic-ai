@@ -1327,7 +1327,8 @@ class GoogleRealtimeModel(RealtimeModel):
             # re-seed: session resumption restores server state, and a `RealtimeSessionReconnectEvent`
             # starts a fresh turn.
             if turns:
-                await session.send_client_content(turns=turns, turn_complete=history_in_client_content)
+                # Unpacked into a new list, which the SDK's invariant `list[Content | ContentDict]` accepts.
+                await session.send_client_content(turns=[*turns], turn_complete=history_in_client_content)
             yield GoogleRealtimeConnection(
                 session,
                 profile=self.profile,
