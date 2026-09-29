@@ -1894,14 +1894,13 @@ class TestReadBgOutputEdgeCases:
         """A log removed after its existence check but before its readability check reads as empty."""
         ts = _shell_toolset(shell_dir)
         ctx = _run_context(Workspace(_RemovesFileOnReadCheck(shell_dir)))
-        command_id = _parse_command_id(await ts.start_command(ctx, 'exec sleep 300'))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'printf removed'))
         job = await _job(ts, ctx, command_id)
-        stdout_log = Path(job.directory) / 'stdout.log'
-        stdout_log.write_text('removed')
-        try:
-            assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: running]'
-        finally:
-            await ts.stop_command(ctx, command_id)
+        # A running wrapper can still open, and so recreate, its log after the check removes it.
+        with anyio.fail_after(5):
+            while (await job.status())[0]:
+                await anyio.sleep(0.05)  # pragma: lax no cover
+        assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: finished]\n[exit code: 0]'
 
 
 class _NoStatSizes(LocalWorkspaceBackend):
