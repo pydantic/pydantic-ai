@@ -441,7 +441,7 @@ def openai_model_profile(model_name: str) -> ModelProfile:
 
     # OpenAI's native `tool_search` tool with `defer_loading` is available on gpt-5.4 and later
     # mainline families (https://developers.openai.com/api/docs/guides/tools-tool-search; GPT-5.6
-    # verified live; GPT-6 Astra per its model guide's supported tools). Like the other gates in
+    # and the GPT-6 family verified live). Like the other gates in
     # this function, this enumerates known versions rather than matching open-endedly, so a new
     # family must be added here explicitly once confirmed; until then it falls back to local search.
     supports_tool_search = model_name.startswith(('gpt-5.4', 'gpt-5.5', 'gpt-5.6', *_GPT_6_MODEL_PREFIXES))

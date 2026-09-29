@@ -111,12 +111,13 @@ For OpenAI, check the broad union the repo actually consumes (`OpenAIModelName =
 uv run python -c "from openai.types import AllModels; from typing import get_args; print([m for m in get_args(AllModels) if '<new-version>' in m])"
 ```
 
-If the locked SDK doesn't list the new id, bridge it with a local `Literal` on the model-name alias. The PR then lands green without waiting for the SDK.
+If no SDK release lists the new id, bridge it with a local `Literal` on the model-name alias. The PR then lands green without waiting for the SDK.
 
-- OpenAI: `OpenAIModelName = str | AllModels | Literal['<id>']`. The docstring names the `openai` release that adds the id. A later PR bumps the floor and drops the bridge (#8635 bridged, #8655 dropped).
-- Anthropic and xAI: see the SDK-lag bridge notes in their landmine sections below. Anthropic checks `ModelParam`, not `Model`.
+If a release lists the id but sits inside the 7-day `exclude-newer` window, the providers differ:
 
-A same-day SDK release sits inside the 7-day `exclude-newer` window, so a floor bump needs the quarantine exemption the Anthropic section describes.
+- OpenAI: bridge anyway with `OpenAIModelName = str | AllModels | Literal['<id>']`. The docstring names the `openai` release that adds the id. A later PR bumps the floor and drops the bridge (#8635 bridged, #8655 dropped).
+- Anthropic: bump the SDK through the quarantine exemption its landmine section describes. Anthropic checks `ModelParam`, not `Model`.
+- xAI: see the SDK-lag bridge notes in its landmine section.
 
 ## Step 5 — Probe capabilities (only if not a pure mirror)
 
@@ -202,7 +203,7 @@ check. Keep the model-specific evidence concise:
 - **Probe a point release against every sibling, not only its namesake.** GPT-6.1 Sol rejects `effort='none'` like GPT-6 Astra; GPT-6 Sol accepts it. The accepted-effort list decides `can_be_disabled`. Decide `supports_image_output` by forcing the tool (`tool_choice={'type': 'image_generation'}`), not from the model page's tool list.
 - **Chat Completions rejects function tools while reasoning is on** for the GPT-6 family: `Function tools with reasoning_effort are not supported`. A model that rejects `effort='none'` therefore has no Chat Completions tool calling. Document the limit in `docs/models/openai.md`.
 - **A gateway 404 `No cost data available for model` means genai-prices has no entry yet.** It is not a gateway rejection. Keep the `gateway/openai:` literal and leave `UNSUPPORTED_GATEWAY_MODEL_NAMES` alone. The id waits on the Step 3b genai-prices entry.
-- **clai2 keeps a curated Codex menu**: `CODEX_MODELS` in `src/pydantic_clai2/pydantic_clai2/model_catalog.py`. Add the id when Codex offers it. Check `openai/codex`'s `codex_tui__chatwidget__tests__model_selection_popup.snap`, then run `Agent('openai-codex:<id>')` with a local Codex login. Update the model lists in `src/pydantic_clai2/README.md`, `src/pydantic_clai2/PLUGINS.md` and `docs/harness/clai2.md`.
+- **clai2 keeps a curated Codex menu**: `CODEX_MODELS` in `src/pydantic_clai2/pydantic_clai2/model_catalog.py`. Add the id when Codex offers it. Check `openai/codex`'s `codex_tui__chatwidget__tests__model_selection_popup.snap`, then run `Agent('openai-codex:<id>')` with a local Codex login. Update the Codex model lists in `src/pydantic_clai2/README.md` (two of them), `src/pydantic_clai2/PLUGINS.md` and `docs/harness/clai2.md`: `rg 'openai-codex:gpt-|gpt-5.6-luna' src/pydantic_clai2 docs/harness`.
 
 ### Anthropic
 
