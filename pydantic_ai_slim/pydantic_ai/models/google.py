@@ -5,7 +5,7 @@ import re
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, cast, get_args, overload
@@ -42,6 +42,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
     AbstractNativeTool,
@@ -53,7 +54,12 @@ from ..native_tools import (
 )
 from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
-from ..profiles.google import GoogleModelProfile
+from ..profiles.google import (
+    GOOGLE_THINKING_LEVEL_SCALE,
+    GOOGLE_THINKING_LEVELS,
+    GoogleModelProfile,
+    GoogleThinkingLevel,
+)
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
 from ..tools import ToolDefinition
@@ -159,6 +165,7 @@ LatestGoogleModelNames = Literal[
     'gemini-3.5-flash-lite',
     'gemini-3.6-flash',
     'gemini-3.7-flash',
+    'gemini-3.8-flash',
 ]
 """Latest Gemini models."""
 
@@ -442,9 +449,9 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
     assert_never(service_tier)  # pragma: no cover
 
 
-def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
+def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     """Normalize unified thinking effort to a Gemini thinking level."""
-    level_by_effort: dict[ThinkingEffort, Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']] = {
+    level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
         'minimal': 'MINIMAL',
         'low': 'LOW',
         'medium': 'MEDIUM',
@@ -454,13 +461,50 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> Literal['MINIMAL', 'L
     return level_by_effort[thinking]
 
 
-def _resolve_google_thinking_level(
-    thinking: ThinkingEffort, profile: GoogleModelProfile
-) -> Literal['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']:
+_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
+    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
+}
+
+
+def _snap_thinking_level(
+    level: GoogleThinkingLevel, levels: frozenset[GoogleThinkingLevel] | None
+) -> GoogleThinkingLevel:
+    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH` scale.
+
+    Equidistant levels round down to the cheaper one. `None` means the model takes the whole scale, so
+    the level passes through. Shared with the Live path, which differs only in where its level set
+    comes from.
+    """
+    if levels is None:
+        return level
+    if not levels:
+        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
+    if unknown := levels - GOOGLE_THINKING_LEVELS:
+        raise UserError(
+            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
+            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
+        )
+    requested = _GOOGLE_THINKING_LEVEL_ORDER[level]
+    return min(
+        levels,
+        key=lambda candidate: (
+            abs(_GOOGLE_THINKING_LEVEL_ORDER[candidate] - requested),
+            _GOOGLE_THINKING_LEVEL_ORDER[candidate],
+        ),
+    )
+
+
+def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
     """Map unified thinking to the closest thinking level the model supports."""
-    if thinking == 'minimal' and not profile.get('google_supports_minimal_thinking_level', True):
-        return 'LOW'
-    return _thinking_effort_to_level(thinking)
+    levels = profile.get('google_thinking_levels')
+    if levels is None:
+        # Sparse profile without a level set: fall back to the boolean floor flag.
+        levels = (
+            GOOGLE_THINKING_LEVELS
+            if profile.get('google_supports_minimal_thinking_level', True)
+            else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
+        )
+    return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
 
 
 @dataclass(init=False)
@@ -521,12 +565,33 @@ class GoogleModel(Model[Client]):
         return self._provider.name
 
     @property
+    def _is_google_cloud(self) -> bool:
+        """Whether requests go to Google Cloud (Vertex) rather than the Gemini Developer API.
+
+        Derived from the client's transport rather than the provider name, because either provider
+        accepts a pre-built `client=` and stores it as-is, so the two can disagree in both
+        directions: a Vertex-backed client in `GoogleProvider` keeps `name` `'google'`, and a
+        Gemini-API client in `GoogleCloudProvider` keeps `name` `'google-cloud'`. The name cannot be
+        reconciled against the client instead — it is persisted in `ModelMessage.provider_name` and
+        checked when replaying history, so changing it breaks replay of anything captured under the
+        old name. `AnthropicModel` reads its transport off the client for the same reason.
+        """
+        return bool(self.client.vertexai)
+
+    @property
     def _matching_provider_names(self) -> frozenset[str]:
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
-            return _GOOGLE_CLOUD_PROVIDER_NAMES
-        if self.system in _GEMINI_API_PROVIDER_NAMES:
-            return _GEMINI_API_PROVIDER_NAMES
-        return frozenset({self.system})  # pragma: no cover
+        # Keyed on the transport, because the pre-v2 names this set exists to accept were themselves
+        # transport-derived: `GoogleProvider.name` used to return `google-vertex`/`google-gla` off the
+        # client. The union with `self.system` is load-bearing, not cosmetic — a Vertex-backed
+        # `GoogleProvider` stamps `provider_name='google'`, which the Google Cloud set does not contain,
+        # so without it this model would reject its own history. Both consumers depend on this set:
+        # `_content_model_response` replays thinking signatures and native tool parts through it, and
+        # `_validate_uploaded_file` checks `UploadedFile.provider_name` against it.
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES or self.system in _GEMINI_API_PROVIDER_NAMES:
+            names = _GOOGLE_CLOUD_PROVIDER_NAMES if self._is_google_cloud else _GEMINI_API_PROVIDER_NAMES
+            return names | {self.system}
+        # A provider outside both families has no pre-v2 alias to accept, so it only matches itself.
+        return frozenset({self.system})
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -559,16 +624,21 @@ class GoogleModel(Model[Client]):
                     'Use `output_type=PromptedOutput(...)` instead.'
                 )
         merged_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
-        if model_request_parameters.cache and not (merged_settings or {}).get('google_cached_content'):
-            warnings.warn(
-                'The unified `cache` setting adds nothing to a Google request: Gemini caches prompts '
-                'implicitly, and explicit caching requires a pre-created cache resource passed via '
-                'the `google_cached_content` setting.',
-                UserWarning,
-            )
+        if model_request_parameters.cache:
+            if (merged_settings or {}).get('google_cached_content'):
+                # The explicit cached content takes precedence, so the unified value must not be reported
+                # as resolved either, matching the other providers' explicit cache settings.
+                model_request_parameters = replace(model_request_parameters, cache=None)
+            else:
+                warnings.warn(
+                    'The unified `cache` setting adds nothing to a Google request: Gemini 2.5 and newer '
+                    'cache prompts implicitly, and explicit caching requires a pre-created cache resource '
+                    'passed via the `google_cached_content` setting.',
+                    UserWarning,
+                )
         return merged_settings, model_request_parameters
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Gemini caching claims no resolvable retention.
 
         The implicit cache retention is undocumented and a `google_cached_content` resource
@@ -614,7 +684,7 @@ class GoogleModel(Model[Client]):
         config = CountTokensConfigDict(
             http_options=generation_config.get('http_options'),
         )
-        if self._provider.name not in _GEMINI_API_PROVIDER_NAMES:
+        if self._is_google_cloud:
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
             # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
@@ -640,11 +710,14 @@ class GoogleModel(Model[Client]):
                 ),
             )
 
-        response = await self.client.aio.models.count_tokens(
-            model=self._model_name,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response = await self.client.aio.models.count_tokens(
+                model=self._model_name,
+                contents=contents,
+                config=config,
+            )
+        except errors.APIError as e:
+            raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if response.total_tokens is None:
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Total tokens missing from Gemini response', str(response)
@@ -690,7 +763,7 @@ class GoogleModel(Model[Client]):
                 )
             image_config['image_size'] = tool.size
 
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+        if self._is_google_cloud:
             if tool.output_format is not None:
                 if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
                     raise UserError(
@@ -826,7 +899,7 @@ class GoogleModel(Model[Client]):
         if (
             emits_tool_call_invocations
             and self.profile.get('google_supports_server_side_tool_invocations', False)
-            and self.system not in _GOOGLE_CLOUD_PROVIDER_NAMES
+            and not self._is_google_cloud
         ):
             tool_config['include_server_side_tool_invocations'] = True
 
@@ -889,18 +962,16 @@ class GoogleModel(Model[Client]):
         if thinking is None:
             return None
         profile = self.profile
+        supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
-            if profile.get('google_supports_thinking_level', False):
-                # Gemini represents `thinking=False` as its lowest supported thinking level.
-                return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
-            return ThinkingConfigDict(thinking_budget=0)
-        if profile.get('google_supports_thinking_level', False):
-            if thinking is True:
-                return ThinkingConfigDict(include_thoughts=True)
-            return ThinkingConfigDict(
-                include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
-            )
-        else:
+            if not supports_thinking_level:
+                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0
+                return ThinkingConfigDict(thinking_budget=0)
+            # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
+            return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
+
+        if not supports_thinking_level:
+            # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             budget_map: dict[ThinkingEffort, int] = {
@@ -911,6 +982,13 @@ class GoogleModel(Model[Client]):
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+
+        # Default Gemini 3+ behaviour uses thinking_level
+        if thinking is True:
+            return ThinkingConfigDict(include_thoughts=True)
+        return ThinkingConfigDict(
+            include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
+        )
 
     async def _build_content_and_config(
         self,
@@ -958,7 +1036,7 @@ class GoogleModel(Model[Client]):
             headers.update(extra_headers)
 
         gla_service_tier: _GlaServiceTier | None = None
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+        if self._is_google_cloud:
             headers.update(_google_cloud_service_tier_headers(_resolve_google_cloud_service_tier(model_settings)))
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
@@ -1115,6 +1193,10 @@ class GoogleModel(Model[Client]):
         for m in messages:
             if isinstance(m, ModelRequest):
                 message_parts: list[PartDict] = []
+                # Held back so the split below can't leave framed tool media sharing a `Content` with
+                # a `function_response`, which Gemini reads as model-authored (#4210) — the opposite
+                # of the attribution the framing exists to give it.
+                tool_return_media: list[PartDict] = []
 
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
@@ -1122,7 +1204,9 @@ class GoogleModel(Model[Client]):
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.extend(await self._map_tool_return(part))
+                        function_response_part, framed_media = await self._map_tool_return(part)
+                        message_parts.append(function_response_part)
+                        tool_return_media.extend(framed_media)
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
@@ -1143,6 +1227,15 @@ class GoogleModel(Model[Client]):
                         raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
+
+                if tool_return_media:
+                    # After the last `function_response`, not after every part: a `ToolReturn.content`
+                    # user part trails the tool returns in the same request, and appending to the end
+                    # would put the developer's message between a call and the file it produced.
+                    # Anywhere earlier and the split below would leave media sharing a `Content` with
+                    # a later `function_response`.
+                    after_last_response = max(i for i, p in enumerate(message_parts) if 'function_response' in p) + 1
+                    message_parts[after_last_response:after_last_response] = tool_return_media
 
                 # Work around a Gemini bug where content objects containing functionResponse parts are treated as
                 # role=model even when role=user is explicitly specified.
@@ -1187,12 +1280,15 @@ class GoogleModel(Model[Client]):
 
         return system_instruction, contents
 
-    async def _map_tool_return(self, part: ToolReturnPart) -> list[PartDict]:
+    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[PartDict, list[PartDict]]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
-        For Gemini 3+ models with supported MIME types, files are sent inside
-        `function_response.parts` for efficiency. Unsupported types become separate
-        parts after the function_response (fallback strategy).
+        Returns the `function_response` part and, separately, any files this model can't carry
+        inside it. For Gemini 3+ models with supported MIME types, files are sent inside
+        `function_response.parts` for efficiency and the second element is empty. Unsupported types
+        fall back to ordinary parts, each framed by `_tool_result_provenance_tags`; the caller emits
+        those after every `function_response` in the request, which is why they carry the framing
+        rather than relying on sitting next to the call they belong to.
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
         supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
@@ -1207,9 +1303,9 @@ class GoogleModel(Model[Client]):
                 function_response_parts.append(fr_part)
             else:
                 fallback_refs.append(f'See file {file.identifier}.')
-                fallback_parts.append({'text': f'This is file {file.identifier}:'})
+                open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id, file.identifier)
                 file_part = await self._map_file_to_part(file)
-                fallback_parts.append(file_part)
+                fallback_parts.extend([{'text': open_tag}, file_part, {'text': close_tag}])
 
         if part.outcome == 'failed':
             # Google's function-response schema prescribes an `error` key (mirroring the `output` key
@@ -1232,10 +1328,7 @@ class GoogleModel(Model[Client]):
         if function_response_parts:
             function_response_dict['parts'] = function_response_parts
 
-        result: list[PartDict] = [{'function_response': function_response_dict}]
-        result.extend(fallback_parts)
-
-        return result
+        return {'function_response': function_response_dict}, fallback_parts
 
     def _validate_uploaded_file(self, file: UploadedFile) -> tuple[str, str]:
         """Validate an `UploadedFile` and return (`file_uri`, `mime_type`).
@@ -1248,7 +1341,7 @@ class GoogleModel(Model[Client]):
                 f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
                 f'Expected `provider_name` to be one of {sorted(self._matching_provider_names)!r}.'
             )
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+        if self._is_google_cloud:
             if not file.file_id.startswith('gs://'):
                 raise UserError(
                     f'UploadedFile for GoogleModel (Google Cloud) must use a GCS URI (gs://bucket/path), got: {file.file_id}'
@@ -1273,12 +1366,12 @@ class GoogleModel(Model[Client]):
             file_uri, mime_type = self._validate_uploaded_file(file)
             return ('file', file_uri, mime_type)
         elif isinstance(file, VideoUrl) and (
-            file.is_youtube or (file.url.startswith('gs://') and self.system in _GOOGLE_CLOUD_PROVIDER_NAMES)
+            file.is_youtube or (file.url.startswith('gs://') and self._is_google_cloud)
         ):
             return ('file', file.url, file.media_type)
         elif isinstance(file, FileUrl):
             if file.force_download or (
-                self.system in _GEMINI_API_PROVIDER_NAMES
+                not self._is_google_cloud
                 and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
             ):
                 downloaded_item = await download_item(file, data_format='bytes')
@@ -2037,6 +2130,21 @@ def _usage_metadata_as_usage(
     [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
     speaks the generate-content field names, so a Live caller translates before handing it over.
     """
+    if not any(
+        (
+            prompt_token_count,
+            output_token_count,
+            cached_content_token_count,
+            thoughts_token_count,
+            tool_use_prompt_token_count,
+            prompt_tokens_details,
+            cache_tokens_details,
+            output_tokens_details,
+            tool_use_prompt_tokens_details,
+        )
+    ):
+        return existing_usage or usage.RequestUsage()
+
     details: dict[str, int] = {}
     if cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
@@ -2182,16 +2290,6 @@ def _extract_file_search_retrieved_contexts(
         context_dict: dict[str, Any] = chunk.retrieved_context.model_dump(
             mode='json', exclude_none=True, by_alias=False
         )
-        # The SDK type may not define file_search_store yet, but model_dump includes it.
-        # Check both snake_case and camelCase since the field name varies.
-        file_search_store = context_dict.get('file_search_store')
-        if file_search_store is None:  # pragma: lax no cover
-            context_dict_with_aliases: dict[str, Any] = chunk.retrieved_context.model_dump(
-                mode='json', exclude_none=True, by_alias=True
-            )
-            file_search_store = context_dict_with_aliases.get('fileSearchStore')
-        if file_search_store is not None:  # pragma: lax no cover
-            context_dict['file_search_store'] = file_search_store
         retrieved_contexts.append(context_dict)
     return retrieved_contexts
 

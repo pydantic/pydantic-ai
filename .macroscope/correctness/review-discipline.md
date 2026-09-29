@@ -1,13 +1,3 @@
----
-include:
-  - "**/*.py"
-  - "**/*.md"
-  - "**/*.yml"
-  - "**/*.yaml"
-  - "**/*.ts"
-  - "**/*.tsx"
----
-
 Two rules that keep findings precise, applied to every finding.
 
 ## Flag what this PR introduces, not what it inherits

@@ -115,9 +115,6 @@ class WrapperModel(Model):
     ) -> list[ModelMessage]:
         return self.wrapped.prepare_messages(messages, model_request_parameters)
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
-        return self.wrapped.resolve_prompt_cache_retention(model_settings)
-
     @property
     def provider(self) -> Provider[Any] | None:
         return self.wrapped.provider  # pragma: no cover
@@ -144,9 +141,20 @@ class WrapperModel(Model):
         return self.wrapped.profile
 
     @property
+    def context_window(self) -> int | None:
+        # Forwarded rather than read off `profile`: a wrapped `FallbackModel` has no profile but does
+        # have a context window (the smallest among its candidates).
+        return self.wrapped.context_window
+
+    @property
     def settings(self) -> ModelSettings | None:
         """Get the settings from the wrapped model."""
         return self.wrapped.settings
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        # `Model.resolve_cache_retention` is defined on the base class, so without this override normal
+        # attribute lookup succeeds and `__getattr__` never forwards.
+        return self.wrapped.resolve_cache_retention(model_settings)
 
     @property
     def base_url(self) -> str | None:

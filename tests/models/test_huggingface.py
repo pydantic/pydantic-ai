@@ -19,6 +19,7 @@ from pydantic_ai import (
     CachePoint,
     DocumentUrl,
     ImageUrl,
+    ModelAPIError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -60,7 +61,7 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputDelta,
         ChatCompletionStreamOutputUsage,
     )
-    from huggingface_hub.errors import HfHubHTTPError
+    from huggingface_hub.errors import HfHubHTTPError, OverloadedError
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -70,7 +71,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='huggingface_hub not installed'),
-    pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::ResourceWarning'),
 ]
 
@@ -662,6 +662,26 @@ def test_model_status_error(allow_model_requests: None) -> None:
     assert exc.headers == {'x-request-id': 'abc'}
 
 
+@pytest.mark.parametrize('first_chunk', [True, False], ids=['first-chunk', 'mid-stream'])
+async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, first_chunk: bool) -> None:
+    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces as
+    `ModelAPIError`, with no status code invented for it.
+
+    https://github.com/pydantic/pydantic-ai/issues/8722
+    """
+    error = OverloadedError('Model is overloaded')
+    stream: list[MockStreamEvent] = [error] if first_chunk else [text_chunk('Hello'), error]
+    mock_client = MockHuggingFace.create_stream_mock(stream)
+    model = HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with Agent(model).run_stream('hello') as result:
+            await result.get_output()
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == 'Model is overloaded'
+    assert exc_info.value.__cause__ is error
+
+
 @pytest.mark.vcr()
 async def test_hf_model_instructions(allow_model_requests: None, huggingface_api_key: str):
     m = HuggingFaceModel(
@@ -961,8 +981,13 @@ async def test_image_tool_return_is_forwarded_as_user_message():
             {
                 'role': 'user',
                 'content': [
-                    {'type': 'text', 'image_url': None, 'text': 'This is file 01a7df:'},
+                    {
+                        'type': 'text',
+                        'image_url': None,
+                        'text': '<tool_result tool_name="get_image" tool_call_id="call_1" file_id="01a7df">',
+                    },
                     {'type': 'image_url', 'image_url': {'url': 'https://example.com/image.png'}, 'text': None},
+                    {'type': 'text', 'image_url': None, 'text': '</tool_result>'},
                 ],
             },
         ]

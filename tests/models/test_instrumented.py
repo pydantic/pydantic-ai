@@ -54,7 +54,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='logfire not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -1498,7 +1497,7 @@ async def test_response_cost_error(capfire: CaptureLogfire, monkeypatch: pytest.
     model = InstrumentedModel(MyModel())
 
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('user_prompt')], timestamp=IsDatetime())]
-    monkeypatch.setattr('pydantic_ai._cost.calc_price', None)
+    monkeypatch.setattr('pydantic_ai._genai_prices.calc_price', None)
 
     with warns(
         snapshot(["CostCalculationFailedWarning: Failed to get cost: TypeError: 'NoneType' object is not callable"])

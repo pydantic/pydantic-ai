@@ -205,7 +205,9 @@ class TestAnthropicCacheTranslation:
 
     def test_bedrock_client_uses_stable_boundary_breakpoints(self):
         client = AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')
-        settings, _ = self._model(client).prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
+        model = self._model(client)
+        assert model.profile.get('supports_auto_cache') is False
+        settings, _ = model.prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
         assert settings == {'anthropic_cache_instructions': '1h', 'anthropic_cache_tool_definitions': '1h'}
 
     def test_explicit_provider_setting_wins(self):
@@ -225,7 +227,7 @@ class TestAnthropicCacheTranslation:
         assert settings == {'anthropic_cache_instructions': False}
         assert params.cache is None
         model = self._model()
-        assert model.resolve_prompt_cache_retention(AnthropicModelSettings(cache='1h', anthropic_cache=False)) is None
+        assert model.resolve_cache_retention(AnthropicModelSettings(cache='1h', anthropic_cache=False)) is None
 
     def test_explicit_setting_in_model_defaults_wins_over_run_level_unified(self):
         """The presence check runs on the merged settings, so an explicit setting in the model's
@@ -349,48 +351,49 @@ class TestGoogleCacheWarning:
 
     def test_cache_with_cached_content_does_not_warn(self):
         settings = GoogleModelSettings(cache=True, google_cached_content='cachedContents/foo')
-        self._model().prepare_request(settings, ModelRequestParameters())
+        _, params = self._model().prepare_request(settings, ModelRequestParameters())
+        assert params.cache is None
 
     def test_no_cache_setting_does_not_warn(self):
         self._model().prepare_request(ModelSettings(), ModelRequestParameters())
 
 
-class TestResolvePromptCacheRetentionUnified:
+class TestResolveCacheRetentionUnified:
     def test_function_model_unified_retention(self):
         model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '1h'))
-        assert model.resolve_prompt_cache_retention(ModelSettings(cache='1h')) == timedelta(hours=1)
-        assert model.resolve_prompt_cache_retention(ModelSettings(cache=True)) == timedelta(minutes=5)
-        assert model.resolve_prompt_cache_retention(ModelSettings(cache=False)) is None
-        assert model.resolve_prompt_cache_retention(None) is None
+        assert model.resolve_cache_retention(ModelSettings(cache='1h')) == timedelta(hours=1)
+        assert model.resolve_cache_retention(ModelSettings(cache=True)) == timedelta(minutes=5)
+        assert model.resolve_cache_retention(ModelSettings(cache=False)) is None
+        assert model.resolve_cache_retention(None) is None
 
     def test_30m_retention_on_supporting_profile(self):
         model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '30m'))
-        assert model.resolve_prompt_cache_retention(ModelSettings(cache='30m')) == timedelta(minutes=30)
+        assert model.resolve_cache_retention(ModelSettings(cache='30m')) == timedelta(minutes=30)
 
     def test_unified_retention_snapped_before_resolution(self):
         model = _make_model(supports_cache=True, supported_cache_retentions=('5m',))
-        assert model.resolve_prompt_cache_retention(ModelSettings(cache='1h')) == timedelta(minutes=5)
+        assert model.resolve_cache_retention(ModelSettings(cache='1h')) == timedelta(minutes=5)
 
     def test_unsupported_model_resolves_none(self):
         model = _make_model(supports_cache=False)
-        assert model.resolve_prompt_cache_retention(ModelSettings(cache='1h')) is None
+        assert model.resolve_cache_retention(ModelSettings(cache='1h')) is None
 
     def test_fallback_model_resolves_none(self):
         from pydantic_ai.models.fallback import FallbackModel
 
         model = FallbackModel(_make_model(supports_cache=True))
-        assert model.resolve_prompt_cache_retention(ModelSettings(cache='1h')) is None
+        assert model.resolve_cache_retention(ModelSettings(cache='1h')) is None
 
     @pytest.mark.skipif(not google_imports(), reason='google not installed')
     def test_google_model_resolves_none(self):
         model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key='test'))
-        assert model.resolve_prompt_cache_retention(ModelSettings(cache=True)) is None
+        assert model.resolve_cache_retention(ModelSettings(cache=True)) is None
 
     def test_wrapper_model_delegates_to_wrapped(self):
         from pydantic_ai.models.wrapper import WrapperModel
 
         model = _make_model(supports_cache=True, supported_cache_retentions=('5m', '1h'))
-        assert WrapperModel(model).resolve_prompt_cache_retention(ModelSettings(cache='1h')) == timedelta(hours=1)
+        assert WrapperModel(model).resolve_cache_retention(ModelSettings(cache='1h')) == timedelta(hours=1)
 
     @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     def test_anthropic_explicit_settings_shadow_unified_value(self):
@@ -398,9 +401,9 @@ class TestResolvePromptCacheRetentionUnified:
         the unified value contribute nothing, since it also adds nothing to the request."""
         model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test'))
         settings = AnthropicModelSettings(cache='1h', anthropic_cache_instructions='5m')
-        assert model.resolve_prompt_cache_retention(settings) == timedelta(minutes=5)
-        assert model.resolve_prompt_cache_retention(AnthropicModelSettings(cache=True)) == timedelta(minutes=5)
-        assert model.resolve_prompt_cache_retention(AnthropicModelSettings(cache='1h')) == timedelta(hours=1)
+        assert model.resolve_cache_retention(settings) == timedelta(minutes=5)
+        assert model.resolve_cache_retention(AnthropicModelSettings(cache=True)) == timedelta(minutes=5)
+        assert model.resolve_cache_retention(AnthropicModelSettings(cache='1h')) == timedelta(hours=1)
 
 
 class _RecordingFunctionModel(FunctionModel):

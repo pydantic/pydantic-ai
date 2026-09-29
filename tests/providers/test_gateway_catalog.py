@@ -23,7 +23,7 @@ with try_import() as imports_successful:
 if not imports_successful():
     pytest.skip('gateway model checks require provider packages to be installed', allow_module_level=True)
 
-pytestmark = [pytest.mark.anyio, pytest.mark.filterwarnings('ignore::DeprecationWarning')]
+pytestmark = [pytest.mark.filterwarnings('ignore::DeprecationWarning')]
 
 
 @pytest.fixture(scope='module')

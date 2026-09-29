@@ -15,6 +15,7 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_recorded_tool_call_result,
     wrap_tool_call_result,
 )
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from ._toolset import guard_task_enqueue, resolve_tool_task_config, with_non_retryable_errors
@@ -22,6 +23,17 @@ from ._types import TaskConfig, default_task_config
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset, ToolResult
+
+
+def _resolve_mcp_tool_config(tool: ToolsetTool[Any] | None, name: str) -> TaskConfig:
+    config = resolve_tool_task_config(tool, name, {})
+    if config is False:
+        raise UserError(
+            f'Prefect durable config for MCP tool {name!r} has been explicitly set to `False` '
+            '(durable execution disabled), but MCP tools perform I/O and cannot run outside a durable task. '
+            'Remove the metadata so the call stays durable.'
+        )
+    return config
 
 
 def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfig) -> CallToolOperation:
@@ -39,6 +51,7 @@ def _call_tool_operation(wrapped: MCPToolset[AgentDepsT], base_config: TaskConfi
     async def call_tool_operation(
         name: str,
         tool_args: dict[str, Any],
+        *,
         ctx: RunContext[AgentDepsT],
         tool: ToolsetTool[AgentDepsT],
         config: Mapping[str, Any],
@@ -76,8 +89,7 @@ class PrefectMCPToolset(DurableMCPToolset[AgentDepsT]):
             get_tools_operation=None,
             get_instructions_operation=None,
             call_tool_operation=_call_tool_operation(wrapped, base_config),
-            # The deprecated wrapper never read per-tool metadata; leave its behavior frozen.
-            resolve_tool_config=lambda tool, name: {},
+            resolve_tool_config=_resolve_mcp_tool_config,
             lifecycle='enter-always',
             durable_config=base_config,
         )
@@ -93,10 +105,7 @@ def prefectify_mcp_toolset(
         get_tools_operation=None,
         get_instructions_operation=None,
         call_tool_operation=_call_tool_operation(wrapped, base_config),
-        # Per-tool config on MCP tools works the same as on function and dynamic tools: unlike
-        # Temporal, a Prefect flow can do I/O itself, so `False` runs the call inline in flow code
-        # rather than being rejected.
-        resolve_tool_config=lambda tool, name: resolve_tool_task_config(tool, name, {}),
+        resolve_tool_config=_resolve_mcp_tool_config,
         lifecycle='enter-always',
         durable_config=base_config,
     )

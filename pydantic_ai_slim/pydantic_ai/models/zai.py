@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 
 from typing_extensions import override
 
+from ..messages import FinishReason
 from ..profiles import ModelProfileSpec
 from ..profiles.zai import ZaiModelProfile
 from ..providers import Provider
@@ -17,8 +18,16 @@ from . import ModelRequestParameters
 
 try:
     from openai import AsyncOpenAI, Omit, omit
+    from openai.types import chat
+    from openai.types.chat import chat_completion
 
-    from .openai import OpenAIChatModel, OpenAIChatModelSettings
+    from .openai import (
+        _CHAT_FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
+        OpenAIChatModel,
+        OpenAIChatModelSettings,
+        OpenAIStreamedResponse,
+        _ChatCompletion,  # pyright: ignore[reportPrivateUsage]
+    )
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'Please install the `openai` package to use the Z.AI model, '
@@ -27,8 +36,47 @@ except ImportError as _import_error:  # pragma: no cover
 
 __all__ = ('ZaiModel', 'ZaiModelName', 'ZaiModelSettings')
 
+
+_ZaiFinishReason = Literal[
+    'stop',
+    'length',
+    'tool_calls',
+    'content_filter',
+    'function_call',
+    'sensitive',
+    'model_context_window_exceeded',
+    'network_error',
+]
+"""The union of the OpenAI `finish_reason` values and the ones Z.AI documents on top of them.
+
+See [the Z.AI docs](https://docs.z.ai/api-reference/llm/chat-completion) for Z.AI's own list.
+"""
+
+_ZAI_FINISH_REASON_MAP: dict[_ZaiFinishReason, FinishReason] = {
+    **_CHAT_FINISH_REASON_MAP,
+    # Blocked by Z.AI's content moderation.
+    'sensitive': 'content_filter',
+    'model_context_window_exceeded': 'length',
+    # Inference was interrupted, so the generation is truncated rather than complete.
+    'network_error': 'error',
+}
+
+
+class _ZaiChoice(chat_completion.Choice):
+    """Wraps the OpenAI chat completion choice with Z.AI's wider set of finish reasons."""
+
+    finish_reason: _ZaiFinishReason  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+class _ZaiChatCompletion(_ChatCompletion):
+    """Wraps the OpenAI chat completion with Z.AI's choice type."""
+
+    choices: list[_ZaiChoice]  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
 LatestZaiModelNames = Literal[
     'glm-5.3',
+    'glm-5.3-flash',
     'glm-5.2',
     'glm-5.1',
     'glm-5',
@@ -139,6 +187,32 @@ class ZaiModel(OpenAIChatModel):
         # which `prepare_request` translates the unified `thinking` setting into.
         del model_settings, model_request_parameters
         return omit
+
+    @override
+    def _validate_completion(self, response: chat.ChatCompletion) -> _ZaiChatCompletion:
+        return _ZaiChatCompletion.model_validate(response.model_dump())
+
+    @override
+    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:
+        return _ZAI_FINISH_REASON_MAP.get(key)
+
+    @property
+    @override
+    def _streamed_response_cls(self) -> type[OpenAIStreamedResponse]:
+        return ZaiStreamedResponse
+
+
+@dataclass
+class ZaiStreamedResponse(OpenAIStreamedResponse):
+    """Implementation of `StreamedResponse` for Z.AI models.
+
+    Streamed chunks need no widened type: the openai SDK builds them leniently, so Z.AI's
+    non-standard `finish_reason` reaches us as-is and only the mapping below has to know about it.
+    """
+
+    @override
+    def _map_finish_reason(self, key: _ZaiFinishReason) -> FinishReason | None:
+        return _ZAI_FINISH_REASON_MAP.get(key)
 
 
 def _zai_settings_to_openai_settings(

@@ -11,6 +11,7 @@ from pydantic_core import to_json
 from ...exceptions import RunCancelled
 from ...messages import (
     CompactionPart,
+    CustomEvent,
     FilePart,
     FinishReason as PydanticFinishReason,
     FunctionToolCallEvent,
@@ -37,6 +38,7 @@ from .. import UIEventStream
 from .._adapter import compaction_payload
 from ._utils import (
     COMPACTION_DATA_TYPE,
+    DATA_CHUNK_TYPES,
     TOOL_AVAILABILITY_DELTA_DATA_TYPE,
     dump_message_metadata,
     dump_provider_metadata,
@@ -410,6 +412,19 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
     async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[BaseChunk]:
         async for chunk in self._handle_tool_result(event.part):
             yield chunk
+
+    async def handle_custom_event(self, event: CustomEvent) -> AsyncIterator[BaseChunk]:
+        # A data-carrying chunk payload (`DataChunk`, `SourceUrlChunk`, etc.) is passed through verbatim,
+        # mirroring the tool-return metadata passthrough.
+        payload = event.to_payload()
+        if isinstance(payload, DATA_CHUNK_TYPES):
+            yield payload
+        else:
+            # The data is always the bare payload, whether or not the event is tool-scoped: a
+            # frontend written against one shape must not break when the same event class is later
+            # emitted from inside a tool. An event that wants its attribution on the wire includes
+            # it by overriding `to_payload`.
+            yield DataChunk(type=f'data-{event.name}', data=payload)
 
     async def _handle_tool_result(self, part: ToolReturnPart | RetryPromptPart) -> AsyncIterator[BaseChunk]:
         tool_call_id = part.tool_call_id

@@ -10,9 +10,10 @@ import secrets
 import sys
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from functools import cache, cached_property
+from decimal import Decimal
+from functools import cache
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
@@ -21,13 +22,13 @@ import httpx
 import httpx2
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from cassetter import Cassette, RecordMode
+from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
-from vcr import VCR, request as vcr_request
-from vcr.record_mode import RecordMode
 
 import pydantic_ai._http
 import pydantic_ai.models
-from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder
+from pydantic_ai import Agent, BinaryContent, BinaryImage, Embedder, ImageGenerator
 from pydantic_ai.messages import (
     DocumentUrl,
     FilePart,
@@ -49,6 +50,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from . import cassette_hooks
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
 
@@ -64,8 +66,17 @@ with suppress(ImportError):
 
 T = TypeVar('T')
 
+# Like `try_import` for a whole directory: these suites need their workspace member installed, which
+# the `--package` matrix cells for other members do not do.
+collect_ignore = [
+    directory
+    for directory, package in (('harness', 'pydantic_ai_harness'), ('clai2', 'pydantic_clai2'))
+    if importlib.util.find_spec(package) is None
+]
+
 __all__ = (
     'IsDatetime',
+    'IsDecimal',
     'IsFloat',
     'IsNow',
     'IsStr',
@@ -82,12 +93,6 @@ __all__ = (
     'message_part',
 )
 
-# Configure VCR logger to WARNING as it is too verbose by default
-# specifically, it logs every request and response including binary
-# content in Cassette.append, which is causing log downloads from
-# GitHub action to fail.
-logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
-
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
@@ -98,18 +103,22 @@ def pytest_configure(config: pytest.Config) -> None:
         'markers',
         'moves_cache_prefix(reason): recorded conversation deliberately moves the cache prefix; reason required',
     )
+    config.addinivalue_line(
+        'markers',
+        'realtime_ws_hold_open: keep a replay WebSocket open after its last recorded frame',
+    )
 
 
 if TYPE_CHECKING:
     from blockbuster import BlockBuster
     from pluggy import Result
-    from vcr.cassette import Cassette
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
 
     def IsInstance(arg: type[T]) -> T: ...
     def IsDatetime(*args: Any, **kwargs: Any) -> datetime: ...
+    def IsDecimal(*args: Any, **kwargs: Any) -> Decimal: ...
     def IsFloat(*args: Any, **kwargs: Any) -> float: ...
     def IsInt(*args: Any, **kwargs: Any) -> int: ...
     def IsNow(*args: Any, **kwargs: Any) -> datetime: ...
@@ -118,7 +127,10 @@ if TYPE_CHECKING:
     def IsBytes(*args: Any, **kwargs: Any) -> bytes: ...
     def IsList(*args: T, **kwargs: Any) -> list[T]: ...
 else:
-    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsStr
+    from dirty_equals import IsBytes, IsDatetime, IsFloat, IsInstance, IsInt, IsList, IsNow as _IsNow, IsNumeric, IsStr
+
+    class IsDecimal(IsNumeric[Decimal]):
+        allowed_types = Decimal
 
     def IsNow(*args: Any, **kwargs: Any):
         # Increase the default value of `delta` to 10 to reduce test flakiness on overburdened machines
@@ -348,23 +360,27 @@ def env() -> Iterator[TestEnv]:
 
 
 @pytest.fixture(scope='session')
-def anyio_backend():
-    return 'asyncio'
+def anyio_backend(pytestconfig: pytest.Config) -> str:
+    backend = pytestconfig.getoption('--anyio-backend')
+    assert isinstance(backend, str)
+    return backend
 
 
 # Calls that are allowed to block in the event loop, as (blockbuster function, file, functions).
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
-    # coverage reads Python source files while collecting coverage data. Remove these once
-    # https://github.com/cbornet/blockbuster/pull/69 is released in a compatible version.
-    ('os.stat', 'coverage/python.py', 'get_python_source'),
-    ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
     # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
     # example printing from inside a running event loop trips the detector on the harness's own
     # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
     # code detectable.
     ('os.stat', 'pytest_examples/run_code.py', '__call__'),
+    # The first-run banner asks whether the harness is installed and what version it is, to name it
+    # in the banner. That happens once per process, before the first request.
+    ('os.stat', 'pydantic_ai/_display.py', '_version_line'),
+    ('os.listdir', 'pydantic_ai/_display.py', '_version_line'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_display.py', '_version_line'),
+    ('io.BufferedReader.read', 'pydantic_ai/_display.py', '_version_line'),
     # `load_mcp_toolsets` is a sync config-file loader; reading the file is its documented job.
     ('os.stat', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
     ('io.BufferedReader.read', 'pydantic_ai/mcp.py', 'load_mcp_toolsets'),
@@ -392,6 +408,17 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     # tool schema is built, which can happen during an agent run.
     ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
     ('io.TextIOWrapper.read', 'pydantic_ai/_function_schema.py', 'function_schema'),
+    # Enum member docstrings are read from source the same way, once per enum, when a schema is built.
+    ('os.stat', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('os.getcwd', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('io.TextIOWrapper.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    # A local workspace built with a relative `working_dir` resolves it against the current directory
+    # once, at construction, which may happen in async code.
+    ('os.getcwd', 'pydantic_ai/workspaces/local.py', '__init__'),
+    # Prefect's `Task` reads its function's source for display when core builds a task, which the
+    # durable workspace tests do while constructing an agent inside a running test.
+    ('os.stat', 'prefect/tasks.py', '__init__'),
     # logfire resolves the current working directory while classifying user stack frames.
     ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
     # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
@@ -412,8 +439,10 @@ def _configure_blockbuster(
     # must remain unaffected by that instrumentation.
     from blockbuster import BlockBuster
 
+    # The harness isn't installed in every CI lane (the `pydantic-evals` one, say).
+    harness = ['pydantic_ai_harness'] if importlib.util.find_spec('pydantic_ai_harness') is not None else []
     bb = BlockBuster(
-        ['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'],
+        ['pydantic_ai', *harness, 'pydantic_graph', 'pydantic_evals', 'clai'],
         excluded_modules=excluded_modules or None,
     )
     for func, filename, functions in exemptions:
@@ -465,6 +494,33 @@ def blockbuster(
     bb = _configured_blockbuster(blockbuster_excluded_modules)
     with _activated_blockbuster(bb):
         yield bb
+
+
+def detach_dbos_logging() -> None:
+    """Detach the OTel `LoggingHandler` and `DBOSLogTransformer` filter `DBOS.destroy()` leaves behind.
+
+    DBOS attaches them to the root logger and every registered logger (the filter always, the handler
+    with `enable_otlp=True`) and does not detach them on destroy. Their emit path imports
+    `dbos._context`, which imports `http.server`: fatal inside the Temporal workflow sandbox when a
+    later test in the same process runs a Temporal workflow.
+    TODO(dsfaccini): Drop once DBOS cleans up its handlers on destroy.
+    https://github.com/dbos-inc/dbos-transact-py/issues/871
+    """
+    from dbos import _logger as dbos_logger_module
+    from opentelemetry.sdk._logs import LoggingHandler
+
+    handler_types: tuple[type[logging.Handler], ...] = (LoggingHandler,)
+    # DBOS 2.31+ builds this one instead of the deprecated SDK handler.
+    with suppress(ImportError):
+        from opentelemetry.instrumentation.logging.handler import LoggingHandler as InstrumentationLoggingHandler
+
+        handler_types += (InstrumentationLoggingHandler,)
+
+    for logger in [logging.root, *(logging.getLogger(name) for name in logging.root.manager.loggerDict)]:
+        for handler in [h for h in logger.handlers if isinstance(h, handler_types)]:
+            logger.removeHandler(handler)
+        for log_filter in [f for f in logger.filters if isinstance(f, dbos_logger_module.DBOSLogTransformer)]:
+            logger.removeFilter(log_filter)
 
 
 @pytest.fixture
@@ -593,6 +649,7 @@ def missing_event_loop() -> Iterator[asyncio.AbstractEventLoop]:
 def no_instrumentation_by_default():
     Agent.instrument_all(False)
     Embedder.instrument_all(False)
+    ImageGenerator.instrument_all(False)
 
 
 try:
@@ -609,7 +666,7 @@ try:
         logfire.shutdown(flush=False)
         # `test_examples.py` runs doc snippets that call the process-global `logfire.instrument_httpx()`,
         # which patches httpx via OTel and is never torn down. Reset it so it can't leak request spans
-        # into other tests sharing the xdist worker (e.g. stray `POST` spans in `test_temporal` snapshots).
+        # into other tests sharing the xdist worker (e.g. stray `POST` spans in `tests/durable_exec/temporal` snapshots).
         if _httpx_instrumentor._is_instrumented_by_opentelemetry:  # pyright: ignore[reportPrivateUsage]
             _httpx_instrumentor.uninstrument()
         # The worker's main-thread OTel context also persists across tests: an `attach` without a
@@ -635,64 +692,13 @@ def raise_if_exception(e: Any) -> None:
         raise e
 
 
-_AWS_ACCOUNT_ID_IN_ARN = re.compile(r'(arn(?:%3A|:)aws(?:%3A|:)bedrock(?:%3A|:)[^:%]*(?:%3A|:))\d{12}((?:%3A|:))')
-_SCRUBBED_AWS_ACCOUNT_ID = r'\g<1>123456789012\2'
-
-
-def pytest_recording_configure(config: Any, vcr: VCR):
-    from . import json_body_serializer
-
-    vcr.register_serializer('yaml', json_body_serializer)
-
-    def method_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
-        if r1.method.upper() != r2.method.upper():
-            raise AssertionError(f'{r1.method} != {r2.method}')
-
-    def path_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
-        """Match URL paths after scrubbing AWS account IDs from ARNs."""
-        path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
-        path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
-        # Normalize Vertex AI paths by replacing region and project (cassettes may be recorded
-        # against a different GCP project than the fixture default)
-        path1 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path1)
-        path2 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path2)
-        path1 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path1)
-        path2 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path2)
-        if path1 != path2:
-            raise AssertionError(f'{path1} != {path2}')
-
-    vcr.register_matcher('method', method_matcher)
-    vcr.register_matcher('path', path_matcher)
-
-    def scrub_request(request: vcr_request.Request) -> vcr_request.Request | None:
-        if request.host == 'oauth2.googleapis.com' and request.path == '/token':
-            return None
-        request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
-        return request
-
-    vcr.before_record_request = scrub_request
-
-    # Normalize Bedrock hostnames to ignore region differences
-    # e.g., bedrock-runtime.us-east-1.amazonaws.com == bedrock-runtime.us-east-2.amazonaws.com
-    bedrock_host_pattern = re.compile(r'bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com')
-
-    def host_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
-        host1 = r1.host  # pyright: ignore[reportUnknownVariableType]
-        host2 = r2.host  # pyright: ignore[reportUnknownVariableType]
-        # Normalize Bedrock hosts by removing region
-        host1_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host1)
-        host2_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host2)
-        # Normalize Vertex AI hosts by removing region prefix
-        vertex_host_pattern = re.compile(r'^[a-z0-9-]+-aiplatform\.googleapis\.com$')
-        host1_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host1_normalized)
-        host2_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host2_normalized)
-        if host1_normalized != host2_normalized:
-            raise AssertionError(f'{host1} != {host2}')
-
-    vcr.register_matcher('host', host_matcher)
-
-
 def pytest_addoption(parser: Any) -> None:
+    parser.addoption(
+        '--anyio-backend',
+        choices=('asyncio', 'trio'),
+        default='asyncio',
+        help='Select the async test backend without duplicating the suite (default: asyncio).',
+    )
     parser.addoption(
         '--xai-proto-include-json',
         action='store_true',
@@ -722,30 +728,14 @@ def pytest_runtest_makereport(
     setattr(item, f'rep_{report.when}', report)
 
 
-@pytest.fixture(autouse=True)
-def mock_vcr_aiohttp_content(mocker: MockerFixture):
-    try:
-        from vcr.stubs import aiohttp_stubs
-    except ImportError:  # pragma: lax no cover
-        return
-
-    # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
-    # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
-    # So we turn `content` into a cached property to return the same one each time.
-    # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # pyright: ignore[reportArgumentType, reportUnknownVariableType]
-    cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
-    mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
-    mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
-
-
 @pytest.fixture(scope='module')
-def vcr_config():
+def vcr_config() -> dict[str, Any]:
+    """Module `conftest.py` overrides should extend this (`{**vcr_config, ...}`) so the hooks stay on."""
     return {
         'ignore_localhost': True,
-        # Note: additional header filtering is done inside the serializer
-        'filter_headers': ['authorization', 'x-api-key', 'cookie'],
-        'decode_compressed_response': True,
+        'before_record_request': cassette_hooks.before_record_request,
+        'before_record_response': cassette_hooks.before_record_response,
+        'uri_normalizer': cassette_hooks.normalize_uri,
     }
 
 
@@ -753,12 +743,15 @@ def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
     if vcr.play_count == 0 and not strict_usage:
         return
 
-    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
-    if unused_indexes:
-        pytest.fail(
-            f'Cassette {getattr(vcr, "_path", "<unknown>")} did not play all interactions: '
-            f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
-        )
+    # Each protocol numbers its interactions from 0, and `play_counts` only covers HTTP.
+    unused = {
+        'HTTP': [index for index in range(len(vcr.interactions)) if vcr.play_counts.get(index, 0) == 0],
+        'gRPC': [index for index, played in enumerate(vcr.grpc_played_indices) if not played],
+        'WebSocket': [index for index, played in enumerate(vcr.ws_played_indices) if not played],
+    }
+    if any(unused.values()):
+        details = '; '.join(f'unused {protocol} indexes: {indexes}' for protocol, indexes in unused.items() if indexes)
+        pytest.fail(f'Cassette {vcr.path} did not play all interactions: {details}')
 
 
 @pytest.fixture(autouse=True)
@@ -789,11 +782,80 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
         return
     if vcr is None or vcr.record_mode != RecordMode.NONE:
         return
+    # Playback never records, so the interactions cassetter loaded are exactly the file's contents.
+    check_cache_prefix_stability(request.node, vcr)
 
-    cassette_path_value = getattr(vcr, '_path', None)
-    if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
-        return
-    check_cache_prefix_stability(request.node, cassette_path)
+
+# `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
+_REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, JsonValue])
+
+# What `httpx2.AsyncClient()` uses when no timeout is passed.
+_HTTPX_DEFAULT_TIMEOUT = 5.0
+
+
+@dataclass
+class RequestCapture:
+    """Outbound request bodies, as the live code built them.
+
+    A cassette records what was sent when it was recorded, and the default matchers ignore the body,
+    so a request whose payload has since drifted still replays against its recording. httpx event
+    hooks run inside `AsyncClient.send`, above the transport VCR patches, so they fire on replay too
+    and see what is actually going out. Pass `capture.client` as a provider's `http_client` and
+    snapshot a projection of `capture.body(...)` to pin the fields a test's claim rests on.
+    A provider that needs a longer deadline than httpx's default takes `capture.http_client(...)`.
+    """
+
+    paths: list[str] = field(default_factory=list[str])
+    raw_bodies: list[bytes] = field(default_factory=list[bytes])
+    headers: list[httpx2.Headers] = field(default_factory=list[httpx2.Headers])
+    client: httpx2.AsyncClient = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.client = httpx2.AsyncClient(event_hooks={'request': [self._record]})
+
+    def http_client(self, *, timeout: float = _HTTPX_DEFAULT_TIMEOUT) -> httpx2.AsyncClient:
+        """`client`, with `timeout` as the read timeout, for a provider that reads it back out.
+
+        `GoogleProvider` reads the injected client's read timeout into google-genai's
+        `HttpOptions.timeout`, which becomes both the per-request httpx timeout and the
+        `X-Server-Timeout` deadline the API enforces. Gemini rejects a deadline under 10 seconds, and
+        httpx defaults to 5. The default here is httpx's own, so it leaves the client as `client` has
+        it; only a caller that needs a longer deadline passes a `timeout`.
+        """
+        self.client.timeout = timeout
+        return self.client
+
+    async def _record(self, request: httpx2.Request) -> None:
+        # Only the raw bytes are kept here: the hook runs on every request of every test that asks
+        # for a capture, while a test typically inspects one of them. Parsing happens in `body`.
+        self.paths.append(request.url.path)
+        self.raw_bodies.append(request.read())
+        # The cassette serializer strips `anthropic-*` headers, so the wire is the only place a test
+        # can see beta gating.
+        self.headers.append(request.headers)
+
+    def bodies(self, path_suffix: str = '') -> list[dict[str, JsonValue]]:
+        """Every captured body whose URL path ends with `path_suffix`, parsed on demand."""
+        return [
+            _REQUEST_BODY_ADAPTER.validate_json(raw)
+            for path, raw in zip(self.paths, self.raw_bodies)
+            if path.endswith(path_suffix)
+        ]
+
+    def body(self, path_suffix: str = '', index: int = 0) -> dict[str, JsonValue]:
+        """The `index`th captured body whose URL path ends with `path_suffix`, parsed on demand."""
+        matches = self.bodies(path_suffix)
+        assert matches, f'no captured request matching {path_suffix!r}; saw {self.paths}'
+        return matches[index]
+
+
+@pytest.fixture
+async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
+    capture = RequestCapture()
+    yield capture
+    # Built directly rather than through `create_async_httpx2_client`, so the autouse
+    # `close_httpx_clients` tracker never sees it and its pool would otherwise leak per test.
+    await capture.client.aclose()
 
 
 _HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'
@@ -1002,6 +1064,11 @@ def groq_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def typesafe_api_key() -> str:
+    return os.getenv('TYPESAFE_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def anthropic_api_key() -> str:
     return os.getenv('ANTHROPIC_API_KEY', 'mock-api-key')
 
@@ -1102,6 +1169,11 @@ def crusoe_api_key() -> str:
 
 
 @pytest.fixture(scope='session')
+def github_copilot_api_key() -> str:
+    return os.getenv('GITHUB_COPILOT_API_KEY', 'mock-api-key')
+
+
+@pytest.fixture(scope='session')
 def snowflake_account() -> str:
     return os.getenv('SNOWFLAKE_ACCOUNT', 'myorg-myaccount')
 
@@ -1125,7 +1197,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
     try:
         from pydantic_ai.providers.xai import XaiProvider
         from tests.models.xai_proto_cassettes import xai_proto_cassette_session
-    except ImportError:  # pragma: no cover
+    except ImportError:
         pytest.skip('xai_sdk not installed')
 
     cassette_name = sanitize_filename(request.node.name, 240)
@@ -1133,7 +1205,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
     cassette_path = Path(request.node.fspath).parent / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
-        # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
+        # Provided by cassetter's pytest plugin as `--record-mode=...`.
         record_mode = cast(Any, request.config).getoption('record_mode')
     except Exception:  # pragma: no cover
         record_mode = None

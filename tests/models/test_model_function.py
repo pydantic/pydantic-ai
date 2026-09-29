@@ -38,8 +38,6 @@ from pydantic_ai.usage import RequestUsage
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
-
 
 def hello(_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('hello world')])  # pragma: no cover
