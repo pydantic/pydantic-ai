@@ -42,7 +42,9 @@ def save_key_connection(*, account: str, token: SecretStr | KeyReference, value:
     """Validate references and save atomically with respect to key renames and deletions."""
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
-            raise UserError('The selected API key no longer exists. Select a saved key again through /add_model.')
+            raise UserError(
+                f'The selected API key no longer exists. Select a saved key again through {_KEY_CONSUMERS[account]}.'
+            )
         save_codex_credentials(account=account, value=value)
 
 

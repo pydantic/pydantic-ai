@@ -20,6 +20,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.google_workspace import GoogleWorkspace
 from pydantic_clai2 import DEFAULT_PLUGINS, api_keys, google_workspace
+from pydantic_clai2.api_keys import KeyReference
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
@@ -274,6 +275,12 @@ async def test_the_last_product_cannot_be_removed() -> None:
     [_, services, *_] = source.rows()
     assert source.reset(services) == 'Reset Products.'
     assert plugin.settings(GoogleWorkspaceSettings) == GoogleWorkspaceSettings()
+
+
+def test_a_key_deleted_before_saving_the_choice_points_to_google_workspace() -> None:
+    with pytest.raises(UserError, match='through /google_workspace'):
+        api_keys.save_key_connection(account='google-workspace', token=KeyReference(name='GONE'), value='{}')
+    assert load_codex_credentials(account='google-workspace') is None
 
 
 def test_an_invalid_saved_choice_fails_closed() -> None:
