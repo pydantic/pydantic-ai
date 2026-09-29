@@ -12424,6 +12424,47 @@ async def test_central_content_filter_handling():
         await agent.run('Trigger filter')
 
 
+async def test_central_content_filter_on_thinking_only_response():
+    """A refusal after the model has emitted only thinking raises `ContentFilterError` rather than re-prompting.
+
+    Claude Opus 5 can refuse (`stop_reason: 'refusal'`) after emitting a thinking block; re-prompting the same
+    transcript is refused again, so the run would otherwise end in `Exceeded maximum output retries`.
+    """
+    calls = 0
+
+    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[ThinkingPart(content='Considering the request.', signature='sig'), TextPart('')],
+            model_name='test-model',
+            finish_reason='content_filter',
+            provider_details={'refusal': {'category': 'reasoning_extraction'}},
+        )
+
+    agent = Agent(FunctionModel(function=filtered_response, model_name='test-model'))
+
+    with pytest.raises(ContentFilterError, match=re.escape('Content filter triggered. Refusal:')):
+        await agent.run('Trigger filter')
+    assert calls == 1
+
+
+async def test_central_thinking_only_response_without_content_filter_is_retried():
+    """A thinking-only response with no content-filter finish reason is still re-prompted."""
+    calls = 0
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ThinkingPart(content='Thinking.')], finish_reason='stop')
+        return ModelResponse(parts=[TextPart('done')])
+
+    result = await Agent(FunctionModel(respond)).run('Hello')
+    assert result.output == 'done'
+    assert calls == 2
+
+
 async def test_central_content_filter_with_partial_content():
     """
     Test that the agent graph returns partial content (does not raise exception)

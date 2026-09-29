@@ -22,6 +22,8 @@ Checked after every step:
 - `response.mixed`: one `ModelResponse` holds what two server responses said;
 - `wait.early`: a `wait_for_reply()` returned while a reply it was owed was still coming;
 - `codec.*`: the connection broke the lifecycle contract (`_conformance.py`);
+- `lifecycle.*`: a connection on version 2 of the contract broke a rule its lifecycle events promise
+  (`_conformance.py`), checked on its lifecycle stream;
 - `api.unexpected_error`: a client call, or iterating the session, raised something other than the
   documented errors;
 - `simulator.malformed_frame`: the simulated server sent something the real connection can't parse (a
@@ -60,7 +62,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import os
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
@@ -78,6 +80,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.realtime import RealtimeError, RealtimeSession
+from pydantic_ai.realtime._lifecycle import LifecycleEvent
 from pydantic_ai.realtime.codec import RealtimeCodecEvent
 
 from ._conformance import ConformanceIssue, LifecycleChecker
@@ -155,6 +158,8 @@ class Checker:
         self.enforce = enforce
         """Ids of known findings that raise anyway: the one a pinned scenario is about."""
         self.lifecycle = LifecycleChecker()
+        self.lifecycle_stream: LifecycleChecker | None = None
+        """The version 2 lifecycle contract, checked on the connection's lifecycle stream when it has one."""
         self.codec_events: list[RealtimeCodecEvent] = []
         self.known_hits: list[tuple[str, str]] = []
         """`(finding id, invariant code)` for every tolerated violation, in order."""
@@ -178,6 +183,17 @@ class Checker:
             return await handle(event)
 
         session._handle_pump_event = observed  # pyright: ignore[reportPrivateUsage]
+
+    def observe_lifecycle_stream(
+        self, inputs_sent: Callable[[], int]
+    ) -> Callable[[RealtimeCodecEvent | LifecycleEvent | None], None]:
+        """Check a version 2 connection's lifecycle stream: feed the returned callback each event, and `None` at its end."""
+        checker = self.lifecycle_stream = LifecycleChecker(lifecycle=True, inputs_sent=inputs_sent)
+
+        def observe(event: RealtimeCodecEvent | LifecycleEvent | None) -> None:
+            self._codec_issues += checker.finish() if event is None else checker.feed(event)
+
+        return observe
 
     def report(self, code: str, violations: Iterable[Violation]) -> None:
         """Report each violation: tolerated if it is a known finding (and not strict), raised otherwise."""

@@ -2,7 +2,7 @@
 description: "Use Amazon Bedrock models like Claude, Nova and GPT-OSS with Pydantic AI via the Converse or Mantle API, with guardrails, prompt caching and inference profiles."
 ---
 
-# Bedrock
+# AWS Bedrock
 
 [Amazon Bedrock](https://aws.amazon.com/bedrock/) exposes foundation models from many providers, and Pydantic AI reaches it through two separate AWS APIs. Pick the route by model prefix:
 
