@@ -31,7 +31,7 @@ from pydantic import ValidationError
 
 from pydantic_ai import _utils
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.exceptions import AgentRunError, ModelRetry
+from pydantic_ai.exceptions import AgentRunError, ModelRetry, RetryModelRequest
 from pydantic_ai.messages import AgentStreamEvent, CapabilityEvent, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
@@ -1130,6 +1130,9 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 return await _call_entry(
                     entry, 'on_model_request_error', ctx, request_context=request_context, error=error
                 )
+            except (ModelRetry, RetryModelRequest):
+                # Control flow, not a replacement error: see `CombinedCapability.on_model_request_error`.
+                raise
             except Exception as new_error:
                 error = new_error
         raise error

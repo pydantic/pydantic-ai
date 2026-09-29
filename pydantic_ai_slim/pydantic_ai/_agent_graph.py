@@ -366,9 +366,11 @@ class _AttemptBaseline:
         )
 
     def restore(self, request_context: ModelRequestContext) -> None:
+        # Fresh containers, so a hook that edits the settings or parameters in place for one attempt
+        # doesn't change what the next attempt starts from.
         request_context.messages = list(self.messages)
-        request_context.model_settings = self.model_settings
-        request_context.model_request_parameters = self.model_request_parameters
+        request_context.model_settings = self.model_settings.copy() if self.model_settings is not None else None
+        request_context.model_request_parameters = replace(self.model_request_parameters)
 
 
 @dataclasses.dataclass
@@ -2038,6 +2040,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     conversation_id=ctx.state.conversation_id,
                 )
 
+            # Instruction parts are request configuration, but the message recording the current step
+            # must still reflect what was sent. Recorded as the before-chain left them: what
+            # `prepare_model_request` changes for one attempt stays out of history.
+            _apply_instruction_parts(self.request, request_context.model_request_parameters.instruction_parts)
+
             if self.is_resuming_without_prompt:
                 # No separate user-prompt request this run: the trailing request that arrived via
                 # `message_history` *is* the request being sent, so it's prior context, not new. Track it
@@ -2098,6 +2105,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # with are dispatched against that history.
             _refresh_loaded_capability_ids(ctx)
 
+            instructions_target = (
+                _get_history_instructions_source(ctx.state.message_history) or ctx.deps.resumed_request
+            )
+            if instructions_target is not None:
+                _apply_instruction_parts(
+                    instructions_target, request_context.model_request_parameters.instruction_parts
+                )
+
         self.last_request_context = original_request_context
 
         return request_context
@@ -2131,10 +2146,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         run_context.model_settings = model_settings
 
         if self._resume_suspended is None:
-            # Instruction parts are request configuration, but the message recording the
-            # current step must still reflect what was actually sent.
-            _apply_instruction_parts(self.request, model_request_parameters.instruction_parts)
-
             # Normalize consecutive trailing requests for model adapters without changing stored history.
             messages = _clean_message_history(list(messages), repair_last_response=True)
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
@@ -2199,11 +2210,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         else:
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
             request_context.model_request_parameters = model_request_parameters
-            instructions_target = (
-                _get_history_instructions_source(ctx.state.message_history) or ctx.deps.resumed_request
-            )
-            if instructions_target is not None:
-                _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
             usage = ctx.state.usage
 
         if request_context.attempt > 1:

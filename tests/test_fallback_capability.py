@@ -6,12 +6,14 @@ Not the final suite: see the PR description for the coverage still owed.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart
-from pydantic_ai.capabilities import Fallback
-from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError
+from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
+from pydantic_ai.capabilities import AbstractCapability, Fallback, Hooks
+from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, RetryModelRequest
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 
@@ -90,3 +92,53 @@ async def test_streaming_open_failure_falls_back():
     )
     async with agent.run_stream('x') as stream:
         assert await stream.get_output() == 'hello'
+
+
+@pytest.mark.anyio
+async def test_attempt_survives_a_replaced_request_context():
+    """A `prepare_model_request` hook that returns a copy doesn't reset `attempt` for the hooks after it."""
+    seen: list[int] = []
+
+    class CopyingHook(AbstractCapability[None]):
+        async def prepare_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            return replace(request_context)
+
+    class RecordingHook(AbstractCapability[None]):
+        async def prepare_model_request(
+            self, ctx: RunContext[None], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            seen.append(request_context.attempt)
+            return request_context
+
+    agent = Agent(
+        FunctionModel(failure),
+        deps_type=type(None),
+        capabilities=[CopyingHook(), RecordingHook(), Fallback(FunctionModel(success))],
+    )
+    assert (await agent.run('x')).output == 'hello'
+    assert seen == [1, 2]
+
+
+@pytest.mark.anyio
+async def test_hooks_error_chain_passes_retry_model_request_through():
+    """A later `Hooks` error callback must not be handed another callback's `RetryModelRequest` as its error."""
+    hooks = Hooks[None]()
+    later_errors: list[Exception] = []
+    fallback_model = FunctionModel(success)
+
+    @hooks.on.model_request_error
+    async def retry(ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception) -> ModelResponse:
+        if request_context.attempt == 1:
+            raise RetryModelRequest(fallback_model)
+        raise error  # pragma: no cover
+
+    @hooks.on.model_request_error
+    async def later(ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception) -> ModelResponse:
+        later_errors.append(error)  # pragma: no cover
+        raise error  # pragma: no cover
+
+    agent = Agent(FunctionModel(failure), deps_type=type(None), capabilities=[hooks])
+    assert (await agent.run('x')).output == 'hello'
+    assert later_errors == []

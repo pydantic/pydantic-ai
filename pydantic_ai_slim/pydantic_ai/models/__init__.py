@@ -372,7 +372,7 @@ class ModelRequestContext:
     apart. Read-only from hooks: reassigning it doesn't change how the loop consumes the response.
     """
 
-    attempt: int = field(default=1, init=False)
+    attempt: int = 1
     """Which attempt at this request step is about to run, starting at `1`.
 
     A step makes more than one attempt when a hook raises
