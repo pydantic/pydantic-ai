@@ -14,6 +14,7 @@ from dataclasses import field, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
+import anyio
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
@@ -1260,7 +1261,12 @@ async def model_request_stream(
             # consumer has stopped (mirrors the pre-stitching `async with request_stream`
             # teardown; a no-op after a fully-drained stream). Server-side cancellation
             # stays on the `AgentStream.cancel()` → `close_stream()` path.
-            await sr.aclose()
+            # Shielded: the handler task can be cancelled while parked (e.g. a parallel
+            # input guardrail blocking mid-stream cancels it), and an interrupted `aclose()`
+            # would leave the stitching generator in a bad state for the consumer still
+            # unwinding. The consumer is stopped separately via `AgentStream.aclose_events()`.
+            with anyio.CancelScope(shield=True):
+                await sr.aclose()
 
 
 def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
@@ -1389,15 +1395,32 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                 agent_stream_holder.append(agent_stream)
                 stream_ready.set()
+                _lock_acquired = False
                 try:
-                    await stream_done.wait()
+                    try:
+                        await stream_done.wait()
+                    except asyncio.CancelledError:
+                        # The handler was cancelled while the consumer may still be iterating --
+                        # e.g. a parallel input guardrail blocking mid-stream cancels the handler
+                        # task, while the run task drives the model's iteration. Tearing down the
+                        # raw stream (`sr.aclose()` in the `async with` exit below) while an
+                        # `anext()` is in flight corrupts the stitching generator. Hold the
+                        # stream's pull lock across the teardown so it serializes with pulls.
+                        # Shielded: we're already unwinding from a cancellation.
+                        with anyio.CancelScope(shield=True):
+                            await agent_stream._anext_lock.acquire()  # pyright: ignore[reportPrivateUsage]
+                            _lock_acquired = True
+                        raise
+                    finally:
+                        # Report TTFT in a `finally` so it also lands when the consumer raises
+                        # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
+                        # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
+                        # that cancelled path `finish` is never reached today (no metrics of any
+                        # kind are recorded), so this is symmetry rather than an observable fix.
+                        time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
                 finally:
-                    # Report TTFT in a `finally` so it also lands when the consumer raises
-                    # mid-iteration and `_cancel_task(wrap_task)` injects CancelledError at
-                    # the `wait()` above, mirroring `InstrumentedModel.request_stream`. On
-                    # that cancelled path `finish` is never reached today (no metrics of any
-                    # kind are recorded), so this is symmetry rather than an observable fix.
-                    time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
+                    if _lock_acquired:
+                        agent_stream._anext_lock.release()  # pyright: ignore[reportPrivateUsage]
             response = sr.get()
             _handler_response = response
             return response
@@ -1490,12 +1513,35 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Normal path: handler was called, stream is ready
         stream_error: BaseException | None = None
+
+        async def _stop_stream_on_short_circuit() -> None:
+            """End the consumer's iteration if `wrap_task` short-circuits mid-stream.
+
+            A capability can short-circuit the model request after the stream was handed off --
+            e.g. a parallel input guardrail blocking once the stream is already open. The consumer
+            drives the model's iteration, so cancelling the handler task alone does not stop it:
+            close the event stream so the short-circuit surfaces promptly instead of after a
+            full drain.
+
+            The `shield` keeps cancelling this watcher (at teardown) from propagating into
+            `wrap_task` -- `Task.cancel()` cancels the future the task is currently awaiting,
+            which here would cancel the model request itself.
+            """
+            try:
+                await asyncio.shield(wrap_task)
+            except exceptions.SkipModelRequest:
+                await agent_stream_holder[0].aclose_events()
+            except BaseException:
+                pass  # Any other failure surfaces via `await wrap_task` below.
+
+        short_circuit_watcher = asyncio.create_task(_stop_stream_on_short_circuit())
         try:
             yield agent_stream_holder[0]
         except BaseException as exc:
             stream_error = exc
             raise
         finally:
+            await _cancel_task(short_circuit_watcher)
             stream_done.set()
             try:
                 if stream_error is not None:
@@ -1523,6 +1569,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             model_response = await wrap_task
                         except exceptions.ModelRetry:
                             raise  # Propagate to outer handler
+                        except exceptions.SkipModelRequest as e:
+                            # `wrap_model_request` short-circuited after the handoff -- e.g. a parallel
+                            # input guardrail blocked mid-stream. Finish with the short-circuit
+                            # response, as the pre-handoff path does.
+                            self.last_request_context = wrap_request_context
+                            await self._finish_handling(ctx, e.response)
+                            assert self._result is not None
+                            return
                         except Exception as e:
                             if not root_capability._has_on_model_request_error:  # pyright: ignore[reportPrivateUsage]
                                 raise

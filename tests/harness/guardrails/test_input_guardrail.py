@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+from collections.abc import AsyncIterator
 from typing import Any
 
 import anyio
@@ -685,6 +686,46 @@ class TestInputGuardrailStreaming:
         )
         async with agent.run_stream('hello') as result:
             assert (await result.get_output()) == 'nope'
+
+    async def test_parallel_block_interrupts_stream_and_ends_with_block_message(self):
+        """A `parallel=True` block stops an in-flight stream and ends the run with the block message.
+
+        Regression test for https://github.com/pydantic/pydantic-ai/issues/9279: when a parallel
+        input guardrail blocked while the model stream was already open, the consumer kept draining
+        the whole stream and the raw `SkipModelRequest` surfaced only after the drain. The guard
+        blocks only after the first chunk is pulled, proving the stream genuinely overlapped the
+        guard race without relying on sleep timing. The `wait_for` makes a reintroduced hang fail
+        fast here instead of stalling CI.
+        """
+        first_chunk_pulled = asyncio.Event()
+        pulled_chunks = 0
+
+        async def stream_function(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+            nonlocal pulled_chunks
+            for index in range(200):
+                pulled_chunks += 1
+                if index == 0:
+                    first_chunk_pulled.set()
+                yield f'chunk {index} '
+
+        async def guard(_ctx: RunContext[None], _prompt: str) -> GuardrailResult:
+            await first_chunk_pulled.wait()
+            return GuardrailResult.block('nope')
+
+        agent = Agent(
+            FunctionModel(stream_function=stream_function),
+            capabilities=[InputGuardrail(guard=guard, parallel=True)],
+        )
+
+        async def run() -> None:
+            async with agent.run_stream_events('hello') as events:
+                async for _ in events:
+                    pass
+            assert events.result is not None
+            assert events.result.output == 'nope'
+
+        await asyncio.wait_for(run(), timeout=10)
+        assert pulled_chunks < 200
 
 
 class TestExtractPrompt:
