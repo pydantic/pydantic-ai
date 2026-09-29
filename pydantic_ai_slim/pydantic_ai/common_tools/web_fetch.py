@@ -40,6 +40,9 @@ _upstream_convert_li: Callable[[MarkdownConverter, Tag, str, set[str]], str] = g
 _upstream_process_text: Callable[[MarkdownConverter, NavigableString, set[str] | None], str] = getattr(
     MarkdownConverter, 'process_text'
 )
+_upstream_get_conv_fn: Callable[[MarkdownConverter, str], Callable[[Tag, str, set[str]], str] | None] = getattr(
+    MarkdownConverter, 'get_conv_fn'
+)
 _TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
 _TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
 _HTML_HEADING_RE = re.compile(r'h\d+')
@@ -263,14 +266,14 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             parent_tags: set[str] = {'pre', '_noformat'} if in_pre else {'_noformat'} if noformat else set()
             converted_text = converter.process_text(node, parent_tags)
             text_metrics[id(node)] = (len(converted_text), converted_text.count('`'))
-            if isinstance(node.parent, Tag) and node.parent.name == 'a':
-                direct_link_text[id(node)] = converted_text
+            direct_link_text[id(node)] = converted_text
             if converted_text.strip():
                 contentful.add(id(node))
             # Only converted lines need indentation; collapsed whitespace and escaped characters
             # also change the amount of text copied through ancestors.
-            cost += (indent_depth + indent_width) * converted_text.count('\n')
-            text_scan_cost += max(depth - 16, 0) * len(converted_text)
+            if not inline and not in_pre:
+                cost += (indent_depth + indent_width) * converted_text.count('\n')
+                text_scan_cost += max(depth - 16, 0) * len(converted_text)
         if cost > _MAX_HTML_CONVERSION_COST or text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
             raise ModelRetry('the document is too complex')
 
@@ -299,6 +302,10 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                     descendant_td.add(node_id)
                 if node_id not in first_sources and child_id in first_sources:
                     first_sources[node_id] = first_sources[child_id]
+            if len(node.contents) == 1 and _upstream_get_conv_fn(converter, node.name) is None:
+                child_text = direct_link_text.get(id(node.contents[0]))
+                if child_text is not None:
+                    direct_link_text[node_id] = child_text
             text_metrics[node_id] = (text_length, backticks)
             if node.name in ('hr', 'q', 'td', 'th', 'tr') or (
                 node.name == 'video'
@@ -311,8 +318,16 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
         href = node.get('href')
         if href and not noformat and any(id(child) in contentful for child in node.contents):
             title = str(node.get('title') or '')
-            child = node.contents[0] if len(node.contents) == 1 else None
-            autolink = not title and direct_link_text.get(id(child), '').replace(r'\_', '_') == href
+            candidate_parts: list[str] = []
+            if not title:
+                for child in node.contents:
+                    if isinstance(child, (Comment, Doctype)):
+                        continue
+                    child_text = direct_link_text.get(id(child))
+                    if child_text is None:
+                        break
+                    candidate_parts.append(child_text)
+            autolink = bool(candidate_parts) and ''.join(candidate_parts).replace(r'\_', '_') == href
             if not autolink:
                 text_scan_cost += (depth - 16) * (len(str(href)) + len(title) + title.count('"'))
             if text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
@@ -332,6 +347,13 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
         parent = row.parent
         if isinstance(parent, Tag) and parent.name == 'thead' and id(row) in descendant_td:
             cost += 8 * subtree_sizes[id(parent)]
+        elif (
+            isinstance(parent, Tag)
+            and parent.name == 'tbody'
+            and row.find_previous_sibling() is None
+            and isinstance(parent.parent, Tag)
+        ):
+            cost += 8 * subtree_sizes[id(parent.parent)]
         if cost > _MAX_HTML_CONVERSION_COST:
             raise ModelRetry('the document is too complex')
 
@@ -367,6 +389,23 @@ class _MarkdownConverter(MarkdownConverter):
     def __init__(self, **options: Any):
         super().__init__(**options)
         self._ol_indexes: dict[int, int] = {}
+        self._conversion_cost = 0
+        self._text_scan_cost = 0
+
+    def get_conv_fn(self, tag_name: str) -> Callable[[Tag, str, set[str]], str]:
+        upstream = _upstream_get_conv_fn(self, tag_name)
+
+        def convert(node: Tag, text: str, parent_tags: set[str]) -> str:
+            result = upstream(node, text, parent_tags) if upstream is not None else text
+            self._conversion_cost += max(len(result) - len(text), 0)
+            if node.name == 'li' or (node.name in ('blockquote', 'dd') and '_inline' not in parent_tags):
+                self._conversion_cost += result.count('\n')
+            self._text_scan_cost += len(result)
+            if self._conversion_cost > _MAX_HTML_CONVERSION_COST or self._text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
+                raise ModelRetry('the document is too complex')
+            return result
+
+        return convert
 
     def process_text(self, el: NavigableString, parent_tags: set[str] | None = None) -> str:
         # Collapse whitespace runs ahead of time, the way upstream's regexes would, so they only
@@ -413,6 +452,8 @@ class _MarkdownConverter(MarkdownConverter):
         start = int(start_attr) if isinstance(start_attr, str) and start_attr.isdecimal() else 1
         bullet = f'{start + self._ol_indexes[id(el)]}. '
         bullet_indent = ' ' * len(bullet)
+        if len(bullet_indent) * text.count('\n') > _MAX_HTML_CONVERSION_COST:
+            raise ModelRetry('the document is too complex')
 
         def indent_line(match: re.Match[str]) -> str:
             line = match.group(1)
