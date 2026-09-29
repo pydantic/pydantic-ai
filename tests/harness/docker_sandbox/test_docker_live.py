@@ -8,9 +8,10 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 
+import anyio
 import pytest
 
-from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef, WorkspaceTimeoutError
 from pydantic_ai.workspaces.conformance import WorkspaceBackendSuite
 from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBackend
 
@@ -55,3 +56,15 @@ class TestLiveDocker(WorkspaceBackendSuite):
             await DockerSandbox[None](LIVE_IMAGE).destroy(backend.ref)
 
         return destroy
+
+    async def test_a_timeout_stops_background_children_that_hold_the_output(self, backend: WorkspaceBackend) -> None:
+        # `docker exec` waits for the output to close, and killing the client leaves the container's processes
+        # running: a fake can't reproduce this, because its processes die with the client.
+        assert isinstance(backend, DockerSandboxBackend)
+        try:
+            await backend.run('(sleep 2; touch survived) &', shell=True, timeout=0.5)
+        except WorkspaceTimeoutError:
+            await anyio.sleep(2.5)
+            assert (await backend.run(['ls'])).stdout == ''
+        else:
+            pytest.skip("this engine's `exec` returns without waiting for a background child's output (Podman)")

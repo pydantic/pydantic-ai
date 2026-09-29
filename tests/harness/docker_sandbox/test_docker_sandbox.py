@@ -157,6 +157,34 @@ async def test_a_stop_that_comes_before_the_command_starts_prevents_it(docker: F
     assert not list(Path('/tmp').glob(f'.pydantic-ai-{tag}.*'))
 
 
+async def test_a_running_commands_pid_file_survives_other_commands(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
+    await backend.working_dir()
+    before = set(Path('/tmp').glob('.pydantic-ai-*.pid'))
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(backend.run, ['sleep', '30'])
+        with anyio.fail_after(10):
+            while not (running := set(Path('/tmp').glob('.pydantic-ai-*.pid')) - before):
+                await anyio.sleep(0.05)
+        await backend.run(['true'])
+
+        assert all(path.exists() for path in running)
+        tg.cancel_scope.cancel()
+
+
+async def test_finished_commands_pid_files_are_removed_by_the_next_command(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
+    await backend.run(['true'])
+    before = set(Path('/tmp').glob('.pydantic-ai-*.pid'))
+
+    await backend.run(['true'])
+
+    assert not before & set(Path('/tmp').glob('.pydantic-ai-*.pid'))
+
+
 async def test_output_over_the_limit_stops_the_command(docker: FakeDocker, container_dir: Path) -> None:
     backend = DockerSandboxBackend('image', working_dir=str(container_dir))
 

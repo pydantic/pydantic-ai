@@ -39,8 +39,12 @@ _PID_DIR = '/tmp'
 
 _WRAPPER = f"""tag=$1
 pidfile={_PID_DIR}/.pydantic-ai-$tag.pid
-shift
 stopped={_PID_DIR}/.pydantic-ai-$tag.stopped
+shift
+for old in {_PID_DIR}/.pydantic-ai-*.pid; do
+    read -r pid 2> /dev/null < "$old" || continue
+    [ -z "$pid" ] || kill -0 "$pid" 2> /dev/null || kill -0 "-$pid" 2> /dev/null || rm -f "$old"
+done
 if ! echo $$ 2> /dev/null > "$pidfile"; then
     echo "cannot write $pidfile, which stops the command on a timeout: {_PID_DIR} must be writable" >&2
     exit 1
@@ -52,11 +56,14 @@ fi
 printf '%s' '{_READY}' >&2
 (exec "$@")
 status=$?
-rm -f "$pidfile"
 printf '\\n__pydantic_ai_docker_done__%s:%d\\n' "$tag" "$status" >&2
 exit "$status"
 """
 """Runs as `sh -c WRAPPER sh <tag> <argv...>`: records its PID, marks the start, and reports the exit status.
+
+The PID file outlives the command: background children that hold its output open keep its process group, and
+`docker exec`, going, so a timeout still has a group to stop. Each wrapper first removes the files whose process
+and group are both gone. An empty file is one another wrapper is still writing.
 
 A subshell `exec` runs the program itself, never a builtin, and exits 127 when it's missing.
 """
@@ -67,8 +74,8 @@ stopped={_PID_DIR}/.pydantic-ai-$1.stopped
 pid=$(cat "$pidfile" 2> /dev/null)
 [ -n "$pid" ] || exit 0
 rm -f "$pidfile" "$stopped"
-kill -s TERM -- "-$pid" "$pid" 2> /dev/null
-(sleep 1; kill -s KILL -- "-$pid" "$pid" 2> /dev/null) < /dev/null > /dev/null 2>&1 &
+kill -TERM "-$pid" "$pid" 2> /dev/null
+(sleep 1; kill -KILL "-$pid" "$pid" 2> /dev/null) < /dev/null > /dev/null 2>&1 &
 exit 0"""
 """Stop the command recorded under the tag `$1`, and its process group.
 
@@ -78,6 +85,7 @@ of the two comes second sees the other's file. A marker for a command that alrea
 
 A `docker exec` process leads a session of its own in both runc and crun, so its group is the command's; a
 command that started a session of its own (the harness `Shell`'s jobs) is in another group and keeps running.
+Groups are signalled as `kill -SIGNAL -PGID`, without `--`, which BusyBox's `kill` rejects, as does dash's after `-0`.
 """
 
 _STOP_TIMEOUT = 2.0
