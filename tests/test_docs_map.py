@@ -1,8 +1,8 @@
 """Tests for the committed docs atlas generator.
 
 This is a unit/integration test of `scripts/generate_docs_map.py`. It does not
-hit the network and does not use VCR: the source of truth is `docs/navigation.yml`
-plus markdown files already in the tree.
+use VCR: the source of truth is `docs/navigation.yml` plus markdown files already
+in the tree. On a cold cache, `tiktoken` downloads `cl100k_base` once.
 """
 
 from __future__ import annotations
@@ -22,40 +22,40 @@ def docs_map() -> DocsMap:
 
 
 @pytest.fixture(scope='module')
-def text(docs_map: DocsMap) -> str:
+def atlas(docs_map: DocsMap) -> str:
     return render_atlas(docs_map)
 
 
-def test_atlas_core_concepts_and_agent(text: str):
-    assert '### Core Concepts' in text
-    assert '`agent.md`' in text
+def test_atlas_core_concepts_and_agent(atlas: str):
+    assert '### Core Concepts' in atlas
+    assert '`agent.md`' in atlas
 
 
-def test_api_reference_omitted_from_region_listing(text: str):
-    assert '### API Reference' not in text
-    assert 'API reference omitted below' in text
-    assert 'open the one symbol page, never the section' in text
+def test_api_reference_omitted_from_region_listing(atlas: str):
+    assert '### API Reference' not in atlas
+    assert 'API reference omitted below' in atlas
+    assert 'open the one symbol page, never the section' in atlas
 
 
-def test_harness_pages_are_listed(text: str):
+def test_harness_pages_are_listed(atlas: str):
     for path in ('harness/coder.md', 'harness/researcher.md', 'harness/filesystem.md', 'harness/pydantic-ai-docs.md'):
-        assert f'`{path}`' in text
+        assert f'`{path}`' in atlas
 
 
-def test_hubs_follow_sidebar_entry_points(text: str):
+def test_hubs_follow_sidebar_entry_points(atlas: str):
     """Hubs are overview/index pages, not the highest-inbound page."""
-    assert 'Hub: `index.md`' in text
-    assert 'Hub: `agent.md`' in text
-    assert 'Hub: `models/overview.md`' in text
-    assert 'Hub: `tools.md`' in text
-    assert 'Hub: `evals.md`' in text
-    assert 'Hub: `mcp/overview.md`' in text
-    core = text.split('### Core Concepts', 1)[1].split('### ', 1)[0]
+    assert 'Hub: `index.md`' in atlas
+    assert 'Hub: `agent.md`' in atlas
+    assert 'Hub: `models/overview.md`' in atlas
+    assert 'Hub: `tools.md`' in atlas
+    assert 'Hub: `evals.md`' in atlas
+    assert 'Hub: `mcp/overview.md`' in atlas
+    core = atlas.split('### Core Concepts', 1)[1].split('### ', 1)[0]
     assert 'Hub: `agent.md`' in core
     assert 'Hub: `capabilities/overview.md`' not in core
-    overview = text.split('### Overview', 1)[1].split('### ', 1)[0]
+    overview = atlas.split('### Overview', 1)[1].split('### ', 1)[0]
     assert overview.index('`index.md`') < overview.index('`install.md`')
-    tools = text.split('### Tools & Toolsets', 1)[1].split('### ', 1)[0]
+    tools = atlas.split('### Tools & Toolsets', 1)[1].split('### ', 1)[0]
     assert tools.index('`tools.md`') < tools.index('`tools-advanced.md`')
 
 
