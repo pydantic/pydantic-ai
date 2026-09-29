@@ -696,7 +696,9 @@ class TestWebFetchLocalTool:
                     return_value=_html_response(html),
                 ):
                     tool = WebFetchLocalTool(max_content_length=50_000, allow_local_urls=False, timeout=30)
-                    with pytest.raises(ModelRetry, match='too complex'):
+                    with pytest.raises(
+                        ModelRetry, match=r'Failed to convert https://example\.com: the document is too complex'
+                    ):
                         await tool('https://example.com')
             finally:
                 finished.set()
@@ -831,6 +833,26 @@ class TestMarkdownConverter:
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
         assert time.perf_counter() - started < 3
+
+    @pytest.mark.parametrize(
+        ('tag', 'depth', 'prefix'),
+        [
+            pytest.param('dd', 15, ':   ' * 15, id='definition-items'),
+            pytest.param('div', 30, '', id='ordinary-tags'),
+        ],
+    )
+    def test_large_single_line_text_is_not_overcharged(self, tag: str, depth: int, prefix: str):
+        """Nested text that converts quickly without output growth must remain available."""
+        text = 'x' * 1_500_000
+        html = f'<{tag}>' * depth + text + f'</{tag}>' * depth
+        _, content = _convert_html(html)
+        assert content == prefix + text
+
+    def test_deep_text_scan_is_bounded(self):
+        """Large text copied through hundreds of ancestors still has a separate work bound."""
+        html = '<div>' * 300 + 'x' * 18_000_000 + '</div>' * 300
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
 
     def test_shallow_generated_line_breaks_are_bounded(self):
         """Tags that create line breaks count even without newline text nodes."""

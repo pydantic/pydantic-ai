@@ -43,7 +43,12 @@ _upstream_process_text: Callable[[MarkdownConverter, NavigableString, set[str] |
 _TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
 _TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+# This rejects 15 nested `<dd>` tags with 300k short lines before 600 KB of HTML expands
+# to ~19 MB of Markdown (0.7 s in a local conversion benchmark).
 _MAX_HTML_CONVERSION_COST = 20_000_000
+# Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
+# despite ~2.8 billion estimated character copies. Budget those separately.
+_MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
 
 
 class WebFetchResult(TypedDict):
@@ -154,6 +159,8 @@ class WebFetchLocalTool:
                     # `markdownify` walks the document recursively, so a page nested deeper than the
                     # interpreter's recursion limit can't be converted; let the model try elsewhere.
                     raise ModelRetry(f'Failed to convert {url}: the HTML is nested too deeply') from e
+                except ModelRetry as e:
+                    raise ModelRetry(f'Failed to convert {url}: {e}') from e
             elif media_type == 'application/json':
                 try:
                     parsed = json.loads(text)
@@ -193,6 +200,7 @@ def _convert_html(html: str) -> tuple[str, str]:
     # Estimate scans beyond 16 levels and indentation at any depth before conversion so a small,
     # deeply nested page cannot produce a huge intermediate string or hold the GIL for seconds.
     cost = 0
+    text_scan_cost = 0
     pending: list[tuple[PageElement, int, int, int]] = [(soup, 0, 0, 0)]
     while pending:
         node, depth, indent_depth, indent_width = pending.pop()
@@ -212,19 +220,18 @@ def _convert_html(html: str) -> tuple[str, str]:
                 else:
                     indent_width += 4
             # A tag can emit line breaks even without any text children (for example, `<br>`).
-            cost += indent_width
+            cost += indent_width + indent_depth
             work = 8 * (indent_depth + 1) + sum(len(str(value)) for value in node.attrs.values())
             if node.contents:
                 pending.append((node.contents[0], depth, indent_depth, indent_width))
+            cost += max(depth - 16, 0) * work
         else:
             assert isinstance(node, NavigableString)
-            indent_work = indent_width * node.count('\n')
-            work = len(node) + indent_work
-            # Indentation can dominate even within the first 16 levels.
-            cost += indent_depth * len(node) + indent_work
-        cost += max(depth - 16, 0) * work
-        if cost > _MAX_HTML_CONVERSION_COST:
-            raise ModelRetry('Failed to convert HTML: the document is too complex')
+            # Only lines need indentation; charging all text rejects fast single-line pages.
+            cost += (indent_depth + indent_width) * node.count('\n')
+            text_scan_cost += max(depth - 16, 0) * len(node)
+        if cost > _MAX_HTML_CONVERSION_COST or text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
+            raise ModelRetry('the document is too complex')
     return _extract_title(html), _MarkdownConverter(strip=['img', 'script', 'style']).convert_soup(soup)
 
 
