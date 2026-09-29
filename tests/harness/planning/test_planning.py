@@ -1185,26 +1185,43 @@ class TestEndToEnd:
         ]
 
         def handler(request: httpx2.Request) -> httpx2.Response:
-            bodies.append(json.loads(request.content))
+            body = json.loads(request.content)
+            bodies.append(body)
             step = script[len(bodies) - 1]
-            content = (
-                [{'type': 'text', 'text': 'done'}]
+            block: dict[str, Any] = (
+                {'type': 'text', 'text': 'done'}
                 if step is None
-                else [{'type': 'tool_use', 'id': f't{len(bodies)}', 'name': step[0], 'input': step[1]}]
+                else {'type': 'tool_use', 'id': f't{len(bodies)}', 'name': step[0], 'input': step[1]}
             )
-            return httpx2.Response(
-                200,
-                json={
-                    'id': f'msg_{len(bodies)}',
-                    'type': 'message',
-                    'role': 'assistant',
-                    'model': 'claude-sonnet-4-6',
-                    'content': content,
-                    'stop_reason': 'end_turn' if step is None else 'tool_use',
-                    'stop_sequence': None,
-                    'usage': {'input_tokens': 1, 'output_tokens': 1},
+            message: dict[str, Any] = {
+                'id': f'msg_{len(bodies)}',
+                'type': 'message',
+                'role': 'assistant',
+                'model': 'claude-sonnet-4-6',
+                'content': [block],
+                'stop_reason': 'end_turn' if step is None else 'tool_use',
+                'stop_sequence': None,
+                'usage': {'input_tokens': 1, 'output_tokens': 1},
+            }
+            start_block, delta = (
+                ({'type': 'text', 'text': ''}, {'type': 'text_delta', 'text': 'done'})
+                if step is None
+                else ({**block, 'input': {}}, {'type': 'input_json_delta', 'partial_json': json.dumps(step[1])})
+            )
+            events: list[dict[str, Any]] = [
+                {'type': 'message_start', 'message': {**message, 'content': [], 'stop_reason': None}},
+                {'type': 'content_block_start', 'index': 0, 'content_block': start_block},
+                {'type': 'content_block_delta', 'index': 0, 'delta': delta},
+                {'type': 'content_block_stop', 'index': 0},
+                {
+                    'type': 'message_delta',
+                    'delta': {'stop_reason': message['stop_reason'], 'stop_sequence': None},
+                    'usage': {'output_tokens': 1},
                 },
-            )
+                {'type': 'message_stop'},
+            ]
+            sse = ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events)
+            return httpx2.Response(200, content=sse.encode(), headers={'content-type': 'text/event-stream'})
 
         client = AsyncAnthropic(api_key='test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
         model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
@@ -1216,7 +1233,10 @@ class TestEndToEnd:
         def lookup(n: int) -> str:
             return f'result {n}'
 
-        assert (await agent.run('Fix the bug.')).output == 'done'
+        # Streamed, so the mock needs one response shape whether or not a capability with an event hook
+        # elsewhere in the process would have made `agent.run` stream anyway.
+        async with agent.run_stream('Fix the bug.') as streamed:
+            assert await streamed.get_output() == 'done'
 
         def blocks(body: dict[str, Any]) -> list[str]:
             return [
