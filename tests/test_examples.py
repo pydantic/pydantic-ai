@@ -121,6 +121,9 @@ def find_filter_examples() -> Iterable[ParameterSet]:
     for ex in find_examples('README.md', 'docs', 'pydantic_ai_slim', 'pydantic_graph', 'pydantic_evals'):
         if '.agents' in ex.path.parts:
             continue
+        if ex.path.resolve().is_relative_to(root_dir / 'docs' / 'harness'):
+            # Written for the harness repository, which never ran them; not yet made runnable here.
+            continue
         if ex.path.name == 'README.md' and (
             'pydantic_ai_harness' in ex.source or 'agent.realtime(' in ex.source or 'ClearToolResults(' in ex.source
         ):
@@ -694,6 +697,15 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    # docs/workspace.md
+    'Explain what fizzbuzz.py does.': 'It prints the numbers 1 to 15, with fizz, buzz or fizzbuzz for multiples of 3 and 5.',
+    'Now add a test for it.': 'Added test_fizzbuzz.py.',
+    'Ask the reviewer to check fizzbuzz.py.': ToolCallPart(
+        tool_name='ask_reviewer', args={'request': 'Check fizzbuzz.py for bugs.'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
+    'Check fizzbuzz.py for bugs.': ToolCallPart(
+        tool_name='read_file', args={'path': 'fizzbuzz.py'}, tool_call_id='pyd_ai_tool_call_id'
+    ),
     # docs/models/decision.md
     'pytest tests/test_agent.py': ToolCallPart(tool_name='final_result', args={'safe_to_run': True}),
     'A dashboard that shows every SaaS subscription a company pays for.': ToolCallPart(
@@ -1006,9 +1018,16 @@ tool_responses: dict[tuple[str, str], str] = {
 }
 
 
-def _output_tool_named(info: AgentInfo, type_name: str) -> str:  # pragma: lax no cover
-    """The output tool for the union member named `type_name`, whatever the tool itself is called."""
-    return next(tool.name for tool in info.output_tools if tool.name.endswith(type_name))
+def _structured_output(
+    info: AgentInfo, type_name: str, args: dict[str, Any]
+) -> ToolCallPart | TextPart:  # pragma: lax no cover
+    """The union member named `type_name` as the model would return it: a call to its output tool, whatever the tool
+    itself is called, or Native Output's JSON where the model's profile resolves the output type to it."""
+    if info.output_tools:
+        return ToolCallPart(
+            tool_name=next(tool.name for tool in info.output_tools if tool.name.endswith(type_name)), args=args
+        )
+    return TextPart(json.dumps({'result': {'kind': type_name, 'data': args}}))
 
 
 # docs/models/decision.md: Jev's route probabilities for the labelled texts the threshold is tuned on, from a live run
@@ -1077,9 +1096,10 @@ async def model_logic(  # noqa: C901
         # so this is the language model behind it, writing the reply with the status in view
         return ModelResponse(
             parts=[
-                ToolCallPart(
-                    tool_name=_output_tool_named(info, 'Reply'),
-                    args={
+                _structured_output(
+                    info,
+                    'Reply',
+                    {
                         'body': (
                             "Yes, login has been having problems since 09:12 UTC and that's why your team can't sign in. "
                             'A fix is rolling out now, so please try again shortly.'
@@ -1270,7 +1290,7 @@ async def model_logic(  # noqa: C901
         elif m.content == 'The export button does nothing when I click it.':
             # docs/models/decision.md: a union picks a member, then fills it in a second request
             return ModelResponse(
-                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Ticket'), args={'urgent': False})],
+                parts=[_structured_output(info, 'Ticket', {'urgent': False})],
                 provider_details={
                     'confidence': {'urgent': 0.4},
                     'probabilities': {},
@@ -1288,7 +1308,7 @@ async def model_logic(  # noqa: C901
             choice = max(route, key=lambda label: route[label])
             args = {'urgent': False} if choice == 'Ticket' else {'security': True}
             return ModelResponse(
-                parts=[ToolCallPart(tool_name=_output_tool_named(info, choice), args=args)],
+                parts=[_structured_output(info, choice, args)],
                 provider_details={
                     'confidence': {},
                     'probabilities': {},
@@ -1299,9 +1319,7 @@ async def model_logic(  # noqa: C901
             )
         elif m.content == 'Can you recommend a good restaurant near your office?':
             # docs/models/decision.md: the language model behind Jev takes the step Jev's route pick was unsure of
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Ticket'), args={'urgent': False})]
-            )
+            return ModelResponse(parts=[_structured_output(info, 'Ticket', {'urgent': False})])
         elif response := text_responses.get(m.content):
             if isinstance(response, str):
                 return ModelResponse(parts=[TextPart(response)])
@@ -1331,20 +1349,13 @@ async def model_logic(  # noqa: C901
             )
         elif m.content == 'You charged me twice for the March invoice.':
             # docs/models/decision.md: the support desk picks the `Refund` route, then fills it
-            return ModelResponse(
-                parts=[ToolCallPart(tool_name=_output_tool_named(info, 'Refund'), args={'reason': 'duplicate'})]
-            )
+            return ModelResponse(parts=[_structured_output(info, 'Refund', {'reason': 'duplicate'})])
         elif m.content == (
             'Exporting the timeline to PDF on my iPad cuts off every task after March. Client review is this afternoon.'
         ):
             # docs/models/decision.md: the support desk picks the `Triage` route, then fills all four of its fields
             return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        tool_name=_output_tool_named(info, 'Triage'),
-                        args={'area': 'bug', 'urgent': True, 'app': 'ios', 'impact': 2},
-                    )
-                ]
+                parts=[_structured_output(info, 'Triage', {'area': 'bug', 'urgent': True, 'app': 'ios', 'impact': 2})]
             )
         elif m.content == 'Is login down? None of my team can sign in.':
             # docs/models/decision.md: the support desk picks `check_status` and fills its argument
@@ -1454,6 +1465,24 @@ async def model_logic(  # noqa: C901
                     FilePart(content=BinaryImage(data=b'fake', media_type='image/png', identifier='160d47')),
                 ]
             )
+        elif m.content == 'Write fizzbuzz to fizzbuzz.py and run it.':
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='execute',
+                        args={
+                            'command': [
+                                'python',
+                                '-c',
+                                'from pathlib import Path; '
+                                'code = \'for i in range(1, 16): print("fizz"*(i%3==0) + "buzz"*(i%5==0) or i)\\n\'; '
+                                "Path('fizzbuzz.py').write_text(code); exec(code)",
+                            ]
+                        },
+                        tool_call_id='pyd_ai_tool_call_id',
+                    )
+                ]
+            )
         elif m.content == 'Calculate the factorial of 15.':
             return ModelResponse(
                 parts=[
@@ -1495,6 +1524,23 @@ async def model_logic(  # noqa: C901
             return ModelResponse(parts=[TextPart("Congratulations Anne, you guessed correctly! You're a winner!")])
         elif 'Yashar' in m.content:
             return ModelResponse(parts=[TextPart('Tough luck, Yashar, you rolled a 4. Better luck next time.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'read_file' and 'fizz' in str(m.content):
+        # docs/workspace.md: the reviewer read the file the coding agent wrote in the shared workspace
+        return ModelResponse(parts=[TextPart('fizzbuzz.py is correct.')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'ask_reviewer':
+        return ModelResponse(parts=[TextPart(f'The reviewer says {m.content}')])
+    elif isinstance(m, ToolReturnPart) and m.tool_name == 'execute':
+        prompts = [
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        ]
+        # The examples' `execute` tool reports failures as '[exit N] ...'; the command
+        # really ran in the workspace, so require it to have succeeded.
+        assert isinstance(m.content, str) and not m.content.startswith('[exit '), m.content
+        if 'Write fizzbuzz to fizzbuzz.py and run it.' in prompts:
+            return ModelResponse(parts=[TextPart('fizzbuzz.py is written and runs clean.')])
     if (
         isinstance(m, RetryPromptPart)
         and isinstance(m.content, str)

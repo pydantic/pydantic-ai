@@ -59,8 +59,9 @@ differs from every other Live model in three ways the model handles for you:
   level the model accepts, because reasoning costs latency. Ask for more with
   [`thinking`](../capabilities/thinking.md)`='medium'` or `'high'`. `thinking=False` means "as little as
   possible" here rather than "off", since the model has no off.
-- **Its tool calls are always asynchronous.** `google_async_tool_calls` is on regardless, and an
-  explicit `False` is ignored, since the model has no blocking mode.
+- **Its tool calls are always asynchronous.** Its profile's
+  [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] is
+  `'always'`, since the model has no blocking mode, so an explicit `async_tool_calls=False` is ignored.
 - **Its spoken filler doesn't end the turn.** Gemini closes the filler's response and says the
   interaction is still in progress, so the filler and the tool call it was stalling for are recorded
   as one `ModelResponse`, and `RealtimeTurnCompleteEvent` and
@@ -71,11 +72,12 @@ differs from every other Live model in three ways the model handles for you:
 `gemini-3.8-live` is the same family without background reasoning. It rejects a thinking *level*, so
 the shared [`thinking`](../capabilities/thinking.md) setting is ignored rather than sent. Unlike older
 Live models it defaults to asynchronous tool calls, so Pydantic AI declares tools `BLOCKING` unless
-`google_async_tool_calls=True` asks otherwise, keeping the same default as every other model.
+`async_tool_calls=True` asks otherwise, keeping the same default as every other model.
 
 Both 3.8 models keep proactive audio permanently on, so there's nothing for `google_proactive_audio`
 to turn on and it can be left unset. Gemini rejects an explicit `False`, which Pydantic AI never sends,
-and `True` still needs a `v1alpha` client like on any model. Neither supports affective dialog.
+and `True` still needs a `v1alpha` client like on any model. Neither supports affective dialog, and neither does
+`gemini-3.1-flash-live-preview`: `google_affective_dialog=True` raises `UserError` when the session connects.
 
 ## Settings
 
@@ -103,14 +105,13 @@ model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', settings=set
 | Setting | Purpose |
 | --- | --- |
 | `google_voice`, `google_language_code`, `google_multi_speaker` | Voice, output language, and per-speaker voices |
-| `google_affective_dialog` | Emotion-aware delivery, on native-audio models (not the 3.8 models) |
+| `google_affective_dialog` | Emotion-aware delivery, on the 2.5 models (not 3.1 Flash Live or the 3.8 models) |
 | `google_proactive_audio` | Model-decided speech on native-audio models; needs a `v1alpha` client (see below). Always on for the 3.8 models |
 | `google_vad` | Exact automatic VAD; fully overrides shared [`turn_detection`](turns.md#automatic-turn-detection) |
 | `google_activity_handling`, `google_turn_coverage` | [Interruption](turns.md#barge-in) behavior and which input belongs to a turn |
 | `google_input_transcription`, `google_output_transcription` | Native [transcription](audio.md#input-transcription) switches, enabled by default |
 | `google_context_compression` | Sliding-window compression for long sessions |
 | `google_enable_session_resumption` | Native state restoration; enabled automatically by a `reconnect` policy |
-| `google_async_tool_calls` | Lets supported models, including `gemini-3.8-live`, continue speaking during tools; always on for extended thinking |
 | `google_config_overrides` | Raw `LiveConnectConfig` keys merged last as a forward-compatibility escape hatch |
 
 `google_voice` is the provider voice setting. `google_thinking_config` takes precedence over the
@@ -149,12 +150,18 @@ Gemini-specific control is needed.
 
 ### Asynchronous tool calls
 
-Gemini normally pauses generation while a function tool is outstanding. Set
-`google_async_tool_calls=True` on supported models to let it continue speaking. This is best for slow
-tools; a fast result can interrupt speech that barely started and leave an empty interrupted turn in
-history. Models that don't support it ignore the setting, and
-`gemini-3.8-live-extended-thinking`, which has no blocking mode, runs every tool call this way
-regardless — see [Extended thinking](#extended-thinking).
+Gemini normally pauses generation while a function tool is outstanding. On the native-audio models and
+`gemini-3.8-live`, set the shared
+[`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting to `True` to
+let it keep speaking and answering: tools are then declared `NON_BLOCKING`, and their results are
+returned with `INTERRUPT` scheduling, so each cuts into whatever the model is saying when it arrives.
+This is best for slow tools; a fast result can interrupt speech that barely started and leave an empty
+interrupted turn in history.
+
+The other Live models accept a `NON_BLOCKING` declaration and then wait for the result anyway, so
+they ignore the setting, and `gemini-3.8-live-extended-thinking`, which has no blocking mode, runs every
+tool call this way regardless — see [Extended thinking](#extended-thinking). The deprecated
+`google_async_tool_calls` setting still works as an alias, with a deprecation warning.
 
 ### Native tools
 
@@ -221,7 +228,9 @@ For [state-restoring reconnects](lifecycle.md#state-restoration), set the `recon
 automatically alongside it (`google_enable_session_resumption` can still request handles without a
 policy, and explicitly setting it to `False` next to a policy raises
 [`UserError`][pydantic_ai.exceptions.UserError] rather than silently losing the conversation).
-Reconnection uses the latest in-memory server handle and emits `state_restored=True`.
+Reconnection uses the latest in-memory server handle and emits `state_restored=True`, unless the
+drop cut off an exchange the resumed session no longer has (see
+[State restoration](lifecycle.md#state-restoration)).
 
 !!! note "The connection cap can briefly interrupt a turn"
     Gemini sends `GoAway` shortly before its provider-defined connection cap. Pydantic AI reconnects
@@ -238,9 +247,21 @@ Reconnection uses the latest in-memory server handle and emits `state_restored=T
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
 - [Seeded](history.md#seeding-a-session) function calls/results are represented as readable text
   because Live cannot accept function parts in seeded turns.
+- `send()` sends an [image](audio.md#images) as a live video frame. Spoken turns see video frames,
+  but typed turns don't on the Live models. So a typed turn (`send('...')`) also carries the most
+  recent image sent in the last 10 seconds in its own content, ahead of the text. That image is sent,
+  and counted as input, twice. Context text (`respond=False`) and audio don't carry it. To ask about an
+  image in writing, send the two together so the question is always inside the window:
+  `session.send([image, 'What is this?'])`. The `google_text_turns_see_video_frames` profile flag
+  controls the second send.
 - Gemini 3.x Live models transcribe the user's speech even with input transcription
   [turned off](audio.md#input-transcription). Pydantic AI discards those transcripts, so the setting
   still keeps the user's words out of history, but they are still produced on Google's side.
+- After resuming from a handle it issued at the start of a turn, `gemini-3.8-live` can stream that
+  turn's answer without ever sending `turn_complete`, then answer the next input with
+  `RealtimeResponseInterruptedEvent` and nothing more. The reply stays open, so
+  [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] doesn't return. This
+  happens on Google's side, and no client-side workaround is known.
 - Native transcription can produce only a completed sentence on some models.
   [Caption UIs](audio.md#live-captions) should replace text from `TranscriptUpdate.transcript`
   rather than assume incremental deltas.

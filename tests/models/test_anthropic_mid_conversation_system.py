@@ -19,7 +19,6 @@ profile flag, the client-transport gate, and the cache breakpoint that now lands
 from __future__ import annotations as _annotations
 
 import asyncio
-import json
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
@@ -45,11 +44,11 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import ToolDefinition
 
 from .._inline_snapshot import snapshot
-from ..cassette_utils import single_request_body
+from ..cassette_utils import request_json, single_request_body
 from ..conftest import try_import
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry
@@ -68,7 +67,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -765,7 +763,10 @@ async def test_mid_conversation_system_prompt_on_bedrock(
     )
 
 
-async def test_native_tool_availability_delta(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-8', 'claude-sonnet-5-5'])
+async def test_native_tool_availability_delta(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, model_name: str
+):
     """A framework tool reveal reaches the model, which then calls the tool it just learned about.
 
     A delta arriving on its own has the same problem a lone system prompt does — nothing legal to
@@ -779,7 +780,7 @@ async def test_native_tool_availability_delta(allow_model_requests: None, anthro
     `lookup_refund_policy` or its `order_id` parameter, so a call to it can only have come from the
     reveal.
     """
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
     tool = ToolDefinition(
         name='lookup_refund_policy',
         description='Look up the refund policy for an order.',
@@ -1189,7 +1190,7 @@ async def test_inline_system_prompt_cache_prefix_is_reused(
     first = await agent.run(message_history=history)
     second = await agent.run(message_history=history)
 
-    recorded_bodies = [json.loads(request.body) for request in vcr.requests]  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType,reportUnknownVariableType]
+    recorded_bodies = [request_json(request) for request in vcr.requests]
     assert rendered_requests == [{'system': body['system'], 'messages': body['messages']} for body in recorded_bodies]
     assert rendered_requests[0] == rendered_requests[1]
     assert rendered_requests[0]['messages'][-2:] == snapshot(

@@ -7,9 +7,15 @@ uv run pytest tests/benchmarks --codspeed --codspeed-mode=walltime
 
 Run these commands from the repository root. For a correctness check without timing, omit the CodSpeed flags.
 
-The [CodSpeed workflow](../../.github/workflows/benchmark.yml) uses instrumentation on Linux to compare CPU work across commits, without relying on noisy wall-clock thresholds. It runs on pull requests and pushes to `main`.
+The [CodSpeed workflow](../../.github/workflows/benchmark.yml) measures wall time on CodSpeed's dedicated ARM64 Graviton runners, with Python 3.14. It runs on pull requests and pushes to `main`. Fixed hardware avoids the CPU differences of GitHub-hosted runners, while isolation reduces timing noise.
 
-The agent benchmark uses `TestModel` to avoid network latency. Its fixture warms up a reused agent before measurement. BlockBuster is disabled for this benchmark because its blocking-call instrumentation changes the workload.
+You need [CodSpeed macro-runner access for public repositories](https://codspeed.io/docs/integrations/ci/github-actions/macro-runners#public-repositories). After changing the runner or measurement mode, record a fresh `main` baseline before comparing performance. Walltime results are not comparable to the previous CPU-simulation results. The job has a ten-minute timeout to bound runner usage. Superseded PR runs are canceled; `main` baseline runs are kept.
+
+The agent-run benchmarks use `TestModel` to avoid network latency. Their fixtures warm up a reused agent before measurement. BlockBuster is disabled for all benchmarks in this module because its blocking-call instrumentation changes the workload.
+
+The synthetic-history benchmark supplies 1,000 or 5,000 consecutive assistant-response fragments without provider identity metadata. The agent must merge these into one response. Fixtures construct the history and warm up the history-processing path outside the measured test.
+
+The replay benchmark captures a `FunctionModel` stream of 1,000 or 5,000 chunks, each containing 256 characters. Capture happens outside measurement. The test measures `CompletedStreamedResponse` replay through completion and checks its final response, not live generation or network latency. Each case allows 15 seconds of measurements so the slower replay produces more samples.
 
 ## Stress testing
 

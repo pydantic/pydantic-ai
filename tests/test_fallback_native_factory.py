@@ -38,8 +38,6 @@ from pydantic_ai.tools import RunContext
 
 from .capability_models import build_run_context
 
-pytestmark = [pytest.mark.anyio]
-
 
 def _none_native_factory(ctx: RunContext[str]) -> None:
     """Omits the native tool: legal on the native path, but the invoked fallback cannot honor it."""

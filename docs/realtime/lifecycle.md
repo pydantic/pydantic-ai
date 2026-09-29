@@ -68,6 +68,14 @@ realtime = agent.realtime(
 session, preventing an endpoint that repeatedly accepts and closes connections from redialing
 forever.
 
+While the policy is replacing a dropped connection, an audio chunk sent with
+[`send_audio()`][pydantic_ai.realtime.RealtimeSession.send_audio] is dropped instead of raising, so
+a microphone capture task survives the reconnect (live audio is no use once late). Other sends made
+during the reconnect still raise [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. A reconnect
+in the middle of an utterance commits only the audio sent after it, so with push-to-talk, prompt the
+user to repeat themselves on
+[`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent].
+
 Without a policy, an unexpected provider close raises
 [`RealtimeError`][pydantic_ai.realtime.RealtimeError] from the session iterator.
 
@@ -100,7 +108,16 @@ completes with the response terminal as usual, and `state_restored` stays `True`
 reports `False` and cancels running tools) but closes the cut reply as an interrupted response
 (keeping any partial transcript in history) before the
 [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] and stays
-quiet until the next input.
+quiet until the next input. Gemini issues no handle while a tool call is running, so a resumed
+session never has a call still running at the drop, and never answers its result. Such a call is
+cancelled with an interrupted return, like a call Gemini cancels itself, the resumed session is told
+the call was interrupted, and `state_restored` is `False`. Gemini 2.5 also withholds handles while it
+works on a turn, so a typed turn not yet followed by a handle after its reply is missing from the
+resumed session too: the turn stays in history, `state_restored` is `False`, and you can send it again.
+When its reply hadn't started and no spoken reply was in progress,
+[`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] also stops waiting for it.
+A turn typed while the model was answering speech can't be told apart from that spoken reply, so
+`wait_for_reply()` may keep waiting for it, and the reconnect may report `state_restored=True`.
 
 Local replay (OpenAI, Azure OpenAI) restores only the finalized turns, so a reply in flight when the
 socket dropped cannot continue. The session settles it before emitting the event — the partial reply
@@ -179,7 +196,7 @@ Realtime sessions use the standard Pydantic AI exception hierarchy:
 | Exception | Raised when |
 | --- | --- |
 | [`UserError`][pydantic_ai.exceptions.UserError] | The application requests an unsupported operation, passes incompatible settings, lacks credentials, or misuses the session. |
-| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejects the WebSocket upgrade with an HTTP status; Gemini also maps WebSocket close codes such as `1007` and `1008` to `status_code`, while OpenAI-protocol providers use `RealtimeError` for an in-handshake rejection. |
+| [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] | The provider rejects the WebSocket upgrade with an HTTP status. A provider that accepts the upgrade and then closes the socket during the handshake (Gemini's `1007` for a rejected config, for example) raises `RealtimeError` instead, since a WebSocket close code isn't an HTTP status. |
 | [`RealtimeError`][pydantic_ai.realtime.RealtimeError] | The connection fails, times out, closes unexpectedly, returns an invalid frame, or exhausts reconnect attempts. |
 | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] | A configured [usage limit](observability.md#usage-and-limits) is exceeded. |
 

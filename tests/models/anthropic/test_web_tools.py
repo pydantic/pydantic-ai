@@ -30,7 +30,7 @@ from ..test_anthropic import (
 )
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 with try_import() as imports_successful:
     from anthropic import (
@@ -68,7 +68,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.filterwarnings(
         'ignore:`BuiltinToolCallEvent` is deprecated, look for `PartStartEvent` and `PartDeltaEvent` with `NativeToolCallPart` instead.:DeprecationWarning'
     ),

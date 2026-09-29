@@ -30,7 +30,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.skipif(not imports_successful(), reason='bedrock not installed'),
 ]

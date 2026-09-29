@@ -38,8 +38,6 @@ from pydantic_ai.usage import RequestUsage
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsNow, IsStr
 
-pytestmark = pytest.mark.anyio
-
 
 async def test_model_request():
     model_response = await model_request('test', [ModelRequest.user_text_prompt('x')])

@@ -109,6 +109,17 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return FlowRunContext.get() is not None
 
+    def _default_run_id(self) -> str | None:
+        context = FlowRunContext.get()
+        if context is None:
+            return None
+        assert context.flow_run is not None
+        key = 'pydantic_ai:workspace_run_id'
+        sequence = context.task_run_dynamic_keys.get(key, 0)
+        assert isinstance(sequence, int)
+        context.task_run_dynamic_keys[key] = sequence + 1
+        return f'{context.flow_run.id}:{sequence}'
+
     def get_durable_operation_backend(self) -> DurableOperationBackend[TaskConfig]:
         def tool_config(
             operation_id: DurableOperationId, tool: object | None, tool_name: str

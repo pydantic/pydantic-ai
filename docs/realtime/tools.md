@@ -41,17 +41,71 @@ If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
 provider.
 
+### Restricting the available tools
+
+The [`tool_choice`](../tools-advanced.md#tool-choice) setting in
+[`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings] is resolved as it is for a
+standard run, but applied once, when the session is created, and it then holds for every response.
+`'auto'` and `'none'` work as usual, and
+[`ToolOrOutput(function_tools=[...])`][pydantic_ai.settings.ToolOrOutput] limits the model to the
+named tools while leaving it free to answer:
+
+```python
+from pydantic_ai.realtime import RealtimeModelSettings
+from pydantic_ai.settings import ToolOrOutput
+
+settings = RealtimeModelSettings(tool_choice=ToolOrOutput(function_tools=['get_weather']))
+```
+
+A choice that forces a tool call — `'required'` or a list of tool names — raises a
+[`UserError`][pydantic_ai.exceptions.UserError] before connecting on OpenAI, Azure OpenAI, and xAI.
+Applied to every response, including the one after a tool result, it would never let the model
+answer: it would keep calling tools until a [usage limit](../agent.md#usage-limits) ended the session.
+Gemini Live has no tool-choice configuration, so it ignores `'required'` and treats a list of tool
+names as a restriction, like `ToolOrOutput`. To choose the tools from the run context, filter them
+with a [filtered toolset](../toolsets.md#filtering-tools) or
+[`prepare_tools`](../tools-advanced.md#prepare-tools) instead.
+
 ### Concurrent tool execution
 
 Every tool runs in the background, so a slow tool does not block session events, other tools, or
 turn tracking. [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] keeps each
 result adjacent to its call even when calls finish out of order.
 
-Whether the model continues speaking while it waits is provider-specific. Inspect the
-[`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]
-profile flag. OpenAI and Azure models generally fill the gap; Gemini pauses unless the
-[`google_async_tool_calls`](gemini.md#asynchronous-tool-calls) setting — which declares the tools
-`NON_BLOCKING` to the Live API — is enabled on a supported model.
+When one response calls several tools, each result goes back to the model as its tool finishes, but the
+model is asked to answer only once all of them are in, so it answers them together, once, rather than
+answering the first result while its siblings are still running.
+
+Whether the *model* keeps the conversation going while a tool runs — speaking (typically saying
+what it's doing) and answering the user before the result is back — depends on the model. Its
+profile's [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode]
+says which:
+
+| Mode | Models | Tool calls |
+| --- | --- | --- |
+| `'always'` | OpenAI (GPT-Live and gpt-realtime), Azure OpenAI, xAI, `gemini-3.8-live-extended-thinking` | The model keeps talking; there's no mode that waits |
+| `'optional'` | Gemini native-audio models, `gemini-3.8-live` | The model waits for the result, unless the session asks otherwise |
+| `'never'` | Other Gemini Live models | The model waits for the result |
+
+On an `'optional'` model, set the shared
+[`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting to `True` to
+have it keep talking. The setting doesn't change what an `'always'` or `'never'` model does, so a
+cross-provider app can set it once for every model: it takes effect wherever the model offers the
+choice, and is ignored elsewhere.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.realtime import RealtimeModelSettings
+
+agent = Agent(instructions='Look up orders with the tool, and keep the caller company while it runs.')
+realtime = agent.realtime(
+    'google:gemini-3.8-live', model_settings=RealtimeModelSettings(async_tool_calls=True)
+)
+```
+
+Async tool calls pay off for tools that take a noticeable moment. With a fast tool, the result can
+arrive just as the model starts speaking, cutting that reply short. See
+[Asynchronous tool calls](gemini.md#asynchronous-tool-calls) for how Gemini runs them.
 
 ## Native tools
 

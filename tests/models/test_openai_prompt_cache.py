@@ -14,13 +14,12 @@ the real APIs.
 
 from __future__ import annotations as _annotations
 
-import json
 from decimal import Decimal
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl
 from pydantic_ai.exceptions import UserError
@@ -28,6 +27,7 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import request_json
 from ..conftest import try_import
 from .mock_openai import (
     MockOpenAI,
@@ -60,7 +60,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -718,8 +717,7 @@ _STABLE_PREFIX = 'Reference catalogue for the prompt cache test corpus.\n' + '\n
 
 
 def _request_body(cassette: Cassette, index: int) -> dict[str, Any]:
-    body = cast('Any', cassette.requests)[index].body  # pyright: ignore[reportUnknownMemberType]
-    return cast('dict[str, Any]', json.loads(body))
+    return cast('dict[str, Any]', request_json(cassette.requests[index]))
 
 
 def _assert_cache_usage(first: RunUsage, second: RunUsage) -> None:
