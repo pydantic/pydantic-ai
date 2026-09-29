@@ -83,7 +83,7 @@ it on release day. Grep genai-prices `main` for each provider file you plan to e
 provider-file changes in its open PRs:
 
 ```bash
-for f in openai openrouter; do gh api "repos/pydantic/genai-prices/contents/prices/providers/$f.yml" -H 'Accept: application/vnd.github.raw' | grep -n '<id>' | sed "s/^/$f.yml:/"; done
+for f in <provider files, e.g. openai openrouter github_copilot>; do gh api "repos/pydantic/genai-prices/contents/prices/providers/$f.yml" -H 'Accept: application/vnd.github.raw' | grep -n '<id>' | sed "s/^/$f.yml:/"; done
 for n in $(gh pr list --repo pydantic/genai-prices --state open --limit 200 --json number --jq '.[].number'); do gh api "repos/pydantic/genai-prices/pulls/$n/files" --paginate --jq '.[] | select(.filename | startswith("prices/providers/")) | .patch' | grep -q '<id>' && echo "#$n"; done
 ```
 
