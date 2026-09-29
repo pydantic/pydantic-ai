@@ -300,6 +300,18 @@ agent = Agent(
 
 Set `clear_tool_inputs=True` to also blank the arguments of the cleared calls, and `exclude_tools` to a set of tool names whose results are never cleared.
 
+Set `idle_seconds` to clear when a conversation resumes after a pause. Providers expire an unused prompt cache after a few minutes (Anthropic's default is 5; OpenAI's in-memory cache lasts 5 to 10), so when the history's last model response is older than that, the next request re-writes the cache anyway and clearing costs no cache hit. Set it above the cache lifetime you use, including an extended one such as Anthropic's 1-hour cache. It combines with the size triggers (either one fires), and it clears once: the cleared history persists, and the new response is fresh.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import ClearToolResults
+
+agent = Agent(
+    'anthropic:claude-sonnet-5',
+    capabilities=[ClearToolResults(max_fraction=0.8, idle_seconds=3600, keep_pairs=3)],
+)
+```
+
 ## `DeduplicateFileReads`: drop superseded reads
 
 When the same file is read more than once, only the latest read keeps its content; earlier reads are blanked with a placeholder, with pairing preserved.
@@ -414,7 +426,7 @@ Warnings begin at `warning_threshold` (default `0.7`, a fraction of the limit) a
 
 ## Cache tradeoff
 
-Clearing, deduplicating, clamping, and summarizing all rewrite message content, which invalidates the provider's prompt cache from the edit point onward -- the next request pays a cache-write. For `ClearToolResults`, use `min_clear_tokens` to skip clearing that reclaims too little to be worth busting the cache. For `ClampOversizedMessages` the cache bust is unavoidable, because the alternative is a failed request.
+Clearing, deduplicating, clamping, and summarizing all rewrite message content, which invalidates the provider's prompt cache from the edit point onward -- the next request pays a cache-write. For `ClearToolResults`, use `min_clear_tokens` to skip clearing that reclaims too little to be worth busting the cache, and `idle_seconds` to clear when the cache has already expired. For `ClampOversizedMessages` the cache bust is unavoidable, because the alternative is a failed request.
 
 ## Tracing
 
