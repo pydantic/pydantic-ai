@@ -1,4 +1,4 @@
-"""`SmartGrep` syntax-aware chunking for fifteen languages beyond Python (tree-sitter).
+"""`SmartFileSearch` syntax-aware chunking for fifteen languages beyond Python (tree-sitter).
 
 Ported from Code Puppy's `code_puppy_core_plugins/jev_grep` tests.
 """

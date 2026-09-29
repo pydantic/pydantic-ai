@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
-    from .smart_grep import SmartGrep
+    from .smart_grep import SmartFileSearch
     from .spend import SpendLimits
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
     from .stackone import StackOne
@@ -119,7 +119,7 @@ __all__ = [
     'Shell',
     'Skills',
     'SlidingWindowCompaction',
-    'SmartGrep',
+    'SmartFileSearch',
     'SpendLimits',
     'SpritesSandbox',
     'SpritesSandboxBackend',
@@ -176,7 +176,7 @@ _CAPABILITY_EXPORTS = {
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
-    'SmartGrep': 'smart_grep',
+    'SmartFileSearch': 'smart_grep',
     'SpendLimits': 'spend',
     'SpritesSandbox': 'sprites_sandbox',
     'StackOne': 'stackone',

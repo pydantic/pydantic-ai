@@ -22,7 +22,7 @@ _TEST_PATH = re.compile(r'(^|/)(tests?|__tests__|spec)/|(^|/)test_[^/]*$|[._-](t
 
 
 @dataclass(kw_only=True)
-class SmartGrepMatch:
+class SmartFileSearchMatch:
     """One relevant snippet, with a short excerpt focused on the evidence."""
 
     file_path: str
@@ -46,7 +46,7 @@ class SmartGrepMatch:
 
 
 @dataclass(kw_only=True)
-class SmartGrepCoverage:
+class SmartFileSearchCoverage:
     """How much of the directory the search actually judged."""
 
     files: int = 0
@@ -62,12 +62,12 @@ class SmartGrepCoverage:
 
 
 @dataclass(kw_only=True)
-class SmartGrepResult:
+class SmartFileSearchResult:
     """What one `smart_grep` call found, and how thoroughly it looked."""
 
-    matches: list[SmartGrepMatch] = field(default_factory=list[SmartGrepMatch])
+    matches: list[SmartFileSearchMatch] = field(default_factory=list[SmartFileSearchMatch])
     """Relevant snippets, best first, overlapping snippets collapsed into the best one."""
-    coverage: SmartGrepCoverage = field(default_factory=SmartGrepCoverage)
+    coverage: SmartFileSearchCoverage = field(default_factory=SmartFileSearchCoverage)
     """How much of the directory was judged."""
     omitted_matches: int = 0
     """Relevant snippets beyond `limit`."""
@@ -128,10 +128,10 @@ def _excerpt(chunk: Chunk, focus: Chunk | None, query: str) -> tuple[int, str]:
     return first, '\n'.join(lines)[:EXCERPT_CHARS]
 
 
-def _to_match(item: _Scored, passing: list[_Scored], query: str) -> SmartGrepMatch:
+def _to_match(item: _Scored, passing: list[_Scored], query: str) -> SmartFileSearchMatch:
     chunk = item.chunk
     first, text = _excerpt(chunk, _evidence(chunk, passing), query)
-    return SmartGrepMatch(
+    return SmartFileSearchMatch(
         file_path=chunk.path,
         start_line=first,
         end_line=first + text.count('\n'),
@@ -155,7 +155,7 @@ async def search_code(
     candidates: int = DEFAULT_CANDIDATES,
     threshold: float,
     concurrency: int,
-) -> SmartGrepResult:
+) -> SmartFileSearchResult:
     """Find the snippets under `directory` that `model` judges relevant to `query`."""
     query = query.strip()
     if not query or len(query) > MAX_QUERY_CHARS:
@@ -165,7 +165,7 @@ async def search_code(
 
     found = await discover(workspace, directory, glob)
     selected = rank(query, found.chunks)[:candidates]
-    coverage = SmartGrepCoverage(
+    coverage = SmartFileSearchCoverage(
         files=found.files,
         snippets=len(found.chunks),
         evaluated=len(selected),
@@ -194,7 +194,7 @@ async def search_code(
     if found.skipped:
         warnings.append(f'{len(found.skipped)} files skipped (binary, non-UTF-8, minified or unreadable).')
 
-    return SmartGrepResult(
+    return SmartFileSearchResult(
         matches=[_to_match(item, passing, query) for item in kept[:limit]],
         coverage=coverage,
         omitted_matches=max(len(kept) - limit, 0),

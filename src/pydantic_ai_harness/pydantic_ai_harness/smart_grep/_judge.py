@@ -71,8 +71,8 @@ def resolve_judge_model(model: JudgeModel | None, run_model: object) -> JudgeMod
         # `isinstance` narrows to `Model[Unknown]`; the bare `Model` restores its declared client default.
         return cast(Model, run_model)
     raise UserError(
-        '`SmartGrep` could not pick a judge model: the run model is not a request-response `Model`. '
-        'Pass `SmartGrep(model=...)`.'
+        '`SmartFileSearch` could not pick a judge model: the run model is not a request-response `Model`. '
+        'Pass `SmartFileSearch(model=...)`.'
     )
 
 

@@ -1,15 +1,15 @@
 """Plain-English code search: find code by what it does, judged by any Pydantic AI model."""
 
-from pydantic_ai_harness.smart_grep._capability import SmartGrep
+from pydantic_ai_harness.smart_grep._capability import SmartFileSearch
 from pydantic_ai_harness.smart_grep._judge import Relevance
-from pydantic_ai_harness.smart_grep._search import SmartGrepCoverage, SmartGrepMatch, SmartGrepResult
-from pydantic_ai_harness.smart_grep._toolset import SmartGrepToolset
+from pydantic_ai_harness.smart_grep._search import SmartFileSearchCoverage, SmartFileSearchMatch, SmartFileSearchResult
+from pydantic_ai_harness.smart_grep._toolset import SmartFileSearchToolset
 
 __all__ = [
     'Relevance',
-    'SmartGrep',
-    'SmartGrepCoverage',
-    'SmartGrepMatch',
-    'SmartGrepResult',
-    'SmartGrepToolset',
+    'SmartFileSearch',
+    'SmartFileSearchCoverage',
+    'SmartFileSearchMatch',
+    'SmartFileSearchResult',
+    'SmartFileSearchToolset',
 ]

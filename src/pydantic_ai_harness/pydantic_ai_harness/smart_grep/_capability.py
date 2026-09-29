@@ -1,4 +1,4 @@
-"""The `SmartGrep` capability: plain-English code search judged by a pluggable model."""
+"""The `SmartFileSearch` capability: plain-English code search judged by a pluggable model."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai_harness.smart_grep._toolset import SmartGrepToolset
+from pydantic_ai_harness.smart_grep._toolset import SmartFileSearchToolset
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
@@ -36,7 +36,7 @@ instead."""
 
 
 @dataclass
-class SmartGrep(AbstractCapability[AgentDepsT]):
+class SmartFileSearch(AbstractCapability[AgentDepsT]):
     """Plain-English code search: find code by what it does, described in plain English.
 
     Adds a `smart_grep` tool. A search lists the files under a directory in the
@@ -57,11 +57,11 @@ class SmartGrep(AbstractCapability[AgentDepsT]):
     from pydantic_ai import Agent
     from pydantic_ai.capabilities import LocalWorkspace
 
-    from pydantic_ai_harness import SmartGrep
+    from pydantic_ai_harness import SmartFileSearch
 
     agent = Agent(
         'openai:gpt-6-luna',
-        capabilities=[LocalWorkspace('.'), SmartGrep(model='typesafe:jev-latest')],
+        capabilities=[LocalWorkspace('.'), SmartFileSearch(model='typesafe:jev-latest')],
     )
     ```
 
@@ -114,6 +114,8 @@ class SmartGrep(AbstractCapability[AgentDepsT]):
             return self.guidance or None
         return _INSTRUCTIONS
 
-    def get_toolset(self) -> SmartGrepToolset[AgentDepsT]:
+    def get_toolset(self) -> SmartFileSearchToolset[AgentDepsT]:
         """Build the toolset providing `smart_grep`."""
-        return SmartGrepToolset[AgentDepsT](model=self.model, threshold=self.threshold, concurrency=self.concurrency)
+        return SmartFileSearchToolset[AgentDepsT](
+            model=self.model, threshold=self.threshold, concurrency=self.concurrency
+        )

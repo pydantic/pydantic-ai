@@ -268,7 +268,7 @@ navigation:
           - page: "FileSystem"
             path: "harness/filesystem.md"
             slug: "harness/filesystem"
-          - page: "Smart Grep"
+          - page: "Smart File Search"
             path: "harness/smart-grep.md"
             slug: "harness/smart-grep"
           - page: "Shell"

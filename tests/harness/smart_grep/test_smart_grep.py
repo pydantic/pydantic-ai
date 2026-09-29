@@ -1,4 +1,4 @@
-"""Tests for `SmartGrep`: chunking, the lexical shortlist, the pluggable judge, and the tool.
+"""Tests for `SmartFileSearch`: chunking, the lexical shortlist, the pluggable judge, and the tool.
 
 Ported from Code Puppy's `code_puppy_core_plugins/jev_grep` tests. The judge is exercised two ways, to pin
 that it is pluggable: a fake `DecisionModel` answering the real Decisions protocol (the path TypeSafe's Jev
@@ -33,8 +33,14 @@ from pydantic_ai.models.decision import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceTimeoutError
-from pydantic_ai_harness import SmartGrep
-from pydantic_ai_harness.smart_grep import SmartGrepResult, SmartGrepToolset, _chunks, _judge, _search as search_module
+from pydantic_ai_harness import SmartFileSearch
+from pydantic_ai_harness.smart_grep import (
+    SmartFileSearchResult,
+    SmartFileSearchToolset,
+    _chunks,
+    _judge,
+    _search as search_module,
+)
 from pydantic_ai_harness.smart_grep._chunks import Chunk, Discovery, LineTooLong, discover, source_chunks, windows
 from pydantic_ai_harness.smart_grep._judge import TYPESAFE_MODEL, judge, resolve_judge_model
 from pydantic_ai_harness.smart_grep._retrieve import rank, terms
@@ -126,7 +132,7 @@ def _repo(root: Path) -> Path:
 
 async def _search(
     root: Path, model: Model, query: str = 'reject expired sessions', *, limit: int = 5, candidates: int | None = None
-) -> SmartGrepResult:
+) -> SmartFileSearchResult:
     workspace = _workspace(root)
     if candidates is None:  # the tool's own default
         return await search_code(workspace, model, query, '.', limit=limit, threshold=0.5, concurrency=8)
@@ -376,7 +382,7 @@ async def test_search_code_no_match_limit_and_shortlist(tmp_path: Path) -> None:
 async def test_empty_directory_judges_nothing(tmp_path: Path) -> None:
     model = FakeJev('x')
     out = await _search(tmp_path, model)
-    assert out == SmartGrepResult(coverage=out.coverage)
+    assert out == SmartFileSearchResult(coverage=out.coverage)
     assert out.coverage.selection_complete and not model.requests
 
 
@@ -444,17 +450,17 @@ async def test_long_lines_trim_the_excerpt_to_its_character_budget(tmp_path: Pat
 
 def test_capability_validates_its_settings() -> None:
     with pytest.raises(ValueError, match='threshold'):
-        SmartGrep[None](threshold=1.5)
+        SmartFileSearch[None](threshold=1.5)
     for concurrency in (0, float('nan')):
         with pytest.raises(ValueError, match='concurrency'):
-            SmartGrep[None](concurrency=concurrency)  # pyright: ignore[reportArgumentType]
+            SmartFileSearch[None](concurrency=concurrency)  # pyright: ignore[reportArgumentType]
 
 
 def test_guidance_replaces_or_disables_the_discovery_policy() -> None:
-    default = SmartGrep[None]().get_instructions()
+    default = SmartFileSearch[None]().get_instructions()
     assert isinstance(default, str) and 'smart_grep first' in default
-    assert SmartGrep[None](guidance='Use it.').get_instructions() == 'Use it.'
-    assert SmartGrep[None](guidance='').get_instructions() is None
+    assert SmartFileSearch[None](guidance='Use it.').get_instructions() == 'Use it.'
+    assert SmartFileSearch[None](guidance='').get_instructions() is None
 
 
 def _calls_smart_grep(**args: object) -> FunctionModel:
@@ -473,10 +479,10 @@ def _tool_return(messages: list[ModelMessage]) -> ToolReturnPart:
 async def test_agent_searches_its_workspace_with_the_configured_judge(tmp_path: Path) -> None:
     _repo(tmp_path)
     judge_model = FakeJev('expired')
-    agent = Agent(_calls_smart_grep(), capabilities=[LocalWorkspace(tmp_path), SmartGrep(model=judge_model)])
+    agent = Agent(_calls_smart_grep(), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=judge_model)])
     result = await agent.run('find it')
     content = _tool_return(result.all_messages()).content
-    assert isinstance(content, SmartGrepResult)
+    assert isinstance(content, SmartFileSearchResult)
     assert {m.file_path for m in content.matches} == {'auth.py', 'tests/test_auth.py'}
     assert judge_model.requests
 
@@ -496,7 +502,7 @@ async def test_agent_judges_with_its_own_model_when_typesafe_is_unavailable(
             return ModelResponse(parts=[ToolCallPart('smart_grep', {'query': 'assign x'})])
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), SmartGrep()])
+    agent = Agent(FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch()])
     await agent.run('find it')
     assert len(judged) == 1 and 'a.py:1-1' in judged[0]
 
@@ -507,7 +513,9 @@ async def test_judge_failure_is_reported_to_the_model(tmp_path: Path) -> None:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise ModelHTTPError(503, 'judge', 'backend down')
 
-    agent = Agent(_calls_smart_grep(), capabilities=[LocalWorkspace(tmp_path), SmartGrep(model=FunctionModel(respond))])
+    agent = Agent(
+        _calls_smart_grep(), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=FunctionModel(respond))]
+    )
     result = await agent.run('find it')
     content = str(_tool_return(result.all_messages()).content)
     assert 'smart_grep failed: ModelHTTPError' in content
@@ -515,7 +523,7 @@ async def test_judge_failure_is_reported_to_the_model(tmp_path: Path) -> None:
 
 async def test_workspace_failure_is_reported_to_the_model(tmp_path: Path) -> None:
     (tmp_path / 'slow.py').write_text('x = 1\n')
-    agent = Agent(_calls_smart_grep(), capabilities=[SmartGrep(model=FakeJev('x'))])
+    agent = Agent(_calls_smart_grep(), capabilities=[SmartFileSearch(model=FakeJev('x'))])
     result = await agent.run('find it', workspace=Workspace(VanishingBackend(tmp_path)))
     assert 'read timed out' in str(_tool_return(result.all_messages()).content)
 
@@ -527,21 +535,21 @@ async def test_tool_is_hidden_on_a_workspace_that_cannot_run_commands(tmp_path: 
         seen.append([tool.name for tool in info.function_tools])
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(FunctionModel(respond), capabilities=[SmartGrep(model=FakeJev('x'))])
+    agent = Agent(FunctionModel(respond), capabilities=[SmartFileSearch(model=FakeJev('x'))])
     await agent.run('hi', workspace=ReadOnlyWorkspace(_workspace(tmp_path)))
     await agent.run('hi', workspace=_workspace(tmp_path))
     assert seen == [[], ['smart_grep']]
 
 
 async def test_run_without_a_workspace_fails_at_its_start() -> None:
-    agent = Agent(TestModel(), capabilities=[SmartGrep(model=FakeJev('x'))])
-    with pytest.raises(UserError, match='`SmartGrep` needs a workspace'):
+    agent = Agent(TestModel(), capabilities=[SmartFileSearch(model=FakeJev('x'))])
+    with pytest.raises(UserError, match='`SmartFileSearch` needs a workspace'):
         await agent.run('hi')
 
 
 def test_toolset_advertises_the_upstream_schema() -> None:
-    toolset = SmartGrep[None]().get_toolset()
-    assert isinstance(toolset, SmartGrepToolset)
+    toolset = SmartFileSearch[None]().get_toolset()
+    assert isinstance(toolset, SmartFileSearchToolset)
     schema = toolset.tools['smart_grep'].function_schema.json_schema
     assert set(schema['properties']) == {'query', 'directory', 'glob', 'limit', 'candidates'}
     assert schema['properties']['candidates']['default'] == 128
@@ -552,7 +560,7 @@ def test_toolset_advertises_the_upstream_schema() -> None:
 async def test_judge_runs_are_named_after_the_capability(capfire: CaptureLogfire, tmp_path: Path) -> None:
     (tmp_path / 'a.py').write_text('expired = True\n')
     agent = Agent(
-        _calls_smart_grep(), name='outer', capabilities=[LocalWorkspace(tmp_path), SmartGrep(model=FakeJev('x'))]
+        _calls_smart_grep(), name='outer', capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=FakeJev('x'))]
     )
     await agent.run('find it')
     assert agent_run_names(capfire).count('smart_grep') == 1
@@ -560,8 +568,8 @@ async def test_judge_runs_are_named_after_the_capability(capfire: CaptureLogfire
 
 def test_capability_loads_from_an_agent_spec() -> None:
     spec = AgentSpec.model_validate(
-        {'model': 'test', 'capabilities': [{'SmartGrep': {'model': 'openai:gpt-5-mini', 'threshold': 0.6}}]}
+        {'model': 'test', 'capabilities': [{'SmartFileSearch': {'model': 'openai:gpt-5-mini', 'threshold': 0.6}}]}
     )
-    agent = Agent.from_spec(spec, custom_capability_types=[SmartGrep])
-    [capability] = [c for c in agent.root_capability.capabilities if isinstance(c, SmartGrep)]
+    agent = Agent.from_spec(spec, custom_capability_types=[SmartFileSearch])
+    [capability] = [c for c in agent.root_capability.capabilities if isinstance(c, SmartFileSearch)]
     assert (capability.model, capability.threshold) == ('openai:gpt-5-mini', 0.6)

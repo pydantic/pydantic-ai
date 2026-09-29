@@ -8,12 +8,12 @@ from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._workspace import raise_tool_failure, require_workspace, supports_commands
 from pydantic_ai_harness.smart_grep._judge import JudgeModel, resolve_judge_model
-from pydantic_ai_harness.smart_grep._search import DEFAULT_CANDIDATES, SmartGrepResult, search_code
+from pydantic_ai_harness.smart_grep._search import DEFAULT_CANDIDATES, SmartFileSearchResult, search_code
 
 TOOL_NAME = 'smart_grep'
 
 
-class SmartGrepToolset(FunctionToolset[AgentDepsT]):
+class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
     """Registers `smart_grep`, which searches the run's workspace and judges snippets with a model.
 
     Files are listed with `rg` and read through `ctx.workspace`, so the tool is only offered when the
@@ -37,7 +37,7 @@ class SmartGrepToolset(FunctionToolset[AgentDepsT]):
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Offer no tools when the workspace cannot execute commands; fail a run with no workspace."""
         if not ctx.workspace.attached:
-            require_workspace(ctx.workspace, 'SmartGrep', ctx.messages)
+            require_workspace(ctx.workspace, 'SmartFileSearch', ctx.messages)
         if not supports_commands(ctx.workspace):
             return {}
         return await super().get_tools(ctx)
@@ -50,7 +50,7 @@ class SmartGrepToolset(FunctionToolset[AgentDepsT]):
         glob: str | None = None,
         limit: int = 5,
         candidates: int = DEFAULT_CANDIDATES,
-    ) -> SmartGrepResult:
+    ) -> SmartFileSearchResult:
         """Find code by what it DOES, described in plain English.
 
         Use for behaviour-based discovery when you don't know the symbol names,

@@ -1,11 +1,11 @@
 ---
-title: Smart Grep
+title: Smart File Search
 description: "Give a Pydantic AI agent code search by behavior: describe it in plain English and get ranked source excerpts, judged by any model, with TypeSafe's Jev as the recommended judge."
 ---
 
-# Smart Grep
+# Smart File Search
 
-`SmartGrep` gives an agent code search by behavior: the model describes the behavior it is looking for in plain
+`SmartFileSearch` gives an agent code search by behavior: the model describes the behavior it is looking for in plain
 English ("where do we reject expired sessions?") and gets back ranked source excerpts with file and line
 ranges, without first having to guess the symbol names a text search needs. Relevance is decided by a judge
 model you choose: any Pydantic AI model works, and TypeSafe's Jev decision model is the recommended one.
@@ -28,16 +28,16 @@ pip/uv-add "pydantic-ai-harness[smart-grep]" "pydantic-ai-slim[typesafe]"
 ```
 
 Set `TYPESAFE_API_KEY` to judge with [Jev](#choosing-the-judge), or pass any other model as `model`.
-`SmartGrep` searches the run's [workspace](../workspace.md), so attach one next to it:
+`SmartFileSearch` searches the run's [workspace](../workspace.md), so attach one next to it:
 
 ```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai_harness import SmartGrep
+from pydantic_ai_harness import SmartFileSearch
 
 agent = Agent(
     'openai:gpt-6-luna',
-    capabilities=[LocalWorkspace('.'), SmartGrep(model='typesafe:jev-latest')],
+    capabilities=[LocalWorkspace('.'), SmartFileSearch(model='typesafe:jev-latest')],
 )
 
 result = agent.run_sync('Where do we retry failed webhook deliveries?')
@@ -72,7 +72,7 @@ A search runs in four steps:
    product of the two, and those at or above `threshold` are returned, best first, each with a focused
    excerpt of at most 12 lines.
 
-The result is a `SmartGrepResult`: the matches, how many passed but were cut by `limit`, coverage figures
+The result is a `SmartFileSearchResult`: the matches, how many passed but were cut by `limit`, coverage figures
 (files seen and skipped, snippets built and judged, and whether the shortlist was complete) and warnings, so
 an empty result is never mistaken for proof that the code does not exist. Matches in test files are labelled
 `kind='test'` rather than demoted.
@@ -116,44 +116,44 @@ local judge model if no source may leave the machine.
 
 ## Instructions
 
-`SmartGrep` adds discovery guidance to the system prompt: reach for `smart_grep` before exploratory text
+`SmartFileSearch` adds discovery guidance to the system prompt: reach for `smart_grep` before exploratory text
 search when locating unfamiliar behavior, use exact search for known symbols and exhaustive references, and
 fall back to regular search when results are weak or the tool fails. Pass `guidance` to replace it, or
 `guidance=''` to add none.
 
 ## Telemetry
 
-`SmartGrep` adds no spans of its own. With instrumentation on, each judgment is an agent run named
+`SmartFileSearch` adds no spans of its own. With instrumentation on, each judgment is an agent run named
 `smart_grep` under the tool call's span, so a search's judge cost is grouped under that name.
 
 ## Agent spec (YAML/JSON)
 
-`SmartGrep` works with Pydantic AI's [agent spec](../agent-spec.md):
+`SmartFileSearch` works with Pydantic AI's [agent spec](../agent-spec.md):
 
 ```yaml
 # agent.yaml
 model: openai:gpt-6-luna
 capabilities:
-  - SmartGrep:
+  - SmartFileSearch:
       model: typesafe:jev-latest
       threshold: 0.6
 ```
 
 ```python {test="skip"}
 from pydantic_ai import Agent
-from pydantic_ai_harness import SmartGrep
+from pydantic_ai_harness import SmartFileSearch
 
-agent = Agent.from_file('agent.yaml', custom_capability_types=[SmartGrep])
+agent = Agent.from_file('agent.yaml', custom_capability_types=[SmartFileSearch])
 ```
 
 Attach the workspace when running the agent, with `agent.run(..., workspace=...)`.
 
 ## API reference
 
-::: pydantic_ai_harness.smart_grep.SmartGrep
+::: pydantic_ai_harness.smart_grep.SmartFileSearch
 
-::: pydantic_ai_harness.smart_grep.SmartGrepResult
+::: pydantic_ai_harness.smart_grep.SmartFileSearchResult
 
-::: pydantic_ai_harness.smart_grep.SmartGrepMatch
+::: pydantic_ai_harness.smart_grep.SmartFileSearchMatch
 
-::: pydantic_ai_harness.smart_grep.SmartGrepCoverage
+::: pydantic_ai_harness.smart_grep.SmartFileSearchCoverage

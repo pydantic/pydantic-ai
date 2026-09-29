@@ -1,4 +1,4 @@
-"""Edge cases of `SmartGrep`'s language-agnostic structural chunking, driven by a minimal `Syntax`."""
+"""Edge cases of `SmartFileSearch`'s language-agnostic structural chunking, driven by a minimal `Syntax`."""
 
 from __future__ import annotations
 
