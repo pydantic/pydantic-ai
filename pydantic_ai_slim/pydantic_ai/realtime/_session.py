@@ -224,7 +224,7 @@ class _HeldCommit:
     """Where a user turn belongs on a connection that holds its commit back: wherever the commit goes out.
 
     Input sent while the commit is held reaches the provider first, so the turn's place is only known
-    once the connection sends it (see `RealtimeConnection.defers_audio_commit`). Turns recorded before
+    once the connection sends it (see `RealtimeConnection._defers_audio_commit`). Turns recorded before
     then wait here.
     """
 
@@ -907,7 +907,7 @@ class RealtimeSession:
         self._pending_anonymous_user_turn_anchors: deque[_UserTurnAnchor] = deque()
         self._pending_user_turn_anchors: dict[str, tuple[_UserTurnAnchor]] = {}
         self._user_turn_anchors: dict[str | None, _UserTurnAnchor] = {}
-        # The commit a connection that `defers_audio_commit` holds, which user turns starting now belong to,
+        # The commit a connection that `_defers_audio_commit` holds, which user turns starting now belong to,
         # and sent ones placed after a response that isn't recorded yet.
         self._held_commit = _HeldCommit()
         self._sent_commit: _HeldCommit | None = None
@@ -1030,7 +1030,7 @@ class RealtimeSession:
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
             # support because that is the mechanism, and a no-op where the provider resumes natively.
             self._connection.set_message_history(self.all_messages)
-        self._connection.set_audio_commit_listener(self._place_held_commit)
+        self._connection._set_audio_commit_listener(self._place_held_commit)  # pyright: ignore[reportPrivateUsage]
 
         self._session_instrumentation.start_session_span()
 
@@ -2883,7 +2883,7 @@ class RealtimeSession:
 
     def _user_turn_anchor_here(self) -> _UserTurnAnchor:
         """Where a user turn starting now belongs: with the held commit, after the response being produced, or else the last message."""
-        if self._connection.defers_audio_commit:
+        if self._connection._defers_audio_commit:  # pyright: ignore[reportPrivateUsage]
             if self._held_commit.has_audio or self._sent_commit is None:
                 return self._held_commit
             # No audio for the next commit yet, so a turn starting now is the provider reporting on audio
@@ -3056,7 +3056,7 @@ class RealtimeSession:
         self._input_audio.clear()
         self._user_turn_active = False
         request = self._new_request([part])
-        if self._connection.defers_audio_commit:
+        if self._connection._defers_audio_commit:  # pyright: ignore[reportPrivateUsage]
             # With the commit its audio went out with, or will.
             self._insert_user_request(self._user_turn_anchor_here(), request)
         else:

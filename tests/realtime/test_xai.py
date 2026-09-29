@@ -1571,7 +1571,7 @@ async def test_reconnect_during_the_held_commit_sends_the_whole_turn_again() -> 
     ws = _FailingSend([], sends=2)
     conn = _manual(ws, dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})
     commits_announced: list[None] = []
-    conn.set_audio_commit_listener(lambda: commits_announced.append(None))
+    conn._set_audio_commit_listener(lambda: commits_announced.append(None))  # pyright: ignore[reportPrivateUsage]
     await conn.send(_AUDIO)
     await conn.send(CommitAudio())
     await conn.send(_OTHER_AUDIO)

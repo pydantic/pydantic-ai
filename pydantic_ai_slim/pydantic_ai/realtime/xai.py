@@ -417,10 +417,10 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             await self._send_audio(self._held_audio.pop(0))
 
     @property
-    def defers_audio_commit(self) -> bool:
+    def _defers_audio_commit(self) -> bool:
         return self._manual_turns
 
-    def set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
+    def _set_audio_commit_listener(self, listener: Callable[[], None]) -> None:
         self._audio_commit_listener = listener
 
     @property
