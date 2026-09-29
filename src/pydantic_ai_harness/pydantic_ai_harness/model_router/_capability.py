@@ -126,10 +126,9 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
         # pick-one question with per-option criteria. A union of output types would instead
         # become several output tools, which a decision model refuses to fill.
         options = tuple(
-            Annotated[Literal[name], Field(description=choice.description)]  # pyright: ignore[reportInvalidTypeForm]
-            for name, choice in self.choices.items()
+            Annotated[Literal[name], Field(description=choice.description)] for name, choice in self.choices.items()
         )
-        choice_type = Union[options]  # pyright: ignore[reportInvalidTypeArguments]  # noqa: UP007
+        choice_type = Union[options]  # noqa: UP007
         return create_model('ModelRoute', __base__=_Route, choice=(choice_type, ...))
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> ModelRouter[AgentDepsT]:
