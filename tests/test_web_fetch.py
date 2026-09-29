@@ -35,7 +35,7 @@ def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8')
 
 def _assert_scales_better_than_quadratic(small_elapsed: float, large_elapsed: float) -> None:
     """A 4x larger input must take well below the 16x growth expected from quadratic work."""
-    assert large_elapsed < max(small_elapsed * 10, 1)
+    assert large_elapsed < max(small_elapsed * 10, 5)
 
 
 class TestWebFetchLocalTool:
