@@ -15,7 +15,7 @@ from opentelemetry.trace import NoOpTracer, Tracer
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import CapabilityOrdering
-from pydantic_ai.exceptions import SkipModelRequest, UserError
+from pydantic_ai.exceptions import ModelRetry, SkipModelRequest, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -187,6 +187,37 @@ class TestInputGuardrail:
         result = await agent.run('hello')
         assert result.output == 'done'
         assert calls == ['hello']
+
+
+def _no_forbidden(prompt: str) -> bool:
+    return 'forbidden' not in prompt
+
+
+class TestInputGuardrailBlockSticks:
+    """A block holds for the whole run, so an output retry cannot resend the blocked prompt."""
+
+    async def test_output_retry_after_block_never_reaches_model(self):
+        seen, model = _recording_model()
+        agent = Agent(model, capabilities=[InputGuardrail(guard=_no_forbidden)])
+
+        @agent.output_validator
+        def reject_refusal(output: str) -> str:
+            if output != 'ok':
+                raise ModelRetry('Keep going.')
+            return output
+
+        with pytest.raises(UnexpectedModelBehavior, match='output retries'):
+            await agent.run('forbidden request')
+        assert seen == []
+
+    async def test_block_does_not_leak_into_the_next_run(self):
+        seen, model = _recording_model()
+        agent = Agent(model, capabilities=[InputGuardrail(guard=_no_forbidden)])
+
+        blocked = await agent.run('forbidden request')
+        assert blocked.output == 'Request blocked by input guardrail.'
+        assert (await agent.run('hello')).output == 'ok'
+        assert seen == ['hello']
 
 
 class TestInputGuardrailRedaction:
