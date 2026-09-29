@@ -26,6 +26,7 @@ import anyio.to_thread
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.smart_file_search._chunks import (
+    MAX_TOTAL_BYTES,
     MAX_TOTAL_LINES,
     Chunk,
     LineTooLong,
@@ -225,7 +226,7 @@ async def _refresh(
     """Bring `index` up to date with `root`. Returns the listed file count and the skipped files."""
     paths, skipped = await list_files(workspace, root, glob)
     readable: set[str] = set()
-    lines = 0
+    lines = size = 0
     for offset in range(0, len(paths), _READ_BATCH):
         batch = paths[offset : offset + _READ_BATCH]
         contents = await asyncio.gather(*(read_or_error(workspace, posixpath.join(root, path)) for path in batch))
@@ -236,6 +237,9 @@ async def _refresh(
             else:
                 read.append((path, raw))
                 readable.add(path)
+                size += len(raw)
+        if size > MAX_TOTAL_BYTES:
+            raise ModelRetry(f'Search exceeds {MAX_TOTAL_BYTES >> 30} GiB of source. Narrow the directory or glob.')
         lines += await anyio.to_thread.run_sync(index.update, read)
         if lines > MAX_TOTAL_LINES:
             raise ModelRetry(f'Search exceeds {MAX_TOTAL_LINES:,} lines of source. Narrow the directory or glob.')

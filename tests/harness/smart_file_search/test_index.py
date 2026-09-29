@@ -113,7 +113,20 @@ async def test_discover_enforces_line_and_file_budgets(monkeypatch: pytest.Monke
     with pytest.raises(ModelRetry, match='exceeds 10 lines of source'):
         await _discover(_workspace(tmp_path), '.')
     monkeypatch.setattr(_chunks, 'MAX_FILES', 1)
-    with pytest.raises(ModelRetry, match='exceeds 1 files'):
+    with pytest.raises(ModelRetry, match=r'exceeds 1 files\. Narrow the directory\.$'):
+        await _discover(_workspace(tmp_path), '.')
+    with pytest.raises(ModelRetry, match=r'exceeds 1 files\. Narrow the directory or glob\.$'):
+        await _discover(_workspace(tmp_path), '.', glob='*.py')
+    # The file cap applies after the glob: one matching file is searchable in a larger workspace.
+    assert [c.path for c in (await _discover(_workspace(tmp_path), '.', glob='b.py')).chunks] == ['b.py']
+
+
+async def test_discover_enforces_byte_budget(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    (tmp_path / 'a.py').write_text('x = 1\n' * 50)
+    monkeypatch.setattr(_index, 'MAX_TOTAL_BYTES', 100 << 30)
+    assert (await _discover(_workspace(tmp_path), '.')).chunks
+    monkeypatch.setattr(_index, 'MAX_TOTAL_BYTES', 100)
+    with pytest.raises(ModelRetry, match='GiB of source'):
         await _discover(_workspace(tmp_path), '.')
 
 

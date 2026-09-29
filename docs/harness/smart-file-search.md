@@ -82,8 +82,8 @@ can fall back to regular search instead of acting on half-judged results.
 
 ## Large codebases
 
-A search is capped at 200,000 files and 50 million lines, enough for the Linux kernel; past that it asks the
-model to narrow `directory` or `glob`. Without caching, every search reads, chunks and indexes its directory
+A search is capped at 200,000 files (counted after `glob`), 50 million lines and 2 GiB of source, enough for
+the Linux kernel; past that it asks the model to narrow `directory` or `glob`. Without caching, every search reads, chunks and indexes its directory
 from scratch, which takes seconds for a typical repository and minutes for the kernel.
 
 Set `cache_index=True` to keep each searched directory's index between searches, for the life of the agent:

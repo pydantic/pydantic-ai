@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import posixpath
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
@@ -23,10 +23,12 @@ from pydantic_ai_harness.filesystem._ripgrep import RipgrepMissing, run_ripgrep
 from pydantic_ai_harness.smart_file_search._structure import Range, python_ranges
 from pydantic_ai_harness.smart_file_search._treesitter import treesitter_ranges
 
-# A search is bounded by files and lines, sized to fit the Linux kernel (~96k files, ~39M lines). Snippet
-# count is not capped: only the ranked shortlist is judged, and the index only reads the query's postings.
+# A search is bounded by files, lines and bytes, sized to fit the Linux kernel (~96k files, ~39M lines,
+# ~1.1 GiB). Snippet count is not capped: only the ranked shortlist is judged, and the index only reads the
+# query's postings.
 MAX_FILES = 200_000
 MAX_TOTAL_LINES = 50_000_000
+MAX_TOTAL_BYTES = 2 << 30
 MAX_FILE_BYTES = 1024 * 1024
 MAX_CHUNK_CHARS = 12_000
 WHOLE_DECLARATION_LINES = 160
@@ -121,18 +123,23 @@ async def list_files(workspace: Workspace, root: str, glob: str | None) -> tuple
 
     Honours `.gitignore`, skips hidden files and files over `MAX_FILE_BYTES`. `glob` only narrows that
     listing: ripgrep's own `--glob` overrides its ignore rules, so it would let `glob='.env'` pick a hidden,
-    ignored file and send its contents to the judge.
+    ignored file and send its contents to the judge. The file cap applies after the glob, so a narrow glob
+    can search a workspace with more than `MAX_FILES` files.
     """
-    paths, unreadable = await _ripgrep_files(workspace, root, [])
-    if glob:
-        matching, unreadable = await _ripgrep_files(workspace, root, ['--glob', glob])
-        wanted = set(matching)
-        paths = [path for path in paths if path in wanted]
+    if not glob:
+        return await _ripgrep_files(workspace, root, [], accept=lambda path: path, narrow='the directory')
+    matching, unreadable = await _ripgrep_files(
+        workspace, root, ['--glob', glob], accept=lambda path: path, narrow='the directory or glob'
+    )
+    wanted = set(matching)
+    paths, _ = await _ripgrep_files(
+        workspace, root, [], accept=lambda path: path if path in wanted else None, narrow='the directory'
+    )
     return paths, unreadable
 
 
 async def _ripgrep_files(
-    workspace: Workspace, root: str, arguments: list[str]
+    workspace: Workspace, root: str, arguments: list[str], *, accept: Callable[[str], str | None], narrow: str
 ) -> tuple[list[str], list[tuple[str, str]]]:
     try:
         paths, capped, unreadable = await run_ripgrep(
@@ -141,7 +148,7 @@ async def _ripgrep_files(
             cwd=root,
             limit=MAX_FILES,
             listing=True,
-            accept=lambda record: record.path,
+            accept=lambda record: accept(record.path),
         )
     except RipgrepMissing:
         raise ToolFailed(
@@ -149,7 +156,7 @@ async def _ripgrep_files(
             '(the `coder` extra does for a local workspace), or use regular file search instead.'
         ) from None
     if capped:
-        raise ModelRetry(f'Search exceeds {MAX_FILES} files. Narrow the directory.')
+        raise ModelRetry(f'Search exceeds {MAX_FILES} files. Narrow {narrow}.')
     return paths, [(u.path, u.reason) for u in unreadable]
 
 
