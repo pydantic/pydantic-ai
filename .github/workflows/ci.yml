@@ -681,11 +681,14 @@ jobs:
         }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
       BLOCKBUSTER_ENABLED: false
-      # Disables Temporal's workflow deadlock detector (temporalio reads this to set the
-      # per-activation budget to `None` instead of 2s). That budget is wall-clock, so it
-      # measures runner contention as readily as a blocking call, and a descheduled workflow
-      # thread trips it as `TMPRL1101`. The cost: a genuine in-workflow blocking call now
-      # hangs to the job timeout instead of failing in 2s.
+      # Puts every Temporal worker in debug mode, which disables the workflow deadlock detector
+      # (temporalio sets the per-activation budget to `None` instead of 2s). That budget is
+      # wall-clock, so it measures runner contention as readily as a blocking call, and a
+      # descheduled workflow thread trips it as `TMPRL1101`. The cost: a genuine in-workflow
+      # blocking call now hangs to the job timeout instead of failing in 2s. Since `temporalio`
+      # 1.29, debug mode also runs every workflow activation inline on the worker's event loop
+      # instead of in the executor thread a production worker uses, so on the `locked` legs only a
+      # test that unsets this variable runs workflow code on that thread.
       TEMPORAL_DEBUG: '1'
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
