@@ -9656,6 +9656,7 @@ async def test_anthropic_prompted_output_with_thinking(
 
     result = await Agent(model, output_type=int).run('What is 3 + 3?')
     body = request_capture.body()
+    assert body['thinking'] == {'type': 'enabled', 'budget_tokens': 3000}
     assert 'tool_choice' not in body
     assert 'output_config' not in body
     assert body['system'] == snapshot(
