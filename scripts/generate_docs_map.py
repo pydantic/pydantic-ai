@@ -10,16 +10,12 @@ import sys
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from difflib import unified_diff
-from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
+import tiktoken
 import yaml
 from pydantic import RootModel, ValidationError
-
-if TYPE_CHECKING:
-    from tiktoken.core import Encoding
 
 TOKEN_ENCODING = 'cl100k_base'
 PAGE_SLURP_TOKENS = 8000
@@ -71,7 +67,9 @@ class _Edge:
 
 
 @dataclass(frozen=True)
-class _DocsMap:
+class DocsMap:
+    """Pages, cross-links, and region order parsed from the published docs."""
+
     nodes: tuple[_Node, ...]
     edges: tuple[_Edge, ...]
     section_edges: tuple[_Edge, ...]
@@ -98,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         '--html',
         type=Path,
         metavar='PATH',
-        help='write an HTML viewer with the graph inlined (D3 is loaded from a CDN). Defaults to docs/map.html when regenerating',
+        help='also write the HTML viewer (graph and D3 inlined) to PATH',
     )
     args = parser.parse_args(argv)
 
@@ -107,7 +105,7 @@ def main(argv: list[str] | None = None) -> int:
     markdown = render_atlas(docs_map)
     atlas_path = root / ATLAS_RELATIVE_PATH
 
-    html = _render_html(docs_map)
+    html = render_html(docs_map)
     default_html_path = root / HTML_RELATIVE_PATH
 
     if args.check:
@@ -126,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
     return status
 
 
-def build_docs_map(root: Path) -> _DocsMap:
+def build_docs_map(root: Path) -> DocsMap:
     """Parse navigation, count tokens, and build the cross-link graph."""
     raw_pages = _collect_pages(root / NAV_RELATIVE_PATH)
     by_path = {page.path: page for page in raw_pages}
@@ -135,6 +133,7 @@ def build_docs_map(root: Path) -> _DocsMap:
     by_slug = _slug_index(raw_pages)
     docs_dir = root / 'docs'
 
+    encoding = tiktoken.get_encoding(TOKEN_ENCODING)
     tokens: dict[str, int] = {}
     edge_counts: Counter[tuple[str, str]] = Counter()
     for page in raw_pages:
@@ -142,7 +141,7 @@ def build_docs_map(root: Path) -> _DocsMap:
         if not file_path.is_file():
             raise SystemExit(f'docs page listed in navigation.yml is missing: {page.path}')
         text = file_path.read_text(encoding='utf-8')
-        tokens[page.path] = _token_count(text)
+        tokens[page.path] = len(encoding.encode_ordinary(text))
         for href in _extract_hrefs(text):
             target = _resolve_href(page.path, href, by_path, by_slug)
             if target is None or target == page.path:
@@ -181,10 +180,10 @@ def build_docs_map(root: Path) -> _DocsMap:
             section_counts[(src_top, dst_top)] += n
     section_edges = tuple(_Edge(src=src, dst=dst, n=n) for (src, dst), n in sorted(section_counts.items()))
     region_order = tuple(dict.fromkeys(page.top for page in raw_pages))
-    return _DocsMap(nodes=nodes, edges=edges, section_edges=section_edges, region_order=region_order)
+    return DocsMap(nodes=nodes, edges=edges, section_edges=section_edges, region_order=region_order)
 
 
-def render_atlas(docs_map: _DocsMap) -> str:
+def render_atlas(docs_map: DocsMap) -> str:
     """Render the compact agent-facing markdown atlas."""
     nodes = docs_map.nodes
     total_pages = len(nodes)
@@ -254,6 +253,10 @@ def _collect_pages(path: Path) -> list[_RawPage]:
 
 def _walk_nav(item: object, top: str, section_path: str) -> list[_RawPage]:
     data = _as_dict(item, 'navigation entry')
+    if 'link' in data:
+        return []
+    if 'folder' in data or 'include' in data:
+        raise SystemExit(f'navigation entry {sorted(data)}: `folder` and `include` entries are not supported yet')
     if 'page' in data:
         title = _as_str(data.get('page'), 'page')
         path = _as_str(data.get('path'), 'path')
@@ -297,7 +300,7 @@ def _as_list(value: object, where: str) -> list[object]:
 
 def _as_str(value: object, where: str) -> str:
     if not isinstance(value, str):
-        raise SystemExit(f'{where}: expected a string {where}, got {type(value).__name__}')
+        raise SystemExit(f'{where}: expected a string, got {type(value).__name__}')
     return value
 
 
@@ -377,23 +380,6 @@ def _posix_join(source_path: str, href_path: str) -> str | None:
     return '/'.join(out)
 
 
-def _token_count(text: str) -> int:
-    return len(_encoding().encode_ordinary(text))
-
-
-@cache
-def _encoding() -> Encoding:
-    try:
-        import tiktoken
-    except ImportError as e:
-        raise SystemExit(
-            'tiktoken is required to generate the docs atlas (`cl100k_base`). '
-            'Install the openai extra (`uv sync --extra openai`). '
-            'Refusing to fall back to a character heuristic because committed output must be deterministic.'
-        ) from e
-    return tiktoken.get_encoding(TOKEN_ENCODING)
-
-
 def _region_hub(nodes: list[_Node]) -> _Node:
     """Pick the sidebar entry point, not the most-linked page.
 
@@ -433,7 +419,7 @@ def _check_file(path: Path, expected: str, label: str) -> int:
     return 1
 
 
-def _graph_payload(docs_map: _DocsMap) -> dict[str, object]:
+def _graph_payload(docs_map: DocsMap) -> dict[str, object]:
     nodes_json = [
         {
             'title': node.title,
@@ -467,7 +453,8 @@ def _graph_payload(docs_map: _DocsMap) -> dict[str, object]:
     }
 
 
-def _render_html(docs_map: _DocsMap) -> str:
+def render_html(docs_map: DocsMap) -> str:
+    """Render the interactive viewer with the graph and D3 inlined."""
     if not _VIEWER_TEMPLATE.is_file():
         raise SystemExit(f'viewer template is missing: {_VIEWER_TEMPLATE}')
     template = _VIEWER_TEMPLATE.read_text(encoding='utf-8')
