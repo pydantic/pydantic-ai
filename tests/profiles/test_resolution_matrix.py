@@ -1850,7 +1850,7 @@ def test_sglang_gpt_oss_hf_namespace():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
-            'openai_supports_tool_choice_required': False,
+            'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_multiple_system_messages': False,
