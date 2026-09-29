@@ -562,6 +562,7 @@ order plugin instructions, renderers, and status segments are consulted in.
 | `repo_context` | `pydantic_clai2.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_clai2.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+| `slack` (off until enabled) | `pydantic_clai2.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) is built in too, but starts disabled because
 it needs your Day AI account.
@@ -570,15 +571,16 @@ it needs your Day AI account.
 
 `/plugins` lists only the built-ins above, plus plugins you or the repository
 declared. It does not list every public harness capability for Space-enable:
-hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
+hosted-MCP integrations such as GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
 CLAI plugins written for them, such as the disabled built-ins
 [`day_ai`](#day_ai-day-ai-crm-tools),
 [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
 [`logfire_mcp`](#logfire-mcp-query-your-telemetry),
 [`notion`](#notion-workspace-tools),
-[`ordinal`](#ordinal-social-posts-in-ordinal), and
-[`pylon`](#pylon-support-issues-and-accounts-in-pylon).
+[`ordinal`](#ordinal-social-posts-in-ordinal),
+[`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
+[`slack`](#slack-your-slack-workspace-as-you).
 
 To run any other capability, declare it on purpose under an id of your choice,
 with JSON constructor settings if it takes them:
@@ -596,7 +598,7 @@ Earlier releases listed every harness capability here, disabled. If you enabled
 one of those, it was saved as your own declaration, so it keeps loading and now
 shows as a saved plugin; `/plugins remove NAME` forgets it. The exception is a
 saved copy of an entry that now has its own built-in under the same id, such as
-`google_workspace` or `ordinal`: it becomes that built-in, keeping whether it was enabled.
+`google_workspace`, `ordinal`, or `slack`: it becomes that built-in, keeping whether it was enabled.
 
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
@@ -1006,6 +1008,91 @@ cannot connect.
 saved browser sign-in and drops the one in use, so the next browser run signs in
 again; it does not touch a `/keys` entry or the environment variable. Disabling
 the plugin does not sign you out.
+
+### `slack`: your Slack workspace, as you
+
+`slack` (`pydantic_clai2.slack`) connects harness
+[`Slack`](../pydantic_ai_harness/pydantic_ai_harness/slack/README.md) to Slack's hosted MCP server.
+It ships disabled. The tools act as the user whose token CLAI connects with, so
+anything the agent posts appears under your name. If you enabled or disabled the
+earlier raw `pydantic_ai_harness.slack:Slack` catalog row, CLAI loads this plugin
+in its place and keeps your choice. A declaration with your own
+settings is left as it is.
+
+Turning it on (Space in `/plugins`, `/plugins enable slack`, or `/plugins add`),
+or pressing `C` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
+reopens it later, with no reinstall. The list is searchable, Enter edits the
+highlighted row, `R` resets it, and **Save & close** or Esc closes. Every change is saved as you make it:
+
+| Row | Choices | Saved in |
+|---|---|---|
+| Sign-in | user token from `/keys` (default) or browser sign-in through your Slack app | plugin settings, as `auth` (`key` or `browser`) |
+| User token (`key` only) | a key from `/keys`, or a new user token (`xoxp-`) | `/keys`; only the key's name is kept for Slack, in the credential store |
+| Slack app (`browser` only) | creates your CLAI Slack app, then takes its Client ID | plugin settings, as `client_id` (public, not a secret) |
+| Browser sign-in (`browser` only) | signs in again, or `R` signs out | the tokens, in the credential store (`slack-oauth`) |
+| Tools | read-only (default) or read and write | plugin settings, as `read_only` |
+| Server instructions | forwarded (default) or left out | plugin settings, as `include_instructions` |
+
+**User token.** Enter shows the names of your saved keys. Pick one, or, when
+`/keys` is empty, paste a token into the masked input. A new token is saved in `/keys` as
+`SLACK_USER_TOKEN` (the name harness `Slack` documents, used here only as a label). If that
+name already holds a token, CLAI asks before replacing it, because every plugin and
+connection that uses the key would change with it. Slack's MCP server acts as a
+user and rejects bot tokens, so the menu refuses an `xoxb-` token whether picked
+or pasted; there is no bot-token mode. The token also decides the workspace and
+user: to use another workspace, save its token under another name, such as
+`SLACK_USER_TOKEN_ACME`, and pick that. `R` on this row forgets the choice, which
+turns the Slack tools off, and leaves the key in `/keys`. The row notes when no
+key is chosen or the chosen key is gone from `/keys`.
+
+**Browser sign-in.** Slack's MCP server has no dynamic client registration and
+serves only apps installed in your workspace, so browser sign-in goes through your
+own Slack app. CLAI creates it for you. Choose **Browser sign-in** in the Sign-in row,
+then press Enter on **Slack app**. CLAI opens Slack's create-app page filled in with
+CLAI's manifest. Pick your workspace, click **Create**, and paste the app's **Client
+ID** (Basic Information, App Credentials). CLAI then opens Slack's sign-in page and
+waits up to five minutes behind a screen that shows the URL, in case no browser
+opens (over SSH, for example); Esc cancels. You never copy a token or a client
+secret: the manifest enables PKCE, so Slack treats the app as a public client and
+neither signing in nor renewing needs a secret. The manifest also turns on the
+app's MCP access (`is_mcp_enabled`), which Slack requires, and token rotation.
+Access tokens last 12 hours; CLAI renews them before a turn when they are close
+to expiring, keeping the rotated refresh token in the credential store. If CLAI
+goes unused for 30 days, the refresh token expires and you sign in again.
+
+A read-only sign-in asks Slack for read scopes only, so the token itself cannot
+post. After switching Tools to read and write, press Enter on **Browser sign-in**
+to sign in again with the write scopes. Until you do, turns have no Slack tools
+and CLAI says to sign in again, rather than offering write tools the token cannot
+use. The redirect is fixed at
+`http://localhost:53118/slack/callback`, because Slack matches the registered URL
+exactly. Workspaces that require admin approval for new apps need that approval
+first. `R` on Browser sign-in signs out; `R` on Slack app also forgets the app.
+
+Harness `Slack` has no server URL option: it always connects to
+`https://mcp.slack.com/mcp`, so the menu has no base URL row. Plugin settings never
+hold the token, and a pasted `token` setting is rejected. CLAI does not read the
+`SLACK_USER_TOKEN` environment variable either. If it is set and no key is
+chosen, CLAI says so and points at the menu.
+
+With a user token, before every turn CLAI reads the chosen key's current value from `/keys`, so
+replacing it there takes effect on the next turn with no reload. Until you choose
+a key (or, for browser sign-in, set up the Slack app), turns just have no Slack
+tools, without a warning; the menu rows say what is missing. When the chosen key
+was deleted or the saved choice is invalid, CLAI prints why and that turn has no
+Slack tools. While Slack uses a key, `/keys` will not
+rename it.
+
+| Key | Default | Does |
+|---|---|---|
+| `auth` | `key` | `key` connects with the user token chosen from `/keys`; `browser` with the browser sign-in |
+| `client_id` | none | your CLAI Slack app's Client ID, for `browser` |
+| `read_only` | `true` | keep only the tools Slack marks read-only, so the agent can search and read but not post or edit |
+| `include_instructions` | `true` | forward the Slack server's own instructions to the agent |
+
+To let the agent send messages and edit canvases as you, choose **read and
+write** in the Tools row. The equivalent typed command is
+`/plugins add slack pydantic_clai2.slack '{"read_only": false}'`.
 
 ## Managing plugins
 
@@ -1490,6 +1577,47 @@ the conventional environment-style label (`GITHUB_TOKEN`, `ORDINAL_ACCESS_TOKEN`
 so plugins that need the same credential share it. The label is only a name; it
 does not export or read an environment variable.
 
+For a token row, `pydantic_clai2.plugin_keys.choose_key(name=..., label=..., runners=...)`
+shows the searchable `/keys` picker, or a masked input when no keys are saved.
+It saves a new value under `name` only after confirming a replacement, and
+returns a `KeyReference` to persist in place of the secret. Call it through
+`plugin_keys.on_loop` from the menu's worker thread. The built-in `slack` plugin
+is a complete example.
+
+### Sign in through the browser: `pkce.PKCESignIn`
+
+For a service whose OAuth needs a registered app but accepts PKCE instead of a
+client secret (a public client), describe the app once and let CLAI run the
+authorization-code flow, keep the tokens, and renew them:
+
+```python
+from pydantic_clai2.pkce import PKCESignIn, PublicClient
+
+client = PublicClient(
+    authorize_url='https://example.com/oauth/authorize',
+    token_url='https://example.com/oauth/token',
+    client_id=settings.client_id,  # public: plugin settings may hold it
+    redirect_uri='http://localhost:53119/example/callback',  # registered with the app, fixed port
+    scopes=('read',),
+)
+sign_in = PKCESignIn(client=client, account='example-oauth', service='Example', setup='/plugins configure example')
+```
+
+`await plugin_keys.browser_sign_in(sign_in, runners)` signs in from a settings
+menu behind a waiting screen that shows the URL, and returns `False` when the user
+presses Esc. Outside a menu, `await sign_in.sign_in()` opens the browser directly.
+Before each run, `await sign_in.token()` returns an access token, refreshing it
+first when it expires within five minutes and saving a rotated refresh token. It
+raises `UserError` naming `setup` when there is no usable sign-in, so a plugin can
+turn its tools off with that message. Refreshes are serialized across CLAI
+processes, because a service that rotates refresh tokens invalidates the old one.
+Token responses may report errors the standard way or, like Slack, with HTTP 200
+and an `error` field; both are handled. The tokens are stored under `account` in
+the credential store with the scopes the service granted, tied to the Client ID.
+Changing the app, or asking for scopes the sign-in did not grant, means signing in
+again. Services with Dynamic Client Registration need none of this: add them as
+`/mcp` servers with OAuth.
+
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
 `host.conversation` is the retained history: `messages` is a snapshot,
@@ -1611,7 +1739,9 @@ the secret on the command line.
 
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
 and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
-[`logfire_mcp`](#logfire-mcp-query-your-telemetry), [`notion`](#notion-workspace-tools), and [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
+[`logfire_mcp`](#logfire-mcp-query-your-telemetry), [`notion`](#notion-workspace-tools),
+[`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
+[`slack`](#slack-your-slack-workspace-as-you) show a
 searchable list of names. Choose one, enter a different key privately, or
 choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
 login flows are unchanged. Select keys only for endpoints you trust.
@@ -1630,6 +1760,12 @@ plugins, so built-in plugins look for conventional labels, such as `LOGFIRE_API_
 tools can share. A cross-process lock
 serializes key changes and connection saves so concurrent CLAI sessions do not
 overwrite each other's key edits. The lock file contains no credentials.
+
+Manage plugin secrets here too: a plugin that needs a token stores a reference to
+a named key, never the token itself, because plugin settings are plaintext
+SQLite. Several connections can share one key: name it the way its provider's
+tools do, such as `SLACK_USER_TOKEN` or `GITHUB_TOKEN`, and choose that name in
+each connection. Replacing it then updates all of them.
 
 Existing connections with inline credentials, manually entered connection keys,
 and browser logins remain unchanged. To switch an existing connection to a
@@ -1733,8 +1869,8 @@ remain visible so they can be reset. Choices depend on the model and API: Chat C
 controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort
 and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
-1024 and below an explicit `max_tokens`. If classic thinking has no output cap,
-CLAI reserves the thinking budget plus 4096 output tokens. Other unset fields
+1024 and below an explicit `max_tokens`. Without one, Pydantic AI
+leaves room for the answer beyond the budget. Other unset fields
 use the provider default.
 Explicit native thinking settings take precedence over generic `thinking`.
 GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,

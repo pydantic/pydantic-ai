@@ -169,8 +169,6 @@ class ModelSettingsForm(BaseModel):
         thinking = self._anthropic_thinking()
         if thinking is not None:
             anthropic['anthropic_thinking'] = thinking
-            if thinking['type'] == 'enabled' and self.max_tokens is None:
-                anthropic['max_tokens'] = (self.anthropic_thinking_budget or 10000) + 4096
         betas = self._anthropic_betas(thinking=thinking)
         if betas:
             anthropic['extra_headers'] = {'anthropic-beta': ','.join(betas)}

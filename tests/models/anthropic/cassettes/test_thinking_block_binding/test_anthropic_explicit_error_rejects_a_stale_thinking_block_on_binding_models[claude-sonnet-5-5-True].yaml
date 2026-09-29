@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1365"
+      - "1707"
       content-type:
       - application/json
       host:
@@ -19,26 +19,29 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 128000
         messages:
         - role: user
           content:
-          - text: Think about it, then say what 17*23 is.
+          - text: Think it through, then say what 4817 * 2963 is.
             type: text
         - role: assistant
           content:
           - thinking: ""
             signature: >-
-              CAQSwwQKEAgSGAI4AUIIdGhpbmtpbmcSDDGW2gS7TgOR+pS0OhoMuCVPSNZL0XvvMkqjIjDT/TERjoM3rKglD83TMq91krvEpmnGsG2Peowx1SNcb2D1J05qE0i1J+0A1wyRDnoq4AOfeDfBDni3/xYaEHwttIFWkNSzrjWn1Do22gXuy/kg45c2jgEK9/ZGfFoWiqFx+bdOHLJjPKmaf8Z99LMukjBWrqHmm9F9BKibyl4ZlCuhAF5QfnecNzc9O3EfdP+eNcomEJYpqgYxNBT7Dpe5X7gerDozL2tdibKApE6Aj/DJzV38AFvEpYAa0QJNX2tACrzCV0bDfwwlzzT3jPfF18144UReC+OvpfqECOHHpOGavTYvKM4t7J/HyAcbwABOVEcQe0KfsbuJYFPIkbH+VVzKCoY1TUw7pYOxJMwXKradQNY6xwnuKi6ZYe00m4tYYy+4gjBgAm8DplndgYn3H4qGdqe8BUAQLASz52kOZu6x6L7BWmZqSvw5xHmVCGGdb/NrtNX92MuTGvb/LUg/k2OT+xqOw5Dj9sZ5ydmPT5ndXeNqF78Vvvk95dsp0YUT0pPOq5DigStbK+Jsg9GgHRI7DZOQ2WoN9kq3V9S7us2S6FYrskiGENoOpmFiqobVx7c0YGjhJDTJwSTjDqH50ifhWZDpTzkzUWOfry72AjrnldmQjSqbqtIIa2Y7MkVVUL1eFZ6KPiBKv8/uiID07kmqbD3Asw7hX1WKAOQFOQrLhy7W/oCdXwLmkwIm8mxZw1oYAQ==
+              CAQS9AUKEAgSGAI4AUIIdGhpbmtpbmcSDNjU1yYUrlnITymIYBoMwIZuwaHyTe/SURiLIjC5l7vGqkrpX2wPuRnvWDV0blsQWlHUrEGKz2U78EygAGTgZsVU75OzhtlX3tdl6ZEqkQXW1mf1N11PBuYT/HQ7JM+mbN14YW7zQbl/EJHuk8cCrPyHVfIhQTl7BUbxyqcCFjwy0ZgN3bOuY78nA/2BbUhd1SJlu5TkHnzKBw7yqBTuHE3zjLS0KhaOmIlZyFFU0KzTwiK9Rqsr1oF4XD3IvPz/ACEGpWidDxoIuMmF21n9nlbY8Qs/bZVpXMqzaM3+oRe9Z47wk2Etawwt+78gzk4dd4gIdniQDHBGDpSt7DfAC3N3nFv5pLMjBP8X7oimb7YH8xO9z/AJPHssWrIZIshH5CF7pP9y4zxE2SF1AfNvpGr+rtApxgYduqcxFjATlgpC7quZUhw5FnBxTqRzJloSlaMdo1gc4P3J2A6hvjsONLtEBIlfeJJA4VMQDXNoR4WUPhLSOoOjUHaWJBJ6Vm96mKnsc+XMLBmDr1Om1kC+SkJMKQ63xkcBcg2WK9CWPUYScZOd5/AsJAb6cy561Fry7PKj6qWSx4wzcgUXTtKjOOfvQ4v/Wrux5ecHl/kVg9H+MylMzwkqfjVkOWjfWqxPVv/FMLWkmUzPf/Z9wKrD8RU2CLm4RPNPAPFAl+GIF79zHD+0dgNRr7qdcO8QX/VezZEIkmRyB3e2hM8gMa9TCY3bPD72bf4A4p/wKj3LhSPjIzMCxcUpQ1lUOhfRl1RdZBkdEapcirWocZQPp+gEmZ3v6cOZcbwrfq3x84RBalewGDvvh+M7jw3IP0+uGXrF7p7AueFugTmeAp8mwVa4J5nTiY5gFFKdqxcNAcjzcjaS7+aLo6rQi/c8aWusQV/FpIMY1gRZNgJKzsfI/vJ51pyHm/9y099zP91V8s8FO/7zxu0XTKSSl3x6PzR55dK6fc4LE4l7WWQ5qF8ZM2AdTKwYAQ==
             type: thinking
-          - text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**
+          - text: |-
+              **4817 × 2963 = 14,272,771**
+
+              Method: 4817 × 3000 = 14,451,000, and 4817 × 37 = 178,229. Subtracting gives 14,451,000 − 178,229 = 14,272,771.
             type: text
         - role: user
           content:
           - text: And times two?
             type: text
         model: claude-sonnet-5-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: You are a helpful assistant. Answer briefly. Today is 2026-09-01.
@@ -58,7 +61,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-2bfadc0d85d80829dd6c37bf5c5d96da-1e1d6f3919c17da7-01
+      - 00-bdbdee434cf896bf0e96279dbfba993c-d363089d9ddbd4e8-01
       transfer-encoding:
       - chunked
       vary:
@@ -70,8 +73,8 @@ interactions:
         error:
           type: invalid_request_error
           message: "messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to \"drop_block\". The `system` prompt differs from the one this block was created with."
-        request_id: req_011CfWguFfmvx1C6ALgwHdE6
-  recorded_at: 2026-09-28T23:15:54.246506+00:00
+        request_id: req_011CfY4eXTwjo4Mb2Bs7XvLX
+  recorded_at: 2026-09-29T16:41:40.171965+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -83,7 +86,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "285"
+      - "293"
       content-type:
       - application/json
       host:
@@ -91,65 +94,108 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 128000
         messages:
         - role: user
           content:
-          - text: Think about it, then say what 17*23 is.
+          - text: Think it through, then say what 4817 * 2963 is.
             type: text
         model: claude-sonnet-5-5
         output_config:
           effort: xhigh
-        stream: false
+        stream: true
         system:
         - type: text
           text: You are a helpful assistant. Answer briefly.
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-1bb1f843eff42e80d2964001fdfd2c2d-5671645c5bd98890-01
+      - 00-0fca3454579e6d449df7e9e516454a96-1eb39ec5855a0a6b-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-sonnet-5-5
-        id: msg_011CfWguBm8kLiXwv5tkzMKu
-        type: message
-        role: assistant
-        content:
-        - type: thinking
-          thinking: ""
-          signature: >-
-            CAQSwwQKEAgSGAI4AUIIdGhpbmtpbmcSDDGW2gS7TgOR+pS0OhoMuCVPSNZL0XvvMkqjIjDT/TERjoM3rKglD83TMq91krvEpmnGsG2Peowx1SNcb2D1J05qE0i1J+0A1wyRDnoq4AOfeDfBDni3/xYaEHwttIFWkNSzrjWn1Do22gXuy/kg45c2jgEK9/ZGfFoWiqFx+bdOHLJjPKmaf8Z99LMukjBWrqHmm9F9BKibyl4ZlCuhAF5QfnecNzc9O3EfdP+eNcomEJYpqgYxNBT7Dpe5X7gerDozL2tdibKApE6Aj/DJzV38AFvEpYAa0QJNX2tACrzCV0bDfwwlzzT3jPfF18144UReC+OvpfqECOHHpOGavTYvKM4t7J/HyAcbwABOVEcQe0KfsbuJYFPIkbH+VVzKCoY1TUw7pYOxJMwXKradQNY6xwnuKi6ZYe00m4tYYy+4gjBgAm8DplndgYn3H4qGdqe8BUAQLASz52kOZu6x6L7BWmZqSvw5xHmVCGGdb/NrtNX92MuTGvb/LUg/k2OT+xqOw5Dj9sZ5ydmPT5ndXeNqF78Vvvk95dsp0YUT0pPOq5DigStbK+Jsg9GgHRI7DZOQ2WoN9kq3V9S7us2S6FYrskiGENoOpmFiqobVx7c0YGjhJDTJwSTjDqH50ifhWZDpTzkzUWOfry72AjrnldmQjSqbqtIIa2Y7MkVVUL1eFZ6KPiBKv8/uiID07kmqbD3Asw7hX1WKAOQFOQrLhy7W/oCdXwLmkwIm8mxZw1oYAQ==
-        - type: text
-          text: 17 × 23 = 17 × 20 + 17 × 3 = 340 + 51 = **391**
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 41
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 66
-          output_tokens_details:
-            thinking_tokens: 30
-          service_tier: standard
-          inference_geo: global
-        diagnostics: null
-  recorded_at: 2026-09-28T23:15:54.054728+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CfY4eLwvYxzqPuKVk7ehb","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}         }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS9AUKEAgSGAI4AUIIdGhpbmtpbmcSDNjU1yYUrlnITymIYBoMwIZuwaHyTe/SURiLIjC5l7vGqkrpX2wPuRnvWDV0blsQWlHUrEGKz2U78EygAGTgZsVU75OzhtlX3tdl6ZEqkQXW1mf1N11PBuYT/HQ7JM+mbN14YW7zQbl/EJHuk8cCrPyHVfIhQTl7BUbxyqcCFjwy0ZgN3bOuY78nA/2BbUhd1SJlu5TkHnzKBw7yqBTuHE3zjLS0KhaOmIlZyFFU0KzTwiK9Rqsr1oF4XD3IvPz/ACEGpWidDxoIuMmF21n9nlbY8Qs/bZVpXMqzaM3+oRe9Z47wk2Etawwt+78gzk4dd4gIdniQDHBGDpSt7DfAC3N3nFv5pLMjBP8X7oimb7YH8xO9z/AJPHssWrIZIshH5CF7pP9y4zxE2SF1AfNvpGr+rtApxgYduqcxFjATlgpC7quZUhw5FnBxTqRzJloSlaMdo1gc4P3J2A6hvjsONLtEBIlfeJJA4VMQDXNoR4WUPhLSOoOjUHaWJBJ6Vm96mKnsc+XMLBmDr1Om1kC+SkJMKQ63xkcBcg2WK9CWPUYScZOd5/AsJAb6cy561Fry7PKj6qWSx4wzcgUXTtKjOOfvQ4v/Wrux5ecHl/kVg9H+MylMzwkqfjVkOWjfWqxPVv/FMLWkmUzPf/Z9wKrD8RU2CLm4RPNPAPFAl+GIF79zHD+0dgNRr7qdcO8QX/VezZEIkmRyB3e2hM8gMa9TCY3bPD72bf4A4p/wKj3LhSPjIzMCxcUpQ1lUOhfRl1RdZBkdEapcirWocZQPp+gEmZ3v6cOZcbwrfq3x84RBalewGDvvh+M7jw3IP0+uGXrF7p7AueFugTmeAp8mwVa4J5nTiY5gFFKdqxcNAcjzcjaS7+aLo6rQi/c8aWusQV/FpIMY1gRZNgJKzsfI/vJ51pyHm/9y099zP91V8s8FO/7zxu0XTKSSl3x6PzR55dK6fc4LE4l7WWQ5qF8ZM2AdTKwYAQ=="}       }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**4"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"817 × 2963 ="}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 14,272,771**"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n\nMethod"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":": 4817 × 3"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"000 ="}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 14,451,000, and"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 4817 × 37 "}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"= 178,229. Sub"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"tracting g"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ives 14,451,000 "}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"− 178,229 = "}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"14,272,771."}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":212,"output_tokens_details":{"thinking_tokens":129}}       }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+  recorded_at: 2026-09-29T16:41:39.969227+00:00
