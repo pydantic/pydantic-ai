@@ -274,6 +274,9 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # A prefix match like every other id check here, so a dated or `-preview` snapshot of the model
     # gets the same flags: an exact match would send such a snapshot a thinking level it rejects.
     is_3_8_live = model_name.startswith('gemini-3.8-live') and not is_extended_thinking
+    # Vertex's half-cascade Live model (plus its pinned `-NNN`/`@` versions), which differs from the
+    # native-audio ones in a few ways below.
+    is_half_cascade = re.fullmatch(r'gemini-live-2\.5-flash(?:-\d{3}|@.+)?', model_name) is not None
     thinking_levels = next(
         (levels for prefix, levels in _REALTIME_MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -285,9 +288,6 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # result, as it does for `BLOCKING`. On those it's the session's choice, via the `async_tool_calls`
     # setting. Extended thinking has no other mode: it answers `1007 BLOCKING function calls are not
     # supported for this model` to a `BLOCKING` declaration (verified live 2026-09-16).
-    # Vertex's half-cascade Live model (plus its pinned `-NNN`/`@` versions), which differs from the
-    # native-audio ones in a few ways below.
-    is_half_cascade = re.fullmatch(r'gemini-live-2\.5-flash(?:-\d{3}|@.+)?', model_name) is not None
     async_tool_call_mode: AsyncToolCallMode = 'never'
     if is_extended_thinking:
         async_tool_call_mode = 'always'
@@ -295,7 +295,7 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
         async_tool_call_mode = 'optional'
     profile: GoogleRealtimeModelProfile = {
         'supports_image_input': True,
-        # Every general-purpose Live model is audio-only: a session asking for `TEXT` is closed with
+        # The speech-to-speech Live models are audio-only: a session asking for `TEXT` is closed with
         # `1007 The requested combination of response modalities (TEXT) is not supported by the
         # model`. Verified live against all four the Developer API serves — the three
         # `gemini-2.5-flash-native-audio-*` variants *and* `gemini-3.1-flash-live-preview` — bare

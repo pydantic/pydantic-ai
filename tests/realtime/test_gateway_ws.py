@@ -128,4 +128,4 @@ async def test_gateway_gemini_half_cascade_text_output(
     response = session.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     assert [type(part).__name__ for part in response.parts] == ['TextPart']
-    assert 'four' in response.text.lower()
+    assert response.text == snapshot('Four.')
