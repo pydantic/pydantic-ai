@@ -280,22 +280,25 @@ async def test_settings_cannot_hold_a_secret_or_unknown_options(tmp_path: Path, 
     assert shell.loader.capabilities() == []
 
 
-async def test_plugins_menu_configure_key_opens_the_settings_menu(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_plugins_menu_enabling_opens_the_settings_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     shell = Shell(tmp_path)
     script(monkeypatch, lists=[pick('read_only')], choices=[pick('true')])
+    notices: list[str | None] = []
 
-    def run(menu: PluginMenu[None]) -> MenuResult | None:
-        [item] = menu.items()
+    def run(menu: PluginMenu[None]) -> MenuResult:
+        notices.append(menu.notice)
+        item, save_and_close = menu.items()
+        if len(notices) > 1:
+            return MenuResult(item=save_and_close)
         assert menu.configure(Redraw(), item) is None
-        assert menu.notice == 'Enable notion before configuring it.'
+        assert menu.notice == 'Enable notion to configure it.'
         menu.notice = None
-        menu.toggle(Redraw(), item)
-        assert menu.notice == 'Press C to configure notion.'
-        return menu.configure(Redraw(), item)
+        result = menu.toggle(Redraw(), item)
+        assert result is not None
+        return result
 
     assert await open_plugins_menu(shell.loader, run=run) == 'Saved Tools.'
+    assert notices == [None, 'Saved Tools.']
     assert (await shell.built()).read_only
 
 
@@ -308,12 +311,12 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu(tmp_path: Path) -> No
     with pytest.raises(ValueError, match='no settings menu'):
         await shell.loader.configure('plain')
 
-    def run(menu: PluginMenu[None]) -> MenuResult | None:
+    def run(menu: PluginMenu[None]) -> MenuResult:
         plain = next(item for item in menu.items() if item.value == 'plain')
         assert menu.configure(Redraw(), MenuItem('none', value=None)) is None
         assert menu.configure(Redraw(), plain) is None
         assert menu.notice == 'plain has no settings menu.'
-        return None
+        return MenuResult(cancelled=True)
 
     assert await open_plugins_menu(shell.loader, run=run) == ''
 
