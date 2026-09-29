@@ -374,6 +374,8 @@ class GeminiServer:
                 response.terminal_read = now
             if tags.get('stall') and response.stall_read is None:
                 response.stall_read = now
+        if (word := tags.get('word')) is not None:
+            self.truth.word_read.setdefault(word, now)
         for call_id in tags.get('calls', ()):
             self.truth.tool_calls[call_id].read = True
         for key, tokens in tags.get('usage', {}).items():
@@ -523,6 +525,7 @@ class GeminiServer:
             ),
             response=response.key,
             content=True,
+            word=word,
         )
 
     def call_tools(self, count: int = 1) -> list[str]:

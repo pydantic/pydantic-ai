@@ -125,8 +125,8 @@ class OpenAIServer:
         self._refusals: dict[str, list[str]] = {}
         self._next_error = 1
         self._next_event = 1
-        self.late_terminals = 0
-        """How many `response.done`s were held back until after the next response had started."""
+        self.late_terminals: set[str] = set()
+        """Responses whose (cancelled) `response.done` is, or was, held back past the start of the next response."""
         self.late_cancels = 0
         """How many `response.cancel`s arrived with no response left to cancel (it had already finished)."""
         # Client input index (from `event_id`) -> the input's ground-truth key. The connection numbers its
@@ -136,16 +136,11 @@ class OpenAIServer:
         self._conversation_id = 'conv_simulated'
         # The finished conversation, as `(role, text)`, which an xAI resumption replays.
         self._finished_items: list[tuple[Literal['user', 'assistant'], str]] = []
-        self._audio_delta, self._transcript_delta, self._transcript_done = (
-            ('response.audio.delta', 'response.audio_transcript.delta', 'response.audio_transcript.done')
-            if dialect == 'azure'
-            # Azure's Voice Live speaks the beta event names; the shared mapper accepts both.
-            else (
-                'response.output_audio.delta',
-                'response.output_audio_transcript.delta',
-                'response.output_audio_transcript.done',
-            )
-        )
+        # Azure OpenAI speaks the GA event names too (every `test_azure_ws` cassette does); only Voice Live, which
+        # has a connection class of its own that isn't simulated, still uses the beta names.
+        self._audio_delta = 'response.output_audio.delta'
+        self._transcript_delta = 'response.output_audio_transcript.delta'
+        self._transcript_done = 'response.output_audio_transcript.done'
 
     # --- transport hooks ------------------------------------------------------------------------
 
@@ -211,7 +206,7 @@ class OpenAIServer:
             if response.terminal_read is None:
                 response.terminal_read = now
             else:
-                self.truth.repeated_terminals_read += 1
+                self.truth.repeated_terminals.add(response.key)
             self.truth.usage_reports_read += 1
             # xAI reports usage on the frame itself, leaving `response.usage` empty.
             usage: dict[str, int] = response_object.get('usage') or frame.get('usage') or {}
@@ -374,6 +369,8 @@ class OpenAIServer:
         requested.extend(session.unanswered_tool_outputs)
         if self._armed_rejections and self._armed_rejections[0] == 'response':
             self._armed_rejections.pop(0)
+            if not requested:  # A bare request for a response: track the refusal on the request itself.
+                requested.append(self.truth.add_input(f'create{len(self.truth.inputs)}', 'create', solicits=True).key)
             self._refuse(
                 session, _error('server_refused', 'The server refused the response request.', event_id), requested
             )
@@ -402,7 +399,8 @@ class OpenAIServer:
     def _on_response_cancel(self, session: ServerSession, frame: dict[str, Any]) -> None:
         del frame
         if session.active is None or session.active.cancel_requested:
-            self.late_cancels += 1
+            if session.active is None:  # pragma: no branch (a second cancel of a live response is a race)
+                self.late_cancels += 1
             self._emit(session, _error('response_cancel_not_active', 'Cancellation failed: no active response found.'))
             return
         session.active.cancel_requested = True
@@ -507,7 +505,9 @@ class OpenAIServer:
         session.active = None
         session.ended_responses.append(done)
         if late:
+            assert session.late_done is None, 'one late `response.done` at a time'
             session.late_done = done
+            self.late_terminals.add(truth.key)
         else:
             self._emit(session, done)
         if (pending := session.pending_vad_response) is not None:
@@ -629,10 +629,12 @@ class OpenAIServer:
         """End the active response. A requested cancel ends it as cancelled instead.
 
         `late=True` withholds the `response.done` until `release_late_done()`, so it can land after the next
-        response's `response.created`.
+        response's `response.created`. Only a cancelled response's can (#8801): the provider starts no other
+        response while one that completes normally is still active.
         """
         session = self.session
         assert session is not None and session.active is not None
+        assert not late or session.active.cancel_requested, "only a cancelled response's `response.done` comes late"
         if session.active.cancel_requested:
             self._finish_active(session, 'cancelled', late=late)
         else:
@@ -642,18 +644,25 @@ class OpenAIServer:
         session = self.session
         assert session is not None and session.late_done is not None
         done, session.late_done = session.late_done, None
-        if done['response']['id'] != self.truth.responses_by_number[self.truth.next_response_number - 1].key:
-            self.late_terminals += 1
+        if done['response']['id'] == self.truth.responses_by_number[self.truth.next_response_number - 1].key:
+            self.late_terminals.discard(done['response']['id'])  # No other response started meanwhile.
         self._emit(session, done)
 
     def repeat_done(self) -> None:
-        """Send the most recent `response.done` a second time."""
+        """Send the most recent `response.done` a second time.
+
+        A robustness fault, like a failed send: no recording shows a provider repeating a terminal, and the lifecycle
+        contract (`codec.duplicate_terminal`) forbids it. It checks the session survives one anyway.
+        """
         session = self.session
         assert session is not None and session.ended_responses
         self._emit(session, session.ended_responses[-1])
 
-    def speech_start(self) -> str:
-        """Server VAD hears the user start speaking (cancelling the active response, if configured to)."""
+    def speech_start(self, *, late: bool = False) -> str:
+        """Server VAD hears the user start speaking, cancelling the active response.
+
+        `late=True` withholds the cancelled response's `response.done` until `release_late_done()` (#8801).
+        """
         session = self.session
         assert session is not None and session.server_vad and session.speaking is None
         key = self.truth.new_user_turn()
@@ -663,7 +672,7 @@ class OpenAIServer:
             session, {'type': 'input_audio_buffer.speech_started', 'item_id': f'item_{key}', 'audio_start_ms': 0}
         )
         if session.active is not None:
-            self._finish_active(session, 'cancelled', reason='turn_detected')
+            self._finish_active(session, 'cancelled', reason='turn_detected', late=late)
         return key
 
     def speech_stop(self) -> str:

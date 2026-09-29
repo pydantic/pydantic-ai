@@ -137,7 +137,7 @@ class OpenAISimulation(Simulation):
         deliver: bool = True,
         ticks: int | None = None,
     ) -> None:
-        """The active response ends (as cancelled, if the client asked for that)."""
+        """The active response ends (as cancelled, if the client asked for that; only then can its done be `late`)."""
         self.server.finish(status, late=late)
         self._after_server(deliver, ticks)
 
@@ -153,8 +153,9 @@ class OpenAISimulation(Simulation):
         self._after_server(deliver, ticks)
 
     @step
-    def speech_start(self, deliver: bool = True, ticks: int | None = None) -> None:
-        self.server.speech_start()
+    def speech_start(self, late: bool = False, deliver: bool = True, ticks: int | None = None) -> None:
+        """Server VAD hears the user start, cutting off the active response (its `response.done` late, if `late`)."""
+        self.server.speech_start(late=late)
         self._after_server(deliver, ticks)
 
     @step
@@ -274,6 +275,15 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
     def finish(
         self, status: Literal['completed', 'incomplete', 'failed'], late: bool, deliver: bool, ticks: int | None
     ) -> None:
+        session = self.server_session()
+        # Only a cancelled response's `response.done` can come after the next response starts.
+        late = (
+            late
+            and session is not None
+            and session.active is not None
+            and session.active.cancel_requested
+            and session.late_done is None
+        )
         self.run(lambda: self.openai_sim.finish(status=status, late=late, deliver=deliver, ticks=ticks))
 
     @precondition(lambda self: (session := self.server_session()) is not None and session.late_done is not None)
@@ -294,9 +304,11 @@ class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by 
             and session.audio_ms > 0
         )
     )
-    @rule(deliver=st.booleans(), ticks=TICKS)
-    def speech_start(self, deliver: bool, ticks: int | None) -> None:
-        self.run(lambda: self.openai_sim.speech_start(deliver=deliver, ticks=ticks))
+    @rule(late=st.booleans(), deliver=st.booleans(), ticks=TICKS)
+    def speech_start(self, late: bool, deliver: bool, ticks: int | None) -> None:
+        session = self.server_session()
+        late = late and session is not None and session.active is not None and session.late_done is None
+        self.run(lambda: self.openai_sim.speech_start(late=late, deliver=deliver, ticks=ticks))
 
     @precondition(lambda self: (session := self.server_session()) is not None and session.speaking is not None)
     @rule(deliver=st.booleans(), ticks=TICKS)

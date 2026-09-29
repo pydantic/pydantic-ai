@@ -13,7 +13,14 @@ would get wrong if an adapter broke it:
   that response's `ResponseDone` (it would land on whatever response the session is assembling next);
 - `codec.duplicate_terminal`: a response's `ResponseDone` arrives twice (the second would close
   whatever response the session is assembling next);
+- `codec.overlapping_responses`: content for one response arrives while another is still open (neither
+  its `ResponseDone` nor its usage seen yet): a provider runs one response at a time;
 - `codec.event_after_fatal`: anything follows a non-recoverable `RealtimeSessionErrorEvent`.
+
+The three rules keyed on response ids (`content_after_terminal`, `duplicate_terminal`,
+`overlapping_responses`) only apply to the OpenAI-protocol adapters, which report the provider's response
+ids. Gemini Live and GPT-Live have none, so for them those rules never fire; their turn boundaries are
+checked by the simulator's invariants against the fake server's ground truth instead.
 """
 
 from __future__ import annotations as _annotations
@@ -47,6 +54,7 @@ class LifecycleChecker:
     events: int = 0
     _tool_calls: set[str] = field(default_factory=set[str])
     _ended: set[str] = field(default_factory=set[str])
+    _open: str | None = None
     _fatal: bool = False
 
     def feed(self, event: RealtimeCodecEvent) -> list[ConformanceIssue]:
@@ -60,8 +68,9 @@ class LifecycleChecker:
         if self._fatal:
             issue('codec.event_after_fatal', f'{type(event).__name__} after a non-recoverable error')
         if isinstance(event, RealtimeSessionReconnectEvent):
-            # A new connection: ids are only unique per server session.
+            # A new connection: ids are only unique per server session, and the open response is gone.
             self._ended.clear()
+            self._open = None
         if isinstance(event, ToolCall):
             if event.tool_call_id in self._tool_calls:
                 issue('codec.duplicate_tool_call', f'tool call {event.tool_call_id!r} reported twice')
@@ -73,10 +82,17 @@ class LifecycleChecker:
         response_id = _content_response_id(event)
         if response_id is not None and response_id in self._ended:
             issue('codec.content_after_terminal', f'{type(event).__name__} for {response_id!r} after its ResponseDone')
+        elif response_id is not None:
+            if self._open is not None and self._open != response_id:
+                issue('codec.overlapping_responses', f'content for {response_id!r} while {self._open!r} is still open')
+            # A response's usage comes with its terminal: a function-call-only response has no `ResponseDone`.
+            self._open = None if isinstance(event, SessionUsage) else response_id
         if isinstance(event, ResponseDone) and event.provider_response_id is not None:
             if event.provider_response_id in self._ended:
                 issue('codec.duplicate_terminal', f'second ResponseDone for {event.provider_response_id!r}')
             self._ended.add(event.provider_response_id)
+            if self._open == event.provider_response_id:
+                self._open = None
         if isinstance(event, RealtimeSessionErrorEvent) and not event.recoverable:
             self._fatal = True
         self.issues.extend(found)

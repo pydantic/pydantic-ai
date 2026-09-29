@@ -8,7 +8,7 @@ sequence as a replayable trace.
 
 Known findings (see `_findings.py`) are tolerated in the default mode: the simulation's checker notes a
 violation matching one and carries on checking everything else, and the machine counts it in
-Hypothesis' statistics, so exploration stays green on current main while still failing on anything new.
+`KNOWN_HIT_COUNTS`, so exploration stays green on current main while still failing on anything new.
 Set `REALTIME_SIMULATION_STRICT=1` to report them too.
 """
 
@@ -18,7 +18,7 @@ from collections import Counter
 from collections.abc import Callable
 from typing import Any, ClassVar, Literal
 
-from hypothesis import event, note, strategies as st
+from hypothesis import note, strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, precondition, rule
 
 from ._simulation import InvariantViolation, SessionOptions, Simulation, ToolOutcome
@@ -74,7 +74,6 @@ class SessionMachine(RuleBasedStateMachine):  # pragma: lax no cover (driven onl
                 self.run(lambda: sim.check_handoff())
         finally:
             for finding_id, code in dict.fromkeys(sim.checker.known_hits):
-                event(f'known finding {finding_id} ({code})')
                 KNOWN_HIT_COUNTS[f'{finding_id} ({code})'] += 1
             sim.close_simulation()
 
