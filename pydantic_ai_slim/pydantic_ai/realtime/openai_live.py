@@ -1242,7 +1242,7 @@ class OpenAILiveModel(RealtimeModel):
         tools: list[ToolDefinition] | None,
         messages: Sequence[ModelMessage],
         settings: OpenAILiveModelSettings,
-        native_tools: Sequence[AbstractNativeTool] = (),
+        native_tools: Sequence[AbstractNativeTool],
     ) -> dict[str, Any]:
         delegation_settings = settings.get('openai_live_delegation', OpenAILiveResponsesDelegation())
         backend_instructions = '\n\n'.join(

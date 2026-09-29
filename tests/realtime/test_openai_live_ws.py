@@ -305,7 +305,6 @@ async def test_the_backend_searches_the_web(
     assert isinstance(reply, ModelResponse)
     calls = [part for part in reply.parts if isinstance(part, NativeToolCallPart)]
     returns = [part for part in reply.parts if isinstance(part, NativeToolReturnPart)]
-    assert calls and len(calls) == len(returns)
     assert {part.tool_name for part in [*calls, *returns]} == {'web_search'}
     assert [part.tool_call_id for part in calls] == [part.tool_call_id for part in returns]
     assert all(part.provider_name == 'openai' for part in calls)

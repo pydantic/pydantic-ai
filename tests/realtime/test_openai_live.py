@@ -112,6 +112,7 @@ def model() -> OpenAILiveModel:
 def _config(model: OpenAILiveModel, **kwargs: Any) -> dict[str, Any]:
     kwargs.setdefault('instructions', '')
     kwargs.setdefault('tools', [])
+    kwargs.setdefault('native_tools', [])
     kwargs.setdefault('messages', [])
     kwargs.setdefault('settings', OpenAILiveModelSettings())
     return model._session_config(**kwargs)  # pyright: ignore[reportPrivateUsage]
