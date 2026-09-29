@@ -495,6 +495,62 @@ Because the retry prompts stay in the history, [reusing that history](message-hi
 
 [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] is the deliberate opposite: it records a `ToolReturnPart` with `outcome='failed'` and does **not** consume the retry budget, so repeated failures are bounded by [`UsageLimits`][pydantic_ai.usage.UsageLimits] rather than by a retry count. See [Reporting a Failed Tool Result](tools-advanced.md#tool-failed).
 
+### Transient failures inside a tool {#transient-tool-failures}
+
+The tool retry budget is for mistakes the *model* can fix. When the tool's own work fails transiently (an API answers 429, a connection drops, a command times out under load), the model's arguments were fine, and a retry prompt spends a model round trip on a failure the model can't do anything about. An exception like that isn't a retry at all: it [ends the run](#what-is-never-retried).
+
+Retry that kind of failure inside the tool, around just the call that can fail. Only the tool knows which of its errors are transient and whether the call is safe to repeat: re-running a whole tool because its last step timed out would repeat whatever the earlier steps already did. [tenacity](https://github.com/jd/tenacity), installed by the [`retries` dependency group](#installation), handles the backoff; once the attempts run out, turn the error into a result the model can act on:
+
+```python {title="tool_transient_retry.py"}
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+from pydantic_ai import Agent, ToolFailed
+from pydantic_ai.models.test import TestModel
+
+calls = 0
+
+
+@retry(
+    retry=retry_if_exception_type(TimeoutError),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=0.1, max=2),
+    reraise=True,
+)
+async def fetch_forecast(city: str) -> str:
+    """Stand-in for an HTTP call that times out once, then succeeds."""
+    global calls
+    calls += 1
+    if calls == 1:
+        raise TimeoutError
+    return f'Sunny in {city}'
+
+
+agent = Agent(TestModel())
+
+
+@agent.tool_plain
+async def weather(city: str) -> str:
+    try:
+        return await fetch_forecast(city)
+    except TimeoutError:
+        raise ToolFailed('The weather service is not responding.')
+
+
+result = agent.run_sync('What is the weather in Paris?')
+print(result.output)
+#> {"weather":"Sunny in a"}
+print(calls)
+#> 2
+```
+
+_(This example is complete, it can be run "as is")_
+
+The model never sees the timeout: it gets one tool result. When all three attempts time out, [`ToolFailed`][pydantic_ai.exceptions.ToolFailed] tells the model the call failed without consuming the tool's retry budget; raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] instead if different arguments could succeed.
+
+These attempts [multiply](#retry-multiplication) with any retries beneath them, so check whether the client you're calling already retries (most provider and cloud SDKs do). Under [durable execution](durable_execution/overview.md), a tool call typically runs as an activity, step, or task with its own retry policy, which re-runs the tool, and your retries inside it, on top.
+
+To map exceptions to tool results for every tool at once, without touching tool code, implement `on_tool_execute_error` in a [capability](capabilities/custom.md). It runs after the tool has already failed, so it can turn the error into a result or a `ModelRetry`, but it has no way to know whether re-running the tool is safe.
+
 ## Output retries
 
 The output budget is separate from the tool budget, and how it's enforced depends on how the model returns its final answer. [How output retries are enforced](agent.md#how-output-retries-are-enforced) covers both paths; the difference that matters for message history is:
@@ -525,5 +581,5 @@ The same argument is accepted per run — `agent.run(..., retries=...)` and frie
 
 - **`prepare` callbacks.** An exception raised by a per-tool `prepare=`, by [`PrepareTools`](capabilities/prepare-tools.md), or by a [dynamic toolset](toolsets.md) propagates out of the run unchanged — including `ModelRetry`, which is *not* turned into a retry prompt there. To hide a tool for a turn, return `None` from the callback rather than raising.
 - **The `before_model_request` hook.** It runs while the request is still being assembled, before the model is called, so a `ModelRetry` raised there propagates out of the run instead of becoming a retry prompt — there is no response to retry yet. Raise it from one of the [other model-request hooks](hooks.md#model-request-hooks) instead: `hooks.on.after_model_request` to reject a response the model *did* produce (the rejected response stays in the message history, so the model can see what it said), `hooks.on.model_request` (`wrap_model_request`), or `hooks.on.model_request_error` (`on_model_request_error`).
-- **Exceptions other than `ModelRetry` and `ToolFailed`.** Anything else a tool raises propagates out of the run rather than becoming a retry — *unless* a [capability](capabilities/overview.md) implements `on_tool_execute_error`, which sees the exception first and can return a replacement tool result or raise `ModelRetry` to keep the run going. [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] are the exceptions that are neither: they're control flow, not errors, and end the run with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output instead of propagating — except in a [realtime session](realtime/overview.md), which can't pause and instead answers the model with an explanation that the tool can't complete during the session. [Ending a run from inside a tool](timeouts.md#ending-a-run-from-inside-a-tool) has the full table.
+- **Exceptions other than `ModelRetry` and `ToolFailed`.** Anything else a tool raises propagates out of the run rather than becoming a retry (to absorb transient errors, [retry inside the tool](#transient-tool-failures)) — *unless* a [capability](capabilities/overview.md) implements `on_tool_execute_error`, which sees the exception first and can return a replacement tool result or raise `ModelRetry` to keep the run going. [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] and [`CallDeferred`][pydantic_ai.exceptions.CallDeferred] are the exceptions that are neither: they're control flow, not errors, and end the run with a [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] output instead of propagating — except in a [realtime session](realtime/overview.md), which can't pause and instead answers the model with an explanation that the tool can't complete during the session. [Ending a run from inside a tool](timeouts.md#ending-a-run-from-inside-a-tool) has the full table.
 - **Whole agent runs.** Nothing re-runs an agent for you. [Pydantic Evals](evals.md) has its own `retry_task` and `retry_evaluators` options for retrying a whole task or evaluator during an evaluation — see [Retry Strategies](evals/how-to/retry-strategies.md). Those sit outside the agent, so a retried task starts with fresh tool and output budgets.
