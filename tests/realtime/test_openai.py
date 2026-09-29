@@ -2182,7 +2182,11 @@ async def test_connection_send_text() -> None:
     assert create['item']['content'][0]['text'] == 'hello'
     # Both frames name the input they serve, so a refusal of either can be taken back.
     assert create['event_id'] == 'pydantic_ai.content.0'
-    assert json.loads(ws.sent[1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
+    assert json.loads(ws.sent[1]) == {
+        'type': 'response.create',
+        'event_id': 'pydantic_ai.response.0',
+        'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+    }
 
 
 async def test_connection_send_text_context() -> None:
@@ -2194,6 +2198,7 @@ async def test_connection_send_text_context() -> None:
             'type': 'conversation.item.create',
             'event_id': 'pydantic_ai.content.0',
             'item': {
+                'id': 'pydantic_ai_item_0',
                 'type': 'message',
                 'role': 'user',
                 'content': [{'type': 'input_text', 'text': 'background'}],
@@ -2208,7 +2213,11 @@ async def test_connection_send_tool_result_triggers_response() -> None:
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))
     item = json.loads(ws.sent[0])
     assert item['item'] == {'type': 'function_call_output', 'call_id': 'call_1', 'output': '42'}
-    assert json.loads(ws.sent[1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
+    assert json.loads(ws.sent[1]) == {
+        'type': 'response.create',
+        'event_id': 'pydantic_ai.response.0',
+        'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+    }
 
 
 async def test_connection_send_tool_result_with_follow_up_user_content() -> None:
@@ -2242,7 +2251,11 @@ async def test_connection_send_tool_result_with_follow_up_user_content() -> None
                 ],
             },
         },
-        {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'},
+        {
+            'type': 'response.create',
+            'event_id': 'pydantic_ai.response.0',
+            'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+        },
     ]
 
 
@@ -2295,7 +2308,11 @@ async def test_connection_send_create_response() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send(CreateResponse())
-    assert json.loads(ws.sent[0]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
+    assert json.loads(ws.sent[0]) == {
+        'type': 'response.create',
+        'event_id': 'pydantic_ai.response.0',
+        'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+    }
 
 
 async def test_connection_send_cancel_when_response_active() -> None:
@@ -3343,7 +3360,9 @@ async def test_response_done_settles_a_response_whose_id_was_never_announced() -
     await collect_codec_events(conn)
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
     await conn.send(CreateResponse())
-    assert ws.sent == ['{"type":"response.create","event_id":"pydantic_ai.response.0"}']
+    assert ws.sent == [
+        '{"type":"response.create","event_id":"pydantic_ai.response.0","response":{"metadata":{"pydantic_ai_inputs":"0"}}}'
+    ]
 
 
 def _refusal_frame(event_id: str | None) -> str:
@@ -3383,7 +3402,11 @@ async def test_refused_response_request_releases_the_connection() -> None:
     assert len(ws.sent) == 1
 
     assert await collect_codec_events(conn) == [InputRejected(0, refused='response'), _REFUSAL]
-    assert json.loads(ws.sent[-1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.1'}
+    assert json.loads(ws.sent[-1]) == {
+        'type': 'response.create',
+        'event_id': 'pydantic_ai.response.1',
+        'response': {'metadata': {'pydantic_ai_inputs': '1'}},
+    }
     assert conn._response_request_inputs == (1,)  # pyright: ignore[reportPrivateUsage]
 
 
@@ -3402,7 +3425,11 @@ async def test_refused_shared_response_request_reports_every_input_it_served() -
         await conn.send(CreateResponse())
 
     events = await collect_codec_events(conn)
-    assert json.loads(ws.sent[-1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.1-2'}
+    assert json.loads(ws.sent[-1]) == {
+        'type': 'response.create',
+        'event_id': 'pydantic_ai.response.1-2',
+        'response': {'metadata': {'pydantic_ai_inputs': '1-2'}},
+    }
     assert events[-3:] == [InputRejected(1, refused='response'), InputRejected(2, refused='response'), _REFUSAL]
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
 
@@ -3456,7 +3483,9 @@ async def test_malformed_response_done_still_releases_the_response() -> None:
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
     # The session can speak again, rather than only ever deferring.
     await conn.send(CreateResponse())
-    assert ws.sent == ['{"type":"response.create","event_id":"pydantic_ai.response.0"}']
+    assert ws.sent == [
+        '{"type":"response.create","event_id":"pydantic_ai.response.0","response":{"metadata":{"pydantic_ai_inputs":"0"}}}'
+    ]
 
 
 async def test_reconnect_propagates_unexpected_dial_error() -> None:
