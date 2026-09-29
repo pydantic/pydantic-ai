@@ -164,6 +164,24 @@ async def test_a_stop_that_comes_before_the_command_starts_prevents_it(docker: F
     assert not [path for path in docker.tmp_files(backend.ref.id) if tag in path.name]
 
 
+async def test_a_timeout_is_stopped_even_when_the_configured_working_dir_is_gone(
+    docker: FakeDocker, tmp_path: Path
+) -> None:
+    target, link = tmp_path / 'target', tmp_path / 'link'
+    target.mkdir()
+    link.symlink_to(target)
+    backend = DockerSandboxBackend('image', working_dir=str(link))
+    await backend.working_dir()
+    link.unlink()
+    assert backend.ref is not None
+
+    with pytest.raises(WorkspaceTimeoutError):
+        await backend.run(['sleep', '30'], timeout=0.5)
+
+    # The stop removes the command's PID file: it ran, although the container's own working dir is gone.
+    assert docker.pid_files(backend.ref.id) == set()
+
+
 async def test_a_running_commands_pid_file_survives_other_commands(docker: FakeDocker, container_dir: Path) -> None:
     backend = DockerSandboxBackend('image', working_dir=str(container_dir))
     await backend.working_dir()

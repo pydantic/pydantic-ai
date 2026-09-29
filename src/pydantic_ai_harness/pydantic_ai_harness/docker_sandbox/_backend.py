@@ -355,7 +355,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         with anyio.CancelScope(shield=True):
             try:
                 await self._runner.run(
-                    [self._executable, 'exec', self._name, 'sh', '-c', _STOP, 'sh', tag], timeout=_STOP_TIMEOUT
+                    [self._executable, 'exec', '--workdir', '/', self._name, 'sh', '-c', _STOP, 'sh', tag],
+                    timeout=_STOP_TIMEOUT,
                 )
             except WorkspaceError:
                 pass
