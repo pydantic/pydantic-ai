@@ -641,8 +641,26 @@ Your callback's return value decides the call's fate, and the two outcomes are e
 !!! warning "Host access depends on the configuration"
     `mount` exposes selected host directories. The built-in `OSAccess` uses an isolated in-memory filesystem and environment but the host clock by default; a custom handler or `CallbackFile` can expose other host resources. Prefer constructing `CodeMode` per request so any granted access is scoped to that request.
 
+### `os_policy` -- set the sandbox's own clock and time zone
+
+Reach for `os_policy` when the agent should see the current date in a particular time zone. It takes Monty's `OSPolicy`, and the keys you set are merged over `CodeMode`'s defaults, which route the clock, sleeps, and random seeding to `os_access`:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[CodeMode(os_policy={'datetime': 'system', 'timezone': 'Europe/Paris'})],
+)
+```
+
+Sandboxed code now reads the worker's clock in that zone with no handler at all: `datetime.datetime.now()`, `astimezone()`, `%Z`, and `time.tzname` all agree on Paris time. A `datetime` value in place of `'system'` freezes the clock at that instant. `{'timezone': 'Europe/Paris'}` on its own keeps the clock on your `os_access` handler, but makes the sandbox read the handler's naive local time in that zone rather than as UTC.
+
+Inside a [Temporal workflow](#temporal-durability), a `'system'` clock or `random_start` is read again on replay, so keep the defaults (or fixed values) there.
+
 !!! note "Monty-specific types"
-    These parameters use Monty's `AbstractOS`/`MountDir` types from `pydantic_monty`.
+    These parameters use Monty's `AbstractOS`/`MountDir`/`OSPolicy` types from `pydantic_monty`.
 
 ## Sandbox restrictions
 
@@ -650,7 +668,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 
 - No third-party imports. Allowed stdlib modules: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib` (each must be imported before use).
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments. Other task creation and wait APIs are unavailable.
-- No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail. They become available when an `os_access` handler implements them (the built-in `OSAccess` does). `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer.
+- No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, and unseeded `random` fail. They become available when an `os_access` handler implements them (the built-in `OSAccess` does), or, for the clock, when `os_policy` sets one. `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer.
 - No `import *`.
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv` / `os.environ` need an `os_access` handler.
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry.

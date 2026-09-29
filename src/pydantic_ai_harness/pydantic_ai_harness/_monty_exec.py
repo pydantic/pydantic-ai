@@ -123,6 +123,7 @@ _REMOTE_TURN_SLACK_SECS = 10.0
 # Route the clock and unseeded randomness to the `os=` handler, as before Monty 1.0: without one they are
 # unavailable, which keeps sandbox code deterministic when a Temporal workflow replays it. Sleeps come back to
 # `MontyExecutor`, which waits on the run's own event loop (a durable timer inside a Temporal workflow).
+# `MontyRunState.os_policy` overrides these key by key.
 _OS_POLICY: OSPolicy = {'datetime': 'call_host', 'sleep': 'call_host', 'random_start': 'call_host'}
 
 
@@ -136,6 +137,8 @@ class MontyRunState:
     """
 
     monty_sandbox_url: str | None = None
+    os_policy: OSPolicy | None = None
+    """Session policies merged over `_OS_POLICY` at checkout, key by key."""
     pool: AsyncMonty | AsyncMontyWebsocket | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
@@ -170,7 +173,10 @@ class MontyRunState:
                 raise
         if self.session is None:
             checkout = self.pool.checkout(
-                limits=limits, type_check=type_check, type_check_stubs=type_check_stubs, os_policy=_OS_POLICY
+                limits=limits,
+                type_check=type_check,
+                type_check_stubs=type_check_stubs,
+                os_policy=_OS_POLICY | (self.os_policy or {}),
             )
             self.session = await _enter_monty(self._session_stack, checkout, self.portal)
         return self.session
