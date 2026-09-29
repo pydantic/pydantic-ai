@@ -1247,15 +1247,24 @@ async def test_commit_is_held_until_a_response_is_asked_for() -> None:
             'type': 'conversation.item.create',
             'event_id': 'pydantic_ai.content.2',
             'item': {
+                'id': 'pydantic_ai_item_2',
                 'type': 'message',
                 'role': 'user',
                 'content': [{'type': 'input_text', 'text': 'The user is called Ada.'}],
             },
         },
         {'type': 'input_audio_buffer.commit'},
-        {'type': 'response.create', 'event_id': 'pydantic_ai.response.3'},
+        {
+            'type': 'response.create',
+            'event_id': 'pydantic_ai.response.3',
+            'response': {'metadata': {'pydantic_ai_inputs': '3'}},
+        },
         {'type': 'input_audio_buffer.clear'},
-        {'type': 'response.create', 'event_id': 'pydantic_ai.response.4'},
+        {
+            'type': 'response.create',
+            'event_id': 'pydantic_ai.response.4',
+            'response': {'metadata': {'pydantic_ai_inputs': '4'}},
+        },
     ]
 
 
@@ -1400,7 +1409,11 @@ async def test_create_response_during_the_reply_is_answered_again_when_it_ends()
 
     assert _sent(ws)[3:] == [
         {'type': 'input_audio_buffer.clear'},
-        {'type': 'response.create', 'event_id': 'pydantic_ai.response.3'},
+        {
+            'type': 'response.create',
+            'event_id': 'pydantic_ai.response.3',
+            'response': {'metadata': {'pydantic_ai_inputs': '3'}},
+        },
     ]
 
 
