@@ -33,6 +33,12 @@ engine:
   display-name: Pydantic AI
   description: Pydantic AI CLI (pai) running the pydantic-ai-harness coder agent with MCP tool support
   mcp: true
+  # gh-aw's threat-detection job runs only on its built-in engines, so a custom engine
+  # names the one it runs on. Without this key gh-aw falls back to `copilot` anyway
+  # and warns on every compile. A workflow's `safe-outputs.threat-detection.engine`
+  # overrides it. The key needs gh-aw v0.89.0 or newer: older compilers reject any
+  # engine key they do not know.
+  detection-engine: copilot
   provider:
     name: github
   behaviors:

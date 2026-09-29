@@ -127,6 +127,7 @@ class _Engine(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
     behaviors: _Behaviors
+    detection_engine: str = Field(alias='detection-engine')
 
 
 class _PreAgentStep(BaseModel):
@@ -229,6 +230,12 @@ def test_install_includes_spec_extra_for_yaml_agents() -> None:
     (requirement,) = requirements
     extras = requirement.split('[', 1)[1].split(']', 1)[0].split(',')
     assert 'spec' in extras
+
+
+def test_threat_detection_runs_on_a_built_in_engine() -> None:
+    # gh-aw's `threat-detect` only knows its built-in engines; naming one here keeps
+    # detection working without a compile-time fallback warning on every workflow.
+    assert definition().engine.detection_engine == 'copilot'
 
 
 def launch(tmp_path: Path, env: dict[str, str]) -> _Invocation:

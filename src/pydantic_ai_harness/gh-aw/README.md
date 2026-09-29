@@ -256,13 +256,38 @@ these re-enables checkout configuration and credentials. Such a module also has
 to install `logfire` through the workflow's own `steps:` if it imports it on runs that
 configure no endpoint.
 
+## Threat detection
+
+When a workflow declares safe outputs, gh-aw runs a threat-detection job over the
+agent's output before applying them. That job runs only on gh-aw's built-in engines,
+so this definition sets `detection-engine: copilot`: detection runs on the Copilot
+engine and reads `COPILOT_GITHUB_TOKEN`, whatever provider the agent itself uses.
+
+A workflow that does not have that credential overrides the choice. Point detection at
+the built-in engine whose key the workflow already has, `codex` for an `openai/` or
+`codex/` model and `claude` for an `anthropic/` one, or set `false` to skip the AI
+analysis:
+
+```yaml
+safe-outputs:
+  add-comment:
+  threat-detection:
+    engine: codex
+```
+
+gh-aw's [threat detection reference](https://github.github.com/gh-aw/reference/threat-detection/)
+covers the rest of the job's configuration.
+
 ## gh-aw compatibility
 
-This definition requires the gh-aw action/runtime at
-[v0.86.3](https://github.com/github/gh-aw/releases/tag/v0.86.3) or newer. Its
-endpoint discovery uses `deriveBaseUrlFromModelsURL`, which that release exports for
-converting the reflected `/models` URL into the chat-completions base URL while
-preserving the firewall host bridge.
+This definition requires gh-aw
+[v0.89.0](https://github.com/github/gh-aw/releases/tag/v0.89.0) or newer, both the
+`gh aw` CLI that compiles it and the action/runtime the lockfile pins. That release
+added the engine's `detection-engine` key; older compilers validate the engine object
+strictly and reject the definition. The runtime also has to export
+`deriveBaseUrlFromModelsURL`, which the engine's endpoint discovery uses to convert
+the reflected `/models` URL into the chat-completions base URL while preserving the
+firewall host bridge, and every release from v0.86.3 on does.
 
 Existing workflows must be recompiled with a compatible gh-aw pin and have their
 generated lockfile committed. Installing a newer `gh aw` CLI locally does not alter
