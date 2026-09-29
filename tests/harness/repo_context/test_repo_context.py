@@ -201,7 +201,7 @@ class TestRender:
 
 
 class TestInstructions:
-    async def test_includes_files_and_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
+    async def test_default_includes_files_without_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'be nice')
         cap = RepoContext[object]()
         ctx = _run_context(workspace=workspace)
@@ -209,7 +209,7 @@ class TestInstructions:
         instructions = _render_capability_instructions(cap, ctx)
         assert isinstance(instructions, str)
         assert 'be nice' in instructions
-        assert 'inventory_agent_context' in instructions
+        assert 'inventory_agent_context' not in instructions
 
     def test_none_when_all_disabled(self, tmp_path: Path) -> None:
         cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=False)
@@ -217,12 +217,13 @@ class TestInstructions:
 
     async def test_autoload_off_keeps_inventory_hint(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / 'CLAUDE.md', 'ignored')
-        cap = RepoContext[object](autoload_instructions=False)
+        cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=True)
         await cap.before_run(_run_context(workspace=workspace))
         instructions = cap.get_instructions()
         assert isinstance(instructions, str)
         assert 'ignored' not in instructions
         assert 'inventory_agent_context' in instructions
+        assert 'translate' not in instructions
 
     async def test_no_files_no_inventory_is_none(self, tmp_path: Path, workspace: Workspace) -> None:
         cap = RepoContext[object](expose_inventory_tool=False)
@@ -244,7 +245,15 @@ class TestInstructions:
 
     @pytest.mark.parametrize('autoload_instructions', [True, False])
     async def test_no_workspace_fails_the_run(self, autoload_instructions: bool) -> None:
-        agent = Agent(TestModel(), capabilities=[RepoContext[object](autoload_instructions=autoload_instructions)])
+        agent = Agent(
+            TestModel(),
+            capabilities=[
+                RepoContext[object](
+                    autoload_instructions=autoload_instructions,
+                    expose_inventory_tool=not autoload_instructions,
+                )
+            ],
+        )
 
         with pytest.raises(UserError, match='`RepoContext` needs a workspace'):
             await agent.run('go')
@@ -259,17 +268,17 @@ class TestInstructions:
 
 
 class TestToolset:
-    def test_get_toolset_none_when_disabled(self, tmp_path: Path) -> None:
-        assert RepoContext[object](expose_inventory_tool=False).get_toolset() is None
+    def test_get_toolset_none_by_default(self, tmp_path: Path) -> None:
+        assert RepoContext[object]().get_toolset() is None
 
-    def test_get_toolset_present(self, tmp_path: Path) -> None:
-        assert isinstance(RepoContext[object]().get_toolset(), RepoContextToolset)
+    def test_get_toolset_present_when_enabled(self, tmp_path: Path) -> None:
+        assert isinstance(RepoContext[object](expose_inventory_tool=True).get_toolset(), RepoContextToolset)
 
     async def test_inventory_tool_runs_through_agent(self, tmp_path: Path) -> None:
         _write(tmp_path / '.claude' / 'skills' / 'foo' / 'SKILL.md', 'skill')
         agent = Agent(
             TestModel(call_tools=['inventory_agent_context']),
-            capabilities=[RepoContext[object]()],
+            capabilities=[RepoContext[object](expose_inventory_tool=True)],
         )
         backend = LocalWorkspaceBackend(working_dir=tmp_path)
         result = await agent.run('go', workspace=backend)
@@ -289,8 +298,8 @@ class TestScanAssets:
         assert claude.agents == ['.claude/agents/bar.md']
         assert claude.settings == '.claude/settings.json'
         assert by_root['.agents'].exists is False
-        assert by_root['.codex'].notes is not None
-        assert by_root['.grok'].notes is not None
+        assert by_root['.codex'].notes is None
+        assert by_root['.grok'].notes is None
 
     async def test_existing_root_without_settings(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / '.claude' / 'skills' / 'foo' / 'SKILL.md', 's')
