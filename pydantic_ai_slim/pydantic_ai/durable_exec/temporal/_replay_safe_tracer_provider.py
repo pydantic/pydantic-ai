@@ -22,7 +22,7 @@ class ReplaySafeSDKTracerProvider(SDKTracerProvider):
     def __init__(self, provider: SDKTracerProvider):
         # OpenTelemetry does not expose a span processor accessor. Replace this private access if Logfire
         # adds a public way to share its configured processor with another tracer provider.
-        active_span_processor = provider._active_span_processor  # pyright: ignore[reportPrivateUsage]
+        active_span_processor = provider._active_span_processor
         self._replay_safe_provider = create_tracer_provider(
             resource=provider.resource,
             sampler=provider.sampler,
