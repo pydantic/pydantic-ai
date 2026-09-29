@@ -70,7 +70,6 @@ from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_COMMIT_EVENT,
     RESPONSE_DONE_EVENT_ADAPTER,
     RealtimeHandshakeError,
-    client_event_id,
     config_interrupts_response_on_speech,
     connect_openai_protocol,
     expect_event,
@@ -298,17 +297,23 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         # session, as does xAI's total. The total restarts only with a new conversation.
         self._billed_audio_seconds = 0
         self._billed_conversation_id = conversation_id
-        # With turn detection off, xAI answers audio as soon as it's committed. So that a reply comes only
+        # With turn detection off, xAI answers speech as soon as it's committed. So that a reply comes only
         # when one is asked for, as on every other provider, the commit is held back until then and sent in
-        # place of that `response.create`: the reply to the commit is the answer. Nothing below applies with
-        # turn detection on.
+        # place of `response.create`. A request sent with the commit would be answered before the speech
+        # joins the conversation (checked live). Nothing below applies with turn detection on.
         self._manual_turns = manual_turns
         self._commit_held = False
-        # Audio sent after a held commit, with how many of its frames a later commit covers. It's kept back
-        # until the commit goes out and its reply ends, since speech reaching xAI during a reply stops the
-        # reply without ending it (checked live).
+        # Whether xAI heard speech in the audio it has since the last commit. It doesn't answer a commit of
+        # silence at all (checked live), so without speech the commit goes out with a `response.create`.
+        self._speech_detected = False
+        # Audio kept back from xAI, with how many of its frames a held commit covers: audio sent after a held
+        # commit, until the commit goes out, and audio sent during a reply, until it ends. Speech reaching
+        # xAI during a reply stops the reply without ending it (checked live).
         self._held_audio: list[dict[str, Any]] = []
         self._held_audio_committed = 0
+        # Audio sent to xAI since the last commit went out, which a dropped connection takes with it: sent
+        # again after a reconnect when a held commit covers it.
+        self._sent_audio: list[dict[str, Any]] = []
         # After answering committed audio, xAI silently drops a `response.create` until other input arrives
         # (checked live): no response and no error, so the caller would wait for that reply forever. Text,
         # an image, a tool result, `input_audio_buffer.clear` or cancelling the answer makes it answer again,
@@ -333,11 +338,10 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             return
         event_type = event['type']
         if event_type == INPUT_AUDIO_BUFFER_APPEND_EVENT:
-            if self._commit_held or self._held_audio:
+            if self._commit_held or self._held_audio or self._response_active:
                 self._held_audio.append(event)
             else:
-                await super()._send_event(event)
-                self._audio_uncommitted = True
+                await self._send_audio(event)
             self._audio_is_latest_input = True
         elif event_type == INPUT_AUDIO_BUFFER_COMMIT_EVENT:
             if self._commit_held or self._audio_uncommitted or self._held_audio:
@@ -346,43 +350,52 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
                 self._held_audio_committed = len(self._held_audio)
                 self._audio_uncommitted = False
             else:
-                # Nothing to commit: xAI rejects it, as it always has.
+                # Nothing to commit, which xAI ignores, as it always has.
                 await super()._send_event(event)
         elif event_type == INPUT_AUDIO_BUFFER_CLEAR_EVENT:
-            if self._commit_held or self._held_audio:
-                # Only audio no commit covers is discarded; none of it has reached xAI.
-                del self._held_audio[self._held_audio_committed :]
-            else:
+            # Audio no commit covers is discarded where it is: kept back here, or in xAI's buffer. A clear
+            # with nothing in that buffer isn't sent, since right after a commit it would cancel the reply.
+            del self._held_audio[self._held_audio_committed :]
+            if self._audio_uncommitted:
                 await super()._send_event(event)
-                self._audio_is_latest_input = self._audio_uncommitted = False
+                self._sent_audio.clear()
+                self._audio_is_latest_input = self._audio_uncommitted = self._speech_detected = False
         else:
             await super()._send_event(event)
 
+    async def _send_audio(self, frame: dict[str, Any]) -> None:
+        # Marked first, so a clear made while the frame is on its way knows there's audio to discard.
+        self._audio_uncommitted = True
+        self._sent_audio.append(frame)
+        await super()._send_event(frame)
+
     async def _send_held_commit(self, input_indexes: Sequence[int]) -> None:
-        """Send the held commit, and the audio it covers, as the request for a response."""
+        """Send the held commit, and the audio it covers, with the request for a response."""
+        # Marked first, so audio sent meanwhile is kept back until the reply ends rather than joining the turn.
+        self._response_active = True
         committed = self._held_audio[: self._held_audio_committed]
         del self._held_audio[: self._held_audio_committed]
         self._commit_held = False
         self._held_audio_committed = 0
-        # The commit lands after anything sent while it was held, so the audio is xAI's latest input.
-        self._audio_is_latest_input = True
-        # What `_create_response` records for a `response.create`, so the reply the commit starts is taken
-        # as the answer to `input_indexes`, and an error echoing the id refuses them.
-        self._response_active = True
-        self._active_response_id = None
-        self._response_request_inputs = tuple(input_indexes)
         for frame in committed:
             await super()._send_event(frame)
-        # Every request for a response names the inputs it answers, so the id always has some.
-        await super()._send_event(
-            {'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT, 'event_id': client_event_id('response', input_indexes)}
-        )
+        await super()._send_event({'type': INPUT_AUDIO_BUFFER_COMMIT_EVENT})
+        self._sent_audio.clear()
+        # The commit lands after anything sent while it was held, so the audio is xAI's latest input.
+        self._audio_is_latest_input = True
+        speech_detected, self._speech_detected = self._speech_detected, False
+        if not speech_detected:
+            await super()._create_response(input_indexes)
+            return
+        # What `_create_response` records for a `response.create`, so the reply the commit starts is taken
+        # as the answer to `input_indexes`.
+        self._active_response_id = None
+        self._response_request_inputs = tuple(input_indexes)
 
     async def _send_held_audio(self) -> None:
-        """Send the audio kept back after a commit, until a new commit is held."""
+        """Send the audio kept back behind a reply that has ended, until a new commit is held."""
         while self._held_audio and not self._commit_held:
-            await super()._send_event(self._held_audio.pop(0))
-            self._audio_uncommitted = not self._commit_held
+            await self._send_audio(self._held_audio.pop(0))
 
     @property
     def _response_request_dropped(self) -> bool:
@@ -416,7 +429,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             self._refused_response_inputs.extend(input_indexes)
             return
         # Audio still in the buffer is committed by the request, and answered by its response.
-        self._audio_uncommitted = False
+        self._audio_uncommitted = self._speech_detected = False
+        self._sent_audio.clear()
         await super()._create_response(input_indexes)
 
     async def _handle_response_done(self, data: dict[str, Any]) -> tuple[list[RealtimeCodecEvent], bool]:
@@ -430,10 +444,15 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         return await super()._handle_response_done(data)
 
     async def _attempt_reconnect(self) -> bool:
-        # The new socket's buffer is empty, so a held commit has nothing left to commit, and whether xAI
-        # still drops a request there isn't known: none is refused until audio is committed again.
-        self._audio_is_latest_input = self._audio_uncommitted = self._commit_held = False
-        self._held_audio_committed = 0
+        # The new socket's buffer is empty. A held commit still covers the audio that was in it, so that
+        # audio goes out again with the commit; audio no commit covers is lost with the socket, as before.
+        if self._commit_held:
+            self._held_audio[:0] = self._sent_audio
+            self._held_audio_committed += len(self._sent_audio)
+        self._sent_audio.clear()
+        # Whether xAI still drops a request on the new socket isn't known, so none is refused until audio is
+        # committed again.
+        self._audio_is_latest_input = self._audio_uncommitted = self._speech_detected = False
         return await super()._attempt_reconnect()
 
     async def _decode_frame(self, raw: str) -> list[RealtimeCodecEvent]:
@@ -504,6 +523,13 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         self._conversation_id = conversation_id
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
+        if self._manual_turns:
+            event_type = data.get('type')
+            if event_type == 'input_audio_buffer.speech_started':
+                self._speech_detected = True
+            elif event_type == 'input_audio_buffer.committed':
+                # Speech xAI reports only once the commit is on its way belongs to the audio just committed.
+                self._speech_detected = False
         return map_event(data)
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:

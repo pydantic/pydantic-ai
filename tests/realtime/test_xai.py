@@ -248,7 +248,7 @@ def test_map_conversation_resumption_events() -> None:
 
 def test_connection_map_event_override_matches_module() -> None:
     """`XaiRealtimeConnection` routes frame decoding through the xAI `map_event` (cumulative `.updated`)."""
-    conn = XaiRealtimeConnection.__new__(XaiRealtimeConnection)
+    conn = XaiRealtimeConnection(FakeWebSocket([]))  # type: ignore[arg-type]
     assert conn._map_event(  # pyright: ignore[reportPrivateUsage]
         {'type': 'conversation.item.input_audio_transcription.updated', 'transcript': 'x'}
     ) == InputTranscript(text='x', cumulative=True)
@@ -986,12 +986,10 @@ async def test_connect_reconnect_failure_leaves_nothing_to_close(monkeypatch: py
 
 
 async def test_reconnect_handshake_error_is_retryable() -> None:
-    conn = XaiRealtimeConnection.__new__(XaiRealtimeConnection)
-
     async def dial() -> rt_xai.ClientConnection:
         raise rt_xai.RealtimeHandshakeError('expired conversation')
 
-    conn._dial = dial  # pyright: ignore[reportPrivateUsage]
+    conn = XaiRealtimeConnection(FakeWebSocket([]), dial=dial)  # type: ignore[arg-type]
 
     assert await conn._attempt_reconnect() is False  # pyright: ignore[reportPrivateUsage]
 
@@ -1224,7 +1222,7 @@ def _appended(ws: FakeWebSocket) -> list[bytes]:
 
 
 async def test_commit_is_held_until_a_response_is_asked_for() -> None:
-    """With turn detection off, the commit goes out only with `create_response()`, in place of `response.create`.
+    """With turn detection off, the commit goes out only with `create_response()`, just ahead of `response.create`.
 
     xAI answers a commit by itself, so a commit sent at once would reply whether or not one was asked for.
     """
@@ -1250,7 +1248,8 @@ async def test_commit_is_held_until_a_response_is_asked_for() -> None:
                 'content': [{'type': 'input_text', 'text': 'The user is called Ada.'}],
             },
         },
-        {'type': 'input_audio_buffer.commit', 'event_id': 'pydantic_ai.response.3'},
+        {'type': 'input_audio_buffer.commit'},
+        {'type': 'response.create', 'event_id': 'pydantic_ai.response.3'},
     ]
 
 
@@ -1277,7 +1276,12 @@ async def test_text_turn_sends_the_held_commit() -> None:
     await conn.send(_AUDIO)
     await conn.send(CommitAudio())
     await conn.send('And answer in French.')
-    assert _sent_types(ws) == ['input_audio_buffer.append', 'conversation.item.create', 'input_audio_buffer.commit']
+    assert _sent_types(ws) == [
+        'input_audio_buffer.append',
+        'conversation.item.create',
+        'input_audio_buffer.commit',
+        'response.create',
+    ]
 
 
 async def test_audio_after_a_held_commit_is_kept_back() -> None:
@@ -1293,17 +1297,25 @@ async def test_audio_after_a_held_commit_is_kept_back() -> None:
     assert _sent_types(ws) == ['input_audio_buffer.append']
 
     await conn.send(CreateResponse())
-    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.append', 'input_audio_buffer.commit']
+    assert _sent_types(ws) == [
+        'input_audio_buffer.append',
+        'input_audio_buffer.append',
+        'input_audio_buffer.commit',
+        'response.create',
+    ]
     assert _appended(ws) == [_AUDIO.data, _OTHER_AUDIO.data]
 
 
 async def test_commit_with_nothing_buffered_is_sent() -> None:
-    """A commit with no audio behind it is passed on, and xAI rejects it as before."""
+    """A commit with no audio behind it is passed on, as before, while a clear with none isn't sent.
+
+    A clear right after a commit cancels the commit's reply (checked live), and has nothing to discard.
+    """
     ws = FakeWebSocket([])
     conn = _manual(ws)
     await conn.send(CommitAudio())
     await conn.send(ClearAudio())
-    assert _sent_types(ws) == ['input_audio_buffer.commit', 'input_audio_buffer.clear']
+    assert _sent_types(ws) == ['input_audio_buffer.commit']
 
 
 async def test_audio_after_the_commit_waits_for_its_reply_to_end() -> None:
@@ -1320,7 +1332,7 @@ async def test_audio_after_the_commit_waits_for_its_reply_to_end() -> None:
     events = conn.__aiter__()
     assert isinstance(await events.__anext__(), OutputTranscript)
     await conn.send(_AUDIO)
-    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.commit']
+    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.commit', 'response.create']
 
     rest = [event async for event in events]
     assert isinstance(rest[0], ResponseDone)
@@ -1345,7 +1357,10 @@ async def test_request_behind_a_reply_sends_the_audio_kept_back_first() -> None:
 
 
 async def test_held_commit_waits_for_the_reply_in_flight() -> None:
-    """A request made during a reply sends the held commit only once that reply ends."""
+    """Audio, a commit and a request made during a reply all wait for that reply to end.
+
+    Speech reaching xAI during a reply stops the reply without ending it (checked live).
+    """
     ws = FakeWebSocket(
         [_response_frame('response.created', 'r0'), _transcript_delta('r0'), _response_frame('response.done', 'r0')]
     )
@@ -1355,33 +1370,9 @@ async def test_held_commit_waits_for_the_reply_in_flight() -> None:
     await conn.send(_AUDIO)
     await conn.send(CommitAudio())
     await conn.send(CreateResponse())
-    assert _sent_types(ws) == ['input_audio_buffer.append']
+    assert _sent_types(ws) == []
     _ = [event async for event in events]
-    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.commit']
-
-
-async def test_refused_commit_releases_the_request() -> None:
-    """An error echoing the commit's id refuses the request it stood for, as for a refused `response.create`."""
-    ws = FakeWebSocket(
-        [
-            json.dumps(
-                {
-                    'type': 'error',
-                    'error': {
-                        'type': 'invalid_request_error',
-                        'message': 'buffer too small',
-                        'event_id': 'pydantic_ai.response.2',
-                    },
-                }
-            )
-        ]
-    )
-    conn = _manual(ws)
-    await conn.send(_AUDIO)
-    await conn.send(CommitAudio())
-    await conn.send(CreateResponse())
-    events = [event async for event in conn]
-    assert InputRejected(2, refused='response') in events
+    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.commit', 'response.create']
 
 
 async def test_create_response_during_the_reply_is_refused_when_it_ends() -> None:
@@ -1399,7 +1390,7 @@ async def test_create_response_during_the_reply_is_refused_when_it_ends() -> Non
     await conn.send(CreateResponse())
     rest = [event async for event in events]
 
-    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.commit']
+    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.commit', 'response.create']
     assert isinstance(rest[0], ResponseDone)
     assert rest[1] == InputRejected(3, refused='response')
 
@@ -1463,7 +1454,8 @@ async def test_create_response_after_a_reconnect_is_sent() -> None:
         pytest.param([CancelResponse()], False, id='cancel'),
         pytest.param([CommitAudio()], False, id='empty-commit'),
         pytest.param([TextContext('And three plus three?')], True, id='text'),
-        pytest.param([ClearAudio()], True, id='clear'),
+        pytest.param([ClearAudio()], False, id='clear-with-nothing-buffered'),
+        pytest.param([_AUDIO, ClearAudio()], True, id='clear'),
         pytest.param([_AUDIO], True, id='uncommitted-audio'),
     ],
 )
@@ -1492,7 +1484,7 @@ async def test_create_response_after_the_reply(between: list[RealtimeInput], ans
     await conn.send(CreateResponse())
     rest = [event async for event in events]
 
-    sent_after_commit = _sent_types(ws)[2:]
+    sent_after_commit = _sent_types(ws)[3:]
     if answered:
         assert sent_after_commit[-1] == 'response.create'
         assert not any(isinstance(event, InputRejected) for event in rest)
@@ -1510,3 +1502,74 @@ async def test_audio_that_fails_to_send_is_not_counted_as_buffered() -> None:
         await conn.send(BinaryAudio(data=b'RIFF', media_type='audio/wav'))
     await conn.send(CommitAudio())
     assert _sent_types(ws) == ['input_audio_buffer.commit']
+
+
+async def test_clear_before_the_reply_starts_is_not_sent() -> None:
+    """A clear right after the commit went out would cancel its reply (checked live), and has nothing to discard."""
+    ws = FakeWebSocket([])
+    conn = _manual(ws)
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    await conn.send(CreateResponse())
+    await conn.send(ClearAudio())
+    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.commit', 'response.create']
+
+
+async def test_reconnect_sends_the_audio_a_held_commit_covers_again() -> None:
+    """A dropped connection takes the buffered audio with it, so a held commit sends that audio again."""
+    replacement = FakeWebSocket([])
+    replacements = iter([replacement])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = _manual(_DropAfterFrames([]), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    await conn.send(_OTHER_AUDIO)
+    events = [event async for event in conn]
+    assert any(isinstance(event, RealtimeSessionReconnectEvent) for event in events)
+    await conn.send(CreateResponse())
+
+    assert _sent_types(replacement) == [
+        'input_audio_buffer.append',
+        'input_audio_buffer.commit',
+        'response.create',
+    ]
+    assert _appended(replacement) == [_AUDIO.data]
+
+
+async def test_commit_of_speech_is_sent_without_a_request() -> None:
+    """When xAI has heard speech, the commit alone asks for the reply.
+
+    A `response.create` sent with it would be answered before the speech joins the conversation (checked
+    live). Speech reported after the commit went out belongs to that commit, not to the next turn.
+    """
+    ws = FakeWebSocket(
+        [
+            json.dumps({'type': 'input_audio_buffer.speech_started', 'item_id': 'item-u1', 'audio_start_ms': 0}),
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u1'}),
+            _response_frame('response.created'),
+            _response_frame('response.done'),
+            json.dumps({'type': 'input_audio_buffer.speech_started', 'item_id': 'item-u2', 'audio_start_ms': 0}),
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u2'}),
+        ]
+    )
+    conn = _manual(ws)
+    await conn.send(_AUDIO)
+    events = conn.__aiter__()
+    await events.__anext__()  # xAI heard speech
+    await conn.send(CommitAudio())
+    await conn.send(CreateResponse())
+    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.commit']
+
+    rest = [event async for event in events]
+    assert not any(isinstance(event, InputRejected) for event in rest)
+    # The commit's reply answered the request, so the connection is free for the next one.
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    await conn.send(CreateResponse())
+    assert _sent_types(ws)[2:] == ['input_audio_buffer.append', 'input_audio_buffer.commit', 'response.create']

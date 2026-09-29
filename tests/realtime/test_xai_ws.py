@@ -241,9 +241,10 @@ async def test_push_to_talk_replies_only_when_asked(
 ) -> None:
     """With turn detection off, committed audio gets a reply only when `create_response()` asks for one.
 
-    xAI answers a commit by itself, so the commit is held back and sent in place of `response.create`. Text
-    sent in between reaches xAI first. A second `create_response()` with nothing new behind it, which xAI
-    would drop without a word, is refused, so `wait_for_reply()` returns rather than waiting for ever.
+    xAI answers a commit of speech by itself, so the commit is held back and sent in place of
+    `response.create`. Text sent in between reaches xAI first. A second `create_response()` with nothing new
+    behind it, which xAI would drop without a word, is refused, so `wait_for_reply()` returns rather than
+    waiting for ever.
     """
     provider, cassette = xai_ws_cassette
     model = XaiRealtimeModel(MODEL, provider=provider, settings=XaiRealtimeModelSettings(turn_detection=False))
