@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
 
+import httpx2
 import pydantic_core
 from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
@@ -143,6 +144,7 @@ def _append_revealed_tool_params(tools: list[BetaToolUnionParam], revealed_tool_
 
 try:
     from anthropic import (
+        DEFAULT_TIMEOUT,
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
@@ -697,7 +699,13 @@ def _effective_thinking(
 _DEFAULT_MAX_TOKENS = 16384
 """The `max_tokens` sent when the request doesn't set one and the model's maximum output is unknown.
 
-This matches Anthropic's guidance for non-streaming requests.
+It stays under the SDK's non-streaming limit (`_MAX_NON_STREAMING_TOKENS`).
+"""
+
+_MAX_NON_STREAMING_TOKENS = 21_333
+"""The largest `max_tokens` the Anthropic SDK sends without streaming with its default timeout.
+
+The SDK expects a response to take up to an hour per 128,000 tokens, and requires streaming past 10 minutes.
 """
 
 _LEGACY_DEFAULT_MAX_TOKENS = 4096
@@ -707,11 +715,36 @@ _MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
 """The room the default `max_tokens` leaves beyond an extended thinking `budget_tokens`."""
 
 
+class _WithoutUntypedEvents:
+    """A stream of Anthropic events that skips the untyped ones Bedrock sends.
+
+    The SDK's Bedrock stream decoder drops event types, so a Bedrock-only chunk like
+    `amazon-bedrock-invocationMetrics` arrives as `BetaRawMessageStartEvent(message=None)`
+    (https://github.com/pydantic/pydantic-ai/issues/5774), which the SDK's message accumulator rejects.
+    """
+
+    def __init__(self, stream: AsyncStream[BetaRawMessageStreamEvent]) -> None:
+        self._stream = stream
+
+    @property
+    def response(self) -> httpx2.Response:
+        return self._stream.response
+
+    async def __aiter__(self) -> AsyncIterator[BetaRawMessageStreamEvent]:
+        async for event in self._stream:
+            if isinstance(event, BetaRawMessageStartEvent) and event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
+                continue
+            yield event
+
+    async def close(self) -> None:
+        await self._stream.close()
+
+
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
     """The `max_tokens` to send when the request doesn't set one.
 
     That's the model's maximum output, so responses are only cut off at the model's limit. Above about 21,000 tokens
-    the SDK refuses a non-streaming request, and `AnthropicModel.request` streams it instead. Models that reject input
+    the request is streamed and accumulated into a non-streaming response (see `_messages_create`). Models that reject input
     plus `max_tokens` beyond the context window keep a lower default, so conversations close to the window still fit.
     Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a request whose `max_tokens`
     isn't greater than the budget, so a large budget raises a lower default to leave room for the answer.
@@ -1269,11 +1302,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             betas: set[str],
             thinking_override: dict[str, object] | None,
         ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
+            max_tokens = model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile))
+
             async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
                 return await self.client.beta.messages.create(
-                    max_tokens=model_settings.get(
-                        'max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)
-                    ),
+                    max_tokens=max_tokens,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
                     model=self._model_name,
@@ -1296,20 +1329,37 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     extra_body=_build_extra_body(model_settings, thinking_override),
                 )
 
+            async def accumulate() -> BetaMessage:
+                # Stream the request and accumulate the final message, so the response is processed exactly
+                # like a non-streaming one.
+                raw_stream = await send(True)
+                assert isinstance(raw_stream, AsyncStream)
+                async with raw_stream:
+                    try:
+                        return await BetaAsyncMessageStream(
+                            cast(AsyncStream[BetaRawMessageStreamEvent], _WithoutUntypedEvents(raw_stream)),
+                            output_format=NOT_GIVEN,
+                        ).get_final_message()
+                    except httpx2.TransportError as e:
+                        raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+
             if stream:
                 return await send(True)
+            # The SDK refuses a non-streaming request it expects to take over 10 minutes, but only with its default
+            # timeout. A default `max_tokens` above that limit is the model's maximum output, so stream it when a
+            # custom timeout is set too, rather than hold one connection open for the whole response.
+            if (
+                'max_tokens' not in model_settings
+                and max_tokens > _MAX_NON_STREAMING_TOKENS
+                and ('timeout' in model_settings or self.client.timeout != DEFAULT_TIMEOUT)
+            ):
+                return await accumulate()
             try:
                 return await send(False)
             except ValueError as e:
                 if 'Streaming is required' not in str(e):  # pragma: no cover
                     raise
-                # The SDK refuses a non-streaming request it expects to take over 10 minutes, which a large
-                # `max_tokens` implies. Stream it and accumulate the final message instead, so the response is
-                # processed exactly like a non-streaming one.
-                raw_stream = await send(True)
-                assert isinstance(raw_stream, AsyncStream)
-                async with raw_stream:
-                    return await BetaAsyncMessageStream(raw_stream, output_format=NOT_GIVEN).get_final_message()
+                return await accumulate()
 
         retry_container = container
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
@@ -3190,7 +3240,7 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
     # In streaming, only the start event carries the split, so it's kept in `details` to survive the merge.
     # The one-hour count is capped at the total it's part of: after a compaction iteration's cache write, the final
     # event resets `cache_creation_input_tokens` without resending the split, so a message accumulated from a stream
-    # keeps the start event's stale one-hour count.
+    # keeps the start event's stale one-hour count. This assumes a stale split can only overshoot the total.
     if (
         isinstance(response_usage, BetaUsage)
         and response_usage.cache_creation is not None

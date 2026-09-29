@@ -106,6 +106,7 @@ from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
     from anthropic import (
+        DEFAULT_TIMEOUT,
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
@@ -276,6 +277,10 @@ class MockAnthropic:
     index = 0
     chat_completion_kwargs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     base_url: str = 'https://api.anthropic.com'
+
+    @property
+    def timeout(self) -> Any:
+        return DEFAULT_TIMEOUT
 
     @cached_property
     def beta(self) -> AsyncBeta:
@@ -637,6 +642,7 @@ def test_cache_control_unsupported_param_type():
 
     # Create a mock model instance
     mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
     mock_client.__class__.__name__ = 'AsyncAnthropic'
     mock_client.base_url = 'https://api.anthropic.com'
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
@@ -787,6 +793,7 @@ async def test_anthropic_cache_fallback_on_unsupported_clients(
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
 
     mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
     mock_client.__class__ = client_cls
     mock_client.base_url = base_url
     mock_client.beta.messages.create = AsyncMock(return_value=c)
@@ -929,6 +936,7 @@ async def test_anthropic_cache_fallback_preserves_existing_cache_control(allow_m
     c = completion_message([BetaTextBlock(text='Response', type='text')], BetaUsage(input_tokens=10, output_tokens=5))
 
     mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
     mock_client.__class__ = AsyncAnthropicBedrock  # pyright: ignore[reportAttributeAccessIssue]
     mock_client.base_url = 'https://bedrock.amazonaws.com'
     mock_client.beta.messages.create = AsyncMock(return_value=c)
@@ -953,6 +961,7 @@ def test_build_cache_control_standard_client_includes_ttl():
 
     # Create a mock client that looks like standard AsyncAnthropic
     mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
     mock_client.__class__.__name__ = 'AsyncAnthropic'
     mock_client.base_url = 'https://api.anthropic.com'
 
@@ -2553,6 +2562,7 @@ async def test_anthropic_speed_omitted_on_non_direct_clients(allow_model_request
     """Fast mode is only available on the direct Anthropic API; Bedrock/Vertex/Foundry clients get `speed` omitted and warn."""
     c = completion_message([BetaTextBlock(text='hi', type='text')], BetaUsage(input_tokens=5, output_tokens=10))
     mock_client = MagicMock()
+    mock_client.timeout = DEFAULT_TIMEOUT
     mock_client.__class__ = client_cls
     mock_client.beta.messages.create = AsyncMock(return_value=c)
 
@@ -3530,30 +3540,30 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='This is a straightforward question about crossing the street safely. I should provide clear, practical safety advice that applies in most situations.',
-                        signature='EpQDCpsBCBIYAipAx3EChxAvwa7smEjg8aNW3cSVRMlqjOtxJiCXDCNLCiz2E2v2RP6XsKp9XwSxyiHfdIDnNB7fwndHlrlslFI68zIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB0M/v1QYSDAyDCkWpIjxl+V/rUxoModLmg64OJblSa64QIjDHXIhKwS0xG53qzyFf445t7EeLsR4CLvKzjSpjaxoCIkV9oohnDNDoOVfQEyuMEJ4qpQGHxMslw60XvDmKTidWI8DkdT7yaSn40qKbXv300VdP/PXw1IbKTjJOI6PeinB7D+sIXuK9ZQTNjfGB8bjdIvwCwmZI3mHLATHQgfK/YuBYPTdVm+s5DbLkVwoIN1bm6fX0oEx6638HisgQkAQjKJui25f15+Rmh1blx4byspV/kqL74GAMQ71F3mRJbmKki9VoclhiMTcwdYMKh/RZm+atTBfqstAYAQ==',
+                        content='This is a straightforward safety question about crossing the street. I should provide clear, helpful guidance on how to safely cross a street.',
+                        signature='Eo0DCpsBCBIYAipA69qyFi+sCo412EDny7YyS6bZCGAzKzIWQDi9+JvIkWrWp4Ln1nTCZk0bi+3+xTP29JUvmQwNsKw6B9ZbLhwRsjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB3Onv1QYSDKQh/pzKmKY3KNFRkxoMG0gjmaHZ364EjyD8IjAvY2ourooz1iaUcZzAgdPqsJg/1hUvJ8gC+htkUhMZaVrj8g7aQ2MeMK+3hBiG3SMqngHljUCYwl57tiMhfA/T55G+H7CQkUOpTTxnyDrnTbe1vHtaOVRukxsGeKYqa/8HnYHQD8x9H3mnnjy+KBj8GJyShxpSUCSv55If0NlHR2HiUT6MNCqWStfKsP9Ac5+jllBRcs8zfIgtvq6bNZbXiscyscYjV2T1OlQiBMPbbdksZTUHMiegl0mDlUwP1DY8fgR6fL88F9dy73fWLCE3bRgB',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
                     input_tokens=43,
-                    output_tokens=320,
+                    output_tokens=277,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 43,
-                        'output_tokens': 320,
-                        'thinking_tokens': 31,
+                        'output_tokens': 277,
+                        'thinking_tokens': 32,
                     },
-                    cost=Decimal('0.004929'),
+                    cost=Decimal('0.004284'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CfY3rCRSGroG25aVmL5kw',
+                provider_response_id='msg_011CfY86N7So5nDSVMmT1gBt',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3581,23 +3591,31 @@ async def test_anthropic_model_thinking_part(allow_model_requests: None, anthrop
             ModelResponse(
                 parts=[
                     ThinkingPart(
-                        content='This is a straightforward question about crossing the street safely. I should provide clear, practical safety advice that applies in most situations.',
-                        signature='EpQDCpsBCBIYAipAx3EChxAvwa7smEjg8aNW3cSVRMlqjOtxJiCXDCNLCiz2E2v2RP6XsKp9XwSxyiHfdIDnNB7fwndHlrlslFI68zIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB0M/v1QYSDAyDCkWpIjxl+V/rUxoModLmg64OJblSa64QIjDHXIhKwS0xG53qzyFf445t7EeLsR4CLvKzjSpjaxoCIkV9oohnDNDoOVfQEyuMEJ4qpQGHxMslw60XvDmKTidWI8DkdT7yaSn40qKbXv300VdP/PXw1IbKTjJOI6PeinB7D+sIXuK9ZQTNjfGB8bjdIvwCwmZI3mHLATHQgfK/YuBYPTdVm+s5DbLkVwoIN1bm6fX0oEx6638HisgQkAQjKJui25f15+Rmh1blx4byspV/kqL74GAMQ71F3mRJbmKki9VoclhiMTcwdYMKh/RZm+atTBfqstAYAQ==',
+                        content="""\
+The user is asking for an analogy between crossing a street and crossing a river. This is an interesting question that asks me to think about the similar principles but adapted to a different context.
+
+Let me think about the key parallels:
+- Street crossing: safety, finding the right spot, looking for hazards, timing, method of crossing
+- River crossing: similar considerations but adapted to water
+
+I should provide practical advice for crossing a river safely.\
+""",
+                        signature='Es8FCpsBCBIYAipAwOMgDScktpRxOxezSKZlgDv0BuZLzd16JKHtifEj7Gexjinz1tHPsfOKFpDV5Ps2AcRHhy9FLlJ+2nrqsaKvxDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB5env1QYSDOBsWwrA73Lhj5+pyRoM6yekk9bgiyOJWJKAIjBkzvQqpD2HN5Er+Xl6x18dSGuhTbDp7woRb0n2yIbwHSfOfZqVxdpNt8oj63ienHkq4APsDBEEUy7tLmZ0f4AmaHZER9BX9jH4+bYtPUGkBf+oF1a8j0T6v5tNpbG/4aNREh4tmpwYserqz+BiQHNPcnAFJNY9tNrifTHAl8e8xxMOxrTnZOi9SRf8dn/cuVvYbqa5dF7C28GhB1qdEyDaeuzUT1kMbtPytC1sWys4Keo4fpR9lULQynVL95Tt7UBjjjYymstvig2TYrIeBf7ha58fx13WmdM1iX2PnIIaCw6D0euszAwrTavz59RMvovTDcU5A5dQHWRXSB/7BsHu0nxfxSONrcVkgtM/lEraaj81zMXifj72/PRSob4FLzRPZTp1jTasCGJUwJzg6pjOdIBkUqaMrbxc4MLdocLPOkV9jtKiOMMB3VIVqp2Xt+85w9P6WqWJhB4TlT0vOYzOewIt454F+8wA0Jq35w0G2Bt3s4nvPDFxAKFAv5heaaTXE5X3AlmidVb6RlyDPq8+rVzq02tcMjJQicfj4i9nNNNjXJsl+NolxFw3pinctxUezmkNiUZNGto0OI1jsy9ZYWdnJessWUqzBayTmralzFgqpGr/+hxTYBnfdDJlzr9ljuHdkfffNvnAslNXxp0/KGGgcrldzp7G7YEYt4sg8c/8wZlFi2xE+P7yEHg/vEoHoiMYAQ==',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=43,
-                    output_tokens=320,
+                    input_tokens=307,
+                    output_tokens=440,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 43,
-                        'output_tokens': 320,
-                        'thinking_tokens': 31,
+                        'input_tokens': 307,
+                        'output_tokens': 440,
+                        'thinking_tokens': 98,
                     },
-                    cost=Decimal('0.004929'),
+                    cost=Decimal('0.007521'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
@@ -3687,131 +3705,131 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='Eo4CCpsBCBIYAipAmMWKoH9HNKM/vBvvqjFoWnKtP/SZ8whJlgcw47YfKqsIuJVKlQgeno0O9Q5XmbyKPVcL3UwTCAWFHy75Myn9MjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2M/v1QYSDF0KSmPrwo14oE7IrhoMGsNYfreDEtVi3aGOIjC0yz8J9WxEhTsQKehe5YZL6LPPSwlTqlyI8f7xSc+k1KVEmVDerb6l1q7M4023CtgqILxCcLqvm6lXUpOW/vEBxexZp/UZ2Trw09n/4Wjog7rQGAE=',
+                        signature='EoYCCpsBCBIYAipAH9yMh50nMosxdP3q71FDdw6Z+ZPzJuiFuyaffpTU/yPwJKCH8ttFsqMvyZH2twka/lsjXMK1jFbdG5qjBV8q0jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDN/JD1GIwizBXdwOlRoMTCSBWHvFuekYqVgdIjAqoUhdlNp2sh+IK/10MHlg8vuBWmb9I0Y72d163jAsvWNqskMd8BW2PRS9aJOFAaYqGCO/sNubMbD6331RrE0kZGf9M9niUnbnERgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoUCCpsBCBIYAipAd1D7xHnYI7Iaj9RtZZErYnDMNJSLoAhFxdl0kOimsnmSZekzeWiOzoB8hUaH+3IiQX9a8TlyGOpHcvoXyI6fOzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2M/v1QYSDHx4sZDZQvE5Hv4jdhoM6IkYuw8iy8ojqdyeIjCnaUvFrl+F7KT/4ru4hJHodh64dMDdwlfc3NMlCFSzHxQPDuxcxHfSJF9kbf3asXIqF7zJtQ17Ww7jeNRqZDE+Ugc2hgnnKidTGAE=',
+                        signature='EosCCpsBCBIYAipAMhzsaP6mP4XdG63xA9xBCXA8X+sESq1zK/stvJmXS3ev+N7ar8UA0jdX6PF/WOlLRR4djR1IjB7WuKcR3mpziTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDJHB2W2ajvHIqL4L9RoMcs+71e5vbnFmDNvMIjCR8+nYrnDVX+Q/6GpZBzk+xGZpyGh1omt0N91lOEWOT8/aBCMV2NZIeDTUH8UB3GYqHeHnj9JWwi8Gcl8vl2B85rL9oysLXUlFxDHfPJkoGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoUCCpsBCBIYAipAAPNRhJay4OBsISJ3whh3W0mW71/dBuf4cyf7Usm6cBkmBB3vBW/1f7Nu8wTO3PdFcX32cvPh2gMGNBCGqoVZxjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2M/v1QYSDGgmeg20oDmdmO+WAxoMMPO3xmz1C8GfzEsoIjDnOHwtxGycCGuPnHqyA0vIVGi3YNR79jx1kLAes0IoxCjSo1OGoxSyjkiyDBvB8xAqF/74fzU3phaMGRPh5LH7KVSAX9N/b8CGGAE=',
+                        signature='EoUCCpsBCBIYAipA9tLhVJaBQbtE3U29zEYbjYweuKgSdgkQizI3MEo/B/bFZ9i3tpN7sqWwaFqbd1F6h+APjfEP4r2Da1oci3Ah2jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDDrL0GMq3DNCBNn2cRoMAz0dVLAK08yYeZYiIjDoNXTd1E4CD2cBDho/7A2ucaNvqLIfGnjOGbiCGfLupkcYGO3kAqx1xSmYMc5WblMqF8al8jeAXdPk2RZN3wCxzkt4xepNX5u+GAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoUCCpsBCBIYAipAt93hMwAUITUT8vRj3P1zP8wDpy8cGbg6TSzo8Nu1OLZ/KI85VKsx8wmBzKT5vZ1oQk2AlBOj8qaidVAWs3U40jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDHUFiB9s3RZPHbByPhoMpsls4vsZuzSiW+YTIjBVRKlpnlN/I6aH3ZiG29lh+nsdleLdEBMelEavhOa0bnm/vZkU0zLbIFqcQXaAGJwqF+V6CtNFy9Awrtdtw8piPZS9olY1ECf7GAE=',
+                        signature='EowCCpsBCBIYAipAZ7UyCtikcGzZiGrRmmIufMOmrbU7+z9Dm+IlSGh1hLETKjjWf6VaJyxRE8CZ/cUMnTygkCrHlY5ukSnGObdzGzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDBKJvFS5lWAlECEEwRoM6jBcAPREepa/UHvoIjByHVnQt16oZSf8ZZ3l4bbOwLbHdKS4IWuK+6jdETra5Oz2oN7Lh1z2eC85ugwViUoqHrl6h+pEaIZ0/333/HcVHe7NnkpCk6Kah06egoG46hgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EpECCpsBCBIYAipA807vlniuRjCauOQgX4j6tO2ZX78FKRRuyNlyPfeJM+isoaJfMgN4+c3kitNNOQ7XCNlItp7z88W4BD2LIJv0hTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDGLhDSJkNcQtI4oOgxoM9m0C2/Sfkb+a4OGHIjCw8YiIz1z61jFUUMbFMyhh4uqvncLi/ZNbAyKnws5G9quT//QJSnxEb+jWBUQiJtoqI0gP/qiUW2YpYpN9WBHSCHKozQjIxnYN4AUdB41wAHi0AQQeGAE=',
+                        signature='EokCCpsBCBIYAipAKx8eKZujHCV966c6UCXUo05K2bs8qFRrHapEfp2uKqxOEFZGYMJnrMZgHF6snaDCdoAI1d9m+j8mmbwGRRaTsDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDMmEFEt6Yb27M53D2BoMFVctFNc9VPq7fkVIIjCreImFxft0OZVnhyT/AL8SFczrl9CyFN9+R9F1b7f/BIE64AEFVZ9IrJcr770vC4kqG5mnxkeUAMbM9iUnAmjuLmwC8CuW4yiDSyJpkRgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EogCCpsBCBIYAipASkJZNro5FFOXaALlIWzQB5IzWjoFUZriDuw9n8SSN7d/oUoLfnFCq9lcbjDRfXb/0PNfrh9Q6PumvBwxcj0zsTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDKopudzsdbwwibsbFRoM2Z/KjZmWGxsSAWPlIjCq0fMCNLJ2gdRE8cXFF7EVzVDBZJCVHwuYUhyMsUaRSpkrFScXQzEFTxM+mkQTb2MqGmd1UJwl9A7CfuqXNsGXJ0otGFUwEqrsg9XKGAE=',
+                        signature='EosCCpsBCBIYAipAyDu/XQ65uve9leP7V/tGECftwrDje9O/QkbvC8eHaYpUB3S/29EFjUI9Vdnh+vHSf5DEo9qAFh1f0Fsrc3qh4jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB7+nv1QYSDJuL9VQ8J5Uv1DwVoRoMcW0m0FKwo4wN+oq1IjDyUH7I1tVCXD7nju6eMx5i0sgEhMp7rh1oPEHkGcxCGUvAElB2sdAcHzLFzmTPsvMqHavkzmmwe6ixvQQecZBxNkjVVs7YFkOj/IntB1sFGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoYCCpsBCBIYAipAEMvBBA44yqWX8YEStsSfy/LX4OTRl6kp7FfvwC9usWnSZ+osjGluLckDjaFmpMxMz9TjzUr0tO9BtXUpahC7VjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDG5QavHRwX7Qgvg+kBoMeQBY3kmYolRdhvtNIjCiC5jGPUHRVi997vH/HLKQqeQfDdUxFtgATb9HcgdNiCQvQN2o4v2MskF4GQt+Lm4qGN52S91DsNfcNRPDWwaoPe7Ofpm8+nIRaBgB',
+                        signature='EogCCpsBCBIYAipA0WYzCYNjM2oGjFl4T1dFGdr9w+hVaI8347JSkxCM+IOIT8CU49JIbQ8JQJYV6qJtLOBkrUGWSwApx0VjuPuS7TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDMiU7iMqqwcqIoxQ0xoMdXS9D3UlRgSfkmS9IjBmOHhisyqb1ZKQdzxuZVMggrExFngcaJHnjLSujaTBI3/CA2iReSCNRkdz8DFhovUqGhUtgiHjF/Qpqjwuh/GICFHDxEJdUW9XjJnkGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoUCCpsBCBIYAipAleHfoRlIHgShmMFVtnYe9RLSvp3Le+SLfeJSaTrGRjpN1vfFGHe4EAI7/k4pb21/ZWLHyL66IvpGLYt/mLiJDDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDC76Bb+jYIaSYC+NthoMUUA4xpeBgZ6EqGJnIjC5iHbHRQ8qNDJJ7ufuEIJh5B5TILHX0Ec2Pz3GCl6hepewrGY8Z9F5gtTAeoQlCUgqF60BWTh70tywlfFR1kadudwVkIL9WoE2GAE=',
+                        signature='EoACCpsBCBIYAipAJnMI174JyUCIOY11FcIz/B4GPiJFw+w4SwCHkXDsC4KelPhF6G8TL3ZoXe49Nsespb8brIseI4wIOPwRtBFBjjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDCMPAsj14lcl1PCOkRoM65Jrg72CN8507qkGIjBtjaIfVYPQTg8CMEP/Al+rcmskgMF2Qoj8PVptj6rsUEd1gXW3vUCfqayoVX9H9BIqEvDg8/aGBauKnrnmptvzrhF0vhgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoUCCpsBCBIYAipA0cseH+TPpgp+qDv72u9HQYoNPitHp9CsDhN2z3EXbAiRTbtbJ8p7W+Z2XkFCWtXCe/cFWBb58O+EM9RloI7hBTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDDnYPXmrY2l/ES70IxoMpV5cNf5VX8FO39VWIjDoiV5sJqV/Ax7Xo9VsO87RZw2TI9yqYIXE2KYClmZTlS5JVUieBSkh5wpeMcRezs8qF+VuuEAoi1oycalCq2vz7QH64UeG0PHpGAE=',
+                        signature='EoUCCpsBCBIYAipApTZ3PubRBZVpnSYZjSYFcxo8UpecUYTIgWoYjZHIHNvuq9W1IQ/+EmXWqEmTcnTxYdsjC7PuW1BQKmfTvvi+7jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDO6QYLpsGX/hWfUdIxoMsXUsfObWEKr8TJ6JIjBXeazL4mkICqJ1319joWPSkxeJ6RyyXqATZIllUI8Nfe4tZlxrZifjZ+LtEIeCcSYqFyyedWZr5DyN93HPAVqY2O4R76PEoavOGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EosCCpsBCBIYAipAdm9icQomEjWp9KtaGiMt5gk1ty9DmJPbO64UzyVLFUG+7dcfCJWPdrarhJPbYQ361i1HtPltfbOr/419257MZDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDDAmv+QC6dt5YGbWLRoMGbJamRgO+lkk5fVkIjATnk+BlMANoHjyYJfKR7UJGlnEGEHFkUDeeHUZz5cyJrSrvaywc/w+DOycIJteOB4qHWLvY/Vge55WwqRSIxw9qkWTC/ijF9YAY+16ikGkGAE=',
+                        signature='EoMCCpsBCBIYAipAvzHQ5HJCoj0E50P+UzM64bDks/eRBw+ASICBtwLNqKSKgqp8TYrM6Va5ajuAPw0t4MC6Of3uORJr1eKvg6HtUjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDEFbVGGsR5mhQg7qTBoMMuFNPuusDu/0kAWFIjAgHhFesAi3un5RwTMAmEZresDMHNRIz9Pb/z4c/FLNcOVl6JbDHH+TDkPq01v5yWsqFc0w8VWq0Gl08WO4N/U7jHKTvza+jRgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoECCpsBCBIYAipAkT5OGi6VzkaHnQbbow57bdA875NMBfn2QQFvttZ+wX97zz6zq/+J/vfC/lMis+kqq437+SCWrXyLCUAnsmXCqjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDAfdVzzG0I6wB3WDCBoMwM4YbpShITieuQnaIjBEGiXDSI/Nj0F23b10/jjUwdA/BrpidKVhp39Ca2O1Csa3kiT4VBqFPgwYKbZXxLEqE28bVdDfoP3cYyelQtbTtvq15xwYAQ==',
+                        signature='EpMCCpsBCBIYAipAHa2K3QqFoebycm1NBLg/+cjRroBct1eYa/Rzw2/jyorS87kn7sjsI5s3naJLY6yvTmBfZZpBC76AQf+YpYyZkDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDFonsgg3dCBUZI9UVxoM/cdT4Jg58Oe+DA0xIjB5tomREdY5CWIkvDtPvfHi8vvBfitpfGk9L6F3FxQWDzZX9Rb/0ycydBGrLFAVc8cqJcr8u3nQnWjDpQeR5KjR+mZLdieZ0dg3lv2cQB1c9I9g9LLK2QwYAQ==',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='Ep0CCpsBCBIYAipA2ueHQgwCDMEL10dJu97awrRChX+DN2KykcXtUgzE3qQ61JVxOtjvuQrEthv5qOIwZ3uFrtkTKzojm6oqYpLyxzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDC1KjNf6V+1+EGKxixoMO2Kp7l5isW+WHeAlIjC+f8yuo8JD5Iccl2+60K9vWO1eHttt2tANHcMAF5Fq+Hpu2WuKJCEVPfUVdS1UZYYqL9bFQiJzkghISfeG2JY0EmykxrfXe8gnJCwmj8uOdkvMtmYjDlBaNtADOM8NeG83GAE=',
+                        signature='EogCCpsBCBIYAipAExfpgI4F2YtR+6lHAp58CzScP6vtbYJxZ6KMqkGsl/2ZhzaJ81ijMgDD+TtYrDYlZ3/iWgUdWm2HZnm+vNQyJDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDOGbgDHw1PaZBOTFexoM+LZ/3gJHXwaXQx8OIjAjagjLQIuE4kS9R7iVoEz8Romsb+9iR/yKdaiUAmctr7N4o4vuQooj8Ke0+dKBzvkqGsm89B3wKvFu/xkmJq4fzurRPUV0b4gEOEvzGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EooCCpsBCBIYAipAnyGYjy8HCN8w1/OafPQCiD+mM3COjnP5c3AfIhqK3HXoQPWf2p25PZ3OMkb9i2cdCiihW3JtpbtWYPaE6DEnLjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDHMeRHbDqw3J6yJcShoMvRqDDrScCx/OspthIjDvBQXL6EQSGdgYfP56496VMGzbbkeE8ZOoc62r1g497pnpwQksZSvV7uAvavm5m8YqHPLHK02HoG+DpnIxdRAoxElfaoyDYXEx1vStIP4YAQ==',
+                        signature='EoMCCpsBCBIYAipAkV8tYzRfHXqTJukKIzjZXs5UDumddyj5AOKlUA2iDOLA7rgKgs3/7xjg4DRvWN9VhoRUT3Y+vfRWgM1oiDqQezIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDK5vNYlKki5v5WyhGBoM0RCGMBZjwNArBs2sIjC69NXmdoDM8/s9ept8WMHEiMSaXggoBlGRXYfuieGde86d1WywtnfWWzncggKe9g4qFa2bqY+4sLapkplnKQu8jt7eR/ByRRgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoMCCpsBCBIYAipAD2ywCaRBOX5Hf1BeUkFBvm9uQQCDtCVOjIKDrvwTbHWmvIDz3eJrNJbNnGJdh7x+e+OJj0sTdfF6gNPXouXbjTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDNmecdK0me4x+bKtaBoMWcapZ0HyIKWSxioDIjCNSQ+pdwOUrk9hlHJbC9emWDnLzOIm8zeA3SKlV3WCRbsj+l2N5R+ikPdd4Lx+tl4qFRjQ+/NCuPp1y5MpF80IiW3g52f6RBgB',
+                        signature='EogCCpsBCBIYAipAMy/kklQeKU/8oIDybVe7ImQxtKLSaknRiapJRX8vEOfiZLdjbUPPG4T1nFgvUsrc5VCictQJ13MLrHmTjz0iKzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDPNzAMDp6R+/fNh6+hoMWGfqBZ/kRtPG0QjHIjBa+UxofJGR+dE/7jjK+01ofsSZc6ZkX4wtBiev67WMhNMIcXaELbfR2kW4tHgBBz0qGj9UwIUgBuZFVtxPp06aq7Fm8aYa4se6L9ZcGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EpQCCpsBCBIYAipAv9iTTLcXBS05pQEK7JZtrXzJt/VRrkwSs9Otq2PjJm3XZeuwUXWHmdBbBd1OmT8qL8RDxwZibyH3fRs3OkFDMjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDDDuZQOXBJcvTLoEghoMqtCfiThgyAplNlvtIjClhEx3NoM32aDW6B8pnwiFXABth5ySMfmOUE4w7lLykzy3qfXKSSvWZ7W/ks/SRYcqJovkfvy8RXwYltIx08pUzEAnM1GTHwxkPAEw5YmXds9OCY77TAfWGAE=',
+                        signature='EpsCCpsBCBIYAipA9fh8Ro4ul8bGVq05BUDTlV28cDSy3YdhU0fAEGPryq8ZpopRPM8nlAbKR9HxjJi8U8/qfzKLR5lDoE8GMV+oeTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDKZ6xkp/m72qYG5d7hoMpBk6AgrY+EBBbkUXIjCCA1ckuZI95/t6nZuz7d0x9TAsn3y1Ylg0zzsIGNZ057dyQxtcxW92B6kyn3vdOr8qLfu1nnG8OoeEwmmR0JdGvTgWemY1kqQeo5/FEFUvXBWpJcexHKGtAx9fS2avexgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoICCpsBCBIYAipAVFcPPoGZ/bmhIbIqZr92W22YWB4lcIsAuw8/dB+Dl0idBZk16as63EgFp+1A5q2eWbjZF8iBpj3sBGGTwbjzUDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDBF7v9UG/PbFhd/K8RoMf5VWE+PD9OfGuLLTIjBdu1DapxOL/cAw5Swl0DwtZhScTiNRPrBz7GcYsYFR29+3uOBJKDupJrkwyBR1aQcqFCYX9zV3TXxeOfohV3QKG4NEWKzGGAE=',
+                        signature='Eo4CCpsBCBIYAipAwtUEJEa2y4OFRqo4Y6EUCoPx3Ub5HrEqPN9WH483gpmB9cVjObm5gZRV4VT7oKL/MQEFkeYPG5iIS55i2PSyBjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDFfvx1E6BuX0sENs+BoM86sJHteZ/EMd6jLeIjBRMlQXAyg23F4kVlOHtlDxdjLbtqINpGAl/Sw3lKK9fFwh6TT/oaF5xL7VeO+AZTMqIFi/Q80WfFis0rpnjhzxQer8F+ipppdsT72Z7tlCTNTgGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EokCCpsBCBIYAipAj2VE+nAfNXWLXOin/znOFcHmLQtkDs193UW72grgHHEwEaXHFufEsnTL1xgebvtIb+yc+T6AMfJXdtWoy+s34TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDELyrfuP7BKcvDXmtBoMxZnkJrd2ayCMM1ptIjB4RkTub0EVy/OMVtm704OCGNtEFgBM+M2Q8pOxA6ACxc3XA1dO1trGKp95LO0IGgkqG1aVsunOTEF/s/sKdlp08+iE/mLwMyC4rQ2+5xgB',
+                        signature='EowCCpsBCBIYAipAbdIV/0v7ZMAefuPLxlDj5vnBhRA0GD+9LRN18KANXfomsCgL52r4saZDoVarLlMoEmmSP5HOc2j6fFmTnPHfPjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDAZKnqHTEPbClkeU3RoMlke45/mjdH8bpAmpIjCzLP3lAjpQq5goIOQyM1e37o2yll8D7kAMR7fexb0Ly1tZ98TiUknxJx5XTfntpEoqHjP2po2UsiEBgl77wzAWmbR5Q0RQ/nRUZuOPkzCY2hgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='Ev4BCpsBCBIYAipAj2VE+nAfNXWLXOin/znOFcHmLQtkDs193UW72grgHHEwEaXHFufEsnTL1xgebvtIb+yc+T6AMfJXdtWoy+s34TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDLJpl9m6PnsRQLdrThoM0Xj0fME4CDrD3HEdIjAYdC7z/+ESv+/sC5AoifK/YfjJJ8I+R9k7KEit9Km1gQ5E9MIrFsDfK9Hc3AGJt40qEGi34TLrV5BUZiX7zPB+q7YYAQ==',
+                        signature='Ev8BCpsBCBIYAipAoFYas3ogS5mm18MY9nKWMr4/x75x5UsYB2kd4Wv3HylKFOtmBFAQROibk6aTgni673sAU2gScRN8onGQ4kIcSjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8Onv1QYSDFBXiBSj05P9uE6T8BoMrcujKkkzhJdJeQHPIjCjd2TVa2/wb+ob7KleZ7Giq0L0DloriUO5Q+/vRJQqmaEb65Xf8eDB0PVzOOs6avoqEZqedGmWjmsdENQAnLo5JSyjGAE=',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
                     input_tokens=93,
-                    output_tokens=103,
+                    output_tokens=91,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
                         'input_tokens': 93,
-                        'output_tokens': 103,
-                        'thinking_tokens': 47,
+                        'output_tokens': 91,
+                        'thinking_tokens': 42,
                     },
-                    cost=Decimal('0.001824'),
+                    cost=Decimal('0.001644'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CfY3rnnuVjmSHr8jV6m4t',
+                provider_response_id='msg_011CfY87oKnoVeFkVVeHTV5U',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -3847,131 +3865,413 @@ async def test_anthropic_model_thinking_part_redacted(allow_model_requests: None
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='Eo4CCpsBCBIYAipAmMWKoH9HNKM/vBvvqjFoWnKtP/SZ8whJlgcw47YfKqsIuJVKlQgeno0O9Q5XmbyKPVcL3UwTCAWFHy75Myn9MjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2M/v1QYSDF0KSmPrwo14oE7IrhoMGsNYfreDEtVi3aGOIjC0yz8J9WxEhTsQKehe5YZL6LPPSwlTqlyI8f7xSc+k1KVEmVDerb6l1q7M4023CtgqILxCcLqvm6lXUpOW/vEBxexZp/UZ2Trw09n/4Wjog7rQGAE=',
+                        signature='EoICCpsBCBIYAipAtG/CbqI1VALktegtM5G511LDtXp17QNrWvfGLgPoScswSLy1Ew6MUJQWHC4/UFjoogDT2daKm2Ml7U4TIAwMUTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDO1ugFssFGWdRKUWjBoMufHz5AoO/ny9siY3IjCXkXHqT3oAVmpcZj8aGieDlwHL5R2rjztl5m/CJa/IuxZAS8ZXNYDuNMa3E863gkcqFGj9G2ea++j4m5I30k9l1kgK1surGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoUCCpsBCBIYAipAd1D7xHnYI7Iaj9RtZZErYnDMNJSLoAhFxdl0kOimsnmSZekzeWiOzoB8hUaH+3IiQX9a8TlyGOpHcvoXyI6fOzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2M/v1QYSDHx4sZDZQvE5Hv4jdhoM6IkYuw8iy8ojqdyeIjCnaUvFrl+F7KT/4ru4hJHodh64dMDdwlfc3NMlCFSzHxQPDuxcxHfSJF9kbf3asXIqF7zJtQ17Ww7jeNRqZDE+Ugc2hgnnKidTGAE=',
+                        signature='EoUCCpsBCBIYAipAO9AiKamf4m3+be4zjVFq+QCp0y5bb5NebHlk+G8rCsHl9/P3zePg3Vj0X5Y6aVxGic0TxWzZ8b4A0DebNlgGszIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDJVTX/S/huc4n/XrVxoMY+C1FaNQU6LKzV9gIjDp2RYWeHP/2BqefCIZ8ugswEgpVQJhVUNMCMXC0zM5QB0SG0PBPmVQONfhbkexpeUqFyvmhtHGpz5VnPqF7TfP3yNPe6LLR8fFGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoUCCpsBCBIYAipAAPNRhJay4OBsISJ3whh3W0mW71/dBuf4cyf7Usm6cBkmBB3vBW/1f7Nu8wTO3PdFcX32cvPh2gMGNBCGqoVZxjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2M/v1QYSDGgmeg20oDmdmO+WAxoMMPO3xmz1C8GfzEsoIjDnOHwtxGycCGuPnHqyA0vIVGi3YNR79jx1kLAes0IoxCjSo1OGoxSyjkiyDBvB8xAqF/74fzU3phaMGRPh5LH7KVSAX9N/b8CGGAE=',
+                        signature='EoMCCpsBCBIYAipAsWLzKZpQZZxRlz34GAU6GUjMnmu0ytF6oSctWJvbVjWoBGCtQ+WxczumYWeU55fyI3iDfAT56TnsDAErL8QRvjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDKWkEiWtxR+Ag9jR5hoM6/BOs98KAU9TzS3bIjC2WIIr6PhWWRbDKdQ7nDM2cHB6gJaO69dhdZXFkMkcrxNEBd34M2+zujJdT3Xs8mcqFV0MKt5mwZd6XCb7rdSJxdgyAweceBgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoUCCpsBCBIYAipAt93hMwAUITUT8vRj3P1zP8wDpy8cGbg6TSzo8Nu1OLZ/KI85VKsx8wmBzKT5vZ1oQk2AlBOj8qaidVAWs3U40jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDHUFiB9s3RZPHbByPhoMpsls4vsZuzSiW+YTIjBVRKlpnlN/I6aH3ZiG29lh+nsdleLdEBMelEavhOa0bnm/vZkU0zLbIFqcQXaAGJwqF+V6CtNFy9Awrtdtw8piPZS9olY1ECf7GAE=',
+                        signature='EoMCCpsBCBIYAipAI3Qb0/Rkz0NqArF+7nP4GdYUFlCG/vDXNBiFxU63oDcLO9ij0v/6EoMPCyrPnH6NxXsQhn+CRJR0gFOSRashoTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDFoBxpa1R2+8HQDVLRoMdIUizQhQtCkqi1yxIjCOi9dSIyGrO+MNKObohm3NSsc8tsCKEPSVB9i7S8Q+QXRsJIOSwmIkr+VgvPJXso8qFfIhO0bZlcsE8n/Pa3C+of29AdOcrBgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EpECCpsBCBIYAipA807vlniuRjCauOQgX4j6tO2ZX78FKRRuyNlyPfeJM+isoaJfMgN4+c3kitNNOQ7XCNlItp7z88W4BD2LIJv0hTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDGLhDSJkNcQtI4oOgxoM9m0C2/Sfkb+a4OGHIjCw8YiIz1z61jFUUMbFMyhh4uqvncLi/ZNbAyKnws5G9quT//QJSnxEb+jWBUQiJtoqI0gP/qiUW2YpYpN9WBHSCHKozQjIxnYN4AUdB41wAHi0AQQeGAE=',
+                        signature='EoECCpsBCBIYAipAdlMFD4w6RUxuSn5av0UHBgv9cNww/kWjsCevWt89xuk411+A7FNI5KPVHVz1k05YWOSeCeULInXDiskz18u8nzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDD8F33gL7aDjVSmbNBoMq/0rswgLxA5QMd2DIjCz8/hzz9YAJBQN6LTyS+Mf0ofekwVgykQJY1hmE4/0+JLU6KVV74kUgoM6aC+PVWAqE5mnLH67g/wQxbcbgwDcQiTu7IMYAQ==',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EogCCpsBCBIYAipASkJZNro5FFOXaALlIWzQB5IzWjoFUZriDuw9n8SSN7d/oUoLfnFCq9lcbjDRfXb/0PNfrh9Q6PumvBwxcj0zsTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDKopudzsdbwwibsbFRoM2Z/KjZmWGxsSAWPlIjCq0fMCNLJ2gdRE8cXFF7EVzVDBZJCVHwuYUhyMsUaRSpkrFScXQzEFTxM+mkQTb2MqGmd1UJwl9A7CfuqXNsGXJ0otGFUwEqrsg9XKGAE=',
+                        signature='EooCCpsBCBIYAipAAXAvskvZ0qPkPHAH/dz1SJpz76NFe49KjOGXEJEkmD3grxxJuP2E5SctUlPQ2jie9BbwWNh4Tcg0KTtVRLGudTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDKQ5skKwNWMsCNZPIhoM2pE4TBV9dsxiM6PmIjCBQ/gCo5yqiOJREeVp3cHKgIYOweGoqg6CZD9xJJGGxhGpRWo4iGVCP8ttj8gJjugqHHx9XagzvC8VqXvNr6tQjavSxIg2ft3RT5Ri4B0YAQ==',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoYCCpsBCBIYAipAEMvBBA44yqWX8YEStsSfy/LX4OTRl6kp7FfvwC9usWnSZ+osjGluLckDjaFmpMxMz9TjzUr0tO9BtXUpahC7VjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDG5QavHRwX7Qgvg+kBoMeQBY3kmYolRdhvtNIjCiC5jGPUHRVi997vH/HLKQqeQfDdUxFtgATb9HcgdNiCQvQN2o4v2MskF4GQt+Lm4qGN52S91DsNfcNRPDWwaoPe7Ofpm8+nIRaBgB',
+                        signature='EowCCpsBCBIYAipAYhUKiHwJiHK2aojdXvhoD9ypMeemfzPYItoEU4lJ0lsiCT5B9N2nB/cqEN3Vs6Hc7kAwcSM6GFPtFS2x/+8ovjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDJ1E0S6A+DwcYWM/4BoMq9mO/QfDPaON7iBsIjAuGsm4pOvKqxr9RwO81WHXrbWq0D/C+uSbhjrqwJBrH2VB6D5xlAo2U+KG7Mr8zn0qHo+M+SMEw85LPl7NRWgKRYdeGBScGrhTVExMkPUh9RgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoUCCpsBCBIYAipAleHfoRlIHgShmMFVtnYe9RLSvp3Le+SLfeJSaTrGRjpN1vfFGHe4EAI7/k4pb21/ZWLHyL66IvpGLYt/mLiJDDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDC76Bb+jYIaSYC+NthoMUUA4xpeBgZ6EqGJnIjC5iHbHRQ8qNDJJ7ufuEIJh5B5TILHX0Ec2Pz3GCl6hepewrGY8Z9F5gtTAeoQlCUgqF60BWTh70tywlfFR1kadudwVkIL9WoE2GAE=',
+                        signature='Eo0CCpsBCBIYAipAsf/WG0+efT6KOZ9aw6y5VOeUpYu0Z5lK28y2p1Eh0Qcf9Sg29aUqEYQNmQeHB0P5kY8yfdH7yjPwQbAmZCwy3DIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDL+YDL13uPdW9TdA2xoMWFNbEc/a+b7zucMqIjCtY5vPftC/JV5gpHBsuuIHl7VgARpF2HZaygFnBW2LlD6v2P4auwXjxPEuvYcY4WsqH9vk4Iybnv/FGlTVI9qrF/HWgAYxmEhOkxOnaLOQFn0YAQ==',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoUCCpsBCBIYAipA0cseH+TPpgp+qDv72u9HQYoNPitHp9CsDhN2z3EXbAiRTbtbJ8p7W+Z2XkFCWtXCe/cFWBb58O+EM9RloI7hBTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDDnYPXmrY2l/ES70IxoMpV5cNf5VX8FO39VWIjDoiV5sJqV/Ax7Xo9VsO87RZw2TI9yqYIXE2KYClmZTlS5JVUieBSkh5wpeMcRezs8qF+VuuEAoi1oycalCq2vz7QH64UeG0PHpGAE=',
+                        signature='EowCCpsBCBIYAipAbSM7ZlmaYMJGETdkc7WChv+zWs59QHLShOZWbeXoEUhgBTwtiFSpoWpsoEfmlsN9i1KmRx08RpD/BIWWQ+u3KjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDKPcfJM3oT+5j0ivhxoMOix+dZRf7E2pEQfRIjBdvshu/EPULeQRxusQZSHfvFTPiNSC8pgkfogmskpUHnql1cNv7fU3fJtlrS99NjoqHiL8mlAbehEE9cDwqTXEjOzLzf6fDiLx7mjabTkaQBgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EosCCpsBCBIYAipAdm9icQomEjWp9KtaGiMt5gk1ty9DmJPbO64UzyVLFUG+7dcfCJWPdrarhJPbYQ361i1HtPltfbOr/419257MZDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDDAmv+QC6dt5YGbWLRoMGbJamRgO+lkk5fVkIjATnk+BlMANoHjyYJfKR7UJGlnEGEHFkUDeeHUZz5cyJrSrvaywc/w+DOycIJteOB4qHWLvY/Vge55WwqRSIxw9qkWTC/ijF9YAY+16ikGkGAE=',
+                        signature='EoECCpsBCBIYAipACvZbQ+40Bh5imdlph6QkA3PZAmGpqdwHoxHdJdIbO/mpp0ZrpnFjAJaPZ4XbcEOiiimixdEt+rTtSzeHT7ckpDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDKDCZRxNZVN9yVjSqRoMEJlEsGucmuP1VyniIjCPJ10RPncGbkyztrh6bS1V8YHTNNJ+Zg7IoE35aWoKYGyH/y1S2FJmyHoSMvkF6g0qE2qnrUeP0HAEyljG2hL+PqIrXG8YAQ==',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoECCpsBCBIYAipAkT5OGi6VzkaHnQbbow57bdA875NMBfn2QQFvttZ+wX97zz6zq/+J/vfC/lMis+kqq437+SCWrXyLCUAnsmXCqjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDAfdVzzG0I6wB3WDCBoMwM4YbpShITieuQnaIjBEGiXDSI/Nj0F23b10/jjUwdA/BrpidKVhp39Ca2O1Csa3kiT4VBqFPgwYKbZXxLEqE28bVdDfoP3cYyelQtbTtvq15xwYAQ==',
+                        signature='EpACCpsBCBIYAipA0VPH68XYX5ZvHe8VA3mRpfDvyAJNs09yyqMwSQq3otWsSg5unlQbSnxC53F+u01u6mNRHBpAT4Ni8AYN1NdUlzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDD3GDHRPGNEJf2QkLBoM0jT9cAJHvLgDhcaMIjCXphK9V2FsCANuvjn07+QTPhqR0McOungoxg+O0hepLG7DOBDNesWhp7RWv25Q6lwqIhvcF26i74YT0kXE+CU20kQCbRLHA41mbUnKKiSrRkKUzBIYAQ==',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='Ep0CCpsBCBIYAipA2ueHQgwCDMEL10dJu97awrRChX+DN2KykcXtUgzE3qQ61JVxOtjvuQrEthv5qOIwZ3uFrtkTKzojm6oqYpLyxzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDC1KjNf6V+1+EGKxixoMO2Kp7l5isW+WHeAlIjC+f8yuo8JD5Iccl2+60K9vWO1eHttt2tANHcMAF5Fq+Hpu2WuKJCEVPfUVdS1UZYYqL9bFQiJzkghISfeG2JY0EmykxrfXe8gnJCwmj8uOdkvMtmYjDlBaNtADOM8NeG83GAE=',
+                        signature='EpUCCpsBCBIYAipAvgUxIXqfSREto7zpMAWCAqr2wna036aXi4NAFs4xA+OKJRNs4K8YpoA+98PTGRuQIdHaFSISrFM894CuaTKtkzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB8+nv1QYSDDMwtKAU8stI9PjPtRoMqec5JXDPMjfgzRerIjCJXnDHnsayf4JO2BQ1BQGEUb69tOnpQLDi+z4tG7lhb1BZe51vbCapEzHwdhiL08YqJ3YFEJ3TQhAyJ9jDST8a/H0ajSfeobAk4vrC0jwo7js0cC25ue4nERgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EooCCpsBCBIYAipAnyGYjy8HCN8w1/OafPQCiD+mM3COjnP5c3AfIhqK3HXoQPWf2p25PZ3OMkb9i2cdCiihW3JtpbtWYPaE6DEnLjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDHMeRHbDqw3J6yJcShoMvRqDDrScCx/OspthIjDvBQXL6EQSGdgYfP56496VMGzbbkeE8ZOoc62r1g497pnpwQksZSvV7uAvavm5m8YqHPLHK02HoG+DpnIxdRAoxElfaoyDYXEx1vStIP4YAQ==',
+                        signature='EogCCpsBCBIYAipAZp2qD/K44Y2ay6d74hpK0TX3Dfft8Q6hGmwMUlPL8SBIQ6bLRCdDgmWqBHggx7E9hg1bno7qjmqo97vBz4MFiDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDMuvzfvyDpDIUiMBNxoMZDdzGPEsAq+eeUrOIjCc8xVcVrXSBHoe1w/18XrTi0EnIIzl6CdbU+5+awNmBxPn7NMuUzSPkLTpK44C+/wqGuVrOKiZiOm0fGJ0hs6vkfeGw3FoncQ8P16EGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoMCCpsBCBIYAipAD2ywCaRBOX5Hf1BeUkFBvm9uQQCDtCVOjIKDrvwTbHWmvIDz3eJrNJbNnGJdh7x+e+OJj0sTdfF6gNPXouXbjTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDNmecdK0me4x+bKtaBoMWcapZ0HyIKWSxioDIjCNSQ+pdwOUrk9hlHJbC9emWDnLzOIm8zeA3SKlV3WCRbsj+l2N5R+ikPdd4Lx+tl4qFRjQ+/NCuPp1y5MpF80IiW3g52f6RBgB',
+                        signature='EocCCpsBCBIYAipA8gpFSIsC00f5aNPPM5nGLkXJUDJ6qhFeHeJg/WRdRo60q2dVYkrvA0TUPzzCR+0ddrejRlknNto7cb5VK4gNszIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDHpztZbu6QADS2w5dxoMQbNofh09uEpulRD/IjB1frgokLInW9QfVPwbvdUxJrs2kHWqn/V73Z9gsNzLgVz4epkA67nvk/oVKKFGUd4qGS4SF05/2oviF3dbuKcEKWd4i33nrUueuNcYAQ==',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EpQCCpsBCBIYAipAv9iTTLcXBS05pQEK7JZtrXzJt/VRrkwSs9Otq2PjJm3XZeuwUXWHmdBbBd1OmT8qL8RDxwZibyH3fRs3OkFDMjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDDDuZQOXBJcvTLoEghoMqtCfiThgyAplNlvtIjClhEx3NoM32aDW6B8pnwiFXABth5ySMfmOUE4w7lLykzy3qfXKSSvWZ7W/ks/SRYcqJovkfvy8RXwYltIx08pUzEAnM1GTHwxkPAEw5YmXds9OCY77TAfWGAE=',
+                        signature='EoMCCpsBCBIYAipAmlkKLGQnKd3akDBsvd1SsvP0nQQCPHPwKdChMClTbZt0zk24zX9uwaRJ8Bx0pbmgrl0BD8K7KLdmPo9U2lfsfzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDNKHsG5P5hZOX7wiUxoMmelHHVlg9sksz+C0IjBj4i+fv/6qqlYrFJx07snEgSNcn9leOiXDBo0BkUuKbkczGVe3K3E75v3YRQWMqKIqFS/HAjn8lD+JvLMeGYFXHN6/HMHulxgB',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EoICCpsBCBIYAipAVFcPPoGZ/bmhIbIqZr92W22YWB4lcIsAuw8/dB+Dl0idBZk16as63EgFp+1A5q2eWbjZF8iBpj3sBGGTwbjzUDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDBF7v9UG/PbFhd/K8RoMf5VWE+PD9OfGuLLTIjBdu1DapxOL/cAw5Swl0DwtZhScTiNRPrBz7GcYsYFR29+3uOBJKDupJrkwyBR1aQcqFCYX9zV3TXxeOfohV3QKG4NEWKzGGAE=',
+                        signature='EoICCpsBCBIYAipAeFjsFCb+dXJoStuJRs/baKtSHjNOecoLzJASXkQ3KNgH4tXBZHhQJFF61mqjSDboext/ItH2w6DL4EmIkItU4TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDFY4rJ1SPK419J55/xoME+ToMkmLXCVByylHIjDQxXv1oLE6JTuOv+SXfwbMB1uRFsfBr49I8ijaOA875ZdBBGQrAw06BmI9/BXehbgqFOvqIj6+P7/jPRheVYcPC2ANL4z1GAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='EokCCpsBCBIYAipAj2VE+nAfNXWLXOin/znOFcHmLQtkDs193UW72grgHHEwEaXHFufEsnTL1xgebvtIb+yc+T6AMfJXdtWoy+s34TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDELyrfuP7BKcvDXmtBoMxZnkJrd2ayCMM1ptIjB4RkTub0EVy/OMVtm704OCGNtEFgBM+M2Q8pOxA6ACxc3XA1dO1trGKp95LO0IGgkqG1aVsunOTEF/s/sKdlp08+iE/mLwMyC4rQ2+5xgB',
+                        signature='EosCCpsBCBIYAipAMTWb/Ier1jqb50IZpPXchxgcAEyVbB1kjVHPZfaOUg3ABXtoUbeBQjnlW1kNhvVY5g+R4lcInfZBJ287VaiEbzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDFOvadOc8M0cG5+oSRoMDIN1S1NhD9jGdi+kIjBpZtVmwcX8bRUunwW7RSPcu6EyOdrG8fdySw8bDtxw6Ez0UelZtDxiVrWy4Ck/87oqHWCzZDVIuE4x5zbCbmLTwn67oJtD3BX0caJaKzMiGAE=',
                         provider_name='anthropic',
                     ),
                     ThinkingPart(
                         content='',
                         id='redacted_thinking',
-                        signature='Ev4BCpsBCBIYAipAj2VE+nAfNXWLXOin/znOFcHmLQtkDs193UW72grgHHEwEaXHFufEsnTL1xgebvtIb+yc+T6AMfJXdtWoy+s34TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB2c/v1QYSDLJpl9m6PnsRQLdrThoM0Xj0fME4CDrD3HEdIjAYdC7z/+ESv+/sC5AoifK/YfjJJ8I+R9k7KEit9Km1gQ5E9MIrFsDfK9Hc3AGJt40qEGi34TLrV5BUZiX7zPB+q7YYAQ==',
+                        signature='Ev8BCpsBCBIYAipAHbjUo7UNerDRTDWtRVF61MtisWja1B9r7xf3CkE/OgWSyjeq/lV7SPa9lmn7/kWIqhGa3BfnBq+YR2fibdaflzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDLsNxAOtYNCa+CMjaRoM+WZQKs5BNXdxSas9IjCzJ6OwR1Z3QJC17bze5KoK7gdlZT/aLgAlHnUZsH3AmQgrZF7/X1de9399qFD2/hcqEUQ38hd/zKH+8fK4p9nD446JGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipA/2+BO3HzQCvb95ibfi1Eocftb/XKq4ivzhfrSkhlE+aIZQTBwnVWG3SYZM3tRjqBlGt1fGxhHgBJFysWC83yajIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDCPeOj1evmgeSIJm2RoMPDh0110KPCK3DPPwIjDSPl7gO7GNv4n9bYAz2lnIRBtfH4m2+2MVUGimXSy5sOWUHcgTLrnI38xQVihwh0YqFkhMBzUOI4/LB/A5TJvznbDTDjUnrVEYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipAEOxa5vegUwuVQbWQSXKfmk+ZNs8oAsdMRzykn0X/jcAUL6cgYgPzXff2CGfZMpw9reUFfe3f+QWntDpyJE7mQzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDMZQumg0TX8RQU1vtRoMiiAMcHtRHP7MmYetIjAdDt7RqssLf4GOW58f4sgkKLW7JxGKwTn4zH2EedHuurMODgh2mizv+ci1dxKkIioqFvMP8Eo4QrWE4h+kOcuit1DKRfZc9P8YAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoYCCpsBCBIYAipAPI/c/uPxBu84e6OOAY8pbX8Bfs2UJu1lkIjGxJsfIXTgzQPqfgs8gnz0wjr2jRy4RnPuvfhizt3a6j+VhZCWEjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDDta4J407yyJRhlYNRoMVLmPkVtgHnPPlN7hIjDSCPzxIIEIDEXyAR50YlEhwmZ378uYxX2cEmeF708G77btdMisezCnGnmv192oLF0qGAf2IxBpt6VxEzTwm/O3N/Tc0r/q1ehYnxgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipAMW9Qsmzu0YfbgQUsSsbzU6pKQJBus5O+MNGAzbE1ka3k3ONf/eladJ4lQQ40Ip+myyHv7tm85qNDGtwxfyMfIzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDOx81bA9e1Yddixl+BoMGilK6cgRYfYYxMNvIjCBc0fqsjY8ab7OlIDKrDYzH6zwzP6ldIz5hGck3dkHcCLwYOSFvlMscqTHDEBh4KkqFo7lg4rQ5oN9MgM9wxSiiZq3+gcE5YAYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipAR7SmBnKbKOhvlxZE04B3jgFnNAK3v6+pD2BNrHuMc8N8JevGgRdzO/XZNIeOW8GumJGmi6TpzC2mksX6s73PEzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDIzsvc2703TEPPGHKBoMq5QJFSf8zCmRv0DkIjDle+abx9ATmdNL8FOSE19gr3vnXBP6wbl8GgG13LdxQ+gbPHGQFu8STD1Ivt8ESBcqFnECnG2nQy++HnfJfkbU55QgmF62zWEYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoYCCpsBCBIYAipAk8AE96MC7PfTx9HkbnfZsvRurnBzKCqKvE/j48WVknzWxdfxxDd0FfOeVzVDaIlSlx56A4wr/RHqsY24c5OxNTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDEOUKoUXAKiVAWnKIhoMdm/6oRAyJ6lZAv75IjBSo4fZ2lQkd8vLbJtKFdUIdW3/6pK29eX2KHnPkOP0KEeVS2cEAR+0JhJfJ3bBXTQqGBVPY3jlD4EIT1Y2VNoPTcORcboKvB7TUBgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpYCCpsBCBIYAipAl6XgeDtQriAPpaiY0pqp201okjdzaZI8vqYH7H867r3ljR4iMtNdvlZ1dCCNsPfp3+yMADek1h+qgHhIwUxIxjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDJjJcTkEX4PNAcU8dhoM/kirYSv8MNZZ2ixuIjBPKc/3woFPPg2NtldxP+bKVUResGYCtAgz7VKxIb0BY/2N9S6t9Vj0JKN2fyMdy0sqKN1fpQNtRbnMgg9FAZhRp1vCXRMDK5yNHDaJSxSY58vbTyJAx8LjtYIYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EqACCpsBCBIYAipAjh4WBFC4lfeTl5qMiHH08rPp78PF1boHoFG9/NQAS6MD3nSr4pkqItTr0ocMICYnDYKLQ1+Ox2TeKpsTPTzESjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDK8fX8nmLyZ/+YhDUBoMlEKmZAPFIIEPg69HIjDznIJW7nyyOwwD+l3fo+hHp7r5gCTHKRNmO9j16/WW9dP1yHHCJzGcYzOnEPfMu2QqMuJrZjcTHdnilyI6+LEQAs71gqE9dY0JcWQ8IvYr6ChYM47n+wtmiDxw6g2fC1mtEXgUGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoECCpsBCBIYAipAbdwABpX179w3sKjkK4W+t9/49CtyxVG773BCKv6nYkD318vPPZwDRjGmefKzhdta5wSDAwpvkd0qEL25UF3mYTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDAe9Hb6bXEWa9TR4dRoMdxTTvg2GVuOrXB4PIjAxNYv9K+jPKaBRij2vvYmzZacwOB+NCvkv+bBbmOPsiZi+RDL7gIV+rtVN0QPf0iwqE4qC/FtR+N+jTA+gWaZSF2JdLAoYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoECCpsBCBIYAipAYazmhp0bYiEfc9T8s84ZASZCoKu6tS17iNfOOJRkZmuA4xXgMe+LubC22E/swnVDjY3K1zFt6EtgAVNDDaVbvTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDM4/0hw1mR5FK96icxoMzsq4klhLZ3PaA5HOIjBEj/NNdeDAA+cXhMkUP8xQivqhkFA1J4+pDB1ZXzgpEsu5tiJPdmIAWLQzeGgbQsAqE1dPrJFz6Rkkvs0uP4aeXFkPhZMYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Eo0CCpsBCBIYAipAnQF6SVsxYdToVfxgpH/pEKflbjxVfEIArP/KY0wDpyz6rMlS7mlkEH2Wj78Bc+FaJM/mB30WPuudlsLp5DaGXzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9Onv1QYSDJ2c2neZwmaa2wGlohoMzzpfMi8DAp4Q1ZY2IjAeYZtgGtP8HwRkUlJ6nzgIyH6WhcoRJBRMbjAJJC2XyiPH+1m59iB+O8bLHAeRwQgqH4Oj4aRSLAAiSMww601T9AIE9UJdwNOwWNNJ9DnsTVAYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EosCCpsBCBIYAipAyFMSMAhIxZJ57AS9CL5OkYeRhylIG+J9quAITnkxeJikHZ3EjfH2jCU7v2UjvNPY67rdKU+Nu5Z7Mk343AmieDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDDy7GuakzGdzvOiB+RoMhT+Ru7tzpYDSXDeAIjDEFeFejjNGflTEyCaWbouvxB8Y7F7C1naCkA88a8cbsMRbIeeRBMuv+9iU+/PfqZ8qHaRKGxZ9U3iebUI3oeQCLm5Srpm0wjxESczYs0U+GAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EokCCpsBCBIYAipADMtpXryss+sQK87PXZj5KPuOV2NqSG07XxyJ03NJJGodbeqE6zW/LOsYx5SrqjY5vBu/pJpK1WHV4SQSo4HGWzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDDrip1uVKEbOlRIcDxoMRSkbiypAMZUgieqLIjC0mFeVwe1+QebnAUrIxor+412177Z/TUKghDKRk/GiRSfCtq1CSb14d1Ia0XZTAGEqG9BKaEHV6wF1Y0U7dYHSX4Wi/I/zyfkredp24BgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipAd0MMJUX2YzC56oRpLlPWXshMR5QjbVFc11KE+MN4oLC6WNz59YMKVc4XPx4eZmtWkXtUXSLSZ44cTKOKYMn22zIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDCLna8f1BfXWEksG/BoM9bTNwp7uCwX0TzkqIjBIVRxwOPcU4sZjYZ7aoabzZd9MxEWrkD2jsyZJIa22fHLXAu4Clv+znZf7SBDSzhIqGaEts2oEG5dNIVbYKg+gCKaS4jiDiOfMjZ0YAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAs0SMwOAB714pNDHrX2+2rcuwQsizflYee9lce736KAWlW5uK9MIIzXzP6JS1Q+33H35P057WqJJzpEFq+NFhCjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDE6AM7r8rjOlF7r63BoMgMHT3b/+Jo7cydkjIjDwvoRszc7vsAjqcGv5yBtummuicokhdPoVBivVYhBigyKfj07ZwxllghlKJvgUoH4qGh+QxtB/P5bKWq+onOS7uNm+hZ07Qyp5beCMGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpACCpsBCBIYAipAAybIq/ot6LVTRog2g+QnE937rF/LurrHDFKSjkFKrPg8bKX46apEylcD4BLPwi5n0y+n3hH8IUaMQTo52cDY6TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDGug1WXnbhPdJN8BtBoMB6PTAYmCWLyxMXleIjCWOdxK5lkjsZ/Rjn+1u7YO+N8oyaDldELzkrRtelqtfkqJOioWz9zY6+6q4GwfFS0qIiMts5xKOAzT382++TWGBq5eCKod8LXBEtvvJK9Ifev2EeUYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAfj+TTr+nywFzix1R8klQu2nVJ2hN6onDTR4iNA+Ze1Q5slNgr6ILLxvT01/brOIxOweY1M6vcPx8pQP7YGo1VTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDBejW87C2J7TUYa9TRoMtfPEWDRUg4WJcuxnIjAV1IU+SHTeoSo6SprWFaLZSfp4vRDXoKQMfrP9rFmIAOLUsuo42raZWEOHk5aY1IIqGkcmsTd6Gv4jw703Tu3XRO1OazKB9xvSX7R8GAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipA6tBypaXIaynXyGrfPct6aER0Q9mY+BCMkCWRzWN2B+SIl4xnB/ntBtvgBQM97zM/tLRvfMbw3yI9T+1Tu8zA/DIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDGSfqgOZW2dzV/++yBoMbTFxjS/Dr55zduqoIjDQWG6OjFrn910rCVGafYyhshGPNSxDvP48d6WTcAuBQPk3LefoZhqrgVwXKi/4dI0qGYLP33rxKhm+b82tYCFpdjpx/7tvJpugZiYYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipA13w1fDjH1Dv9LwfHk6SLzmcbuEVUsJHx0x8jgIOWkyU4yKo+QwV43/oeQOILInKpV41UQ9jpe7MyQ09mTK5P2zIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDIbGNMAIawsh0Y680RoMXkCgoik0CbeduSvQIjBfBNVrylWp2VKeTuvJflytYSzfwoCZQG5mlvDA9kqaSuAj/EKlFFd6Nqeb5kkwDAcqGWVTJWI8GdXzkJN++8xPH7Hj9y60ASYOcBEYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAxfDHDm99xOUUTCz7kKhBiWWU2DsjazDbMsgLcCVL3L8RjgmXAnJ7lhP2AOvI274VBmhYXSd5LPteuSbOQtLyYDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDELZfTNRhMOSw4U1nBoMateFB1XXFiZMcZMVIjD16URZUSGMLsKviK4fqNopTiDrpgw8mLd/JWr5vmlASIZaa2b2v3AnuWlTuKQsTXkqGpIdDyi+M563+JdZGljzp4aykIJMMFkXrn+EGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpgCCpsBCBIYAipAs8MmTpYfhkZIlLHxeroT0Yx2A+C87xr926+2vqU4/97c3s8OanxTIVtjce79PFhA93q4HzxfefKarulMV5xPSzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDN6ZX2opLeCW4G8bPBoM8EA6O1MLgrTyh5+ZIjAOro5BGTwCvBgh2dCWeIYuD+KknSxxsJZOJMRaGEKCPcdS+a4mQLIxLmkcKLo0yKAqKhS4JQy8WsurOG+Zvqo2SoUuauWtW/zSYfMVnwjXWkLZ6R4L4lydlLjXRRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoECCpsBCBIYAipAvNc5ByqMAQnjdFEVRqduYf2hWJG8sJqJUxRZuXBJCwqvKimWipnelbYHnhvRi8xXJJFGPVWXraLInaWhyjjSkjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDAhF/CZr85wN3oaRNRoMmHz5iwlku57Wmmo6IjAlb5YURU2nGRR3C4d2hEfZOEJ0bX14+Yzq9Nc7nBsFwqsFYjYKHrGB2jhHhZfxUqwqE1vJCSHnMjv3IaBv3FU0UJOGU4wYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAamn6uwnF3AofOR4C2nqFwebaTn1ZqgPNNCy/iZ+fwwaRgj1v/yyStBEWn5cuqBzNL0XdKOHuiIhXM7W+iGJ0IDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDNOiTXomC5eNOFP3nRoMYnYPhJuoHoFLgQfOIjCzORTjocfjJbQAIytsucUHes5VPrg1he/Pbcr/E6ApjnEbXsJYWHNgLo/Ow2aGA1EqHnz4wRz224CjTvsWhUK0WefpvxrMahiAAzvYUAHyqRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipAP3Q4MwwmBULC2+NX//GMPwVU1XRdMCj9POs1rke65dKezZQ2x/SYMRCARlEvozibOSe/TXDsY1c37FrwK4axyTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDLiKxVNW12zurTv/DhoMn0GJrvrwNpgRjsqUIjDS2wVPrsiAXUNaoN3CgRSbl3HpNg73QsCzDPIh2c7kLRl24Eb46dh0bYHoq38gmakqFg5s1E+f7alt/nk38iYpyKWeYFw74LcYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoECCpsBCBIYAipA+pWsmB23Ygn95C3YZ3wpYzP++B/3ZGb1Jcy9iVEPVF8w78OZbDjW1SHke7hZ8hNWcMOBL3k7Tiiul6DgeONuJjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDMmC8RcQ2cw4dCdbtRoMLCw3FxcmFDP028qwIjDGgOyXwVBAXQeA14wqj8IPtf0WJAigyP1nm0GTPqf8pi5zHFHUlJll1L5UBeWPWKcqEwIXeZ0c48g68Eesmb1Ea03QAxcYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipAZD6v6pY0G7L6EVI9cpTWy4hk45bE+0dhyO/E96toyR8VPcb31iVkpn6wu0+cNz42GNY/rqTcFa1raOihjdAqozIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDDQlnJOTYbGhXEes6hoMb34Zmn1nf0vUCsy8IjAhtz/mP3ls22LgTG7IMbEtBHUE6hbzNHt7EfCqZPlcwn94KPErGFQusgZUJhzgsC8qFwUbpqOPzmWFmP8iS+8tQCt1GTC13TPVGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipAO+wcopvbST4hdYHNTLUe3Ne6j4ULyNhiEujVgbU3VGow9sQog2YbR7Xe55kr1IzW/ZB8+C2Jbnsn4JJt09AFUTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDIJ4LkptU6qe7wzHcBoMqoMoFsSFHC5kyR3rIjBu0AV2vFe+0uYkItXq4T2FoQc7TvI+TNGbtiVYCawN9soTdKQlpvsy24jX4fE+RSsqF8Y4hWGPn5g9n8UnlX7VMDu7wB+2uwFkGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoYCCpsBCBIYAipAwEFVFZm7HpL+TpWM41PqHTGXoC4sZuV27Htim0FCMiUwmKj1mzu3C4u4XTlCLSSOIrT8JvaEYOMbviu4njTOsTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDIWj3nf+ncTSaR+6lRoMp14BTCvSvMc66lK8IjBcFw8yCjRcIgRc7aXxyaoi3C9O8gWCZKF726yx2nLHG7/DCRWr9hPxoxrzFFe5KdsqGI+1+qOxwV+HOE2YQ9WRiUsBjIBMczZnoRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipArK6nOsbU8IeD73gxbIBulWx7hi/kafJsK9bMc9/TvbKUbpiJFg7D/Ghfy1dLLzF6H+Ue2zug2YgMHDQFiM4VWTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9env1QYSDF2sJhgsP0mIXoJgjxoMhCY2xlGj9jYDiC2TIjDJzRHOMDGVC4qskYXUE30GL4cgN75bZy9ROymNp/9UwmDG5xEezAqj99bCfKh3qnsqGiJXWS4MUaz3S9yQAUKA3PHkMQi1rcPWppSkGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAo48qayWaEP7qM9WUY+hgi6bcfuCnqiHJHXhkAkSbgFUwDRyxk4E5gbkYRQSHTq3fkUWvhumPBI3PyAFFLHSm7TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDHr0z5/OMp/Ondp3RhoMeemyrN8KnIp9kNT6IjBimUDF8lW+2vUeMkWQQNmkEvnu0B42U87ko2rYt7mgZGVPg92TEmRSbhH97KyFZVoqHtT5BT2pr6BInPE6LJUfBPBMWmG6Ss7xAC/Rg/pwTBgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipAKxAetSD/StiNNJzxUUPqhQ/LRHkSJY9U4WaZNlUFMfG6JUK7pjVci/6gC9LJtoyX4xp3b1Ve097wZo4ObwLBTjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDBzT9lRF3IICmMD4gxoMMdguwzHl3+SdSQaIIjCxFPMS2XdjqiAdxcMMsNkx4QwmjJUbTwn/Yd6WN9WSQGhlSit+odjtYrPJTu8FDkwqGb2IpAMOjRt0kra4OxnF8MZFrnu9eUAmnbQYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EpACCpsBCBIYAipA8RimIbKIasYnzC78+37g4YATeh1RoJQr2kEhu6ihnTezd+HfrPFPvWQ4VL7sRfQZ5Bp/dyOFbbAZBM62W7FyhjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDD/YizmeYClYRSJSgxoMqoVUu9YsLGd0M+o3IjDOsNoRwvxQVIezYC6SC9E8HM9z6NBhUr8jy+3JupQ0vown4eHJGx5JhXVpqCT0VtsqItMXyxjczOY7i0LIopfx4rmZ1BRPWTLQ9NCIFt6QK6T1U4EYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Ev8BCpsBCBIYAipAwKFc/9Zza2sAiT2bAiJ+fWdtsSDYY9UlaEEQMe8sYWDjaYkdzQukF8t5pbpdblpQ9kzfoSCjaleZC1AFzLjJUTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDLEZb/y19ZVfjmNxyRoMp/MbFXJQTSvGClCqIjA0DMUyx+cp0Zedip7amuLdUAKseVb9ZET7DxDQcbuIfT3rSNHOn4JKo40/rHCgIWAqEezFPZuiaiZOXdgcIhOl7ZIGGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EqECCpsBCBIYAipARIliKHCgtjb0SpTyGcz0H6ybwRJMN9s+euOufYMEUOCQve1PxBKX2rlLOcqxBBmcssnFLwgpA86+EHcvfIXnxjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDOJEfz7QSCtEOGDSJxoM2BPS0m4kr4ZB5ALdIjBwvAy2czzlAQlR9azlSaz0Wm8CsJA5fZnsAWqJMc57yKao8QmdjceoqTtNz09t5t4qM1IxWilsI81izgWKY7xkr3MdJZuJO8lXafIwnQVlqoDvSWMNhOaphVixjHh/2/Xf/36cpRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAmCPWRY0mm5dnKVlx12+t9uUCkN5bvB4k/ifOZ0pfRuUcI0Flz+hKQh56+4mjZbPTdmQTCQxdVcxglIYzoOD/gzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDI3InwY2TAcKglE70BoM+XVkTTBW5Ounk9ulIjC+DH5CbGSN7FQD7oYRz8V2t1aGFunD7/yIT0uSAAj1LzJVN0RCzZf643U7NVetU2oqHqyc6SDMCjNdiuHuJ8jvhMC8f4b5NO6nOsaYogzUahgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EosCCpsBCBIYAipAn7s+mVNqnRpHLftKQnW9gidxC0WGVF++/aRB9vCKlXNLwZXP9Hesf+usJ6SvMSCekVXM2P4mZ4eos4B2wBEQfjIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDGBf9BjpWRfYFMfxwRoM/S5jKAvau+pxJ9JGIjAg4S0wkQb7W63O8SX9obiczULu5VRXKLt7xnn6LUtn7UZqYgd1ByU0YxdO2ZwuKWoqHeX4UYg0iYcRYMWY/3Lh4SsjY27AIla+GXDnq3F1GAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoQCCpsBCBIYAipA0i1YJNucizKXdI6ebc1b8NrljjYfFOavWN1Y7J5LXM0JVmQTOD7EkAhwyH0aSOPI4j7MVspI3kqbM9RTbwGTpzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDNlCV6ShnkKWvoj1+xoMtVAD/7x2hAiw8elyIjBynJHduWSUM1bNHxOlwPLlwAQ0yYj65qWUg6gWJDQ8YooFA6uMZs2FRFnTd2mLqUwqFo3y3QFOpzZdDXVdAEvxBafxycYIAYwYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EogCCpsBCBIYAipAMrYeyvwRqJV0Ahfu048xR7Cs6nCWHyPIjWmkOpzckdAcT4HOz412aTaSTnAg1ulHFa0n+/8NK1q11z0kn/8IiTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDFOqxlHLYxa8q8kEJRoMJwfJxVyMOewZvFQ5IjDLv9THmsCcvq8cFXOe/nBAq9qsX049J0vU7BZRedTs7nveS2c/yltQ5c9aGsVJ8hMqGmAtDhYaILSC9tCS0WrtSqdEyH7T/2uu+xtEGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoMCCpsBCBIYAipARmr6kaMKVss88Njpzll8W17Yjdpc/E152E8bnrMwKMmBCS4ih+6GUSgb/jtjMWcQU5gsQDu+AyK9bKAApd9tdDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDKunst7lB1qvScFJSRoMEHpcOroPuPuk9/vYIjBumcehXsWqjjP+IBs01bhXXV0INl/ydkVkgMDzc1m/73dIlGOG+5YGJqJ9sR/cK9QqFThFA6ZJGz+J/Uxb+A/uv+FXH5zrhRgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EocCCpsBCBIYAipAVd6ol2scCsamnhl56hmhtJP7uvzMattb7ALi+CoLw0f46ZmSQ8IZ3GYSAln+Mc8+f+9hA5jp5pLfxM6w11f36TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDFznAxrG9bDaa5sOZhoMGBkpZyESVNZMGqsLIjC+fdiOjZGFysmPV4DozFyRtH3eWV+oDndZg6xeBhfRfGMOyreItMr9d1ZpfIgArAQqGRhl/gDPkLrcC2i77hZkEjxXp6iQ5crwvdYYAQ==',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAuD+llMbS3bPck8yyt526WFH89dOpPhR3pGf6Ld/Hi1pIBdcfPZXYImPamtKTOG06Zp9SFToHXM1h7TIbojH5szIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDOIUnwWGiQ3U8f2sTRoM13zRN+g1C4N6pjhPIjDZYaaJrsjl+we17VzI+5S3dwKj2V6FVQcHCTczKH6MbtGSacDpxOJ/ga6hgTtCsZoqHuBh75Aeymz8ylUETiIrSsPudtQjScLVhsUF5LoTFhgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipAdmy7xXj+D3ctMZX3nkrsVA3wg5GbxuGCrCd64DfhGSkOd5QoURdw4byGjXIeGrjKlB16xe1+hLEKkLkWX3a34TIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDMhB71tqaNuBwixMxRoMTB7gZjpeFiMWOIyRIjBnej1GO9H74/Q98AjD/7h8sXlkeOrpcAVdunwjLzagkepeMu5LedAzxmRSxTAbackqF9b81e0DIMxRQCjcqXlNtD4eOcG/nu8OGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EowCCpsBCBIYAipAkDoEOe9si+Sf0mdkfzyWZ7C3sYMhcyRWqbrf2jUsdtciOMupIsB/i6MbAzLx0iCrLPvf0k+rfKFt3Su90H1U1jIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDPkNimZq3OIngZQb0hoMUrq/bCipz3lXDlaMIjA6fFBXisvN7G6feLMnbj+/mpGJML0F6o0Xq3985rdliu1jsxNFkGFUKo3wdxby0QQqHtjnWrs703g20AZLoVPghB92MLaFt5P70AGz1myq3BgB',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Ep0CCpsBCBIYAipAsZJw/5llL7bWGZJv1jc/Oq8v20O/WZQzPNScVMx7bXDPUCX3pgttq9mi0QQbu5tuQZRwLes3vqUYMNGFSP3QmDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDFYd1Zm2YawrmwZZvhoM9VQek7KV0GS845mqIjBXKkPh/XcX8LmVVdiXRQfUaW7ZITot4MGRNAnumJiym9jSW3yd3jwWonYagSuTQIYqL8eQYQGzGt1kvXbfzLBvtjZHLQE4/U4SJz7xV2KfGSbNcvvuVQOv3a570W5be8tzGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Eo4CCpsBCBIYAipAr+NGyvkThhIqzlMCi3L5CeBczCrIdg+GYm/uG7703B0jPYjUvgSJ48R6a/8+Xnteey1KJv3D7Q4PCXqLfrkVPTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9unv1QYSDODsxYMih5eIDflEnRoM3qhwpbpMuF8GzCc4IjCCyg4kv41GmCvXL31+13SIcVsEAWMPrtnjIKlAu/V1zbKQOraKgpdXZ2tMXYtjEQsqIFL8zb64/T1JyWINVQqjZ/SQ7BXoB0YooLvF+ReHoqcjGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='EoUCCpsBCBIYAipAPxDpYmN8so7suW5uk8OlVfEl/rKEPi6iQH1TVEkm8kgA14vLonUUrerf0RhfRnRF64Q3B+6CXhAyxblN/IgGyzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9+nv1QYSDFp4RG9H/awJ30ac7hoMXrtx2G0Mh44BqGNgIjCTQD1VYJHRujo0hn8JEqZd1yIBrwCzyqxrx1IU9TxZNbxdMPNhXMpwRUVI60ZwbW4qF9HEad9Qkx874EKcjEYC9o9qCt3NQc3AGAE=',
+                        provider_name='anthropic',
+                    ),
+                    ThinkingPart(
+                        content='',
+                        id='redacted_thinking',
+                        signature='Ev4BCpsBCBIYAipAPxDpYmN8so7suW5uk8OlVfEl/rKEPi6iQH1TVEkm8kgA14vLonUUrerf0RhfRnRF64Q3B+6CXhAyxblN/IgGyzIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB9+nv1QYSDEMReeFUS+EiV28VPBoM/MqH72ajCGBco3/GIjBW54khMtp6F19y0JfeIOec2KwuZnqcpLlDPGji3t0rypMbd76b/ugg8BYVirUY12kqEMmN/XjbP1aaQCfGXOI6hc4YAQ==',
                         provider_name='anthropic',
                     ),
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=93,
-                    output_tokens=103,
+                    input_tokens=146,
+                    output_tokens=274,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 93,
-                        'output_tokens': 103,
-                        'thinking_tokens': 47,
+                        'input_tokens': 146,
+                        'output_tokens': 274,
+                        'thinking_tokens': 160,
                     },
-                    cost=Decimal('0.001824'),
+                    cost=Decimal('0.004548'),
                 ),
                 model_name='claude-sonnet-4-5-20250929',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_011CfY3rnnuVjmSHr8jV6m4t',
+                provider_response_id='msg_011CfY884N9wcySx9tLNbH2F',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -13018,33 +13318,34 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
     assert result1.usage == snapshot(
         RunUsage(
             input_tokens=1114,
-            cache_read_tokens=1111,
-            output_tokens=400,
+            output_tokens=408,
+            cache_write_tokens=1111,
             details={
-                'cache_creation_input_tokens': 0,
-                'cache_read_input_tokens': 1111,
+                'cache_creation_input_tokens': 1111,
+                'cache_read_input_tokens': 0,
                 'input_tokens': 3,
-                'output_tokens': 400,
+                'output_tokens': 408,
             },
             requests=1,
-            cost=Decimal('0.0063423'),
+            cost=Decimal('0.01029525'),
         )
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
     assert result2.usage == snapshot(
         RunUsage(
-            input_tokens=1114,
+            input_tokens=1534,
             cache_read_tokens=1111,
-            output_tokens=400,
+            output_tokens=33,
+            cache_write_tokens=420,
             details={
-                'cache_creation_input_tokens': 0,
+                'cache_creation_input_tokens': 420,
                 'cache_read_input_tokens': 1111,
                 'input_tokens': 3,
-                'output_tokens': 400,
+                'output_tokens': 33,
             },
             requests=1,
-            cost=Decimal('0.0063423'),
+            cost=Decimal('0.0024123'),
         )
     )
 
@@ -13211,32 +13512,33 @@ async def test_anthropic_cache_bedrock_real_api(allow_model_requests: None):
         RunUsage(
             input_tokens=9514,
             cache_write_tokens=9511,
-            output_tokens=2630,
+            output_tokens=2257,
             details={
                 'cache_creation_input_tokens': 9511,
                 'cache_read_input_tokens': 0,
                 'input_tokens': 3,
-                'output_tokens': 2630,
+                'output_tokens': 2257,
             },
             requests=1,
-            cost=Decimal('0.027545925'),
+            cost=Decimal('0.025494425'),
         )
     )
 
     result2 = await agent.run('Can you summarize that in one sentence?', message_history=result1.all_messages())
     assert result2.usage == snapshot(
         RunUsage(
-            input_tokens=9514,
-            cache_write_tokens=9511,
-            output_tokens=2630,
+            input_tokens=11783,
+            cache_write_tokens=2269,
+            output_tokens=49,
             details={
-                'cache_creation_input_tokens': 9511,
-                'cache_read_input_tokens': 0,
+                'cache_creation_input_tokens': 2269,
+                'cache_read_input_tokens': 9511,
                 'input_tokens': 3,
-                'output_tokens': 2630,
+                'output_tokens': 49,
             },
+            cache_read_tokens=9511,
             requests=1,
-            cost=Decimal('0.027545925'),
+            cost=Decimal('0.004438885'),
         )
     )
 

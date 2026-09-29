@@ -3581,7 +3581,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
         ]
     )
     assert google_result.output == snapshot("""\
-For order-456, the policy is the same: a refund is allowed for 30 days after the purchase date. \n\
+For order-456, the policy is the same: a refund is allowed for 30 days after the purchase date.
 
 Would you like to proceed with a refund for either of these orders?\
 """)

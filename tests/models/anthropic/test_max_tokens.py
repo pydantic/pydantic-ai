@@ -48,6 +48,8 @@ MAX_TOKENS_CASES = {
     'unified-extended': MaxTokensCase(
         'claude-sonnet-4-5', {'thinking': 'high'}, {'type': 'enabled', 'budget_tokens': 16384}, 64_000, streamed=True
     ),
+    # With a custom timeout the SDK doesn't require streaming, so `AnthropicModel` streams the default itself.
+    'custom-timeout': MaxTokensCase('claude-sonnet-4-5', {'timeout': 120}, None, 64_000, streamed=True),
     'explicit-max-tokens': MaxTokensCase(
         'claude-sonnet-4-5',
         {'anthropic_thinking': {'type': 'enabled', 'budget_tokens': 4096}, 'max_tokens': 15000},
