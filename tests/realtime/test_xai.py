@@ -38,11 +38,19 @@ from pydantic_ai.realtime import (
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
+    CancelResponse,
+    ClearAudio,
+    CommitAudio,
     ConversationCreated,
     ConversationItemCreated,
+    CreateResponse,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
+    RealtimeInput,
+    ResponseDone,
     SessionUsage,
+    TextContext,
     ToolCall,
     ToolResult,
 )
@@ -1174,3 +1182,197 @@ async def test_reconnect_keeps_a_tool_call_batch_the_server_restores() -> None:
     _ = [event async for event in events]
 
     assert [json.loads(frame)['type'] for frame in replacement.sent] == ['response.create']
+
+
+def _response_frame(event_type: str, response_id: str = 'r1') -> str:
+    status = 'in_progress' if event_type == 'response.created' else 'completed'
+    return json.dumps({'type': event_type, 'response': {'id': response_id, 'status': status, 'output': []}})
+
+
+def _transcript_delta(response_id: str = 'r1') -> str:
+    return json.dumps(
+        {
+            'type': 'response.output_audio_transcript.delta',
+            'response_id': response_id,
+            'item_id': 'item-a1',
+            'output_index': 0,
+            'content_index': 0,
+            'delta': 'Four.',
+        }
+    )
+
+
+def _sent_types(ws: FakeWebSocket) -> list[str]:
+    return [json.loads(frame)['type'] for frame in ws.sent]
+
+
+# Stands for speech: xAI answers a request with speech in the buffer, but drops one with only silence.
+_AUDIO = BinaryAudio(data=b'\x10\x27' * 240, media_type='audio/pcm')
+
+
+async def test_create_response_before_the_commit_reply_starts_still_goes_out() -> None:
+    """A request made before xAI starts answering a commit is sent as before, and that answer settles it.
+
+    xAI drops the request, but the reply that starts next is taken as its answer, so there is nothing to refuse.
+    """
+    ws = FakeWebSocket(
+        [
+            json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u1'}),
+            _response_frame('response.created'),
+            _transcript_delta(),
+            _response_frame('response.done'),
+        ]
+    )
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    await conn.send(CreateResponse())
+
+    events = [event async for event in conn]
+
+    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.commit', 'response.create']
+    assert not any(isinstance(event, InputRejected) for event in events)
+
+
+async def test_create_response_during_the_commit_reply_is_refused_when_it_ends() -> None:
+    """A request made while xAI answers a commit is refused when that answer ends, rather than sent after it and dropped."""
+    ws = FakeWebSocket([_response_frame('response.created'), _transcript_delta(), _response_frame('response.done')])
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    events = conn.__aiter__()
+    assert isinstance(await events.__anext__(), OutputTranscript)
+    await conn.send(CreateResponse())
+    rest = [event async for event in events]
+
+    assert _sent_types(ws) == ['input_audio_buffer.append', 'input_audio_buffer.commit']
+    # The fake socket closing afterwards adds an error event, which isn't what this is about.
+    assert isinstance(rest[0], ResponseDone)
+    assert rest[1] == InputRejected(2, refused='response')
+
+
+async def test_create_response_after_a_reply_asked_for_before_the_commit_still_goes_out() -> None:
+    """The first reply to start after a commit isn't taken as the commit's when a response was already asked for.
+
+    Taken as the commit's, the request after it would be refused, and its wake-up clear could cancel the
+    commit's reply, which hasn't started yet.
+    """
+    ws = FakeWebSocket([_response_frame('response.created'), _transcript_delta(), _response_frame('response.done')])
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send('Say hi.')
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    events = [event async for event in conn]
+    await conn.send(CreateResponse())
+
+    assert not any(isinstance(event, InputRejected) for event in events)
+    assert _sent_types(ws)[-2:] == ['input_audio_buffer.commit', 'response.create']
+
+
+async def test_create_response_is_sent_until_every_commit_reply_starts() -> None:
+    """A second commit before the first one's reply keeps a request going out after that reply."""
+    ws = FakeWebSocket([_response_frame('response.created'), _transcript_delta(), _response_frame('response.done')])
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    for _ in range(2):
+        await conn.send(_AUDIO)
+        await conn.send(CommitAudio())
+    events = [event async for event in conn]
+    await conn.send(CreateResponse())
+
+    assert not any(isinstance(event, InputRejected) for event in events)
+    assert _sent_types(ws)[-1] == 'response.create'
+
+
+async def test_create_response_after_a_cancelled_commit_reply_is_sent() -> None:
+    """xAI answers a request after the commit's reply was cancelled (checked live), so it isn't refused."""
+    ws = FakeWebSocket(
+        [
+            _response_frame('response.created'),
+            _transcript_delta(),
+            json.dumps({'type': 'response.done', 'response': {'id': 'r1', 'status': 'cancelled', 'output': []}}),
+        ]
+    )
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    events = conn.__aiter__()
+    assert isinstance(await events.__anext__(), OutputTranscript)
+    await conn.send(CancelResponse())
+    await conn.send(CreateResponse())
+    rest = [event async for event in events]
+
+    assert not any(isinstance(event, InputRejected) for event in rest)
+    assert _sent_types(ws)[-2:] == ['response.cancel', 'response.create']
+
+
+async def test_create_response_after_a_reconnect_is_sent() -> None:
+    """Whether xAI still drops the request on a new socket isn't known, so a reconnect stops refusing it."""
+    replacement = FakeWebSocket([])
+    replacements = iter([replacement])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = XaiRealtimeConnection(
+        _DropAfterFrames([_response_frame('response.created'), _response_frame('response.done')]),  # type: ignore[arg-type]
+        dial=dial,
+        reconnect={'base_delay': 0.0, 'max_attempts': 1},
+    )
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    events = conn.__aiter__()
+    assert isinstance(await events.__anext__(), ResponseDone)
+    assert isinstance(await events.__anext__(), RealtimeSessionReconnectEvent)
+    await conn.send(CreateResponse())
+    rest = [event async for event in events]
+
+    assert not any(isinstance(event, InputRejected) for event in rest)
+    assert _sent_types(replacement) == ['response.create']
+
+
+@pytest.mark.parametrize(
+    ('between', 'answered'),
+    [
+        pytest.param([], False, id='nothing'),
+        pytest.param([CancelResponse()], False, id='cancel'),
+        pytest.param([CommitAudio()], False, id='empty-commit'),
+        pytest.param([TextContext('And three plus three?')], True, id='text'),
+        pytest.param([ClearAudio()], True, id='clear'),
+        pytest.param([_AUDIO], True, id='uncommitted-audio'),
+    ],
+)
+async def test_create_response_after_the_commit_reply(between: list[RealtimeInput], answered: bool) -> None:
+    """After xAI has answered a commit, only new input makes a `response.create` worth sending (checked live).
+
+    Otherwise xAI silently drops it, so the request is refused instead, and an empty-buffer clear, which xAI
+    acknowledges, wakes the receive loop to report the refusal.
+    """
+    ws = FakeWebSocket(
+        [
+            _response_frame('response.created'),
+            _response_frame('response.done'),
+            json.dumps({'type': 'input_audio_buffer.cleared'}),
+        ]
+    )
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    events = conn.__aiter__()
+    assert isinstance(await events.__anext__(), ResponseDone)
+    for content in between:
+        await conn.send(content)
+    create_index = 2 + len(between)
+    await conn.send(CreateResponse())
+    rest = [event async for event in events]
+
+    sent_after_commit = _sent_types(ws)[2:]
+    if answered:
+        assert sent_after_commit[-1] == 'response.create'
+        assert not any(isinstance(event, InputRejected) for event in rest)
+    else:
+        assert sent_after_commit[-1] == 'input_audio_buffer.clear'
+        assert 'response.create' not in sent_after_commit
+        assert rest[0] == InputRejected(create_index, refused='response')

@@ -54,7 +54,12 @@ model = XaiRealtimeModel('grok-voice-latest', settings=settings)
 automatic-response behavior, set `xai_turn_detection=` with
 [`ServerVAD`][pydantic_ai.realtime.openai.ServerVAD]; it fully overrides shared
 [`turn_detection`](turns.md#automatic-turn-detection).
-Set `turn_detection=False` for [push-to-talk](turns.md#push-to-talk).
+Set `turn_detection=False` for [push-to-talk](turns.md#push-to-talk). Grok Voice still answers
+audio as soon as it is committed, and ignores a request for a response made after that answer
+finishes, until you send something new. Pydantic AI refuses such a
+[`create_response()`][pydantic_ai.realtime.RealtimeSession.create_response] instead of sending it,
+so [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] returns rather than
+waiting for a reply that never comes.
 
 [Input transcription](audio.md#input-transcription) defaults to `'auto'`. Unlike the incremental
 deltas described in [live captions](audio.md#live-captions), xAI sends cumulative transcript

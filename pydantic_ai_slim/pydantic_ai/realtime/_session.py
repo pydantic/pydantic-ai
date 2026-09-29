@@ -1380,7 +1380,8 @@ class RealtimeSession:
         called them. Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
         over; it also returns if the session closes, fails (a tool raised, or a usage limit tripped) so
-        the reply can no longer come, or the provider refuses the request for the reply (reported as a
+        the reply can no longer come, or the request for the reply is refused (a refusal the provider
+        explains is reported as a
         [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and

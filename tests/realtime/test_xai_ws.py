@@ -235,6 +235,47 @@ async def test_audio_in_server_vad_turn(
     assert session.usage.cost is not None and session.usage.cost > 0
 
 
+@pytest.mark.realtime_ws_hold_open
+async def test_push_to_talk_create_response_after_the_commit_reply(
+    xai_ws_cassette: tuple[XaiProvider, RealtimeCassette], assets_path: Path
+) -> None:
+    """A `create_response()` after xAI has answered a committed turn by itself doesn't leave `wait_for_reply()` hanging.
+
+    With turn detection off, xAI still replies as soon as audio is committed, and then silently drops a
+    `response.create` that follows the reply: it sends no response and no error. The request is refused
+    locally instead of sent, so the session stops waiting for a reply that would never come.
+    """
+    provider, cassette = xai_ws_cassette
+    model = XaiRealtimeModel(MODEL, provider=provider, settings=XaiRealtimeModelSettings(turn_detection=False))
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    async with agent.realtime(model).session() as session:
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        await session.commit_audio()
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+        # The reply xAI started on its own has finished, so this request asks for nothing new.
+        await session.create_response()
+        with anyio.fail_after(10):
+            await session.wait_for_reply()
+
+    assert [type(m).__name__ for m in session.all_messages()] == snapshot(['ModelRequest', 'ModelResponse'])
+    sent_types = [
+        message.data['type']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.direction == 'sent'
+    ]
+    # The request is never sent: the clear that follows it only wakes the receive loop, on a buffer the
+    # commit already emptied.
+    assert sent_types[sent_types.index('input_audio_buffer.commit') :] == snapshot(
+        ['input_audio_buffer.commit', 'input_audio_buffer.clear']
+    )
+
+
 async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:
     """A tool call is executed by the session and its result folded back into a classic-shaped history.
 

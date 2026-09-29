@@ -29,7 +29,7 @@ supplies the event types the shared OpenAI codec is built on):
 from __future__ import annotations as _annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import quote
@@ -58,12 +58,14 @@ except ImportError as _import_error:  # pragma: no cover
 
 from .._instrumentation import get_instructions
 from ..exceptions import UserError
-from ..messages import ModelMessage, RealtimeSessionReconnectEvent
+from ..messages import BinaryAudio, ModelMessage, RealtimeSessionReconnectEvent
 from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._openai_protocol import (
+    INPUT_AUDIO_BUFFER_CLEAR_EVENT,
+    RESPONSE_DONE_EVENT_ADAPTER,
     RealtimeHandshakeError,
     config_interrupts_response_on_speech,
     connect_openai_protocol,
@@ -78,11 +80,18 @@ from ._openai_protocol import (
 )
 from ._utils import inject_trace_context, resolve_advertised_tools
 from .codec import (
+    CancelResponse,
+    ClearAudio,
+    CommitAudio,
     ConversationCreated,
     ConversationItemCreated,
+    CreateResponse,
+    InputRejected,
     InputTranscript,
     RealtimeCodecEvent,
+    RealtimeInput,
     ToolCall,
+    TruncateOutput,
 )
 from .model import RealtimeModel
 from .openai import OpenAIRealtimeConnection, ServerVAD
@@ -282,6 +291,88 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         # session, as does xAI's total. The total restarts only with a new conversation.
         self._billed_audio_seconds = 0
         self._billed_conversation_id = conversation_id
+        # xAI answers committed audio by itself, even with turn detection off, and then silently drops a
+        # `response.create` until other input arrives (checked live): no response and no error, so the
+        # caller would wait for that reply forever. Text, an image, a tool result or
+        # `input_audio_buffer.clear` makes it answer again, and so does speech still in the buffer, which
+        # the request commits, or the answer being cancelled. Such a request is refused locally instead of
+        # sent. Buffered silence isn't told apart from speech, so a request after it still goes out and is
+        # dropped.
+        self._audio_is_latest_input = False
+        self._audio_uncommitted = False
+        # Commits whose reply hasn't started, and the responses already asked for that start ahead of those
+        # replies. A request made meanwhile still goes out: xAI drops it, but the commit's reply that starts
+        # next is taken as its answer.
+        self._unanswered_commits = 0
+        self._responses_before_commit_replies = 0
+        self._refused_response_inputs: list[int] = []
+
+    async def send(self, content: RealtimeInput) -> None:
+        if isinstance(content, BinaryAudio):
+            self._audio_is_latest_input = self._audio_uncommitted = True
+        elif isinstance(content, CommitAudio):
+            if self._audio_uncommitted:
+                if not self._unanswered_commits:
+                    self._responses_before_commit_replies = int(
+                        self._response_active and not self._response_started
+                    ) + int(self._pending_response)
+                self._unanswered_commits += 1
+            self._audio_uncommitted = False
+        elif isinstance(content, ClearAudio):
+            self._audio_is_latest_input = self._audio_uncommitted = False
+        elif not isinstance(content, (CreateResponse, CancelResponse, TruncateOutput)):
+            self._audio_is_latest_input = False
+        await super().send(content)
+
+    @property
+    def _response_request_dropped(self) -> bool:
+        """Whether xAI would drop a `response.create` sent now, with no reply on its way to answer it."""
+        return self._audio_is_latest_input and not self._audio_uncommitted and not self._unanswered_commits
+
+    async def _solicit_response(self, input_indexes: Sequence[int]) -> None:
+        if self._response_active or not self._response_request_dropped:
+            # A request held behind the reply in flight is refused, if at all, once that reply ends.
+            await super()._solicit_response(input_indexes)
+            return
+        self._refused_response_inputs.extend(input_indexes)
+        # xAI sends nothing back for a request it drops, and nothing else may arrive to wake the receive loop
+        # that reports the refusal. The buffer is empty, so clearing it discards nothing, and xAI
+        # acknowledges the clear. A dead socket wakes the receive loop by itself. The clear would also make
+        # xAI answer a request after it, but a retry is refused too: the caller's turn was answered either
+        # way, and the next input is what asks again.
+        with suppress(*self.transport_errors):
+            await self._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
+
+    async def _create_response(self, input_indexes: Sequence[int]) -> None:
+        if self._response_request_dropped:
+            self._refused_response_inputs.extend(input_indexes)
+            return
+        # Audio still in the buffer is committed by the request, and answered by its response.
+        self._audio_uncommitted = False
+        await super()._create_response(input_indexes)
+
+    async def _handle_response_done(self, data: dict[str, Any]) -> tuple[list[RealtimeCodecEvent], bool]:
+        # Before the base handles it, since it may send a request held behind this response. A malformed
+        # frame is left to the base, which reports it.
+        with suppress(ValueError):
+            if RESPONSE_DONE_EVENT_ADAPTER.validate_python(data).response.status == 'cancelled':
+                # xAI answers a request after an answer it cancelled (checked live).
+                self._audio_is_latest_input = False
+        return await super()._handle_response_done(data)
+
+    async def _attempt_reconnect(self) -> bool:
+        # Whether xAI still drops a request on the new socket isn't known, so none is refused until new
+        # audio is committed.
+        self._audio_is_latest_input = False
+        self._unanswered_commits = self._responses_before_commit_replies = 0
+        return await super()._attempt_reconnect()
+
+    async def _decode_frame(self, raw: str) -> list[RealtimeCodecEvent]:
+        events = await super()._decode_frame(raw)
+        if not self._refused_response_inputs:
+            return events
+        refused, self._refused_response_inputs = self._refused_response_inputs, []
+        return [*events, *(InputRejected(input_index, refused='response') for input_index in refused)]
 
     def _map_response_usage(self, usage: RealtimeResponseUsage | None) -> RequestUsage | None:
         mapped = super()._map_response_usage(usage)
@@ -342,6 +433,11 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         self._conversation_id = conversation_id
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
+        if data.get('type') == 'response.created':
+            if self._responses_before_commit_replies:
+                self._responses_before_commit_replies -= 1
+            elif self._unanswered_commits:
+                self._unanswered_commits -= 1
         return map_event(data)
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
