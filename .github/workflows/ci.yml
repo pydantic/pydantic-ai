@@ -12,6 +12,8 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
+  # Keep workspace package versions stable so testmon can reuse coverage between commits.
+  UV_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
   # Ubuntu's system interpreters are older and slower than uv's optimized managed builds.
   UV_PYTHON_PREFERENCE: only-managed
   # Authenticate the Git fetches uv makes for Git-sourced dependencies. Anonymous HTTPS clones are
