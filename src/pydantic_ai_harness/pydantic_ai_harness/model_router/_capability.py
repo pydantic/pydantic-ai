@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from functools import cache
 from typing import Annotated, Literal, TypeGuard, Union
@@ -113,6 +113,13 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
             output_type=self._output_type(),
             instructions=_INSTRUCTIONS,
         )
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge configuration and rebuild the router agent from the combined menu."""
+        merged = super().combine(capabilities)
+        assert isinstance(merged, cls)
+        return replace(merged)
 
     def _output_type(self) -> type[_Route]:
         # One field whose options each carry their description, so a decision model asks one

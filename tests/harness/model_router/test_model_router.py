@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, _display
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -194,6 +194,22 @@ class TestModelRouter:
         result = await Agent(capabilities=[router]).run('Choose')
 
         assert result.output == 'only'
+
+    async def test_combining_routers_rebuilds_the_output_schema_from_the_merged_menu(self) -> None:
+        first = ModelRouter[object](
+            choices={'fast': ModelChoice(_answer_model('fast'), 'Use for lookups.')},
+            router_model=_router_model('fast'),
+            default='fast',
+        )
+        second = ModelRouter[object](
+            choices={'capable': ModelChoice(_answer_model('capable'), 'Use for hard work.')},
+            router_model=_router_model('fast'),
+            default='capable',
+        )
+
+        result = await Agent(capabilities=[first, second]).run('Choose')
+
+        assert result.output == 'fast'
 
     async def test_resuming_with_pending_tool_calls_routes_on_their_results(self) -> None:
         received: list[list[ModelMessage]] = []
@@ -439,6 +455,7 @@ class TestModelRouter:
     async def test_the_router_run_does_not_show_the_first_run_banner(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        monkeypatch.setattr(_display, '_banner_displayed', False)
         for name in ('PYTEST_VERSION', 'CI', 'PYDANTIC_AI_NO_BANNER'):
             monkeypatch.delenv(name, raising=False)
         monkeypatch.setenv('AI_AGENT', 'test')
