@@ -5,7 +5,7 @@ schedule or a button, and what it produces is a comment, a commit or a pull requ
 reply on a screen. Pydantic AI meets that in two shapes, and which one you want depends on who can
 start the run.
 
-| | [`pydantic/pydantic-ai/action`](#running-an-agent-in-a-step) | [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
+| | [`pydantic/pydantic-ai-action`](#running-an-agent-in-a-step) | [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 |---|---|---|
 | **What you write** | A step in a workflow you already have | A Markdown file that compiles to a whole workflow |
 | **Where the agent runs** | On the runner, as the workflow user | In a container behind an egress firewall |
@@ -19,8 +19,9 @@ of this page is the first.
 
 ## Running an agent in a step
 
-The action installs Pydantic AI, runs one agent against one prompt, and gives you back what it
-said. The provider credential goes in the step's `env:`, not in an input.
+The [`pydantic/pydantic-ai-action`](https://github.com/pydantic/pydantic-ai-action) action
+installs Pydantic AI, runs one agent against one prompt, and gives you back what it said. The
+provider credential goes in the step's `env:`, not in an input.
 
 ```yaml {test="skip" lint="skip"}
 name: Summarize the pull request
@@ -44,7 +45,7 @@ jobs:
           persist-credentials: false
 
       - id: agent
-        uses: pydantic/pydantic-ai/action@main
+        uses: pydantic/pydantic-ai-action@v1
         with:
           model: openai:gpt-5.6-sol
           prompt: Summarize what changed in this pull request.
@@ -57,7 +58,9 @@ jobs:
         run: printf '%s\n' "$SUMMARY"
 ```
 
-Pin the action to a commit SHA rather than a branch in anything you rely on.
+`@v1` moves with each `v1.x.y` release of
+[`pydantic/pydantic-ai-action`](https://github.com/pydantic/pydantic-ai-action); pin a full commit
+SHA instead in anything you rely on.
 
 The agent's output is printed to the log, written to the job summary, and exposed as the step's
 `result` output. A multi-line answer survives all three, and the runner reads none of it as
@@ -69,7 +72,7 @@ Set exactly one of `prompt` and `prompt-file`. A prompt kept in the repository k
 instructions out of the workflow file, and is read relative to `working-directory`:
 
 ```yaml {test="skip" lint="skip"}
-- uses: pydantic/pydantic-ai/action@main
+- uses: pydantic/pydantic-ai-action@v1
   with:
     model: anthropic:claude-sonnet-4-5
     prompt-file: .github/prompts/review.md
@@ -87,7 +90,7 @@ Point `agent` at a `module:variable` pair to run your own [`Agent`][pydantic_ai.
 and install the project that defines it with `pip-install`:
 
 ```yaml {test="skip" lint="skip"}
-- uses: pydantic/pydantic-ai/action@main
+- uses: pydantic/pydantic-ai-action@v1
   with:
     agent: my_project.agents:reviewer
     model: openai:gpt-5.6-sol
@@ -101,7 +104,7 @@ An `agent` ending in `.yml`, `.yaml` or `.json` is read as an [agent spec](agent
 agent that is only instructions, tools and a model needs no Python package at all:
 
 ```yaml {test="skip" lint="skip"}
-- uses: pydantic/pydantic-ai/action@main
+- uses: pydantic/pydantic-ai-action@v1
   with:
     agent: .github/agents/reviewer.yml
     prompt: Review the current checkout.
@@ -124,7 +127,7 @@ workflow running its own agent doesn't wait for it or resolve its dependencies. 
 | `prompt-file` | | A prompt file, read relative to `working-directory`. |
 | `agent` | `pydantic_ai_harness.coder:coder_agent` | A `module:variable` target, or a `.yml`, `.yaml` or `.json` agent spec file. |
 | `model` | | A [model](models/overview.md) identifier such as `openai:gpt-5.6-sol`. Overrides the model the agent carries. |
-| `python-version` | `3.12` | The Python version the agent runs on. |
+| `python-version` | `3.12` | The Python the agent runs on, 3.10 or later. |
 | `pip-install` | | Extra space-separated packages, such as the project your agent lives in. |
 | `pydantic-ai-version` | `>=2.44.0` | The `pydantic-ai-slim` version specifier to install. |
 | `harness-version` | | An exact `pydantic-ai-harness` version, installed whatever the agent is. |
@@ -161,7 +164,7 @@ the step's `env:`, and the action installs Logfire, configures it, and instrumen
 before the run starts:
 
 ```yaml {test="skip" lint="skip"}
-- uses: pydantic/pydantic-ai/action@main
+- uses: pydantic/pydantic-ai-action@v1
   with:
     model: openai:gpt-5.6-sol
     prompt: Summarize what changed in this pull request.
