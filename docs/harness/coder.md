@@ -46,6 +46,14 @@ print(result.output)
 
 File paths resolve from the workspace's working directory, and commands start there. To work in an isolated cloud machine instead, swap `LocalWorkspace` for a sandbox capability (Modal, E2B, or Sprites); the rest of the code stays the same. Commands run without an allowlist, and the file tools' path limits don't apply to them.
 
+With [Modal](modal-sandbox.md), for example:
+
+```python
+from pydantic_ai_harness.modal_sandbox import ModalSandbox
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[ModalSandbox(), Coder()])
+```
+
 With `LocalWorkspace`, [`agent.to_cli_sync()`](https://pydantic.dev/docs/ai/cli/) and [`agent.to_web()`](https://pydantic.dev/docs/ai/web/) work in the same directory. With a sandbox, the CLI keeps one sandbox for the session, but `to_web()` starts a new one for each message because the web protocol does not carry the workspace ref, so use `LocalWorkspace` when files must persist between web messages.
 
 The exported `pydantic_ai_harness.coder:coder_agent` is the same agent, model-less and named `coder`, working in the directory that is current when it is imported.
@@ -112,8 +120,10 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
 `Coder()` is these capabilities, in this order:
 
 1. A `Capability` carrying the default instructions, plus any `instructions=` you pass.
-2. [`FileSystem`](filesystem.md)`(content_hashes=False, max_read_chars=50000, tools=FILE_TOOL_NAMES)`, where
+2. [`FileSystem`](filesystem.md)`(content_hashes=False, max_read_chars=50000, tools=FILE_TOOL_NAMES, max_retries=5)`, where
    `FILE_TOOL_NAMES` is `read_file`, `write_file`, `edit_file`, `list_files`, and `grep`. Its `root_dir` is the workspace's working directory.
+   Each file tool allows five consecutive retries (for a denied path or a stale edit) rather than the agent's default one,
+   so a repeated correctable mistake does not end a long run.
 3. [`Shell`](shell.md)`(denied_commands=[], allow_interactive=True, default_timeout=270, tools=['shell'])`.
 4. [`RepoContext`](repo-context.md)`(expose_inventory_tool=False)` for repository instructions and structure.
    Pass `repo_context=False` to leave it out when the agent already binds its own `RepoContext`, so the
@@ -195,6 +205,9 @@ accessible to commands in a local workspace.
 
 The default instructions keep engineering guidance brief: autonomous investigation and completion,
 focused changes and verification, and pragmatic DRY, YAGNI, SOLID, and the Zen of Python.
+They also ask the agent to leave only the requested change in the project: check behavior with inline
+shell scripts rather than new files, add tests only where the project already has them, and delete
+scratch files before finishing.
 Tool descriptions supply tool usage; `RepoContext` supplies repository instructions and structure.
 The instructions also name the workspace's working directory as the project, where shell commands start and the file tools work.
 `Coder(instructions='...')` appends project-specific guidance rather than replacing defaults.

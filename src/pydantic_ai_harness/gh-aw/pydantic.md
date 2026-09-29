@@ -541,12 +541,12 @@ engine:
 
 Shared engine definition for the [Pydantic AI](https://ai.pydantic.dev) CLI
 (`pai`), running the coder agent from
-[pydantic-ai-harness](https://github.com/pydantic/pydantic-ai-harness). Import
+[pydantic-ai-harness](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness). Import
 this file and set `engine: id: pydantic-ai` to use it:
 
 ```yaml
 imports:
-  - pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
 engine:
   id: pydantic-ai
   model: copilot/claude-sonnet-4-5

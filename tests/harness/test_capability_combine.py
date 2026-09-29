@@ -63,6 +63,7 @@ from pydantic_ai_harness import (
     Planning,
     Researcher,
     SpendLimits,
+    SSHWorkspace,
     StepPersistence,
     SubAgent,
     SubAgents,
@@ -201,6 +202,10 @@ def _check_sub_agents(merged: Any) -> None:
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
 
 
+def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
+    assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
+
+
 COMBINE_POLICY: dict[str, Policy] = {
     # -- One per agent: a default `id`, and `combine` says what two of them mean. --
     'Skills': Combines(
@@ -265,6 +270,11 @@ COMBINE_POLICY: dict[str, Policy] = {
         ),
         _check_advisor,
     ),
+    'SSHWorkspace': Combines(
+        'the later configuration replaces the earlier one whole, so an `env` (and its secrets) never carries over',
+        lambda: (SSHWorkspace[Any]('first', env={'FIRST_SECRET': 'x'}, read_only=True), SSHWorkspace[Any]('second')),
+        _check_ssh_workspace,
+    ),
     'BackgroundTools': Combines(
         'one background scheduler per agent; selectors combine without wrapping a tool twice',
         lambda: (BackgroundTools[Any](tools=['first']), BackgroundTools[Any](tools=['second'])),
@@ -276,6 +286,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'RequireWorkspace': Anonymous('the same run-start check; two check the same thing twice'),
     '_BoundToolOutputs': Anonymous('Coder-local truncation composes with standalone output policies'),
     'Coder': Anonymous('a packaged harness; composing two is composing their members'),
+    'E2BSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'SpritesSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
+    'BubblewrapSandbox': Anonymous('a structural wrapper, applied once per wrapped workspace capability'),
+    'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
@@ -366,7 +380,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     'CodeMode': Collides('`run_code` is reserved, so a second one is rejected by name'),
     'BrowserUse': Collides('its toolset registers its browser tools under fixed names'),
     'PlaywrightBrowser': Collides('its toolset registers `click` and friends under fixed names'),
-    'ModalSandbox': Collides('its toolset registers `run_command` and friends under fixed names'),
     'ConversationSearch': Collides('its toolset registers `search_conversation_history` under a fixed name'),
     'ExaAgent': Collides('its toolset registers `web_search` and friends under fixed names'),
     'ExaSearch': Collides('its toolset registers `web_search` and friends under fixed names'),
@@ -587,7 +600,13 @@ async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backen
         pytest.param(
             'shared_capabilities', {'shared_capabilities': [Thinking(effort='high')]}, {}, id='shared_capabilities'
         ),
-        pytest.param('inherit_tools', {'inherit_tools': True}, {'inherit_tools': False}, id='inherit_tools'),
+        pytest.param(
+            'inherit_tools',
+            {'inherit_tools': True},
+            {'inherit_tools': False},
+            id='inherit_tools',
+            marks=pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
+        ),
         pytest.param('tool_name', {'tool_name': 'delegate_task'}, {'tool_name': 'ask_specialist'}, id='tool_name'),
         pytest.param('forward_usage', {'forward_usage': False}, {'forward_usage': True}, id='forward_usage'),
         pytest.param('tool_retries', {'tool_retries': 5}, {'tool_retries': 2}, id='tool_retries'),
@@ -617,6 +636,15 @@ def test_sub_agents_compose_the_roster_and_nothing_else(
 
 def _child(name: str) -> Agent[Any, str]:
     return Agent(TestModel(), name=name)
+
+
+def test_coder_composes_with_plain_sub_agents() -> None:
+    tree = CombinedCapability([Coder[Any](), SubAgents[Any](agents=[SubAgent(_child('worker'))])])
+    combined = combine_duplicate_capabilities(tree, [tree.capabilities])
+    sub_agents = [leaf for leaf in leaf_capabilities(combined) if isinstance(leaf, SubAgents)]
+    assert len(sub_agents) == 1
+    assert sub_agents[0].include_self
+    assert [entry.agent.name for entry in sub_agents[0].agents] == ['worker']
 
 
 @pytest.mark.skipif(
