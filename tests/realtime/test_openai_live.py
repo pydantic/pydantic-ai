@@ -64,7 +64,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     TruncateOutput,
 )
-from pydantic_ai.settings import ToolOrOutput
+from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
@@ -74,6 +74,7 @@ with try_import() as imports_successful:
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import ServerEvent, SessionConfig
+    from openai.types.shared import ReasoningEffort
     from pydantic import TypeAdapter
     from websockets.frames import Close
 
@@ -254,7 +255,7 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
     ],
 )
 def test_thinking_sets_the_backends_reasoning_effort(
-    model: OpenAILiveModel, backend: str, thinking: Any, expected: str | None
+    model: OpenAILiveModel, backend: str, thinking: ThinkingLevel, expected: ReasoningEffort
 ) -> None:
     """The backend does the reasoning, so the shared `thinking` setting is its effort."""
     settings = OpenAILiveModelSettings(thinking=thinking, openai_live_delegation={'model': backend})

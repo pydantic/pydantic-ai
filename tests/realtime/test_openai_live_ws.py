@@ -164,8 +164,9 @@ async def test_thinking_sets_the_backends_reasoning_effort(
 ) -> None:
     """The shared `thinking` setting reaches the delegated backend, which is the model that reasons.
 
-    At its default effort (`medium`, as Live echoes it) the backend spent 75 reasoning tokens on this
-    request when it was recorded; `thinking=False` is sent as `'none'` and it spends none.
+    Left at its default effort (`medium`, as the backend echoes it), the backend spent 75 reasoning tokens
+    on this request in a control recording made alongside this one; `thinking=False` is sent as `'none'`
+    and it spends none.
     `parallel_tool_calls` reaches the backend the same way. The recording pins both in the session
     config, and the backend echoes both on every response.
     """

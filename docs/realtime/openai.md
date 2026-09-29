@@ -396,8 +396,9 @@ Input transcription defaults to `'auto'`; set a supported transcription model ID
 GPT-Live reasons on its delegated backend, so the shared
 [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting (see
 [Thinking](../capabilities/thinking.md)) sets the [backend model](#backend-model)'s reasoning effort,
-resolved exactly as it would be on a direct Responses request to that model: a backend that doesn't
-reason ignores it, and `'minimal'` becomes `'low'` on a backend without a minimal effort.
+resolved from the backend's model name as a direct Responses request to it would be: a backend that
+doesn't reason ignores it, `thinking=False` leaves a backend that always reasons (such as `gpt-5`) at
+its default effort, and `'minimal'` becomes `'low'` on a backend without a minimal effort.
 `openai_live_delegation={'reasoning_effort': ...}` takes precedence when set.
 
 On gpt-realtime, the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting
@@ -451,7 +452,7 @@ the provider-agnostic workflows.
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |
 | Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) and no way to disable it |
 | Input speech events | Unsupported | No speech start/end frames, so a "listening" indicator should read the profile rather than wait for events |
-| Thinking | Limited parameter support | Sets the backend's reasoning effort; see [Reasoning](#reasoning) |
+| Thinking | Limited parameter support | Sets the backend's reasoning effort, if the backend reasons; see [Reasoning](#reasoning) |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
 | Browser WebRTC | Unsupported | Bridge media through your backend |
 | Reconnection | Unsupported | Automatic [reconnection](lifecycle.md#reconnecting) is not implemented for Live, so the [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy is ignored and a dropped connection ends the session. Open a new one, seeding it with the previous session's history |
