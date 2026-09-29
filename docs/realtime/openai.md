@@ -473,7 +473,7 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
 
 | Feature | Support | Notes |
 | --- | --- | --- |
-| Audio format | Full feature support | Mono PCM16, 24 kHz input and output |
+| Audio format | Limited parameter support | Mono PCM16, 24 kHz input and output; the API also offers 8 kHz G.711, which Pydantic AI does not expose |
 | Text output | Full feature support | Select with `output_modality='text'` |
 | Image input | Full feature support | [Images](audio.md#images) provide context for the next turn |
 | Manual turns and interruption | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk); [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |

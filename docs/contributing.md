@@ -133,16 +133,20 @@ make
 
 ### Type checking
 
-`make typecheck` runs Pyright over every file in the project.
+`make typecheck` runs Pyright over every file in the project. Pre-commit does not run Pyright: CI
+runs the full check on every pull request that touches something Pyright reads. Locally, type-check
+the files you changed:
 
-The pre-commit hook runs `make typecheck-changed` instead, which checks only the files whose content
-changed since Pyright last passed plus everything that transitively imports them. It records what
-passed under your git directory, so the record is per-worktree and never committed.
+```bash
+PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright path/to/file.py
+```
 
-CI runs that same hook, and whenever it runs it checks everything: GitHub Actions always sets `CI`,
-and on seeing it `make typecheck-changed` narrows nothing and hands the whole project to
-`make typecheck-pyright`. A fresh runner has no record to narrow against in the first place. CI still
-skips the hook outright on a pull request that touches nothing Pyright reads, as it did before.
+`make typecheck-changed` checks only the files whose content changed since Pyright last passed plus
+everything that transitively imports them, but its fallbacks below can check nearly every file, so
+prefer targeted runs while iterating. It records what passed under your git directory, so the record
+is per-worktree and never committed. CI runs the same target, and there it checks everything:
+GitHub Actions always sets `CI`, and on seeing it `make typecheck-changed` narrows nothing and hands
+the whole project to `make typecheck-pyright`.
 
 Locally it follows the imports Pyright resolves statically, and never checks a file under `tests/`
 that did not itself change since the run it recorded. Tests are two thirds of the project's lines
@@ -158,15 +162,14 @@ project. It then runs Pyright over every tracked file Pyright reports on, minus 
 that did not change; a first run has no record to compare them against, so it checks all of them.
 Only three things hand the whole project to `make typecheck-pyright`: `CI`, an interpreter older
 than Python 3.11, which is what it needs to read `pyproject.toml`, and a Pyright configuration it
-cannot reproduce. Every other run considers tracked files only, so run `make typecheck` yourself
-before relying on a green hook for a file you have not added.
+cannot reproduce.
 
 A full run is single-process unless `PYRIGHT_THREADS` says otherwise, and CI sets it to `auto`.
 The variable turns on Pyright's parallel check phase, which reaches the same diagnostics in less
 wall time: `auto` is up to one worker per logical core, and a positive integer caps them. Only
-`make typecheck-pyright` reads it, so the hook picks it up only on a run that hands the whole
-project over: `CI`, an interpreter older than Python 3.11, or a Pyright configuration it cannot
-reproduce. A run it narrows, or runs itself over the reduced set, stays single-process.
+`make typecheck-pyright` reads it, so `make typecheck-changed` picks it up only on a run that hands
+the whole project over: `CI`, an interpreter older than Python 3.11, or a Pyright configuration it
+cannot reproduce. A run it narrows, or runs itself over the reduced set, stays single-process.
 
 ```bash
 export PYRIGHT_THREADS=auto

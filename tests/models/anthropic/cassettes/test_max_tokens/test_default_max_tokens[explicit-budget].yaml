@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 15000
+        max_tokens: 16384
         messages:
         - role: user
           content:
@@ -29,7 +29,7 @@ interactions:
         stream: false
         thinking:
           type: enabled
-          budget_tokens: 4096
+          budget_tokens: 8000
   response:
     status: 200
     headers:
@@ -42,7 +42,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-431c206accd2be780254c82bbeae1890-39371517dfb2e856-01
+      - 00-61bc5c1d406e129ccc1cc594c892dd5e-185ac0d57aa9b923-01
       transfer-encoding:
       - chunked
       vary:
@@ -51,21 +51,20 @@ interactions:
       type: json
       content:
         model: claude-sonnet-4-5-20250929
-        id: msg_011CfWdhMg1G8Fi49iKLpT53
+        id: msg_011CfWffqQY5rqvvkJ5gH2cX
         type: message
         role: assistant
         content:
         - type: thinking
           thinking: |-
-            17 * 23 = ?
+            17 * 23
 
-            Let me calculate this step by step:
-            17 * 23 = 17 * (20 + 3)
-            = 17 * 20 + 17 * 3
+            I can calculate this step by step:
+            17 * 23 = 17 * 20 + 17 * 3
             = 340 + 51
             = 391
           signature: >-
-            EuoCCpsBCBIYAipADna0+pKcdSv83XTb6RuxnrsyG8RlrV0UN1Qr92DPGvcY8WRjwlCSVVX0HUjwlRVYXEUr+SOXAYLEvxuRMYrZIDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB0dbr1QYSDKuReGLFd8IdfA9l9hoMT5rcmuwgaqPI5+TAIjDwIpxuV60WoBRIp73z8HQceeGRzH4tM1dc/IoRvWhHFtTm9JgMKILTgNI/IvgKTFAqfLEblRkykN0+g8zpWnPFW5DhGr1beevp+d8SK7DdRrhSD177YdiTshpBIHVKp0YK7DeuHPcoLK+a8oaRH/EVReSQxoqENHimrF8wKAhXYnWx+PiJzM/LsK+ATX3FHtgtr8XF+R7SU1EV5+hktQf1G6DQjuQ0HkGmChi7qbAYAQ==
+            EtUCCpsBCBIYAipAodA95xy/Q9WwB/kPb3/oSB8NRmb+BbhINgpF/X9Uiwhz78rdPoc/2yDBonL/xJ4f8JSqQhOAOFVbeetjBBHORTIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB4uLr1QYSDCw6hFMVhqfUKZwcLhoMkUVdEJouuXecwNFeIjDUOPdMlHdtGB4yzy468x/DN5Iqhl5KHI3GCNaQ0YouNy0g6CEena0o5pFUhScKZToqZ8SweEw83oumx7UJOdB8KRGz5KqxxfVBpqaLRvx0fDH8zYsnxiV/P5NWuzeyah4nF23OQr8oiiblcaU9hQqzZgpzwAqTpvkUujj3+R4/+cvlE+TvdsoD3QaxtV4cyBOx+yvvAnQH8u8YAQ==
         - type: text
           text: "391"
         container: null
@@ -79,10 +78,10 @@ interactions:
           cache_creation:
             ephemeral_5m_input_tokens: 0
             ephemeral_1h_input_tokens: 0
-          output_tokens: 76
+          output_tokens: 60
           output_tokens_details:
-            thinking_tokens: 70
+            thinking_tokens: 54
           service_tier: standard
           inference_geo: not_available
         diagnostics: null
-  recorded_at: 2026-09-28T22:33:53.591647+00:00
+  recorded_at: 2026-09-28T22:59:46.489665+00:00

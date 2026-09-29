@@ -153,7 +153,7 @@ raise, and [`session.result`][pydantic_ai.realtime.RealtimeSession.result] is se
 For external policy such as an idle timeout or maximum call duration, run a watchdog task that calls
 `close()`:
 
-```python
+```python {test="skip - the watchdog sleeps for the whole call budget"}
 import asyncio
 
 from pydantic_ai import Agent

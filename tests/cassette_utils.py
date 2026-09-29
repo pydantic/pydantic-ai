@@ -515,8 +515,7 @@ class CassetteContext:
             AssertionError: If a pattern is not found.
         """
         bodies = self._get_bodies()
-        if not bodies:
-            return
+        assert bodies, f'No recorded request bodies to verify for {self.test_name}'
 
         for pattern in patterns:
             if isinstance(pattern, tuple):
@@ -537,8 +536,7 @@ class CassetteContext:
             AssertionError: If ordering is violated or a pattern is not found.
         """
         bodies = self._get_bodies()
-        if not bodies:
-            return
+        assert bodies, f'No recorded request bodies to verify for {self.test_name}'
 
         content = ''.join(bodies)
         last_index = -1
