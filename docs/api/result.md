@@ -4,5 +4,6 @@
     options:
         inherited_members: true
         members:
+            - AgentStream
             - StreamedRunResult
             - StreamedRunResultSync

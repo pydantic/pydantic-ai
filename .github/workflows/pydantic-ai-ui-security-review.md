@@ -1,7 +1,7 @@
 ---
 emoji: "🛡️"
 name: "Pydantic AI UI Security Review"
-description: "Security review of UI-adapter PRs (Vercel AI + AG-UI): audits the client/server trust boundary for outbound leakage and inbound abuse. Inline comments + a non-voting COMMENT-type review summary (pydantic-ai-pr-review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
+description: "Security review of UI-adapter PRs (Vercel AI + AG-UI): audits the client/server trust boundary for outbound leakage and inbound abuse. Inline comments + a non-voting COMMENT-type review summary (CI Review owns the merge-gate verdict until gh-aw check-runs land). Prompt iterable from a Logfire managed variable; read-only via gh-aw safe-outputs."
 on:
   # Runs on EVERY PR (no `paths:` filter) so the review's check is always
   # reported on the head commit. The UI-path selection moved into the `detect`
@@ -28,6 +28,13 @@ on:
 # Only run the review (and request approval) when the PR touches the UI
 # security surface. Non-UI PRs skip the activation chain, so the agent reports
 # "skipped" (= success for required checks) and never blocks merge.
+#
+# `detect` MUST also be referenced from the prompt body below, or this gate
+# inverts into an unconditional skip. gh-aw copies this `if:` onto `activation`,
+# but only adds jobs referenced by the PROMPT to `activation.needs`; a job named
+# only here resolves to empty there, `activation` skips, and `detect` — which the
+# compiler makes depend on `activation` — skips with it, taking the agent down
+# too. That is why this workflow had never once run its agent (#6766 item 7).
 if: ${{ needs.detect.outputs.touched == 'true' }}
 permissions:
   contents: read
@@ -50,15 +57,25 @@ safe-outputs:
   noop:
   create-pull-request-review-comment:
     max: 30
-  # Non-voting by design: the prompt restricts the event to COMMENT only,
-  # because both this workflow and pydantic-ai-pr-review submit reviews as
-  # `github-actions[bot]` and GitHub's merge-gate uses the latest verdict
-  # per reviewer login — an APPROVE/REQUEST_CHANGES from here would
-  # overwrite pr-review's. To be reconsidered when gh-aw supports check
-  # runs (https://github.com/githubnext/gh-aw — Bill Easton's WIP).
+  # Non-voting by design, because both this workflow and pydantic-ai-pr-review
+  # submit reviews as `github-actions[bot]` and GitHub's merge-gate uses the
+  # latest verdict per reviewer login — an APPROVE/REQUEST_CHANGES from here
+  # would overwrite pr-review's. To be reconsidered when gh-aw supports check
+  # runs (https://github.com/github/gh-aw — Bill Easton's WIP).
+  #
+  # `allowed-events` enforces that host-side. The prompt also says COMMENT, but
+  # a prompt is not a guarantee: without this key gh-aw allows all three events.
   submit-pull-request-review:
     max: 1
+    allowed-events: [COMMENT]
 timeout-minutes: 30
+env:
+  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # so the agent stops itself and emits a result instead of being killed mid-flight.
+  # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
+  # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
+  # fails the build if the two ever diverge.
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -71,7 +88,7 @@ imports:
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
 pre-agent-steps:
-  # Pre-fetch PR context into `/tmp/gh-aw/.review-context/` (pr-details, diffs,
+  # Pre-fetch PR context into `$GITHUB_WORKSPACE/.review-context/` (pr-details, diffs,
   # comments, review threads, related issues, AGENTS.md excerpts). The agent
   # reads these files instead of calling the GitHub API at run time.
   #
@@ -150,5 +167,8 @@ jobs:
           logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---
+
+<!-- Keeps `detect` in `activation.needs` — see the `if:` comment in the frontmatter.
+     UI security surface touched: ${{ needs.detect.outputs.touched }} -->
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}

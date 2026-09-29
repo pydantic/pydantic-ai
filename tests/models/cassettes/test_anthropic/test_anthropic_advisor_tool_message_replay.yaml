@@ -1,0 +1,232 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '287'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What's 2+2? Consult your advisor first.
+          type: text
+        role: user
+      model: claude-sonnet-5
+      stream: false
+      tools:
+      - max_tokens: 1024
+        model: claude-opus-4-8
+        name: advisor
+        type: advisor_20260301
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '2388'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-45ff39e38f90e88d226e0e6a6af0ca1b-759889b47a7cb6d7-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - signature: EooDCokBCA8YAipArdh/ugu99mvdK4hF5/E+woVxkF8lFPvFqh8srWpXNR3ksKUbYzqvVIBvIz0TJ2PZHVqL5iH8AhO1CsjzC0znlDIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCJyz+pdozJ0CepWxhoM2BavCxERlAFG2AHnIjDss3yEU8XgTrNJNBR3VFxtJkB7LlDOyD9muAf0xwGlz5ufmXkEHiue8JFBPXWtDLoqrQH8ZZ/eY6l6hqFVSyRTt969QNXkpJ9wAY8KjooUelXdqopQNoyiS1zZiynkDT6HcHqK7spP62O5I/BaFPF1jxXl/OIGG086nYQcMYCYWocWg0LmOD44Hf1GhFnEEBZEmA+1DFd6mkpAGzm01ObHYGqDgNxuAkBpDw1aRbAbRisfzxy4E3lxPhUuZKSHm0ZK9z+nKBx2JvEwnhMXvv82y2MtW893d95pUkBDXWt3ERgB
+        thinking: ''
+        type: thinking
+      - text: 'Task: answer "What''s 2+2?" -- trivial arithmetic; initial read is that the answer is simply 4.'
+        type: text
+      - id: srvtoolu_012xj8SM7Gg8HKKmpPDuKHvs
+        input: {}
+        name: advisor
+        type: server_tool_use
+      - content:
+          stop_reason: end_turn
+          text: |-
+            4.
+
+            The answer is 4. This is a fact you can verify directly -- no need to defer. Write it and you're done.
+          type: advisor_result
+        tool_use_id: srvtoolu_012xj8SM7Gg8HKKmpPDuKHvs
+        type: advisor_tool_result
+      - text: 2 + 2 = 4.
+        type: text
+      id: msg_011CdD8mgfyYuTXcsUEmsshh
+      model: claude-sonnet-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 2417
+        iterations:
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 1128
+          output_tokens: 121
+          type: message
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 2529
+          model: claude-opus-4-8
+          output_tokens: 38
+          type: advisor_message
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 1289
+          output_tokens: 12
+          type: message
+        output_tokens: 133
+        output_tokens_details:
+          thinking_tokens: 55
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1538'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: What's 2+2? Consult your advisor first.
+          type: text
+        role: user
+      - content:
+        - signature: EooDCokBCA8YAipArdh/ugu99mvdK4hF5/E+woVxkF8lFPvFqh8srWpXNR3ksKUbYzqvVIBvIz0TJ2PZHVqL5iH8AhO1CsjzC0znlDIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmISDCJyz+pdozJ0CepWxhoM2BavCxERlAFG2AHnIjDss3yEU8XgTrNJNBR3VFxtJkB7LlDOyD9muAf0xwGlz5ufmXkEHiue8JFBPXWtDLoqrQH8ZZ/eY6l6hqFVSyRTt969QNXkpJ9wAY8KjooUelXdqopQNoyiS1zZiynkDT6HcHqK7spP62O5I/BaFPF1jxXl/OIGG086nYQcMYCYWocWg0LmOD44Hf1GhFnEEBZEmA+1DFd6mkpAGzm01ObHYGqDgNxuAkBpDw1aRbAbRisfzxy4E3lxPhUuZKSHm0ZK9z+nKBx2JvEwnhMXvv82y2MtW893d95pUkBDXWt3ERgB
+          thinking: ''
+          type: thinking
+        - text: 'Task: answer "What''s 2+2?" -- trivial arithmetic; initial read is that the answer is simply 4.'
+          type: text
+        - id: srvtoolu_012xj8SM7Gg8HKKmpPDuKHvs
+          input: {}
+          name: advisor
+          type: server_tool_use
+        - content:
+            stop_reason: end_turn
+            text: |-
+              4.
+
+              The answer is 4. This is a fact you can verify directly -- no need to defer. Write it and you're done.
+            type: advisor_result
+          tool_use_id: srvtoolu_012xj8SM7Gg8HKKmpPDuKHvs
+          type: advisor_tool_result
+        - text: 2 + 2 = 4.
+          type: text
+        role: assistant
+      - content:
+        - text: And what is that plus one?
+          type: text
+        role: user
+      model: claude-sonnet-5
+      stream: false
+      tools:
+      - max_tokens: 1024
+        model: claude-opus-4-8
+        name: advisor
+        type: advisor_20260301
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '769'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-3cb9bed0b3d4bfc2a689fa85d5a4f40c-bd5162d4349a442a-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: 2 + 2 + 1 = 5.
+        type: text
+      id: msg_011CdD8n4mGArzCeXbsaLqEc
+      model: claude-sonnet-5
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 1311
+        iterations:
+        - cache_creation:
+            ephemeral_1h_input_tokens: 0
+            ephemeral_5m_input_tokens: 0
+          cache_creation_input_tokens: 0
+          cache_read_input_tokens: 0
+          input_tokens: 1311
+          output_tokens: 16
+          type: message
+        output_tokens: 16
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

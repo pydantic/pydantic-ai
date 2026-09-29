@@ -1,3 +1,7 @@
+---
+description: "How Pydantic AI keeps the prompt prefix stable so provider prompt caches hit, how to enable caching per provider, what invalidates a cache, and how to monitor cache efficiency."
+---
+
 # Prompt Caching
 
 Provider prompt caching reuses a processed prompt prefix and charges a steeply discounted rate for tokens read from the cache, often around 10% of the normal input-token price. A cache hit requires the serialized request to be an exact byte prefix of an earlier request in the provider's cache order: tool definitions, then the system prompt, then messages. Moving one byte early in the request silently causes everything after it to be charged again. Because [agent runs](agent.md#running-agents) resend the whole conversation at every step, caching is often the difference between paying for the history once and paying for it on every turn.
@@ -36,13 +40,13 @@ Pydantic AI makes the following guarantees about the prompt prefix it sends to p
 
 ### Provider retention
 
-Provider caches expire after idle gaps. This is unavoidable, but it creates a useful opportunity: schedule history-mutating maintenance for [cache-cold windows](message-history.md#scheduling-maintenance-into-cache-cold-windows), when the next request would pay the full input price anyway. That section documents provider retention expectations and shows how [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] can identify those windows.
+Provider caches expire after idle gaps. This is unavoidable, but it creates a useful opportunity: schedule history-mutating maintenance for [cache-cold windows](message-history.md#scheduling-maintenance-into-cache-cold-windows), when the next request would pay the full input price anyway. That section documents provider retention expectations — each provider's documented default is recorded as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention], and a longer retention requested through settings is resolved by [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention] — and shows how [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] can identify those windows.
 
 ## Monitoring cache efficiency
 
 Every response's [`RequestUsage`][pydantic_ai.usage.RequestUsage] normalizes `cache_read_tokens` and `cache_write_tokens` across providers. `input_tokens` always includes cached reads, so `cache_read_tokens / input_tokens` is a comparable hit ratio per request and, through [`RunUsage`][pydantic_ai.usage.RunUsage], per run.
 
-When [instrumentation](logfire.md) is enabled, model-request spans carry `pydantic_ai.cache.hit_ratio` and `pydantic_ai.cache.established_tokens`. A cache collapse also records `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.wasted_tokens`, and `pydantic_ai.cache.collapse_reason`, whose value is `'unexpected'`, `'ttl-expired'`, `'unknown'`, or `'unreported'`. Only an `'unexpected'` collapse — one that happens while the provider's documented retention window should still be active — additionally emits a `pydantic_ai.cache.collapse` span event; model switches never register as collapses at all, since each provider and model's cache is tracked separately. See the [Logfire documentation](logfire.md#prompt-cache-health) for the authoritative attribute definitions.
+When [instrumentation](logfire.md) is enabled, model-request spans carry `pydantic_ai.cache.hit_ratio` and `pydantic_ai.cache.established_tokens`. A cache collapse also records `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.wasted_tokens`, and `pydantic_ai.cache.collapse_reason`, whose value is `'unexpected'`, `'ttl-expired'`, `'unknown'`, or `'unreported'`. Only an `'unexpected'` collapse — one that happens while the provider's documented retention window should still be active — additionally emits a `pydantic_ai.cache.collapse` span event; model switches never register as collapses at all, since each provider and model's cache is tracked separately. The established prefix is tracked per conversation rather than per run, so the first request of a run that continues a conversation is judged against what the previous run cached. See the [Logfire documentation](logfire.md#prompt-cache-health) for the authoritative attribute definitions.
 
 ## Rules for extension authors
 

@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import base64
 import re
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -31,15 +31,18 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
     AbstractNativeTool,
@@ -51,7 +54,12 @@ from ..native_tools import (
 )
 from ..output import OutputObjectDefinition
 from ..profiles import ModelProfileSpec
-from ..profiles.google import GoogleModelProfile
+from ..profiles.google import (
+    GOOGLE_THINKING_LEVEL_SCALE,
+    GOOGLE_THINKING_LEVELS,
+    GoogleModelProfile,
+    GoogleThinkingLevel,
+)
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
 from ..tools import ToolDefinition
@@ -59,6 +67,9 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
@@ -96,6 +107,8 @@ try:
         ImageConfigDict,
         MediaResolution,
         Modality,
+        ModalityTokenCount,
+        ModelArmorConfigDict,
         Part,
         PartDict,
         SafetySettingDict,
@@ -138,15 +151,20 @@ LatestGoogleModelNames = Literal[
     'gemini-2.5-flash-preview-09-2025',
     'gemini-2.5-flash-image',
     'gemini-2.5-flash-lite',
-    'gemini-2.5-flash-lite-preview-09-2025',
     'gemini-2.5-pro',
     'gemini-3-flash-preview',
+    'gemini-3-pro-image',
     'gemini-3-pro-image-preview',
     'gemini-3-pro-preview',
+    'gemini-3.1-flash-image',
     'gemini-3.1-flash-image-preview',
-    'gemini-3.1-flash-lite-preview',
+    'gemini-3.1-flash-lite',
     'gemini-3.1-pro-preview',
     'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.6-flash',
+    'gemini-3.7-flash',
+    'gemini-3.8-flash',
 ]
 """Latest Gemini models."""
 
@@ -158,22 +176,26 @@ allow any name in the type hints.
 See [the Gemini API docs](https://ai.google.dev/gemini-api/docs/models/gemini#model-variations) for a full list.
 """
 
-_FINISH_REASON_MAP: dict[GoogleFinishReason, FinishReason | None] = {
-    GoogleFinishReason.FINISH_REASON_UNSPECIFIED: None,
-    GoogleFinishReason.STOP: 'stop',
-    GoogleFinishReason.MAX_TOKENS: 'length',
-    GoogleFinishReason.SAFETY: 'content_filter',
-    GoogleFinishReason.RECITATION: 'content_filter',
-    GoogleFinishReason.LANGUAGE: 'error',
-    GoogleFinishReason.OTHER: None,
-    GoogleFinishReason.BLOCKLIST: 'content_filter',
-    GoogleFinishReason.PROHIBITED_CONTENT: 'content_filter',
-    GoogleFinishReason.SPII: 'content_filter',
-    GoogleFinishReason.MALFORMED_FUNCTION_CALL: 'error',
-    GoogleFinishReason.IMAGE_SAFETY: 'content_filter',
-    GoogleFinishReason.UNEXPECTED_TOOL_CALL: 'error',
-    GoogleFinishReason.IMAGE_PROHIBITED_CONTENT: 'content_filter',
-    GoogleFinishReason.NO_IMAGE: 'error',
+# Keyed by enum value rather than member: `google.genai`'s `FinishReason` grows members dynamically
+# at parse time for values its installed version doesn't know statically (e.g. `MODEL_ARMOR`),
+# so member-keyed lookups silently miss them.
+_FINISH_REASON_MAP: dict[str, FinishReason | None] = {
+    GoogleFinishReason.FINISH_REASON_UNSPECIFIED.value: None,
+    GoogleFinishReason.STOP.value: 'stop',
+    GoogleFinishReason.MAX_TOKENS.value: 'length',
+    GoogleFinishReason.SAFETY.value: 'content_filter',
+    GoogleFinishReason.RECITATION.value: 'content_filter',
+    GoogleFinishReason.LANGUAGE.value: 'error',
+    GoogleFinishReason.OTHER.value: None,
+    GoogleFinishReason.BLOCKLIST.value: 'content_filter',
+    GoogleFinishReason.PROHIBITED_CONTENT.value: 'content_filter',
+    GoogleFinishReason.SPII.value: 'content_filter',
+    GoogleFinishReason.MALFORMED_FUNCTION_CALL.value: 'error',
+    GoogleFinishReason.IMAGE_SAFETY.value: 'content_filter',
+    GoogleFinishReason.UNEXPECTED_TOOL_CALL.value: 'error',
+    GoogleFinishReason.IMAGE_PROHIBITED_CONTENT.value: 'content_filter',
+    GoogleFinishReason.NO_IMAGE.value: 'error',
+    'MODEL_ARMOR': 'content_filter',
 }
 
 _GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
@@ -291,6 +313,21 @@ class GoogleModelSettings(ModelSettings, total=False):
     headers sent, and links to Google docs.
     """
 
+    google_model_armor_config: ModelArmorConfigDict
+    """Model Armor configuration for screening prompts and responses. Only supported by the Vertex AI API.
+
+    Specifies the Model Armor templates to use for sanitizing user prompts and model responses.
+    Both fields are optional — omit either to skip screening for that direction.
+
+    Mutually exclusive with `google_safety_settings`: Vertex AI rejects a request that sets both,
+    since Model Armor replaces the built-in safety filters for that request.
+
+    Note: Model Armor screening — both prompt and response — is only applied for non-streaming
+    requests. Google's API ignores `modelArmorConfig` for streaming requests (`streamGenerateContent`).
+
+    See the [Model Armor docs](https://cloud.google.com/security-command-center/docs/model-armor-overview) for use cases and limitations.
+    """
+
 
 def _warn_on_cached_content_strips(
     cached_content: str | None,
@@ -362,6 +399,30 @@ def _resolve_google_cloud_service_tier(model_settings: GoogleModelSettings) -> G
     return 'pt_then_on_demand'
 
 
+def _map_api_error(e: errors.APIError, model_name: str, model_id_namespace: str = 'google') -> ModelAPIError:
+    """Map a `google.genai` API error to the pydantic-ai exception to raise in its place."""
+    if (status_code := e.code) >= 400:
+        headers = dict(e.response.headers) if e.response is not None else None  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+        details = e.details  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+        suggested_model_id = None
+        if _utils.is_str_dict(details) and _utils.is_str_dict(error := details.get('error')):
+            message = error.get('message')
+            if (
+                error.get('status') == 'NOT_FOUND'
+                and isinstance(message, str)
+                and message.startswith(f'models/{model_name} is not found ')
+            ):
+                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+        return ModelHTTPError(
+            status_code=status_code,
+            model_name=model_name,
+            body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
+            headers=headers,
+            suggested_model_id=suggested_model_id,
+        )
+    return ModelAPIError(model_name=model_name, message=str(e))
+
+
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:
     """HTTP headers for Google Cloud Provisioned Throughput, Flex PayGo, and Priority PayGo routing."""
     if service_tier == 'pt_then_on_demand':
@@ -385,6 +446,64 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
             'X-Vertex-AI-LLM-Shared-Request-Type': 'priority',
         }
     assert_never(service_tier)  # pragma: no cover
+
+
+def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
+    """Normalize unified thinking effort to a Gemini thinking level."""
+    level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
+        'minimal': 'MINIMAL',
+        'low': 'LOW',
+        'medium': 'MEDIUM',
+        'high': 'HIGH',
+        'xhigh': 'HIGH',  # Gemini has no `xhigh`; map it to the highest level.
+    }
+    return level_by_effort[thinking]
+
+
+_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
+    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
+}
+
+
+def _snap_thinking_level(
+    level: GoogleThinkingLevel, levels: frozenset[GoogleThinkingLevel] | None
+) -> GoogleThinkingLevel:
+    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH` scale.
+
+    Equidistant levels round down to the cheaper one. `None` means the model takes the whole scale, so
+    the level passes through. Shared with the Live path, which differs only in where its level set
+    comes from.
+    """
+    if levels is None:
+        return level
+    if not levels:
+        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
+    if unknown := levels - GOOGLE_THINKING_LEVELS:
+        raise UserError(
+            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
+            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
+        )
+    requested = _GOOGLE_THINKING_LEVEL_ORDER[level]
+    return min(
+        levels,
+        key=lambda candidate: (
+            abs(_GOOGLE_THINKING_LEVEL_ORDER[candidate] - requested),
+            _GOOGLE_THINKING_LEVEL_ORDER[candidate],
+        ),
+    )
+
+
+def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
+    """Map unified thinking to the closest thinking level the model supports."""
+    levels = profile.get('google_thinking_levels')
+    if levels is None:
+        # Sparse profile without a level set: fall back to the boolean floor flag.
+        levels = (
+            GOOGLE_THINKING_LEVELS
+            if profile.get('google_supports_minimal_thinking_level', True)
+            else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
+        )
+    return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
 
 
 @dataclass(init=False)
@@ -445,12 +564,33 @@ class GoogleModel(Model[Client]):
         return self._provider.name
 
     @property
+    def _is_google_cloud(self) -> bool:
+        """Whether requests go to Google Cloud (Vertex) rather than the Gemini Developer API.
+
+        Derived from the client's transport rather than the provider name, because either provider
+        accepts a pre-built `client=` and stores it as-is, so the two can disagree in both
+        directions: a Vertex-backed client in `GoogleProvider` keeps `name` `'google'`, and a
+        Gemini-API client in `GoogleCloudProvider` keeps `name` `'google-cloud'`. The name cannot be
+        reconciled against the client instead — it is persisted in `ModelMessage.provider_name` and
+        checked when replaying history, so changing it breaks replay of anything captured under the
+        old name. `AnthropicModel` reads its transport off the client for the same reason.
+        """
+        return bool(self.client.vertexai)
+
+    @property
     def _matching_provider_names(self) -> frozenset[str]:
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
-            return _GOOGLE_CLOUD_PROVIDER_NAMES
-        if self.system in _GEMINI_API_PROVIDER_NAMES:
-            return _GEMINI_API_PROVIDER_NAMES
-        return frozenset({self.system})  # pragma: no cover
+        # Keyed on the transport, because the pre-v2 names this set exists to accept were themselves
+        # transport-derived: `GoogleProvider.name` used to return `google-vertex`/`google-gla` off the
+        # client. The union with `self.system` is load-bearing, not cosmetic — a Vertex-backed
+        # `GoogleProvider` stamps `provider_name='google'`, which the Google Cloud set does not contain,
+        # so without it this model would reject its own history. Both consumers depend on this set:
+        # `_content_model_response` replays thinking signatures and native tool parts through it, and
+        # `_validate_uploaded_file` checks `UploadedFile.provider_name` against it.
+        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES or self.system in _GEMINI_API_PROVIDER_NAMES:
+            names = _GOOGLE_CLOUD_PROVIDER_NAMES if self._is_google_cloud else _GEMINI_API_PROVIDER_NAMES
+            return names | {self.system}
+        # A provider outside both families has no pre-v2 alias to accept, so it only matches itself.
+        return frozenset({self.system})
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -522,7 +662,7 @@ class GoogleModel(Model[Client]):
         config = CountTokensConfigDict(
             http_options=generation_config.get('http_options'),
         )
-        if self._provider.name not in _GEMINI_API_PROVIDER_NAMES:
+        if self._is_google_cloud:
             # The fields are not supported by the Gemini API per https://github.com/googleapis/python-genai/blob/7e4ec284dc6e521949626f3ed54028163ef9121d/google/genai/models.py#L1195-L1214
             # The Vertex `countTokens` endpoint accepts native/server-side tools (e.g. Google Search grounding), so we
             # forward `tools` as-is to mirror the real request for an accurate count. This intentionally differs from
@@ -577,7 +717,7 @@ class GoogleModel(Model[Client]):
         model_settings = cast(GoogleModelSettings, model_settings or {})
         response = await self._generate_content(messages, True, model_settings, model_request_parameters)
         try:
-            yield await self._process_streamed_response(response, model_request_parameters)  # type: ignore
+            yield await self._process_streamed_response(response, model_request_parameters)  # pyright: ignore[reportArgumentType]
         finally:
             aclose = getattr(response, 'aclose', None)
             if aclose is not None:  # pragma: no branch
@@ -598,7 +738,7 @@ class GoogleModel(Model[Client]):
                 )
             image_config['image_size'] = tool.size
 
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+        if self._is_google_cloud:
             if tool.output_format is not None:
                 if tool.output_format not in _GOOGLE_IMAGE_OUTPUT_FORMATS:
                     raise UserError(
@@ -676,7 +816,7 @@ class GoogleModel(Model[Client]):
         """
         native_tools, image_config = self._get_native_tools(model_request_parameters)
 
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
 
@@ -693,8 +833,8 @@ class GoogleModel(Model[Client]):
                 # Breaks caching, but Google doesn't support AUTO mode with allowed_function_names
                 tool_defs = {k: v for k, v in tool_defs.items() if k in tool_names}
             else:
-                # Use ANY mode with allowed_function_names to force one of the specified tools
-                allowed_function_names = list(tool_names)
+                # Ignore names that are not currently available.
+                allowed_function_names = [name for name in tool_defs if name in tool_names]
         else:
             tool_choice_mode = resolved_tool_choice
 
@@ -704,9 +844,19 @@ class GoogleModel(Model[Client]):
         # which happens when only native tools (e.g. web search) are configured, so only set it when there
         # are function tools.
         if tool_defs:
-            function_calling_config: FunctionCallingConfigDict = {
-                'mode': function_calling_config_modes[tool_choice_mode]
-            }
+            mode = function_calling_config_modes[tool_choice_mode]
+            # `VALIDATED` is `AUTO` with API-side schema enforcement (see
+            # https://github.com/pydantic/pydantic-ai/issues/5366); it needs no schema rewrites,
+            # so we default supported models to it as a safe silent improvement. A caller opts out per tool with
+            # `strict=False` (`tool_defs` spans function and output tools). Only `AUTO` is upgraded; `ANY`/`NONE`
+            # have different semantics.
+            if (
+                mode == FunctionCallingConfigMode.AUTO
+                and self.profile.get('google_supports_strict_tool_definition', False)
+                and not any(tool_def.strict is False for tool_def in tool_defs.values())
+            ):
+                mode = FunctionCallingConfigMode.VALIDATED
+            function_calling_config: FunctionCallingConfigDict = {'mode': mode}
             if allowed_function_names:
                 function_calling_config['allowed_function_names'] = allowed_function_names
             tool_config['function_calling_config'] = function_calling_config
@@ -714,11 +864,18 @@ class GoogleModel(Model[Client]):
         # `include_server_side_tool_invocations` is required on Gemini 3+ when any built-in (server-side)
         # tool is combined with function calling; pre-Gemini-3 models reject the field ('Tool call context
         # circulation is not enabled'). ImageGenerationTool runs through `image_config` and is excluded.
+        # The field is a Gemini Developer API (ML Dev) only parameter: the google-genai SDK's Vertex
+        # converter (`_ToolConfig_to_vertex`) raises `ValueError` when it is present, so skip it for
+        # Google Cloud (Vertex) even on Gemini 3+ models.
         emits_tool_call_invocations = any(
             isinstance(t, (WebSearchTool, WebFetchTool, FileSearchTool, CodeExecutionTool))
             for t in model_request_parameters.native_tools
         )
-        if emits_tool_call_invocations and self.profile.get('google_supports_server_side_tool_invocations', False):
+        if (
+            emits_tool_call_invocations
+            and self.profile.get('google_supports_server_side_tool_invocations', False)
+            and not self._is_google_cloud
+        ):
             tool_config['include_server_side_tool_invocations'] = True
 
         tools: list[ToolDict] = [
@@ -764,15 +921,9 @@ class GoogleModel(Model[Client]):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # type: ignore
+            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
     def _translate_thinking(
         self,
@@ -786,22 +937,16 @@ class GoogleModel(Model[Client]):
         if thinking is None:
             return None
         profile = self.profile
+        supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
-            if profile.get('google_supports_thinking_level', False):
-                return ThinkingConfigDict(thinking_level=cast(Any, 'MINIMAL'))
-            return ThinkingConfigDict(thinking_budget=0)
-        if profile.get('google_supports_thinking_level', False):
-            if thinking is True:
-                return ThinkingConfigDict(include_thoughts=True)
-            level_map: dict[ThinkingEffort, str] = {
-                'minimal': 'MINIMAL',
-                'low': 'LOW',
-                'medium': 'MEDIUM',
-                'high': 'HIGH',
-                'xhigh': 'HIGH',  # no higher level available
-            }
-            return ThinkingConfigDict(include_thoughts=True, thinking_level=cast(Any, level_map[thinking]))
-        else:
+            if not supports_thinking_level:
+                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0
+                return ThinkingConfigDict(thinking_budget=0)
+            # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
+            return ThinkingConfigDict(thinking_level=cast(Any, _resolve_google_thinking_level('minimal', profile)))
+
+        if not supports_thinking_level:
+            # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
             if thinking is True:
                 return ThinkingConfigDict(include_thoughts=True)
             budget_map: dict[ThinkingEffort, int] = {
@@ -812,6 +957,13 @@ class GoogleModel(Model[Client]):
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
             }
             return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+
+        # Default Gemini 3+ behaviour uses thinking_level
+        if thinking is True:
+            return ThinkingConfigDict(include_thoughts=True)
+        return ThinkingConfigDict(
+            include_thoughts=True, thinking_level=cast(Any, _resolve_google_thinking_level(thinking, profile))
+        )
 
     async def _build_content_and_config(
         self,
@@ -859,13 +1011,13 @@ class GoogleModel(Model[Client]):
             headers.update(extra_headers)
 
         gla_service_tier: _GlaServiceTier | None = None
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+        if self._is_google_cloud:
             headers.update(_google_cloud_service_tier_headers(_resolve_google_cloud_service_tier(model_settings)))
         else:
             gla_service_tier = _resolve_gla_service_tier(model_settings)
 
         http_options: HttpOptionsDict = {'headers': headers}
-        if timeout := model_settings.get('timeout'):
+        if (timeout := model_settings.get('timeout')) is not None:
             if isinstance(timeout, int | float):
                 http_options['timeout'] = int(1000 * timeout)
             else:
@@ -896,6 +1048,7 @@ class GoogleModel(Model[Client]):
             response_json_schema=response_schema,
             response_modalities=modalities,
             image_config=image_config,
+            model_armor_config=model_settings.get('google_model_armor_config'),
         )
 
         if gla_service_tier is not None:
@@ -924,7 +1077,7 @@ class GoogleModel(Model[Client]):
             # Add safety ratings to provider details
             if candidate.safety_ratings:
                 provider_details['safety_ratings'] = [r.model_dump(by_alias=True) for r in candidate.safety_ratings]
-            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+            finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason.value)
         elif candidate is None and response.prompt_feedback and response.prompt_feedback.block_reason:
             block_reason = response.prompt_feedback.block_reason
             provider_details['block_reason'] = block_reason.value
@@ -983,7 +1136,13 @@ class GoogleModel(Model[Client]):
         peekable_response: _utils.PeekableAsyncStream[
             GenerateContentResponse, AsyncIterator[GenerateContentResponse]
         ] = _utils.PeekableAsyncStream(response)
-        first_chunk = await peekable_response.peek()
+        # `generate_content_stream` doesn't issue the HTTP request until the response
+        # iterator is first advanced, so API errors surface here rather than in
+        # `_generate_content`'s try/except and need the same mapping.
+        try:
+            first_chunk = await peekable_response.peek()
+        except errors.APIError as e:
+            raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
 
@@ -992,6 +1151,7 @@ class GoogleModel(Model[Client]):
             _model_name=first_chunk.model_version or self._model_name,
             _response=peekable_response,
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
         )
@@ -1008,6 +1168,10 @@ class GoogleModel(Model[Client]):
         for m in messages:
             if isinstance(m, ModelRequest):
                 message_parts: list[PartDict] = []
+                # Held back so the split below can't leave framed tool media sharing a `Content` with
+                # a `function_response`, which Gemini reads as model-authored (#4210) — the opposite
+                # of the attribution the framing exists to give it.
+                tool_return_media: list[PartDict] = []
 
                 for part in m.parts:
                     if isinstance(part, SystemPromptPart):
@@ -1015,7 +1179,9 @@ class GoogleModel(Model[Client]):
                     elif isinstance(part, UserPromptPart):
                         message_parts.extend(await self._map_user_prompt(part))
                     elif isinstance(part, ToolReturnPart):
-                        message_parts.extend(await self._map_tool_return(part))
+                        function_response_part, framed_media = await self._map_tool_return(part)
+                        message_parts.append(function_response_part)
+                        tool_return_media.extend(framed_media)
                     elif isinstance(part, RetryPromptPart):
                         if part.tool_name is None:
                             message_parts.append({'text': part.model_response()})
@@ -1029,8 +1195,22 @@ class GoogleModel(Model[Client]):
                                     }
                                 }
                             )
+                    elif isinstance(part, ToolAvailabilityDeltaPart):
+                        raise _unsynthesized_tool_availability_delta_error()
+                    elif isinstance(part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(part)
+
+                if tool_return_media:
+                    # After the last `function_response`, not after every part: a `ToolReturn.content`
+                    # user part trails the tool returns in the same request, and appending to the end
+                    # would put the developer's message between a call and the file it produced.
+                    # Anywhere earlier and the split below would leave media sharing a `Content` with
+                    # a later `function_response`.
+                    after_last_response = max(i for i, p in enumerate(message_parts) if 'function_response' in p) + 1
+                    message_parts[after_last_response:after_last_response] = tool_return_media
 
                 # Work around a Gemini bug where content objects containing functionResponse parts are treated as
                 # role=model even when role=user is explicitly specified.
@@ -1075,12 +1255,15 @@ class GoogleModel(Model[Client]):
 
         return system_instruction, contents
 
-    async def _map_tool_return(self, part: ToolReturnPart) -> list[PartDict]:
+    async def _map_tool_return(self, part: ToolReturnPart) -> tuple[PartDict, list[PartDict]]:
         """Map a `ToolReturnPart` to Google API format, handling multimodal content.
 
-        For Gemini 3+ models with supported MIME types, files are sent inside
-        `function_response.parts` for efficiency. Unsupported types become separate
-        parts after the function_response (fallback strategy).
+        Returns the `function_response` part and, separately, any files this model can't carry
+        inside it. For Gemini 3+ models with supported MIME types, files are sent inside
+        `function_response.parts` for efficiency and the second element is empty. Unsupported types
+        fall back to ordinary parts, each framed by `_tool_result_provenance_tags`; the caller emits
+        those after every `function_response` in the request, which is why they carry the framing
+        rather than relying on sitting next to the call they belong to.
         See: https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#multimodal
         """
         supported_mime_types = self.profile.get('google_supported_mime_types_in_tool_returns', ())
@@ -1095,13 +1278,22 @@ class GoogleModel(Model[Client]):
                 function_response_parts.append(fr_part)
             else:
                 fallback_refs.append(f'See file {file.identifier}.')
-                fallback_parts.append({'text': f'This is file {file.identifier}:'})
+                open_tag, close_tag = _tool_result_provenance_tags(part.tool_name, part.tool_call_id, file.identifier)
                 file_part = await self._map_file_to_part(file)
-                fallback_parts.append(file_part)
+                fallback_parts.extend([{'text': open_tag}, file_part, {'text': close_tag}])
 
-        response = part.model_response_object()
-        if fallback_refs:
-            response = {'output': [response, *fallback_refs]}
+        if part.outcome == 'failed':
+            # Google's function-response schema prescribes an `error` key (mirroring the `output` key
+            # used for success) for reporting a failed tool call, so this is Gemini's native error
+            # channel, not the generic `{"error": ...}` wrapper other providers fall back to — hence
+            # `wrap_if_error=False` and the hand-built dict. Gemini surfaces the value as the failure
+            # message, so it stays a plain string: file references are sent as the file parts below
+            # rather than folded into the error text (the success branch nests them under `output`).
+            response = {'error': part.model_response_str(wrap_if_error=False)}
+        else:
+            response = part.model_response_object(wrap_if_error=False)
+            if fallback_refs:
+                response = {'output': [response, *fallback_refs]}
 
         function_response_dict: FunctionResponseDict = {
             'name': part.tool_name,
@@ -1111,10 +1303,7 @@ class GoogleModel(Model[Client]):
         if function_response_parts:
             function_response_dict['parts'] = function_response_parts
 
-        result: list[PartDict] = [{'function_response': function_response_dict}]
-        result.extend(fallback_parts)
-
-        return result
+        return {'function_response': function_response_dict}, fallback_parts
 
     def _validate_uploaded_file(self, file: UploadedFile) -> tuple[str, str]:
         """Validate an `UploadedFile` and return (`file_uri`, `mime_type`).
@@ -1127,7 +1316,7 @@ class GoogleModel(Model[Client]):
                 f'UploadedFile with `provider_name={file.provider_name!r}` cannot be used with GoogleModel. '
                 f'Expected `provider_name` to be one of {sorted(self._matching_provider_names)!r}.'
             )
-        if self.system in _GOOGLE_CLOUD_PROVIDER_NAMES:
+        if self._is_google_cloud:
             if not file.file_id.startswith('gs://'):
                 raise UserError(
                     f'UploadedFile for GoogleModel (Google Cloud) must use a GCS URI (gs://bucket/path), got: {file.file_id}'
@@ -1152,12 +1341,12 @@ class GoogleModel(Model[Client]):
             file_uri, mime_type = self._validate_uploaded_file(file)
             return ('file', file_uri, mime_type)
         elif isinstance(file, VideoUrl) and (
-            file.is_youtube or (file.url.startswith('gs://') and self.system in _GOOGLE_CLOUD_PROVIDER_NAMES)
+            file.is_youtube or (file.url.startswith('gs://') and self._is_google_cloud)
         ):
             return ('file', file.url, file.media_type)
         elif isinstance(file, FileUrl):
             if file.force_download or (
-                self.system in _GEMINI_API_PROVIDER_NAMES
+                not self._is_google_cloud
                 and not file.url.startswith(r'https://generativelanguage.googleapis.com/v1beta/files')
             ):
                 downloaded_item = await download_item(file, data_format='bytes')
@@ -1242,6 +1431,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_name: GoogleModelName
     _response: _utils.PeekableAsyncStream[GenerateContentResponse, AsyncIterator[GenerateContentResponse]]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_utils.now_utc)
@@ -1257,13 +1447,7 @@ class GeminiStreamedResponse(StreamedResponse):
     )
 
     async def close_stream(self) -> None:
-        try:
-            # google.genai types this as AsyncIterator, but at runtime it's an
-            # async generator that exposes aclose().
-            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        except RuntimeError as exc:
-            if not _utils.is_async_generator_already_running(exc):
-                raise
+        await self._response.aclose()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         if self._provider_timestamp is not None:
@@ -1323,7 +1507,7 @@ class GeminiStreamedResponse(StreamedResponse):
                             r.model_dump(by_alias=True) for r in candidate.safety_ratings
                         ]
 
-                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason)
+                    self.finish_reason = _FINISH_REASON_MAP.get(raw_finish_reason.value)
 
                 # Google streams the grounding metadata (including the web search queries and results)
                 # _after_ the text that was generated using it, so it would show up out of order in the stream,
@@ -1484,13 +1668,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             self._pending_file_search_returns = []
         except errors.APIError as e:
-            if (status_code := e.code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self._model_name,
-                    body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
-                ) from e
-            raise ModelAPIError(model_name=self._model_name, message=str(e)) from e
+            raise _map_api_error(e, self._model_name, self._model_id_namespace) from e
 
     def _handle_file_search_grounding_metadata_streaming(
         self, grounding_metadata: GroundingMetadata | None
@@ -1627,6 +1805,9 @@ def _content_model_response(
         elif isinstance(item, CompactionPart):  # pragma: no cover
             # Compaction parts are not sent back to models that don't support compaction.
             part = None
+        elif isinstance(item, SpeechPart):  # pragma: no cover
+            # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+            raise _unconverted_speech_part_error()
         else:
             assert_never(item)
 
@@ -1880,23 +2061,65 @@ def _metadata_as_usage(
     metadata = response.usage_metadata
     if metadata is None:
         return existing_usage or usage.RequestUsage()
+    return _usage_metadata_as_usage(
+        prompt_token_count=metadata.prompt_token_count,
+        output_token_count=metadata.candidates_token_count,
+        cached_content_token_count=metadata.cached_content_token_count,
+        thoughts_token_count=metadata.thoughts_token_count,
+        tool_use_prompt_token_count=metadata.tool_use_prompt_token_count,
+        prompt_tokens_details=metadata.prompt_tokens_details,
+        cache_tokens_details=metadata.cache_tokens_details,
+        output_tokens_details=metadata.candidates_tokens_details,
+        tool_use_prompt_tokens_details=metadata.tool_use_prompt_tokens_details,
+        output_details_prefix='candidates',
+        extract_data=response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
+        provider=provider,
+        provider_url=provider_url,
+        existing_usage=existing_usage,
+    )
+
+
+def _usage_metadata_as_usage(
+    *,
+    prompt_token_count: int | None,
+    output_token_count: int | None,
+    cached_content_token_count: int | None,
+    thoughts_token_count: int | None,
+    tool_use_prompt_token_count: int | None,
+    prompt_tokens_details: Sequence[ModalityTokenCount] | None,
+    cache_tokens_details: Sequence[ModalityTokenCount] | None,
+    output_tokens_details: Sequence[ModalityTokenCount] | None,
+    tool_use_prompt_tokens_details: Sequence[ModalityTokenCount] | None,
+    output_details_prefix: Literal['candidates', 'response'],
+    extract_data: dict[str, Any],
+    provider: str,
+    provider_url: str,
+    existing_usage: usage.RequestUsage | None = None,
+) -> usage.RequestUsage:
+    """Map the usage metadata shared by Gemini generate-content and Live responses.
+
+    Live names two fields differently (`responseTokenCount` / `responseTokensDetails` where
+    generate-content says `candidates*`), so the caller passes the counts in and names the output
+    detail keys with `output_details_prefix`. `extract_data` is the raw response payload
+    [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
+    speaks the generate-content field names, so a Live caller translates before handing it over.
+    """
     details: dict[str, int] = {}
-    if cached_content_token_count := metadata.cached_content_token_count:
+    if cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count
 
-    if thoughts_token_count := (metadata.thoughts_token_count or 0):
+    if thoughts_token_count:
         details['thoughts_tokens'] = thoughts_token_count
 
-    if tool_use_prompt_token_count := metadata.tool_use_prompt_token_count:
+    if tool_use_prompt_token_count:
         details['tool_use_prompt_tokens'] = tool_use_prompt_token_count
 
     for prefix, metadata_details in [
-        ('prompt', metadata.prompt_tokens_details),
-        ('cache', metadata.cache_tokens_details),
-        ('candidates', metadata.candidates_tokens_details),
-        ('tool_use_prompt', metadata.tool_use_prompt_tokens_details),
+        ('prompt', prompt_tokens_details),
+        ('cache', cache_tokens_details),
+        (output_details_prefix, output_tokens_details),
+        ('tool_use_prompt', tool_use_prompt_tokens_details),
     ]:
-        assert getattr(metadata, f'{prefix}_tokens_details') is metadata_details
         if not metadata_details:
             continue
         for detail in metadata_details:
@@ -1911,7 +2134,7 @@ def _metadata_as_usage(
         details = {**existing_usage.details, **details}
 
     new_usage = usage.RequestUsage.extract(
-        response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
+        extract_data,
         provider=provider,
         provider_url=provider_url,
         provider_fallback='google',
@@ -2026,16 +2249,6 @@ def _extract_file_search_retrieved_contexts(
         context_dict: dict[str, Any] = chunk.retrieved_context.model_dump(
             mode='json', exclude_none=True, by_alias=False
         )
-        # The SDK type may not define file_search_store yet, but model_dump includes it.
-        # Check both snake_case and camelCase since the field name varies.
-        file_search_store = context_dict.get('file_search_store')
-        if file_search_store is None:  # pragma: lax no cover
-            context_dict_with_aliases: dict[str, Any] = chunk.retrieved_context.model_dump(
-                mode='json', exclude_none=True, by_alias=True
-            )
-            file_search_store = context_dict_with_aliases.get('fileSearchStore')
-        if file_search_store is not None:  # pragma: lax no cover
-            context_dict['file_search_store'] = file_search_store
         retrieved_contexts.append(context_dict)
     return retrieved_contexts
 

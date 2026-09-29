@@ -1,0 +1,172 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1758'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      frequency_penalty: null
+      messages:
+      - content: Retain this instruction prefix for the entire conversation. Retain this instruction prefix for the entire
+          conversation. Retain this instruction prefix for the entire conversation. Retain this instruction prefix for the
+          entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction prefix
+          for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation.
+        role: system
+      - content: 'Reply with exactly: cache probe one.'
+        role: user
+      model: mistral-large-latest
+      n: 1
+      presence_penalty: null
+      prompt_cache_key: pydantic-ai-test-mistral-history-cache
+      stop: null
+      stream: false
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '389'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019f94fe-29c7-7084-bcf6-386b6baa345e
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: cache probe one.
+          role: assistant
+          tool_calls: null
+      created: 1784911112
+      id: f693a0e825f04b4ba7d4fe0c132266b8
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 5
+        prompt_tokens: 253
+        prompt_tokens_details:
+          cached_tokens: 0
+        total_tokens: 258
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '1944'
+      content-type:
+      - application/json
+      host:
+      - api.mistral.ai
+    method: POST
+    parsed_body:
+      frequency_penalty: null
+      messages:
+      - content: Retain this instruction prefix for the entire conversation. Retain this instruction prefix for the entire
+          conversation. Retain this instruction prefix for the entire conversation. Retain this instruction prefix for the
+          entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction prefix
+          for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation. Retain this instruction prefix for the entire conversation. Retain this instruction
+          prefix for the entire conversation.
+        role: system
+      - content: 'Reply with exactly: cache probe one.'
+        role: user
+      - content:
+        - text: cache probe one.
+          type: text
+        prefix: false
+        role: assistant
+        tool_calls: []
+      - content: 'Reply with exactly: cache probe two.'
+        role: user
+      model: mistral-large-latest
+      n: 1
+      presence_penalty: null
+      prompt_cache_key: pydantic-ai-test-mistral-history-cache
+      stop: null
+      stream: false
+      top_p: 1.0
+    uri: https://api.mistral.ai/v1/chat/completions
+  response:
+    headers:
+      access-control-allow-origin:
+      - '*'
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '391'
+      content-type:
+      - application/json
+      mistral-correlation-id:
+      - 019f94fe-2c2f-78ce-8013-ebdd056cd66e
+      strict-transport-security:
+      - max-age=15552000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      choices:
+      - finish_reason: stop
+        index: 0
+        message:
+          content: cache probe two.
+          role: assistant
+          tool_calls: null
+      created: 1784911113
+      id: 23271c0215f547dcb5d5e2950f354f9d
+      model: mistral-large-latest
+      object: chat.completion
+      usage:
+        completion_tokens: 5
+        prompt_tokens: 268
+        prompt_tokens_details:
+          cached_tokens: 224
+        total_tokens: 273
+    status:
+      code: 200
+      message: OK
+version: 1

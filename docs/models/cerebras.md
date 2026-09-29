@@ -1,3 +1,7 @@
+---
+description: "Use models hosted on Cerebras with Pydantic AI: install the cerebras optional group, set your API key, and configure the Cerebras provider for your agents."
+---
+
 # Cerebras
 
 ## Install
@@ -58,10 +62,10 @@ agent = Agent(model)
 ...
 ```
 
-You can also customize the `CerebrasProvider` with a custom `httpx.AsyncClient`:
+You can also customize the `CerebrasProvider` with a custom `httpx2.AsyncClient`:
 
 ```python
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from pydantic_ai import Agent
 from pydantic_ai.models.cerebras import CerebrasModel

@@ -32,8 +32,9 @@ class SystemPromptRunner(Generic[AgentDepsT]):
             function = cast(Callable[[Any], Awaitable[str | None]], self.function)
             return await function(*args)
         else:
-            function = cast(Callable[[Any], str | None], self.function)
-            return await _utils.run_in_executor(function, *args)
+            # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
+            function = cast(Callable[[Any], str | None | Awaitable[str | None]], self.function)
+            return await _utils.await_maybe(await _utils.run_in_executor(function, *args))
 
 
 async def resolve_system_prompts(

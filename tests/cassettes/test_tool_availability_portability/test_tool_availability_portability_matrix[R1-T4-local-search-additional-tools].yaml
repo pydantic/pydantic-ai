@@ -1,0 +1,230 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1925'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Find the exchange-rate tool.
+        role: user
+      - arguments: '{"queries":["exchange rate"]}'
+        call_id: search_call_1
+        name: search_tools
+        type: function_call
+      - call_id: search_call_1
+        output: '{"discovered_tools":[{"name":"lookup_exchange_rate"}]}'
+        type: function_call_output
+      - role: developer
+        tools:
+        - description: Look up an exchange rate.
+          name: lookup_exchange_rate
+          parameters:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+          strict: true
+          type: function
+        type: additional_tools
+      - content: Acknowledge the available exchange-rate tool without calling it.
+        role: user
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        name: always_ready
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name the
+          requested operation. A capability id used as an ordinary domain word does not request that capability. This cannot
+          find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
+        name: search_tools
+        parameters:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '7808'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '7864'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785511717
+      created_at: 1785511710
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0c0e7c2781205396006a6cbf1e4b148190b89a9a95d75e1696
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqbL8mODLU9PO2UQqJIZ79PRjyP9F7lkXrdUd0aBuYLpB4CzIl_WPlKRpDzp3bViAgd7SQEHLCq96NEVe9rrW1TnXA3zDMN4FvZqoJ9y_cokOqPY-LDp2E5NGbwVcTlVmOU2qCqQVkF-kbiaqm9hifNtZ8HMIhX1BTRFDwM89TE1PZXC0IYrSj4EgxiJ54hFAfHHXO6WLTb3N5FR0RyAbDmpyW0vV_pP2-hhpF_3s1uwwd1d4MdFugMIV96E36sCfbJN84pz_Y8NErSQ0D80eFRmjo0HIMmYPHWoB-55nRp-zaX-mWfBBOaO9g3ynk6pcfcrEwbTXbdBVOcQ6VevvBpDmdDNIj1HrZmG5WhRrNd3qu_8KU6L-YlJY_oP-XZDhxOxb1Zf3LrozQAu1ty5P0iBqF5njlQJCj4qNUVs6lnqRV2-fP-i4Kf6Jsc-GU1JiEdhxCMWhT0xieu_QqYD3H3P0osU12mT5dx4933nAMb5lmXCPDbv_ySUSFJs-TYGY1yC3tRj756zlFCEwndFM-Ulo0qGN-Cc03t803xKW1dhXUPOF-w_5ogWG1Bt8etAFsNUKJ2TetcGjRk3AaBmte-Jd6XADZEFMQkWsb0rww0uZUGIoHx2CHWOP2XxbCZ2eHcG8AMTMlL3PkAICoZyY43uMQ8jl34U-o7U8n6tC3iOa5dLlJPnCAPkDhUfSe0RPniBFtUjKU1AIV8zSZ5l7hg1nGBBXy4lUVvLBO0C3V4jc9GaXBOKsHbY-xCY--rcqFGtb6Wj0Wt4_T0Dm6E2p4lCS51gmtmaDkrStYfqiJqggoq6IiLYHqvAKs21_45BzeZ9kUrpUkA-49BS2n6Fi9nz7o4adS6b_sjAnKsET6F1RZPk7E0NvvsJdeYAEgZ-ETCFEXVgtOlCGgPRGQ9m9SJpFy-eRlzK5oWvcbK3cqpKPpHirJ2pQMigcf72XvFK7GUuJFYCXF-hHeqBOxB41kOR8LnEfCAFtFSLdh_bOuD4mE2qPCmK5QKVtwEL-Tdrd4eUPQhSUeHhFbGDfTicsjRUJt_-qbR_yCYWMBrJxSvbQmQQK1reVgRMcZDjMaIDn4dGacyQNUIXLJ4Pjo6bDH46MdySRQm0SM_BjLXXOJYm5Bo4VmXVdDg3jK96PjpK1tXdbDuO391WE5NwPVmpmWfYxz67b1-0G9xnTQP0zbSU9kmMNgOV3iMnam4rNxa-AyoMCWOCkudZl1zLC-L0wv0QcoLGd1K6a4OWqbNbSLjiVZerRE3V2xrmfWO3WpEx7gkhJhJVfHdCuj-73KgxIC__bxZGoLQwOjgjPa6Mn2vuQiZ8TSazs1nnn1p6RyzWwKNVSECSTs0lb2rmskmn4kyagM0l-uxpG6jkAEO9Uzg25Oipq9S5wj8EdVQlMTlwqKY2eLac61n6gU-HISIKlYDQ4oEXP9hTcSM8ilrTcT3Cy9TUIPonwt568KnRNVkvSFImjE-3rcTwVgTbGXvr3GoBQk7LSyemBuRGB7DzgGr20Dkb86xmGmGG8R4udndp2YqawmIlIaafwrfCfAIh-et8IRXLvlqBFhajZq5ozRH2r3Ylo3O04CVe3q4ejFOTFfAVGV7FhtSVlvxEEh17xjz9iW6lSgWT-v0oKTDg5PHj0oj3SCerQWl0yGo8MnUP64YQC0s9UQa7Doqmbl1QLW6moWgTD3sxKBOg5OVnSaiyoHXKMR-Nv6ZQtH3-5hGJN0AEiqgFK16wPLIM8B4lrt5TgItwBGLT6w9PZvrM28Pc4szsXA4i2-9vj4vKtj-uDhVM3Q-p0jxgjadD9LYTwwnsCV_6RhVSaqxRkC0-zaGxUaw-gS1hHd2b1-mMNnYemIifczSOfqYqC_S5jc97okIdhU2SAKWmzOiIvjlnT9KOYThtiiUJi9_scd1uJXVV5jqD3Yswr71FX-jKX2VG0spz_cXUbUTsCUfolk6fEo_R1ZaurywLKTYOQmQQroHoIMP9qkUT9OyN0OQdNlRywug_0zD_FBqdOAeqUQq81o-n8XyjQl6PYM1WJb8g_x55ln4FR8698qYKT-6jknhYyy2oOQuW1MvYQ3RjdodBeZwP6hbBp8fDdKM2ytH75iwodnc-9ixZ6wAk0bzxgxp8_GKS2EkUsTGhVpE_jp7HZrB1H_xyaWc6mGdL2GpE-F1mbRnz46chOVWv_0kABm2j7cLGF5eAza6OUqaAVFvYH7NiRhOwigRkKmXZW0_CxWoaWPGlvkUbRHJIo40N4e76sjhnGIKQj42eYrmDI4iCr1y8SJ5250GT0zmRtQJdGm04TTSwjsCGXflxbXV3ATTQuFDcquUQGgfiPvF74I9wIDh2Ea8-o_JVWZ3UcdBEfqveCw6KHF8feQO6L9s-r1zBrVvQ3FodPponPVRZAnT2jNg46c4JXy_I1_YvI8PpHz0oVAoTyKGjA_7n4HNiMeLOQrLAN-88G5R7bNwq8w8VpcqKl-tO9xi2KQ8SZjp0-Y6sg0GCBgj6vcv9i9wfBJXFNJMiNDa0Lnv_EABFVBCp90V6-CBDMoZ3BDdvsPXqko5fn5L3tmjvP-XeOah_p-GNeYY00ddGcl09IS1nZ-RiUHp8uswzECnpriUW5-SgdTxN8z-O_4I2Tc8HF9tFAJeBR-Y10iqCeEYOKDQUH-1W5L4K577vLgTg89-a-NMc0WoKg3KPoAeuxjrRafhRv1yuh0zVUwVoncTtroyz_s8eRmWuNoXPqTjm874exfjZrd0PvW1Bs3AsEj0NboCOGc_xWmfVhM4Nwgp0hHaBOLP48YoTWselaP-hkflZ2aQlsO7l9GQ4uDk7J8AuTkbfiAWQrI63btJbQfINbU2xT-oxKtu0lncqr3tm-NDzqlxdHSq-hfQd7RauBxqT3T6rnPYtQeJsEowA4i_CIYD-wcivVI3VJ-kFksZsQ0hxEy_odDEVucrezDBosJleQNCfGO8OzbQWmsKMRp8NoPubZNOK-7g7Jx3YcWy-tWXe4DiJXdLIgjhjocebkhZiCGa8cIjy-jv05KlmNevzNIH6edlMFC_y6E-CgWxWWoB8HVBKS0RFRKmGDTzXASpY2RdVlz64ni9huTVAqLISLPSOjcCgbtK-BQV0xtisAgzZnaHfd_AwtSncX0-n5r4m_nNYmhxjbx68fa8zTQ3TC80d-TWtuSxxntb-ZmbVuNT_xMV9x37k5Ey9KCRuqvfRnzVo9Yk-A6XxUX6dHh5Un2gs6Vk4RjXsTIrCAjSQ9v3-fPMwo15xl19P_3XMWE9PtP2ijNjIzkfyRpqwk3WQ6ER3pxBY4xX6UCgL9Mxxtko3R2HRynpss4LYrsE5vWg6YIMZgKWu48ZTZD1JQk4tbcJLFJ0KRbokLzqPLIFyDRsKGw20hj6M84Es2VEPNeogb0KHNY6X7VHN42spywsAgo1uQUR4GdfMajhSxHyuY75xf7k_EtloQYKQ7rmNnN6Lb1s-NJzckVzFQtJtLIjUW6WvNsgcDD71Ls8s7I-u3_mPXoscNfUz2bSLvjune6XZ00xgaWn4EY5dO_rITHMuJrI2XIAp0CoGJmFuWKrHpd2XcyWJNZ7hUHl_VgngsdAkgX1nw4KklN_ctiDotPgGjBJ36LQG1MqRUvGUhtrAGE5uEObB6Y8hUiO-PbCFdCAWgw5os9FW-zoUjBLXMT8RRJaDjaMqEXsWsT6PTMLMj1D2sRyOLyb9RR37x9RdYsD5oAwOaUeU2uvBerwAL-lszJb7mV1yu2wjEX3BOCYZZwwE8ZSyq2Nkot67NOfVv6r1PLoVCXnccwHwjn9MjaIks2RPcoHxIPs07riujSwNMIA4uMW4DKgYH8iHxovHzGvOHJumured9lrHMJinu89Uo6vn-hnGuCvcuM98xazvQGZ8GcB6dQWTTGk4QnstKQgh4egEnsol7UPemacVSCrSgx4qxgEQoNrxB__zNNFN-RA9eU6OSPmL8NGGjdn8IUR5x1Yp_RbDrpCUjh3E6AOCj1VZkkz2PBw8eKaxj_eMEbF8f-W3GnHBv4LIpR7aH-tBSNJ4bfxZEgRFryfWPxU-gA0bCs1luzTjKJIWHrFWv4jsvWEh78uocp3ZlpdO49i9frU1NVxgKRqnN9m_skamvQZxbwM4zQIHEGKYr5p4utj-R85E48LwABHhI9KQS0ga3Hn4gkPHTL9mSgbem-R7a5fRUXFQZM2atVbFFdpvYlVM7stDvwY_1PYZzPOgROrUxvhJdvJI1ucTzHHelQ0xFFHJzajJPU4sW3-A96V2TYSTIpv7wiGKRtf3x5fZodvHfQvCJvVwNuMy_1PWp3BifPfDEXZkFsSaLhI7X-EOj0cYl0Opp0OBxuZQ3JjAr75HaapU0KA6cF4HwtP_BX5RZT_7qj3XNvf3HCwSz7rMlazKOpnZqWbEpdJWUG
+        id: rs_0c0e7c2781205396006a6cbf1ef6a081908b5a298471b89cd6
+        summary: []
+        type: reasoning
+      - content:
+        - annotations: []
+          logprobs: []
+          text: 'An exchange-rate tool is available: lookup_exchange_rate. It looks up an exchange rate and accepts a single
+            parameter: currency (string).'
+          type: output_text
+        id: msg_0c0e7c2781205396006a6cbf252d1c8190b69618950669d74b
+        role: assistant
+        status: completed
+        type: message
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        name: always_ready
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties: {}
+          type: object
+        strict: false
+        type: function
+      - description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name the
+          requested operation. A capability id used as an ordinary domain word does not request that capability. This cannot
+          find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
+        name: search_tools
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            queries:
+              description: List of search queries to match against tool names and descriptions. Use specific words likely
+                to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                matches across queries are unioned.
+              items:
+                type: string
+              type: array
+          required:
+          - queries
+          type: object
+        strict: true
+        type: function
+      - description: Look up an exchange rate.
+        name: lookup_exchange_rate
+        tools:
+        - description: Look up an exchange rate.
+          name: lookup_exchange_rate
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+          strict: true
+          type: function
+        type: namespace
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 345
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 559
+        output_tokens_details:
+          reasoning_tokens: 512
+        total_tokens: 904
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

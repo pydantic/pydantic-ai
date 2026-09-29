@@ -5,6 +5,8 @@
       members:
         - ModelProfile
         - ModelProfileSpec
+        - JsonSchemaTransformer
+        - InlineDefsJsonSchemaTransformer
         - merge_profile
         - prompt_cache_outlook
         - PromptCacheOutlook
@@ -13,6 +15,8 @@
         - DEFAULT_THINKING_TAGS
 
 ::: pydantic_ai.profiles.openai
+
+::: pydantic_ai.profiles.openai_codex
 
 ::: pydantic_ai.profiles.anthropic
 

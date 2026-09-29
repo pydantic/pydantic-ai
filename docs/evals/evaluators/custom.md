@@ -1,3 +1,7 @@
+---
+description: "Write custom Pydantic Evals evaluators for domain-specific logic, external integrations or specialized metrics by subclassing Evaluator and defining evaluate."
+---
+
 # Custom Evaluators
 
 Write custom evaluators for domain-specific logic, external integrations, or specialized metrics.
@@ -54,7 +58,7 @@ class MyEvaluator(Evaluator):
         ctx.metrics           # dict[str, int | float]
         ctx.attributes        # dict[str, Any]
 
-        # OpenTelemetry spans (if logfire configured)
+        # OpenTelemetry spans (if Logfire is configured)
         ctx.span_tree         # SpanTree for behavioral checks
 
         return True
@@ -546,7 +550,7 @@ class ExecutablePython(Evaluator):
         import tempfile
 
         # Write code to temp file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
             f.write(ctx.output)
             temp_path = f.name
 
@@ -632,6 +636,7 @@ Test evaluators like any other Python code:
 from dataclasses import dataclass
 
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext
+from pydantic_evals.otel import SpanTree
 
 
 @dataclass
@@ -653,7 +658,7 @@ def test_exact_match():
         expected_output='expected',
         output='expected',
         duration=0.1,
-        _span_tree=None,
+        _span_tree=SpanTree(),
         attributes={},
         metrics={},
     )
@@ -752,7 +757,7 @@ class SafeEvaluator(Evaluator):
             )
 
         # Your evaluation logic
-        ...
+        return EvaluationReason(value=ctx.output == ctx.expected_output)
 ```
 
 ### 3. Provide Helpful Reasons
