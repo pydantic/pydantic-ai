@@ -271,12 +271,15 @@ def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool
         return False
     if (started := sim.truth.speech_started.get(input_.key)) is not None and started <= response.seq_end:
         return True  # Server VAD heard the user start before the response ended.
+    # Audio for this turn: streamed since the spoken turn before it was committed.
+    since = max(
+        (other.seq for other in sim.truth.inputs if other.kind == 'speech' and other.seq < input_.seq), default=0
+    )
     return any(
         operation.name == 'send_audio'
+        and since < operation.issued < response.seq_end
         and (
-            response.content_read is None
-            or operation.issued < response.content_read
-            or operation.issued < response.seq_end
+            response.content_read is None or operation.issued < response.content_read or response.status == 'cancelled'
         )
         for operation in sim.operations
     )

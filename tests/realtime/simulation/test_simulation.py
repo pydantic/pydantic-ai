@@ -17,7 +17,7 @@ from __future__ import annotations as _annotations
 
 import os
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -1217,6 +1217,7 @@ def test_baseline_server_vad_without_interrupting_or_responding() -> None:
         sim.settle()
         assert len(sim.truth.responses) == 1
         sim.create_response()
+        assert sim.truth.responses_by_number[2].answers == ['u1']
         sim.speak()
         sim.finish()
 
@@ -1246,3 +1247,13 @@ def test_scenario_terminal_dropped_by_hanging_up_is_not_misattributed() -> None:
         ),
         scenario,
     )
+
+
+def test_xai_server_vad_answers_every_turn() -> None:
+    """xAI echoes `create_response: False` back but answers the turn anyway (`XaiRealtimeModelSettings`)."""
+    from ._openai_server import ServerSession
+
+    socket = cast(Any, None)
+    vad: dict[str, Any] = {'type': 'server_vad', 'create_response': False}
+    assert not ServerSession(index=0, socket=socket, turn_detection=vad).create_response
+    assert ServerSession(index=0, socket=socket, turn_detection=vad, answers_every_turn=True).create_response

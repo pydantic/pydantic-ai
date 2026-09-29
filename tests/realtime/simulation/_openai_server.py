@@ -102,6 +102,10 @@ class ServerSession:
     late_done: dict[str, Any] | None = None
     resumed: bool = False
     """An xAI re-dial that resumed the conversation."""
+    answers_every_turn: bool = False
+    """xAI echoes `create_response: False` back but answers anyway (see `XaiRealtimeModelSettings`)."""
+    uncommitted_answers: list[str] = field(default_factory=list[str])
+    """Spoken turns committed without a reply (push-to-talk, or VAD not answering): the next request answers them."""
 
     @property
     def server_vad(self) -> bool:
@@ -114,12 +118,8 @@ class ServerSession:
 
     @property
     def create_response(self) -> bool:
-        """Whether server VAD answers a turn when the user stops speaking.
-
-        xAI echoes `create_response: False` back but responds anyway (see `XaiRealtimeModelSettings`); its
-        `session.update` sets neither flag, so this is always its default there.
-        """
-        return bool((self.turn_detection or {}).get('create_response', True))
+        """Whether server VAD answers a turn when the user stops speaking."""
+        return self.answers_every_turn or bool((self.turn_detection or {}).get('create_response', True))
 
 
 class OpenAIServer:
@@ -163,6 +163,7 @@ class OpenAIServer:
         session = ServerSession(index=len(self.sessions), socket=socket)
         # xAI resumes a conversation natively: a re-dial naming it gets the finished conversation back.
         session.resumed = self.dialect == 'xai' and f'conversation_id={self._conversation_id}' in url
+        session.answers_every_turn = self.dialect == 'xai'
         self.sessions.append(session)
         socket.emit(
             {
@@ -316,7 +317,7 @@ class OpenAIServer:
                 _error('input_audio_buffer_commit_empty', 'Error committing input audio buffer: buffer too small.'),
             )
             return
-        self._commit_user_turn(session, solicits=False)
+        self._commit_user_turn(session)
 
     def _on_audio_clear(self, session: ServerSession, frame: dict[str, Any]) -> None:
         del frame
@@ -380,6 +381,7 @@ class OpenAIServer:
                 # `send(image, respond=True)` sends the image and the request for a response as two inputs.
                 requested.append(self._client_items[index - 1])
         requested.extend(session.unanswered_tool_outputs)
+        requested.extend(session.uncommitted_answers)
         if self._armed_rejections and self._armed_rejections[0] == 'response':
             self._armed_rejections.pop(0)
             if not requested:  # A bare request for a response: track the refusal on the request itself.
@@ -401,6 +403,7 @@ class OpenAIServer:
             return
         answers = requested
         session.unanswered_tool_outputs.clear()
+        session.uncommitted_answers.clear()
         for key in answers:
             input_ = self.truth.input(key)
             assert input_ is not None
@@ -548,14 +551,16 @@ class OpenAIServer:
         active.message_item = None
         active.message_words = []
 
-    def _commit_user_turn(self, session: ServerSession, *, solicits: bool) -> str:
+    def _commit_user_turn(self, session: ServerSession) -> str:
+        """Commit the buffered audio as a user turn, which the next request for a response answers."""
         key = self.truth.new_user_turn()
         item_id = f'item_{key}'
         session.audio_ms = 0
-        self.truth.add_input(key, 'speech', solicits=solicits)
+        self.truth.add_input(key, 'speech')
         self._emit(session, {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None})
         if session.transcription:
             session.pending_transcripts.append(key)
+        session.uncommitted_answers.append(key)
         return key
 
     # --- actions the simulation drives ------------------------------------------------------------
@@ -705,7 +710,7 @@ class OpenAIServer:
             session.pending_transcripts.append(key)
         if not session.create_response:
             # The turn is committed as it is under push-to-talk: the app asks for the reply itself.
-            pass
+            session.uncommitted_answers.append(key)
         elif session.active is None:
             self._start_response(session, trigger='vad', answers=[key], user_turn=key)
         else:
