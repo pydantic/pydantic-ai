@@ -81,6 +81,7 @@ Every `MemoryStore.read` call includes a finite `max_chars`, and every `list_pat
 | `FileStore(directory)` | Markdown files in the run's workspace, or in `workspace=`. Versions are content hashes, and receipts for recent mutations are kept beside the files. One writer per directory. |
 | `SqliteMemoryStore(database=...)` | Durable single-host storage; compare-and-swap and idempotency are enforced in database transactions. |
 | `PostgresMemoryStore(pool)` | Durable shared storage; compare-and-swap and idempotency are enforced in database transactions. The caller owns the pool lifecycle. |
+| `SqliteMemoryStore(connection=...)` | A SQLite-compatible connection with connection-level `execute`, `commit`, and `rollback` methods plus an `in_transaction` property, including [Turso](https://turso.tech). The caller owns the connection lifecycle. |
 
 ```python
 from pydantic_ai_harness import Memory
@@ -90,7 +91,38 @@ local_memory = Memory(FileStore('.agent-memory'))
 sqlite_memory = Memory(SqliteMemoryStore(database='.agent-memory.db'))
 ```
 
-`SqliteMemoryStore` can instead use a caller-owned `sqlite3.Connection`. Because operations run off the event loop, create that connection with `check_same_thread=False` and manage its lifecycle in the application. The connection must be dedicated to the store and idle at the start of every operation; a call fails rather than commit or roll back an active caller transaction.
+`SqliteMemoryStore` can instead use a caller-owned connection. It must be dedicated to the store and idle at the start of every operation; a call fails rather than commit or roll back an active caller transaction. The store serializes access across worker threads. A stdlib `sqlite3` connection must be created with `check_same_thread=False`.
+
+The store accepts SQLite-compatible connections that provide connection-level `execute`, `commit`, and `rollback` methods plus an `in_transaction` property. [Turso](https://turso.tech) provides this surface, so it works without a separate backend. Install the driver in your application, as with the PostgreSQL one below:
+
+uv:
+
+```bash
+uv add pyturso
+```
+
+pip:
+
+```bash
+pip install pyturso
+```
+
+```python
+import turso
+
+from pydantic_ai_harness import Memory
+from pydantic_ai_harness.memory import SqliteMemoryStore
+
+local = Memory(SqliteMemoryStore(connection=turso.connect('agent-memory.db')))
+
+replica_connection = turso.sync.connect(
+    'agent-memory.db', remote_url='libsql://<database>.turso.io', auth_token='...'
+)
+replica_connection.pull()
+replica = Memory(SqliteMemoryStore(connection=replica_connection))
+```
+
+The local form needs no account. Embedded replicas do not synchronize automatically: call `pull()` before operations that need remote changes and `push()` after local writes that must reach Turso Cloud. The application owns that synchronization lifecycle. Compare-and-swap and idempotency are transactional within one local replica; Turso Sync does not turn separate replicas into one shared transactional store. Use `PostgresMemoryStore` when multiple hosts need shared transaction boundaries.
 
 If a memory path resolves outside its store, the tool asks the model to correct the path. A corrupt receipts file produces a warning and starts a fresh operation journal; restore a backup if replay protection for earlier operations matters.
 

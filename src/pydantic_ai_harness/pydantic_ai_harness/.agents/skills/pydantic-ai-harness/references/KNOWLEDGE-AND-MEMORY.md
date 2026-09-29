@@ -38,7 +38,7 @@ only).
 |---|---|---|
 | `InMemoryStore()` | Process lifetime | Tests, ephemeral agents |
 | `FileStore(directory, *, workspace=None)` | Markdown files in the run's workspace | Needs a workspace or `workspace=` backend; one writer per directory |
-| `SqliteMemoryStore(database=... or connection=...)` | Durable, single host | A shared `connection` needs `check_same_thread=False` and must be dedicated to the store |
+| `SqliteMemoryStore(database=... or connection=...)` | Durable, single host | A caller-owned connection must be dedicated to the store. Stdlib `sqlite3` needs `check_same_thread=False`; `pyturso` also works |
 | `PostgresMemoryStore(pool, *, table='agent_memory')` | Durable, shared | Driver-neutral `PostgresPool` protocol (for example an `asyncpg` pool); you own the pool lifecycle; no harness extra |
 
 ```python
@@ -76,6 +76,10 @@ Gotchas:
   implement `MemoryStore` mutations atomically.
 - `FileStore` keeps replay receipts in `.memory-operations.json`; for concurrent writers across
   processes use `SqliteMemoryStore` or `PostgresMemoryStore`.
+- `pyturso` is an application dependency, not a Harness extra. Its embedded replicas need explicit
+  `pull()` calls for remote changes and `push()` calls after local writes. CAS and idempotency are
+  transactional within one local replica, not across multiple Turso Sync replicas; use Postgres for
+  shared transaction boundaries.
 
 ### Namespaces (multi-user)
 

@@ -25,6 +25,7 @@ import anyio.to_thread
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceError, WorkspaceUnavailableError
+from pydantic_ai_harness._sqlite import SqliteConnection
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import secondary_workspace, supports_commands, workspace_path
 
@@ -813,13 +814,21 @@ _SQLITE_METADATA_SCHEMA = (
 
 
 class SqliteMemoryStore:
-    """SQLite-backed store with transactional CAS and operation receipts."""
+    """SQLite-backed store with transactional CAS and operation receipts.
+
+    Pass either `database=` (path; connections opened short-lived per call) or a caller-owned
+    SQLite connection with connection-level `execute`, `commit`, and `rollback` methods plus an
+    `in_transaction` property. Both `turso.connect(...)` and stdlib `sqlite3` provide this surface.
+    A caller-owned stdlib connection must be created with `check_same_thread=False` because
+    operations run on worker threads. Turso rejects that keyword. The connection must be dedicated
+    to this store, which serializes access to it across worker threads.
+    """
 
     def __init__(
         self,
         *,
         database: str | Path | None = None,
-        connection: sqlite3.Connection | None = None,
+        connection: SqliteConnection | None = None,
     ) -> None:
         if (database is None) == (connection is None):
             raise ValueError('provide exactly one of `database=` or `connection=`')
@@ -833,20 +842,24 @@ class SqliteMemoryStore:
         self._schema_ready = False
         self._thread_lock = threading.RLock()
 
-    def _connect(self) -> tuple[sqlite3.Connection, bool]:
+    def _connect(self) -> tuple[SqliteConnection, bool]:
+        # `opened` is the stdlib connection this store owns, kept concretely typed so WAL setup --
+        # which is only ever applied to one we opened -- does not have to narrow a caller's.
+        opened: sqlite3.Connection | None = None
+        connection: SqliteConnection
         if self._connection is not None:
             connection = self._connection
-            owned = False
         else:
             assert self._database is not None
-            connection = sqlite3.connect(self._database, timeout=30, check_same_thread=False)
-            owned = True
+            opened = sqlite3.connect(self._database, timeout=30, check_same_thread=False)
+            connection = opened
+        owned = opened is not None
         if not owned and connection.in_transaction:
             raise RuntimeError('caller-owned SQLite connection must be idle before a memory operation')
         try:
             connection.execute('PRAGMA busy_timeout = 30000')
-            if owned:
-                _enable_wal(connection)
+            if opened is not None:
+                _enable_wal(opened)
             if not self._schema_ready:
                 connection.execute('BEGIN IMMEDIATE')
                 connection.execute(_SQLITE_MEMORY_SCHEMA)
@@ -870,7 +883,7 @@ class SqliteMemoryStore:
                 connection.close()
             raise
 
-    def _run(self, operation: Callable[[sqlite3.Connection], _T], *, immediate: bool = False) -> _T:
+    def _run(self, operation: Callable[[SqliteConnection], _T], *, immediate: bool = False) -> _T:
         with self._thread_lock:
             connection, owned = self._connect()
             try:
@@ -886,7 +899,7 @@ class SqliteMemoryStore:
                 if owned:
                     connection.close()
 
-    def _get_operation(self, connection: sqlite3.Connection, operation: MemoryOperation) -> MemoryMutation | None:
+    def _get_operation(self, connection: SqliteConnection, operation: MemoryOperation) -> MemoryMutation | None:
         row = connection.execute(
             'SELECT fingerprint, version, existed FROM memory_operations WHERE id = ?', (operation.id,)
         ).fetchone()
@@ -900,7 +913,7 @@ class SqliteMemoryStore:
             existed=bool(row[2]),
         )
 
-    def _next_generation(self, connection: sqlite3.Connection) -> int:
+    def _next_generation(self, connection: SqliteConnection) -> int:
         row = connection.execute(
             'UPDATE memory_metadata SET generation = generation + 1 WHERE id = 1 RETURNING generation'
         ).fetchone()
@@ -912,7 +925,7 @@ class SqliteMemoryStore:
         if max_chars <= 0:
             raise ValueError('max_chars must be positive')
 
-        def op(connection: sqlite3.Connection) -> MemoryFile | None:
+        def op(connection: SqliteConnection) -> MemoryFile | None:
             row = connection.execute(
                 'SELECT substr(content, 1, ?), version, last_operation_id, length(content) '
                 'FROM memory_files WHERE path = ?',
@@ -931,7 +944,7 @@ class SqliteMemoryStore:
 
     async def get_operation(self, operation: MemoryOperation) -> MemoryMutation | None:
         def run() -> MemoryMutation | None:
-            def op(connection: sqlite3.Connection) -> MemoryMutation | None:
+            def op(connection: SqliteConnection) -> MemoryMutation | None:
                 return self._get_operation(connection, operation)
 
             return self._run(op)
@@ -940,7 +953,7 @@ class SqliteMemoryStore:
 
     def _write(
         self,
-        connection: sqlite3.Connection,
+        connection: SqliteConnection,
         path: str,
         content: str,
         expected_version: str | None,
@@ -992,7 +1005,7 @@ class SqliteMemoryStore:
 
     def _delete(
         self,
-        connection: sqlite3.Connection,
+        connection: SqliteConnection,
         path: str,
         expected_version: str | None,
         operation: MemoryOperation | None,
@@ -1037,7 +1050,7 @@ class SqliteMemoryStore:
         if limit <= 0:
             raise ValueError('limit must be positive')
 
-        def op(connection: sqlite3.Connection) -> list[str]:
+        def op(connection: SqliteConnection) -> list[str]:
             rows = connection.execute(
                 'SELECT path FROM memory_files WHERE substr(path, 1, length(?)) = ? ORDER BY path LIMIT ?',
                 (prefix, prefix, limit),
@@ -1060,7 +1073,7 @@ class SqliteMemoryStore:
         if not query.split() or limit <= 0 or max_files <= 0 or max_chars <= 0 or max_file_chars <= 0:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
 
-        def op(connection: sqlite3.Connection) -> list[tuple[str, str, int]]:
+        def op(connection: SqliteConnection) -> list[tuple[str, str, int]]:
             rows = connection.execute(
                 'SELECT path, substr(content, 1, ?), length(content) FROM memory_files '
                 'WHERE substr(path, 1, length(?)) = ? ORDER BY path LIMIT ?',

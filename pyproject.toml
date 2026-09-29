@@ -269,6 +269,7 @@ dev = [
     "azure-identity>=1.25.3",
     # Storage backends `pydantic-ai-harness` supports, faked or run against a live server.
     "mongomock-motor>=0.0.36",
+    "pyturso>=0.7.2",
     "redis>=8.1.0",
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
     "cassetter>=0.12.1",
@@ -471,6 +472,8 @@ filterwarnings = [
     "ignore:`pydantic_ai_harness\\.experimental\\.[a-z_.]+` is experimental:UserWarning",
     # browser-use's observability decorators call it at import time.
     "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:browser_use",
+    # pyturso 0.7.2 has a `return` inside a `finally`, which Python 3.14 flags while compiling the module.
+    "ignore:'return' in a 'finally' block:SyntaxWarning:turso.*",
     # boto3
     "ignore::DeprecationWarning:botocore.*",
     "ignore::RuntimeWarning:pydantic_ai.mcp",

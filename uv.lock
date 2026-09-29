@@ -6238,6 +6238,7 @@ dev = [
     { name = "pytest-pretty" },
     { name = "pytest-split" },
     { name = "pytest-xdist" },
+    { name = "pyturso" },
     { name = "redis" },
     { name = "sqlparse" },
     { name = "tavily-python" },
@@ -6317,6 +6318,7 @@ dev = [
     { name = "pytest-pretty", specifier = ">=1.3.0" },
     { name = "pytest-split", specifier = ">=0.11.0" },
     { name = "pytest-xdist", specifier = ">=3.6.1" },
+    { name = "pyturso", specifier = ">=0.7.2" },
     { name = "redis", specifier = ">=8.1.0" },
     { name = "sqlparse", specifier = ">=0.6.0" },
     { name = "tavily-python", specifier = ">=0.5.0" },
@@ -7784,6 +7786,22 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/52/a0/07907b6ff512674d9b201859f7d212298c44933633c946703a20c25e9d81/pytokens-0.4.1-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:967cf6e3fd4adf7de8fc73cd3043754ae79c36475c1c11d514fc72cf5490094a", size = 306698, upload-time = "2026-01-30T01:03:29.653Z" },
     { url = "https://files.pythonhosted.org/packages/39/2a/cbbf9250020a4a8dd53ba83a46c097b69e5eb49dd14e708f496f548c6612/pytokens-0.4.1-cp314-cp314t-win_amd64.whl", hash = "sha256:584c80c24b078eec1e227079d56dc22ff755e0ba8654d8383b2c549107528918", size = 116287, upload-time = "2026-01-30T01:03:30.912Z" },
     { url = "https://files.pythonhosted.org/packages/c6/78/397db326746f0a342855b81216ae1f0a32965deccfd7c830a2dbc66d2483/pytokens-0.4.1-py3-none-any.whl", hash = "sha256:26cef14744a8385f35d0e095dc8b3a7583f6c953c2e3d269c7f82484bf5ad2de", size = 13729, upload-time = "2026-01-30T01:03:45.029Z" },
+]
+
+[[package]]
+name = "pyturso"
+version = "0.7.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions", version = "4.15.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.15' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "typing-extensions", version = "4.16.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.15' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/23/00/b92f81e67af1e1d0ee59b1462cbb5de21339e637ca415f9ebbd0ca8ab6fb/pyturso-0.7.2.tar.gz", hash = "sha256:4d912f53338af195c3bc343b02c4450ae1a0be9892835aa7f962ec49b730ef9f", size = 2859978, upload-time = "2026-07-30T13:49:20.479Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f4/5a/e1cdc67f3d7d7883207a0626a7baa4ed8379fb284506b3ed76e8c9a814d9/pyturso-0.7.2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:5399a4f500733bac23ccb89398fd0f6003e272a760dcb677a785ac2d32e69e20", size = 8789891, upload-time = "2026-07-30T13:49:09.746Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/66/c2b259b658df748580aa81cb3da2cca654815b3458d30e9a9a06beefd0c9/pyturso-0.7.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:ccae747300b7cc7f3e815dbbce3ca66bca489c9ab81e5f4bc9e3ac973a59501b", size = 7793367, upload-time = "2026-07-30T13:49:12.396Z" },
+    { url = "https://files.pythonhosted.org/packages/60/a2/56b941cdde449c221b9b5bcf76807eba9dd8cb640d3798951449367b2711/pyturso-0.7.2-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:76df85d56c485ff170542321a20fd73a72c6995264753c39952fe482d778de08", size = 26032040, upload-time = "2026-07-30T13:49:14.809Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/46/33c1b5b5ef2074bcca64107c4082fe7a775119e084e6ee65ffc53b2caa71/pyturso-0.7.2-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e324ccdf1b9d718abbb26a789ba061d554bb8a7c3fca162fdafdb398dee10aeb", size = 26555827, upload-time = "2026-07-30T13:49:17.578Z" },
 ]
 
 [[package]]

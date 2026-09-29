@@ -64,8 +64,11 @@ Stores, all in `pydantic_ai_harness.step_persistence`, all async, all accepting
 
 - `InMemoryStepStore()`: process-local; tests.
 - `FileStepStore(directory)`: `<directory>/<run_id>/` with JSON/JSONL files.
-- `SqliteStepStore(database='runs.db')`, or `connection=` a `sqlite3.Connection` opened with
-  `check_same_thread=False`.
+- `SqliteStepStore(database='runs.db')`, or a dedicated caller-owned `connection=`. Stdlib
+  `sqlite3.Connection` needs `check_same_thread=False`; `pyturso` also works and is installed by the
+  application. The caller controls transactions; use `isolation_level=None` for Turso autocommit or
+  commit writes explicitly. Embedded Turso replicas need explicit `pull()` and `push()` calls, and
+  their commits are transactional only within one local replica.
 - `MongoStepStore(client=AsyncMongoClient | db_url=..., database=...)`: needs `uv add
   "pydantic-ai-harness[mongodb]"`. Exactly one of `client`/`db_url`, and `database` is required. With
   `db_url` the store owns the client, so call `await store.aclose()`. It creates indexes on its first

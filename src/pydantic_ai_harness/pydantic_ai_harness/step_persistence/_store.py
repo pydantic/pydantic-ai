@@ -7,16 +7,22 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 from collections import defaultdict
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, ParamSpec, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
 import anyio.to_thread
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
+from pydantic_ai_harness._sqlite import (
+    SqliteScriptConnection,
+    _is_database_error,
+)
 from pydantic_ai_harness.media import (
     DiskMediaStore,
     MediaStore,
@@ -35,6 +41,8 @@ from pydantic_ai_harness.step_persistence._types import (
 )
 
 _logger = logging.getLogger(__name__)
+_P = ParamSpec('_P')
+_T = TypeVar('_T')
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -939,9 +947,16 @@ class SqliteStepStore:
     """SQLite-backed store. Single file holds runs, events, snapshots, tool effects + media.
 
     Pass either `database=` (path; connections opened short-lived per call) or
-    `connection=` (caller-owned `sqlite3.Connection`). When `database=` is
-    used, the default `media_store` is a `SqliteMediaStore` against the same
-    file (sibling `media` table), so a single-file deployment is the default.
+    `connection=` (caller-owned). When `database=` is used, the default
+    `media_store` is a `SqliteMediaStore` against the same file (sibling
+    `media` table), so a single-file deployment is the default.
+
+    A caller-owned `connection=` must speak SQLite and provide connection-level
+    `execute`, `executescript`, `commit`, and `rollback` methods plus an
+    `in_transaction` property. Both `turso.connect(...)` and stdlib `sqlite3`
+    provide this surface. It must be dedicated to this store, which
+    serializes access. The caller controls transactions on a caller-owned
+    connection; configure autocommit or commit writes in the application.
 
     `BinaryContent` payloads and text parts at or above
     `media_threshold_bytes` (default 64 KiB) are externalized through that
@@ -950,11 +965,13 @@ class SqliteStepStore:
     externalization existed still restore: `restore_media` recognizes the
     older marker shape.
 
-    A caller-owned `connection=` **must** be created with
+    A caller-owned stdlib `sqlite3` connection **must** be created with
     `check_same_thread=False`. Store methods dispatch SQL onto worker threads
     via `anyio.to_thread`, so the stdlib default (`check_same_thread=True`)
     raises `sqlite3.ProgrammingError` on first use. The `database=` path sets
-    this internally; `connection=` cannot, so it is the caller's responsibility.
+    this internally; `connection=` cannot, so it is the caller's
+    responsibility. Turso rejects that keyword; the store instead serializes
+    access to the dedicated connection across worker threads.
 
     Concurrency: WAL mode is enabled on connections opened from a `database=`
     path (a caller-owned `connection=` keeps whatever journal mode the caller
@@ -975,7 +992,8 @@ class SqliteStepStore:
       for content-addressed dedup.
 
     The `runs.run_id` PK enforces the "explicit `run_id` is single-shot"
-    contract -- `register_run` raises `sqlite3.IntegrityError` on reuse,
+    contract -- `register_run` raises the driver's DB-API `IntegrityError` on
+    reuse,
     which `StepPersistence.before_run` converts to a friendlier
     `ValueError` via its own pre-check.
 
@@ -988,7 +1006,7 @@ class SqliteStepStore:
         self,
         *,
         database: str | Path | None = None,
-        connection: sqlite3.Connection | None = None,
+        connection: SqliteScriptConnection | None = None,
         media_store: MediaStore | None | _AutoMedia = 'auto',
         media_threshold_bytes: int = _DEFAULT_MEDIA_THRESHOLD_BYTES,
         max_snapshots_per_run: int | None = None,
@@ -1000,19 +1018,28 @@ class SqliteStepStore:
         self._database = Path(database) if database is not None else None
         self._connection = connection
         self._schema_ready = False
+        self._thread_lock = threading.RLock()
+        self._connection_media_store: SqliteMediaStore | None = None
         resolved: MediaStore | None
         if media_store == 'auto':
             if self._database is not None:
                 resolved = SqliteMediaStore(database=self._database)
             else:
                 assert connection is not None
-                resolved = SqliteMediaStore(connection=connection)
+                resolved = SqliteMediaStore(connection=connection, _thread_lock=self._thread_lock)
+                self._connection_media_store = resolved
         else:
             resolved = media_store
         self._media_store: MediaStore | None = resolved
         self._media_threshold_bytes = media_threshold_bytes
 
-    def _open(self) -> sqlite3.Connection:
+    def _run_locked(self, operation: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
+        if self._connection is None:
+            return operation(*args, **kwargs)
+        with self._thread_lock:
+            return operation(*args, **kwargs)
+
+    def _open(self) -> SqliteScriptConnection:
         if self._connection is not None:
             return self._connection
         assert self._database is not None
@@ -1021,13 +1048,19 @@ class SqliteStepStore:
         conn.execute('PRAGMA journal_mode=WAL')
         return conn
 
-    def _maybe_close(self, conn: sqlite3.Connection) -> None:
+    def _maybe_close(self, conn: SqliteScriptConnection) -> None:
         if self._connection is None:
             conn.close()
 
-    def _ensure_schema(self, conn: sqlite3.Connection) -> None:
+    def _ensure_schema(self, conn: SqliteScriptConnection) -> None:
         if self._schema_ready:
             return
+        if self._connection is not None and conn.in_transaction:
+            raise RuntimeError('caller-owned SQLite connection must be idle for the first store operation')
+        if self._connection_media_store is not None:
+            # Prepare the implicit media table during the same required-idle phase. Otherwise the
+            # first externalized snapshot could try to create it inside a later caller transaction.
+            self._connection_media_store._ensure_schema(conn)
         conn.executescript(_SQLITE_SCHEMA)
         # Databases created before the `state` column existed: `CREATE TABLE
         # IF NOT EXISTS` keeps their old shape, so add the column here. The
@@ -1037,25 +1070,27 @@ class SqliteStepStore:
         # store instances migrating the same old file concurrently would both
         # pass the pre-check and the loser's `ALTER` would raise. Only a column
         # that is already there is benign, so confirm that is what happened --
-        # a locked or readonly database raises the same `OperationalError`, and
+        # a locked or readonly database raises the same kind of database error, and
         # swallowing it would mark the schema ready while `state` is still
         # missing, with every later snapshot read failing on `no such column:
         # state` and `_schema_ready` never letting the migration retry.
+        # DB-API drivers use unrelated exception hierarchies, so resolve `DatabaseError` from the
+        # connection's module and suppress it only after confirming another migrator added the column.
         try:
             conn.execute("ALTER TABLE snapshots ADD COLUMN state TEXT NOT NULL DEFAULT 'complete'")
-        except sqlite3.OperationalError:
-            if 'state' not in self._snapshot_columns(conn):
+        except Exception as exc:
+            if not _is_database_error(conn, exc) or 'state' not in self._snapshot_columns(conn):
                 raise
         for table in ('events', 'snapshots'):
             try:
                 conn.execute(f'ALTER TABLE {table} ADD COLUMN idempotency_key TEXT')
-            except sqlite3.OperationalError:
-                if 'idempotency_key' not in self._table_columns(conn, table):
+            except Exception as exc:
+                if not _is_database_error(conn, exc) or 'idempotency_key' not in self._table_columns(conn, table):
                     raise  # pragma: no cover
         try:
             conn.execute('ALTER TABLE runs ADD COLUMN registration_id TEXT')
-        except sqlite3.OperationalError:
-            if 'registration_id' not in self._table_columns(conn, 'runs'):
+        except Exception as exc:
+            if not _is_database_error(conn, exc) or 'registration_id' not in self._table_columns(conn, 'runs'):
                 raise  # pragma: no cover
         conn.execute(
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_events_idempotency '
@@ -1085,15 +1120,15 @@ class SqliteStepStore:
         self._schema_ready = True
 
     @staticmethod
-    def _snapshot_columns(conn: sqlite3.Connection) -> set[str]:
+    def _snapshot_columns(conn: SqliteScriptConnection) -> set[str]:
         return {row[1] for row in conn.execute('PRAGMA table_info(snapshots)')}
 
     @staticmethod
-    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    def _table_columns(conn: SqliteScriptConnection, table: str) -> set[str]:
         return {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}
 
     async def register_run(self, record: RunRecord) -> None:
-        await anyio.to_thread.run_sync(self._sync_register_run, record)
+        await anyio.to_thread.run_sync(self._run_locked, self._sync_register_run, record)
 
     def _sync_register_run(self, record: RunRecord) -> None:
         conn = self._open()
@@ -1117,7 +1152,7 @@ class SqliteStepStore:
             self._maybe_close(conn)
 
     async def get_run(self, *, run_id: str) -> RunRecord | None:
-        return await anyio.to_thread.run_sync(self._sync_get_run, run_id)
+        return await anyio.to_thread.run_sync(self._run_locked, self._sync_get_run, run_id)
 
     def _sync_get_run(self, run_id: str) -> RunRecord | None:
         conn = self._open()
@@ -1140,7 +1175,7 @@ class SqliteStepStore:
         parent_run_id: str | None = None,
         conversation_id: str | None = None,
     ) -> list[RunRecord]:
-        return await anyio.to_thread.run_sync(self._sync_list_runs, parent_run_id, conversation_id)
+        return await anyio.to_thread.run_sync(self._run_locked, self._sync_list_runs, parent_run_id, conversation_id)
 
     def _sync_list_runs(
         self,
@@ -1171,7 +1206,7 @@ class SqliteStepStore:
         return [_run_from_row(row) for row in rows]
 
     async def append_event(self, event: StepEvent) -> None:
-        await anyio.to_thread.run_sync(self._sync_append_event, event)
+        await anyio.to_thread.run_sync(self._run_locked, self._sync_append_event, event)
 
     def _sync_append_event(self, event: StepEvent) -> None:
         conn = self._open()
@@ -1202,7 +1237,7 @@ class SqliteStepStore:
             self._maybe_close(conn)
 
     async def list_events(self, *, run_id: str) -> list[StepEvent]:
-        return await anyio.to_thread.run_sync(self._sync_list_events, run_id)
+        return await anyio.to_thread.run_sync(self._run_locked, self._sync_list_events, run_id)
 
     def _sync_list_events(self, run_id: str) -> list[StepEvent]:
         conn = self._open()
@@ -1226,7 +1261,7 @@ class SqliteStepStore:
                 media_store=self._media_store,
                 threshold_bytes=self._media_threshold_bytes,
             )
-        await anyio.to_thread.run_sync(self._sync_save_snapshot, snapshot, messages_json)
+        await anyio.to_thread.run_sync(self._run_locked, self._sync_save_snapshot, snapshot, messages_json)
 
     def _sync_save_snapshot(self, snapshot: ContinuableSnapshot, messages_json: object) -> None:
         conn = self._open()
@@ -1252,7 +1287,7 @@ class SqliteStepStore:
         finally:
             self._maybe_close(conn)
 
-    def _sync_prune_snapshots(self, conn: sqlite3.Connection, run_id: str) -> None:
+    def _sync_prune_snapshots(self, conn: SqliteScriptConnection, run_id: str) -> None:
         """Delete this run's snapshot rows outside the retain set when bounded.
 
         No-op when `max_snapshots_per_run` is `None`. Externalized media in the
@@ -1279,7 +1314,9 @@ class SqliteStepStore:
         )
 
     async def latest_snapshot(self, *, run_id: str, include_interrupted: bool = False) -> ContinuableSnapshot | None:
-        row = await anyio.to_thread.run_sync(self._sync_load_latest_snapshot, run_id, include_interrupted)
+        row = await anyio.to_thread.run_sync(
+            self._run_locked, self._sync_load_latest_snapshot, run_id, include_interrupted
+        )
         if row is None:
             return None
         step_index, conv_id, parent_id, agent_name, timestamp_iso, state, messages_json_text, idempotency_key = row
@@ -1340,7 +1377,9 @@ class SqliteStepStore:
         history. Not part of the `StepStore` protocol: the `conversation_search`
         capability consumes it through its narrower `SnapshotStore` protocol.
         """
-        rows = await anyio.to_thread.run_sync(self._sync_load_snapshot_rows, run_id, include_interrupted)
+        rows = await anyio.to_thread.run_sync(
+            self._run_locked, self._sync_load_snapshot_rows, run_id, include_interrupted
+        )
         snapshots: list[ContinuableSnapshot] = []
         for row in rows:
             try:
@@ -1372,7 +1411,7 @@ class SqliteStepStore:
                 _logger.warning('Skipping unparsable snapshot row for run %s', run_id, exc_info=True)
         return snapshots
 
-    def _sync_load_snapshot_rows(self, run_id: str, include_interrupted: bool) -> list[tuple[object, ...]]:
+    def _sync_load_snapshot_rows(self, run_id: str, include_interrupted: bool) -> list[Sequence[object]]:
         conn = self._open()
         try:
             self._ensure_schema(conn)
@@ -1389,7 +1428,7 @@ class SqliteStepStore:
         return rows
 
     async def record_tool_effect(self, record: ToolEffectRecord) -> None:
-        await anyio.to_thread.run_sync(self._sync_record_tool_effect, record)
+        await anyio.to_thread.run_sync(self._run_locked, self._sync_record_tool_effect, record)
 
     def _sync_record_tool_effect(self, record: ToolEffectRecord) -> None:
         conn = self._open()
@@ -1418,7 +1457,7 @@ class SqliteStepStore:
             self._maybe_close(conn)
 
     async def get_tool_effect(self, *, run_id: str, tool_call_id: str) -> ToolEffectRecord | None:
-        return await anyio.to_thread.run_sync(self._sync_get_tool_effect, run_id, tool_call_id)
+        return await anyio.to_thread.run_sync(self._run_locked, self._sync_get_tool_effect, run_id, tool_call_id)
 
     def _sync_get_tool_effect(self, run_id: str, tool_call_id: str) -> ToolEffectRecord | None:
         conn = self._open()
@@ -1437,7 +1476,7 @@ class SqliteStepStore:
         return _tool_effect_from_row(row)
 
     async def list_unresolved_tool_effects(self, *, run_id: str) -> list[ToolEffectRecord]:
-        return await anyio.to_thread.run_sync(self._sync_list_unresolved_tool_effects, run_id)
+        return await anyio.to_thread.run_sync(self._run_locked, self._sync_list_unresolved_tool_effects, run_id)
 
     def _sync_list_unresolved_tool_effects(self, run_id: str) -> list[ToolEffectRecord]:
         conn = self._open()
@@ -1454,7 +1493,7 @@ class SqliteStepStore:
         return [_tool_effect_from_row(row) for row in rows]
 
 
-def _run_from_row(row: tuple[object, ...]) -> RunRecord:
+def _run_from_row(row: Sequence[object]) -> RunRecord:
     run_id, conv_id, parent_id, agent_name, metadata_text, started_at_iso, registration_id = row
     if not (isinstance(run_id, str) and isinstance(metadata_text, str) and isinstance(started_at_iso, str)):
         raise ValueError('run row has wrong types')
@@ -1469,7 +1508,7 @@ def _run_from_row(row: tuple[object, ...]) -> RunRecord:
     )
 
 
-def _event_from_row(row: tuple[object, ...]) -> StepEvent:
+def _event_from_row(row: Sequence[object]) -> StepEvent:
     (
         run_id,
         kind_raw,
@@ -1511,7 +1550,7 @@ def _event_from_row(row: tuple[object, ...]) -> StepEvent:
     )
 
 
-def _tool_effect_from_row(row: tuple[object, ...]) -> ToolEffectRecord:
+def _tool_effect_from_row(row: Sequence[object]) -> ToolEffectRecord:
     (
         run_id,
         tool_call_id,
