@@ -336,8 +336,6 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
-    ".github/scripts/sandbox_live_changes.py",
-    ".github/scripts/test_sandbox_live_changes.py",
 ]
 
 [tool.ruff.lint]
@@ -402,7 +400,6 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
-".github/scripts/test_sandbox_live_changes.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]
