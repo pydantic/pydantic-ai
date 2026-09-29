@@ -1070,7 +1070,8 @@ class TestSpeculationEdgeCases:
                 assert run_code_task in done
                 result = run_code_task.result()
             finally:
-                if not run_code_task.done():  # pragma: no cover - cleanup after a failed test assertion
+                # This cleanup only runs after a failed test assertion.
+                if not run_code_task.done():  # pragma: no cover
                     run_code_task.cancel()
                     await asyncio.wait({run_code_task}, timeout=0.75)
 
