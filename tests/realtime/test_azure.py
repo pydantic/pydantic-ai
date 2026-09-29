@@ -513,6 +513,17 @@ def test_voice_live_event_mapping() -> None:
     assert _map_voice_live_event({'type': 'some.unknown.event'}) is None
 
 
+def test_voice_live_warning_event_is_surfaced() -> None:
+    """Voice Live's informational `warning` event becomes a Python warning, and the session goes on."""
+    event = {'type': 'warning', 'warning': {'message': 'Heads up', 'code': 'some_code', 'param': 'session.voice'}}
+    with pytest.warns(
+        UserWarning, match=r"^Azure AI Voice Live warning: Heads up \(code='some_code', param='session.voice'\)$"
+    ):
+        assert _map_voice_live_event(event) is None
+    with pytest.warns(UserWarning, match=r'^Azure AI Voice Live warning: Heads up$'):
+        assert _map_voice_live_event({'type': 'warning', 'warning': {'message': 'Heads up'}}) is None
+
+
 def test_voice_live_text_events_keep_item_id() -> None:
     """Voice Live's text frames carry `item_id`, and it must survive the mapping like OpenAI's do.
 
