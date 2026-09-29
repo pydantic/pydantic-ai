@@ -113,6 +113,7 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     TruncateOutput,
 )
+from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings, ToolOrOutput
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
@@ -7003,6 +7004,45 @@ async def test_agent_realtime_session_wires_tools_and_instructions() -> None:
     assert model.last_instructions == 'You are a helpful assistant.'
     assert model.last_tools is not None
     assert 'greet' in [t.name for t in model.last_tools]
+
+
+@pytest.mark.parametrize('failure', ['capability', 'toolset'])
+async def test_agent_realtime_session_dispatches_run_error_for_setup_failure(failure: str) -> None:
+    resource_created = False
+    cleaned: list[str] = []
+
+    class SetupCapability(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            nonlocal resource_created
+            resource_created = True
+            if failure == 'capability':
+                raise RuntimeError('capability setup failed')
+            return self
+
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
+            assert resource_created
+            cleaned.append(str(error))
+            return AgentRunResult(output='setup recovery is unavailable')
+
+    class FailingToolset(FunctionToolset[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractToolset[None]:
+            raise RuntimeError('toolset setup failed')
+
+    expected_error = f'{failure} setup failed'
+    toolsets: list[AbstractToolset[None]] = [FailingToolset()] if failure == 'toolset' else []
+    agent: Agent[None, str] = Agent[None, str](deps_type=type(None), capabilities=[SetupCapability()])
+    model = FakeRealtimeModel(FakeRealtimeConnection([]))
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        async with agent.realtime(model, toolsets=toolsets).session():
+            pass  # pragma: no cover
+
+    assert cleaned == [expected_error]
+
+    with pytest.raises(RuntimeError, match=expected_error):
+        await agent.realtime(model, toolsets=toolsets).create_client_secret()
+
+    assert cleaned == [expected_error]
 
 
 async def test_agent_realtime_session_seeds_message_history() -> None:

@@ -1822,29 +1822,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
         # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
         # with the realtime call site.
-        with capture_run_capability_resolutions() as resolutions:
-            try:
-                resolved_caps = await self._resolve_run_capabilities(
-                    initial_ctx,
-                    base_capability=base_capability,
-                    extra_capabilities=extra_capabilities,
-                    instrumentation_cap=instrumentation_cap,
-                    inject_deferred_loader=True,
-                    base_is_override=base_is_override,
-                    resolution_capture=resolutions,
-                )
-            except BaseException as error:
-                if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
-                    raise
-                assert len(resolutions.layers) == len(extra_capabilities) + 1
-                resolved_base = replace_resolved_run_capabilities(base_capability, resolutions.layers[0])
-                resolved_extras = [
-                    replace_resolved_run_capabilities(capability, layer_resolutions)
-                    for capability, layer_resolutions in zip(extra_capabilities, resolutions.layers[1:], strict=True)
-                ]
-                _, _, setup_capability = _compose_run_capabilities([resolved_base], resolved_extras)
-                await _run_setup_error_hook(setup_capability, initial_ctx, error)
-                raise
+        resolved_caps = await self._resolve_run_capabilities_with_setup_error_hook(
+            initial_ctx,
+            base_capability=base_capability,
+            extra_capabilities=extra_capabilities,
+            instrumentation_cap=instrumentation_cap,
+            inject_deferred_loader=True,
+            base_is_override=base_is_override,
+        )
         run_capability = resolved_caps.run_capability
         # Read back off the resolved tree, which also sees an `Instrumentation` that only a `for_run`
         # contributed, so every later step's `RunContext` describes what the run's spans use.
@@ -3391,6 +3376,41 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             run_layer=run_layer,
         )
 
+    async def _resolve_run_capabilities_with_setup_error_hook(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        base_capability: AbstractCapability[AgentDepsT],
+        extra_capabilities: list[AbstractCapability[AgentDepsT]],
+        instrumentation_cap: InstrumentationCap | None,
+        inject_deferred_loader: bool,
+        base_is_override: bool,
+    ) -> _ResolvedRunCapabilities[AgentDepsT]:
+        """Resolve capabilities and clean up if per-run setup fails before lifecycle hooks begin."""
+        with capture_run_capability_resolutions() as resolutions:
+            try:
+                return await self._resolve_run_capabilities(
+                    ctx,
+                    base_capability=base_capability,
+                    extra_capabilities=extra_capabilities,
+                    instrumentation_cap=instrumentation_cap,
+                    inject_deferred_loader=inject_deferred_loader,
+                    base_is_override=base_is_override,
+                    resolution_capture=resolutions,
+                )
+            except BaseException as error:
+                if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+                    raise
+                assert len(resolutions.layers) == len(extra_capabilities) + 1
+                resolved_base = replace_resolved_run_capabilities(base_capability, resolutions.layers[0])
+                resolved_extras = [
+                    replace_resolved_run_capabilities(capability, layer_resolutions)
+                    for capability, layer_resolutions in zip(extra_capabilities, resolutions.layers[1:], strict=True)
+                ]
+                _, _, setup_capability = _compose_run_capabilities([resolved_base], resolved_extras)
+                await _run_setup_error_hook(setup_capability, ctx, error)
+                raise
+
     def _get_instructions(
         self,
         additional_instructions: AgentInstructions[AgentDepsT] = None,
@@ -3678,14 +3698,25 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, once-only model settings
         # (below), and the `_keep_native` drop plus the shared native ↔ local-tool swap (below). Keep
         # this in sync with the `iter` call site.
-        resolved_caps = await self._resolve_run_capabilities(
-            run_context,
-            base_capability=base_capability,
-            extra_capabilities=extra_capabilities,
-            instrumentation_cap=instrumentation_cap,
-            inject_deferred_loader=True,
-            base_is_override=base_is_override,
-        )
+        if run_lifecycle:
+            resolved_caps = await self._resolve_run_capabilities_with_setup_error_hook(
+                run_context,
+                base_capability=base_capability,
+                extra_capabilities=extra_capabilities,
+                instrumentation_cap=instrumentation_cap,
+                inject_deferred_loader=True,
+                base_is_override=base_is_override,
+            )
+        else:
+            # Offer/client-secret setup is not a run, so it does not dispatch run error hooks.
+            resolved_caps = await self._resolve_run_capabilities(
+                run_context,
+                base_capability=base_capability,
+                extra_capabilities=extra_capabilities,
+                instrumentation_cap=instrumentation_cap,
+                inject_deferred_loader=True,
+                base_is_override=base_is_override,
+            )
         run_capability = resolved_caps.run_capability
         if run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
             # Realtime does not select a workspace yet; don't suggest attaching a capability that is already here.
@@ -3768,7 +3799,12 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             cap_toolsets=resolved_caps.toolsets,
             run_capability=run_capability,
         )
-        toolset = await toolset.for_run(run_context)
+        try:
+            toolset = await toolset.for_run(run_context)
+        except BaseException as error:
+            if run_lifecycle:
+                await _run_setup_error_hook(run_capability, run_context, error)
+            raise
 
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
         # will — so the session and the result standing in for it are handed back through this holder.

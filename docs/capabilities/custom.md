@@ -838,7 +838,7 @@ Error hooks use **raise-to-propagate, return-to-recover** semantics:
 
 During run execution, `on_*_error` hooks fire in **reverse** capability order (like `after_*`). The first capability to return a result **recovers** the error — remaining capabilities' error hooks are not called. If a handler re-raises or raises a new exception, the next capability in the chain sees that exception.
 
-For agent runs, `on_run_error` also fires when capability or toolset `for_run()` setup fails. Every capability's error hook runs in reverse order so it can clean up resources created earlier in setup. No `AgentRunResult` exists at that point, so returning one does not recover the setup error.
+For graph runs and realtime sessions, `on_run_error` also fires when capability or toolset `for_run()` setup fails. Every capability's error hook runs in reverse order so it can clean up resources created earlier in setup. No `AgentRunResult` exists at that point, so returning one does not recover the setup error.
 
 ```python {title="error_hooks_example.py" test="skip" lint="skip"}
 from dataclasses import dataclass, field
