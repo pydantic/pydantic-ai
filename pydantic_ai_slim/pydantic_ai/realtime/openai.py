@@ -817,6 +817,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                         yield _frame_error(e), False
                         continue
                     for tagged in frame.tagged():
+                        event = tagged[0]
+                        if isinstance(event, RealtimeSessionErrorEvent) and not event.recoverable:
+                            # The server reported the session over (e.g. xAI's `max_duration`), so the close
+                            # that follows is final: re-dialing would only run into the same end.
+                            self._gave_up = True
                         yield tagged
                 # `websockets` ends iteration silently on a *normal* close (1000/1001) and only raises
                 # on an abnormal one, but a session the server hung up on is over either way: OpenAI
@@ -836,12 +841,12 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # instead of escaping the stream and bypassing the reconnect policy.
                 closed = str(e)
 
-            if self._reconnect is not None and self._dial is not None and await self._try_reconnect():
+            reconnects = not self._gave_up and self._reconnect is not None and self._dial is not None
+            if reconnects and await self._try_reconnect():
                 for event in self._take_pending_lifecycle():
                     yield event, False
                 yield RealtimeSessionReconnectEvent(state_restored=self._restores_state_on_reconnect), False
                 continue
-            reconnects = self._reconnect is not None and self._dial is not None
             if reconnects:
                 # Out of attempts: no reconnect is coming any more.
                 self._gave_up = True
