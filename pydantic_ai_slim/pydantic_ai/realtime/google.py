@@ -491,8 +491,8 @@ async def _seed_turns(
     Thinking signatures and `provider_details` are provider-session-bound and are not replayed.
     `SystemPromptPart`s are routed through `system_instruction`, and `CachePoint`s are ignored. User
     speech is seeded as its transcript, or as its retained 16 kHz audio on a model whose profile sets
-    `supports_seeding_audio`; Gemini 2.5 rejects audio in seeded turns, so there speech requires a
-    transcript. Other unrepresentable content raises [`UserError`][pydantic_ai.exceptions.UserError].
+    `supports_seeding_audio`; on other models (Gemini 2.5 rejects audio in seeded turns) speech
+    requires a transcript. Other unrepresentable content raises [`UserError`][pydantic_ai.exceptions.UserError].
     """
     turns: list[genai_types.Content | genai_types.ContentDict] = []
     supports_images = profile.get('supports_seeding_images', False)
