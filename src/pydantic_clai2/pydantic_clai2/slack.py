@@ -307,7 +307,7 @@ class SlackSource(Generic[DepsT]):
 
 
 async def configure_menu(source: SlackSource[DepsT]) -> str:
-    """The settings menu: Enter edits a row, Esc closes, and every change is saved as it is made."""
+    """The settings menu: Enter edits a row, Save & close or Esc closes, and every change is saved as it is made."""
     loop = asyncio.get_running_loop()
 
     def pick_token() -> list[str]:

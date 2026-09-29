@@ -591,10 +591,10 @@ earlier raw `pydantic_ai_harness.slack:Slack` catalog row, CLAI switches that sa
 row to this plugin at startup and keeps your choice. A declaration with your own
 settings is left as it is.
 
-Enabling it with `/plugins enable slack`, adding it with `/plugins add`, or
-pressing `C` on it in `/plugins` opens its settings menu. `/plugins configure slack`
+Turning it on (Space in `/plugins`, `/plugins enable slack`, or `/plugins add`),
+or pressing `C` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
 reopens it later, with no reinstall. The list is searchable, Enter edits the
-highlighted row, `R` resets it, and Esc closes. Every change is saved as you make it:
+highlighted row, `R` resets it, and **Save & close** or Esc closes. Every change is saved as you make it:
 
 | Row | Choices | Saved in |
 |---|---|---|

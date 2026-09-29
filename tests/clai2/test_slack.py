@@ -6,7 +6,6 @@ import anyio
 import pytest
 from anyio import to_thread
 from pydantic import SecretStr
-from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
@@ -266,36 +265,23 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu() -> None:
     await app.plugins.close('exit')
 
 
-async def test_plugins_menu_configure_key_opens_the_settings_menu(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_enabling_slack_in_the_plugins_menu_opens_its_settings_menu(monkeypatch: pytest.MonkeyPatch) -> None:
     script(monkeypatch, lists=[pick('read_only')], choices=[pick('false')])
     app = await shell(BUILTIN)
+    runs: list[None] = []
 
-    def run(menu: PluginMenu[None]) -> MenuResult | None:
-        [item] = menu.items()
-        menu.toggle(Redraw(), item)
-        assert menu.notice == 'Press C to configure slack.'
-        return menu.configure(Redraw(), item)
+    def run(menu: PluginMenu[None]) -> MenuResult:
+        runs.append(None)
+        slack_row, save_and_close = menu.items()
+        if len(runs) > 1:
+            return MenuResult(item=save_and_close)
+        result = menu.toggle(Redraw(), slack_row)
+        assert result is not None
+        return result
 
     assert await open_plugins_menu(app.plugins, run=run) == 'Saved Tools.'
+    assert len(runs) == 2, '/plugins comes back after the settings menu closes'
     assert not app.slack().read_only
-    await app.plugins.close('exit')
-
-
-async def test_plugins_menu_stays_open_when_there_is_nothing_to_configure() -> None:
-    app = await shell(BUILTIN)
-    app.store.save_plugin(PluginSettings(id='plain', factory='pydantic_clai2.repo_context', enabled=True))
-    await app.plugins.load_all()
-
-    def run(menu: PluginMenu[None]) -> MenuResult | None:
-        plain_row, slack_row = sorted(menu.items(), key=lambda item: str(item.value))
-        assert menu.configure(Redraw(), MenuItem('none', value=None)) is None
-        assert menu.configure(Redraw(), slack_row) is None
-        assert menu.notice == 'Enable slack before configuring it.'
-        assert menu.configure(Redraw(), plain_row) is None
-        assert menu.notice == 'plain has no settings menu.'
-        return None
-
-    assert await open_plugins_menu(app.plugins, run=run) == ''
     await app.plugins.close('exit')
 
 
