@@ -13765,7 +13765,7 @@ async def test_response_error_raises_model_api_error(
         with pytest.raises(ModelAPIError) as exc_info:
             if stream:
                 async with agent.run_stream('Hello') as result:
-                    await result.get_output()
+                    await result.get_output()  # pragma: no cover — the error raises while the stream opens
             else:
                 await agent.run('Hello')
 
