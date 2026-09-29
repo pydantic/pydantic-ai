@@ -288,6 +288,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return self.engine_spec.durable_container_noun
 
     @property
+    def _cancellation_error_types(self) -> tuple[type[BaseException], ...]:
+        return self.engine_spec.cancellation_error_types
+
+    @property
     def agent(self) -> AbstractAgent[AgentDepsT, Any] | None:
         """The agent bound to this capability, or `None` before binding."""
         return self._agent
