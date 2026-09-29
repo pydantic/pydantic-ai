@@ -9,9 +9,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import base64
-import io
 import json
-import wave
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal, cast
@@ -1865,13 +1863,12 @@ async def test_commit_held_behind_a_reply_goes_after_what_was_sent_meanwhile(
         'input_audio_buffer.commit',
         'response.create',
     ]
-    # A second commit before the first went out extends the same turn, as it does on xAI.
     spoken = 'user speech: Spoken.' if transcription else 'user speech: None'
     assert _turns(session.all_messages()) == [
         'user: What is two plus two?',
         'assistant speech: Four.',
         *(['user: Then this.', 'user: Some context.'] if text else []),
-        spoken,
+        *[spoken] * commits,
         'assistant speech: Answer.',
     ]
 
@@ -1956,9 +1953,10 @@ async def test_speech_reported_after_the_commit_went_out_stays_with_that_commit(
     ]
 
 
+@pytest.mark.parametrize('transcription', [True, False], ids=['transcribed', 'untranscribed'])
 @pytest.mark.parametrize('request_by', ['create_response', 'text'])
 async def test_audio_committed_by_a_request_is_recorded_in_place(
-    monkeypatch: pytest.MonkeyPatch, request_by: str
+    monkeypatch: pytest.MonkeyPatch, request_by: str, transcription: bool
 ) -> None:
     """Audio never committed is committed by the next request, which is when it joins the conversation."""
     ws = _PhasedWebSocket(
@@ -1966,13 +1964,16 @@ async def test_audio_committed_by_a_request_is_recorded_in_place(
         [],
         [
             json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u1'}),
-            _user_transcript('item-u1', 'Spoken.'),
+            *([_user_transcript('item-u1', 'Spoken.')] if transcription else []),
             *_reply('r1', 'Answer.'),
         ],
     )
     monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ws]))
+    settings = rt_xai.XaiRealtimeModelSettings(turn_detection=False)
+    if not transcription:
+        settings['input_transcription_model'] = None
 
-    async with Agent().realtime(_model(rt_xai.XaiRealtimeModelSettings(turn_detection=False))).session() as session:
+    async with Agent().realtime(_model(settings)).session() as session:
         await session.send_audio(_AUDIO.data)
         if request_by == 'text':
             await session.send('Text.')
@@ -1984,7 +1985,7 @@ async def test_audio_committed_by_a_request_is_recorded_in_place(
 
     assert turns == [
         *(['user: Text.'] if request_by == 'text' else []),
-        'user speech: Spoken.',
+        f'user speech: {"Spoken." if transcription else None}',
         'assistant speech: Answer.',
     ]
 
@@ -2027,33 +2028,6 @@ async def test_speech_for_audio_already_committed_is_not_held_for_the_next_commi
         turns = _turns(session.all_messages())
 
     assert turns == ['user speech: First.', 'assistant speech: One.', 'user speech: Second.', 'assistant speech: Two.']
-
-
-async def test_second_commit_before_the_first_goes_out_extends_the_untranscribed_turn(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """xAI takes the audio of both commits as one turn, so history records one turn with both, retained."""
-    ws = _PhasedWebSocket(
-        [_created(), _updated()],
-        [],
-        [json.dumps({'type': 'input_audio_buffer.committed', 'item_id': 'item-u1'}), *_reply('r1', 'Answer.')],
-    )
-    monkeypatch.setattr(rt_xai.websockets, 'connect', _RecordingConnect([ws]))
-    settings = rt_xai.XaiRealtimeModelSettings(turn_detection=False, input_transcription_model=None)
-
-    async with Agent().realtime(_model(settings)).session(audio_retention='input_audio') as session:
-        for audio in (_AUDIO, _OTHER_AUDIO):
-            await session.send_audio(audio.data)
-            await session.commit_audio()
-        await session.create_response()
-        ws.advance()
-        await session.wait_for_reply()
-
-    assert _turns(session.all_messages()) == ['user speech: None', 'assistant speech: Answer.']
-    part = session.all_messages()[0].parts[0]
-    assert isinstance(part, SpeechPart) and part.audio is not None
-    with wave.open(io.BytesIO(part.audio.data)) as wav:
-        assert wav.readframes(wav.getnframes()) == _AUDIO.data + _OTHER_AUDIO.data
 
 
 async def test_turns_of_a_commit_held_behind_a_reply_keep_their_order(monkeypatch: pytest.MonkeyPatch) -> None:
