@@ -1250,7 +1250,7 @@ async def test_openai_responses_cache_instructions_explicit_previous_response_id
         model_settings=OpenAIResponsesModelSettings(openai_cache_instructions=True),
     )
     first = await agent.run('Where is order 1234?')
-    response_id = first.all_messages()[-1].provider_response_id
+    response_id = first.response.provider_response_id
     assert response_id is not None
 
     await agent.run(
