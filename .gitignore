@@ -52,6 +52,8 @@ AGENTS.override.md
 !.claude/plans/
 !.claude/skills/
 .claude/skills/*
+!.claude/skills/add-new-model
+!.claude/skills/adding-a-provider-api-feature
 !.claude/skills/complete-partial-pr
 !.claude/skills/i-have-adhd
 !.claude/skills/poweruser-feature-audit

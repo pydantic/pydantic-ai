@@ -191,6 +191,7 @@ bundled palettes use Termflow defaults.
 | File | Holds |
 |---|---|
 | `_cli.py` | argument parsing, startup, `--agent` |
+| `agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `_app.py` | the prompt loop and built-in `/commands` |
 | `_session.py` | conversation state, revision-checked saves, restore-only resume, per-run plugins |
 | `sessions.py` | resume command and background namer ownership; built-in step capture |

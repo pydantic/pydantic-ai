@@ -52,10 +52,10 @@ Content-less speech parts are skipped because they carry no replayable content. 
 raises [`UserError`][pydantic_ai.exceptions.UserError] instead of being silently dropped. Video,
 documents, uploaded-file references, and model-generated files cannot be seeded.
 
-Speech transcripts are preferred over retained audio. OpenAI and Azure OpenAI can replay retained
-user audio when no transcript exists; Gemini and xAI cannot. Assistant speech always needs a
-transcript for seeding. Check `supports_session_seeding`, `supports_seeding_images`, and
-`supports_seeding_audio` on the
+Speech transcripts are preferred over retained audio. Where no transcript exists, retained user
+audio is replayed on models whose profile sets `supports_seeding_audio`, as long as it was recorded
+at the model's input sample rate. Assistant speech always needs a transcript for seeding. Check
+`supports_session_seeding`, `supports_seeding_images`, and `supports_seeding_audio` on the
 [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] (see
 [Provider support](overview.md#provider-support) for how profiles resolve) before constructing
 portable flows.
