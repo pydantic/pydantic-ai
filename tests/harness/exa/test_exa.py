@@ -448,19 +448,7 @@ class TestExaSearch:
         assert instructions.startswith(base)
         assert 'escalate to `deep_search`' in instructions
 
-    @pytest.mark.parametrize(
-        ('supported_native_tools', 'expected_function_tools', 'expected_native_tools'),
-        [
-            (frozenset({WebSearchTool}), ['get_page'], [WebSearchTool]),
-            (frozenset(), ['web_search', 'get_page'], []),
-        ],
-    )
-    async def test_web_search_is_a_fallback_for_core_native_search(
-        self,
-        supported_native_tools: frozenset[type[WebSearchTool]],
-        expected_function_tools: list[str],
-        expected_native_tools: list[type[WebSearchTool]],
-    ) -> None:
+    async def test_native_web_search_replaces_exa_search(self) -> None:
         seen_function_tools: list[str] = []
         seen_native_tools: list[type[object]] = []
 
@@ -469,14 +457,27 @@ class TestExaSearch:
             seen_native_tools.extend(type(tool) for tool in info.model_request_parameters.native_tools)
             return ModelResponse(parts=[TextPart('done')])
 
-        model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=supported_native_tools))
+        model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=frozenset({WebSearchTool})))
         agent = Agent(model, capabilities=[WebSearch(), ExaSearch(client=_FakeExaClient())])
 
         result = await agent.run('Search the web.')
 
         assert result.output == 'done'
-        assert seen_function_tools == expected_function_tools
-        assert seen_native_tools == expected_native_tools
+        assert seen_function_tools == ['get_page']
+        assert seen_native_tools == [WebSearchTool]
+
+    async def test_unsupported_constrained_native_search_still_raises(self) -> None:
+        model = FunctionModel(
+            lambda _messages, _info: ModelResponse(parts=[TextPart('done')]),
+            profile=ModelProfile(supported_native_tools=frozenset()),
+        )
+        agent = Agent(
+            model,
+            capabilities=[WebSearch(blocked_domains=['untrusted.example']), ExaSearch(client=_FakeExaClient())],
+        )
+
+        with pytest.raises(UserError, match='not supported by this model'):
+            await agent.run('Search the web.')
 
     def test_custom_guidance_replaces_default(self) -> None:
         capability = ExaSearch[None](include_deep_search=True, guidance='Research with the Exa tools.')

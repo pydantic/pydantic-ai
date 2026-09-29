@@ -242,11 +242,10 @@ you want search that follows whichever model you run. Use `YouSearch` when you
 want the same search on every model: one vendor, excerpts with every result,
 page reads you ask for, domain filters, and freshness controls.
 
-You can combine core `WebSearch()` with `YouSearch()` to make You.com the
-fallback for models without native search. When native search is supported,
-Pydantic AI omits You.com's `web_search` to avoid sending two tools with the
-same name, while `get_page` remains available. When native search is
-unavailable, Pydantic AI uses You.com's `web_search` instead.
+On models that support native search, you can combine core `WebSearch()` with
+`YouSearch()`. Pydantic AI omits You.com's `web_search` to avoid sending two
+tools with the same name, while `get_page` remains available. On other models,
+use `YouSearch` without core `WebSearch`.
 
 `ExaSearch` and `YouSearch` still conflict with each other because both expose
 `web_search` and `get_page`. Wrap one in `PrefixTools` to rename its tools, as

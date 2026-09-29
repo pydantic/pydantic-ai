@@ -329,13 +329,11 @@ Reach for `ExaSearch` when you want the same search behavior on every model:
 one vendor, excerpts with every hit, explicit page retrieval, domain filters,
 and opt-in deep search.
 
-You can combine them as `capabilities=[WebSearch(), ExaSearch()]` to make Exa
-the fallback for models without native search.
-
-When the model supports native search, Pydantic AI omits Exa's `web_search` to
-avoid sending two tools with the same name. Exa's `get_page` and optional
-`deep_search` remain available. When native search is unavailable, Pydantic AI
-uses Exa's `web_search` instead.
+On models that support native search, you can combine them as
+`capabilities=[WebSearch(), ExaSearch()]`. Pydantic AI omits Exa's `web_search`
+to avoid sending two tools with the same name, while Exa's `get_page` and
+optional `deep_search` remain available. On other models, use `ExaSearch`
+without core `WebSearch`.
 
 ## ExaSearch vs Exa's MCP server
 

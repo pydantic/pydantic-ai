@@ -21,12 +21,11 @@ fetching is acceptable. `WebSearch()` and `WebFetch()` with no arguments are nat
 models without native support; pass `local=True` for the fallback (needs `pydantic-ai-slim[duckduckgo]`
 and `pydantic-ai-slim[web-fetch]`).
 
-Core `WebSearch()` composes with either `ExaSearch` or `YouSearch`: the harness `web_search` acts as
-the fallback when native search is unavailable, while `get_page` remains available. `ExaSearch` and
-`YouSearch` still collide with each other because both expose `web_search` and `get_page`; wrap one in
-core `PrefixTools(wrapped=..., prefix='cb')`. `Researcher` includes core `WebSearch(local=True)`, so
-adding Exa or You.com also leaves DuckDuckGo available on models without native search unless you
-compose the research stack yourself.
+On models with native search, core `WebSearch()` composes with either `ExaSearch` or `YouSearch`: the
+native tool replaces the harness `web_search`, while `get_page` remains available. On other models,
+use the harness search capability without core `WebSearch`. `ExaSearch` and `YouSearch` still collide
+with each other because both expose `web_search` and `get_page`; wrap one in core
+`PrefixTools(wrapped=..., prefix='cb')`.
 
 ## Researcher
 
