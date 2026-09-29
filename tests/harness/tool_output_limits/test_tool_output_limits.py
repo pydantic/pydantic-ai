@@ -345,6 +345,22 @@ class TestCleanup:
         assert not old.exists()
         assert new.exists()
 
+    def test_prune_refuses_symlink_root(self, tmp_path: Path):
+        target = tmp_path / 'target'
+        target.mkdir()
+        old = target / 'old.bin'
+        old.write_bytes(b'x')
+        past = time.time() - 100
+        os.utime(old, (past, past))
+        root = tmp_path / 'store'
+        root.symlink_to(target, target_is_directory=True)
+        store = LocalFileStore(base_dir=root, cleanup_after=timedelta(seconds=1))
+
+        with pytest.raises(PermissionError, match='is a symbolic link'):
+            store._prune_sync()  # pyright: ignore[reportPrivateUsage]
+
+        assert old.exists()
+
     def test_run_prune_swallows_errors(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         store = LocalFileStore(base_dir=tmp_path, cleanup_after=timedelta(seconds=1))
 

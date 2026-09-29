@@ -278,6 +278,7 @@ class LocalFileStore:
     def _prune_sync(self) -> None:
         """Delete files older than `cleanup_after` (by `st_mtime`)."""
         assert self.cleanup_after is not None
+        self._check_root()
         cutoff = time.time() - self.cleanup_after.total_seconds()
         for path in self._root.rglob('*'):
             if not path.is_file():
