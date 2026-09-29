@@ -158,7 +158,7 @@ class LifecycleChecker:
             self._started.add(event.response_id)
             self._open_responses.add(event.response_id)
             sent = self.inputs_sent() if self.inputs_sent is not None else 0
-            if unknown := [input_id for input_id in event.answers if input_id >= sent]:
+            if unknown := [input_id for input_id in event.answers if not 0 <= input_id < sent]:
                 issue('lifecycle.unknown_answer', f'{event.response_id!r} answers inputs never sent: {unknown}')
             self._settle(event.answers, issue)
         elif isinstance(event, ResponseEnded):
@@ -185,9 +185,14 @@ class LifecycleChecker:
             self._settle(event.input_ids, issue)
 
     def _settle(self, input_ids: tuple[int, ...], issue: Callable[[str, str], None]) -> None:
-        if twice := [input_id for input_id in input_ids if input_id in self._settled_inputs]:
+        # Checked one at a time, so an event naming an input twice settles it twice too.
+        twice: list[int] = []
+        for input_id in input_ids:
+            if input_id in self._settled_inputs:
+                twice.append(input_id)
+            self._settled_inputs.add(input_id)
+        if twice:
             issue('lifecycle.input_settled_twice', f'inputs settled a second time: {twice}')
-        self._settled_inputs.update(input_ids)
 
     def finish(self) -> list[ConformanceIssue]:
         """The stream ended: nothing may still be open."""

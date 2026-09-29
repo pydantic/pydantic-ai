@@ -118,6 +118,12 @@ def test_lifecycle_contract_rules() -> None:
     )
     assert feed_lifecycle(start) == snapshot(['lifecycle.unknown_answer', 'lifecycle.unended_at_close'])
     assert feed_lifecycle(
+        ResponseStarted(response_id='resp_4', answers=(-1,)),
+        ResponseEnded(response_id='resp_4', status='completed'),
+        InputLost(input_ids=(0, 0)),
+        inputs_sent=1,
+    ) == snapshot(['lifecycle.unknown_answer', 'lifecycle.input_settled_twice'])
+    assert feed_lifecycle(
         SessionUsage(RequestUsage(), provider_response_id='resp_3'),
         SessionUsage(RequestUsage(), response_scoped=False),
         InputLost(input_ids=(0,)),

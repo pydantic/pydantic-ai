@@ -98,11 +98,11 @@ class OpenAILifecycle:
         """Our user message items awaiting their `conversation.item.added`, in the order they were sent.
         `None` is one that is no input of its own: seeded or replayed history, or a tool result's follow-up."""
         self._tool_outputs: dict[str, InputId] = {}
+        """Our tool outputs awaiting their `conversation.item.added`, by call id."""
         self._carried_over: set[InputId] = set()
         """Inputs an old socket never acknowledged, which join the conversation once a reconnect succeeds."""
         self._committed: set[str] = set()
         """Spoken turns already committed, so a repeated commit doesn't make a second turn of one."""
-        """Our tool outputs awaiting their `conversation.item.added`, by call id."""
 
     # --- what the connection sends ----------------------------------------------------------------
 
