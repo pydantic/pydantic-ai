@@ -214,6 +214,24 @@ async def _until_listening(redirect_uri: str, callback: asyncio.Future[Tokens]) 
                 await asyncio.sleep(0.02)
 
 
+async def _until_released(redirect_uri: str, *, limit: float = 2) -> None:
+    """Wait, up to `limit` seconds, until a cancelled attempt's callback server stops listening.
+
+    Core abandons that server's thread on cancel, and it only notices between its 0.5s accept polls, so without this
+    signing in again at once finds the fixed redirect port still taken.
+    """
+    split = urlsplit(redirect_uri)
+    deadline = time.monotonic() + limit
+    while time.monotonic() < deadline:
+        try:
+            _, writer = await asyncio.open_connection(split.hostname, split.port)
+        except OSError:
+            return
+        writer.close()
+        await writer.wait_closed()
+        await asyncio.sleep(0.05)
+
+
 class PKCESignIn:
     """A signed-in session for one client, kept in the credential store under `account`."""
 
@@ -301,6 +319,9 @@ class PKCESignIn:
         finally:
             callback.cancel()
             await asyncio.gather(callback, return_exceptions=True)
+            if callback.cancelled():
+                with CancelScope(shield=True):
+                    await _until_released(flow.redirect_uri)
         await finish_write(asyncio.to_thread(self._locked_save, tokens))
         return tokens
 

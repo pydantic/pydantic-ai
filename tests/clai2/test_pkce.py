@@ -264,6 +264,23 @@ async def test_denial_timeout_and_a_busy_port_are_explained_and_keep_the_earlier
     assert Tokens.model_validate_json(load_codex_credentials(account=ACCOUNT) or '').access_token == SecretStr('at-old')
 
 
+async def test_waiting_for_the_port_gives_up_when_something_keeps_it() -> None:
+    with socket.socket() as busy:
+        busy.bind(('127.0.0.1', 0))
+        busy.listen()
+        started = time.monotonic()
+        await pkce._until_released(f'http://127.0.0.1:{busy.getsockname()[1]}/callback', limit=0.2)  # pyright: ignore[reportPrivateUsage]
+        assert 0.2 <= time.monotonic() - started < 2
+
+
+async def test_signing_in_again_right_after_giving_up_finds_the_port_free() -> None:
+    endpoint, app = TokenEndpoint(granted()), client()
+    with pytest.raises(UserError, match='sign-in timed out'):
+        await session(endpoint, app=app, timeout=0.2).sign_in()
+    signed = await session(endpoint, app=app, open_browser=browser(approve), timeout=5).sign_in()
+    assert signed.access_token == SecretStr('at-1')
+
+
 @pytest.mark.parametrize(
     ('answer', 'message'),
     [
