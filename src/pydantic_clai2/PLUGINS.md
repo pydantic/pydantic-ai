@@ -319,12 +319,14 @@ to stock built-ins. See [telemetry](README.md#telemetry-and-references).
 The built-in `logfire_mcp` plugin (`pydantic_clai2.logfire_mcp`) gives the agent
 the tools of Logfire's hosted MCP server through harness
 [`LogfireMCP`](../../docs/harness/logfire-mcp.md). It starts disabled.
-`/plugins enable logfire_mcp` loads it and opens its settings menu; reopen the
-menu any time with `/plugins configure logfire_mcp` or `C` in `/plugins`.
+Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
+opens its settings menu; reopen the menu any time with
+`/plugins configure logfire_mcp` or `C` in `/plugins`.
 
-Every row saves as soon as you change it, and the plugin loads again with the new
-settings when the menu closes. Esc backs out of any picker or text field without
-changing anything; `R` resets the highlighted row to its default.
+Every row saves as soon as you change it, so **Save & close** (or Esc) just leaves
+the menu, and the plugin loads again with the new settings. Esc backs out of any
+picker or text field without changing anything; `R` resets the highlighted row to
+its default.
 
 | Row | Setting | Default | Does |
 |---|---|---|---|

@@ -24,7 +24,7 @@ from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LogfireMCP
 from pydantic_clai2 import DEFAULT_PLUGINS, api_keys
 from pydantic_clai2.api_keys import KeyReference, SavedKey
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.field_menu import CUSTOM
+from pydantic_clai2.field_menu import CUSTOM, is_save_and_close
 from pydantic_clai2.logfire_mcp import SETUP, LogfireMCPSource, activate
 from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, DeviceAuth, SignInError, Tokens
 from pydantic_clai2.plugin_loader import PluginError, PluginLoader
@@ -400,18 +400,20 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu(tmp_path: Path) -> No
         await shell.loader.configure('plain')
 
 
-async def test_plugins_menu_configure_key_opens_the_settings_menu(
+async def test_enabling_in_the_plugins_menu_opens_the_settings_menu(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     api_keys.save_key(name='LOGFIRE_API_KEY', value='saved')
     shell = Shell(tmp_path)
     script(monkeypatch, lists=[pick('read_only')], choices=[pick('false')])
 
-    def run(menu: PluginMenu[None]) -> MenuResult | None:
-        [item] = menu.items()
-        menu.toggle(Redraw(), item)
-        assert menu.notice == 'Press C to configure logfire_mcp.'
-        return menu.configure(Redraw(), item)
+    def run(menu: PluginMenu[None]) -> MenuResult:
+        item, save_and_close = menu.items()
+        if menu.notice is not None:  # Back from the settings menu.
+            return menu.close(Redraw(), save_and_close)
+        opened = menu.toggle(Redraw(), item)
+        assert opened is not None
+        return opened
 
     assert await open_plugins_menu(shell.loader, run=run) == 'Saved Tools.'
     assert shell.capability().read_only is False
@@ -424,14 +426,15 @@ async def test_plugins_menu_stays_open_when_there_is_nothing_to_configure(tmp_pa
     )
     await shell.loader.load_all()
 
-    def run(menu: PluginMenu[None]) -> MenuResult | None:
+    def run(menu: PluginMenu[None]) -> MenuResult:
         assert menu.configure(Redraw(), MenuItem('none', value=None)) is None
-        logfire_row, plain_row = sorted(menu.items(), key=lambda item: str(item.value))
+        rows = [item for item in menu.items() if not is_save_and_close(item)]
+        logfire_row, plain_row = sorted(rows, key=lambda item: str(item.value))
         assert menu.configure(Redraw(), logfire_row) is None
-        assert menu.notice == 'Enable logfire_mcp before configuring it.'
+        assert menu.notice == 'Enable logfire_mcp to configure it.'
         assert menu.configure(Redraw(), plain_row) is None
         assert menu.notice == 'plain has no settings menu.'
-        return None
+        return menu.close(Redraw(), plain_row)
 
     assert await open_plugins_menu(shell.loader, run=run) == ''
 
