@@ -98,6 +98,10 @@ class OpenAILifecycle:
         """Our user message items awaiting their `conversation.item.added`, in the order they were sent.
         `None` is one that is no input of its own: seeded or replayed history, or a tool result's follow-up."""
         self._tool_outputs: dict[str, InputId] = {}
+        self._carried_over: set[InputId] = set()
+        """Inputs an old socket never acknowledged, which join the conversation once a reconnect succeeds."""
+        self._committed: set[str] = set()
+        """Spoken turns already committed, so a repeated commit doesn't make a second turn of one."""
         """Our tool outputs awaiting their `conversation.item.added`, by call id."""
 
     # --- what the connection sends ----------------------------------------------------------------
@@ -136,7 +140,14 @@ class OpenAILifecycle:
             return
         response_id = frame_response_id(event_type, data)
         if response_id is not None and response_id not in self._open and response_id not in self._ended:
-            self._leading.append(self._start(response_id, answers=(), basis='inferred'))
+            # A terminal echoes the request's metadata too, so a response first seen at its end is still known.
+            response = data.get('response') if event_type == 'response.done' else None
+            answers = response_metadata_answers(response.get('metadata')) if is_str_dict(response) else None
+            self._leading.append(
+                self._start(response_id, answers=self._settle(answers), basis='protocol')
+                if answers is not None
+                else self._start(response_id, answers=(), basis='inferred')
+            )
 
     def response_created(
         self,
@@ -223,6 +234,9 @@ class OpenAILifecycle:
     def audio_committed(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         """The input audio buffer was committed: the spoken turn joins the conversation here."""
         item_id = InputAudioBufferCommittedEvent.model_validate(data).item_id
+        if item_id in self._committed:
+            return []
+        self._committed.add(item_id)
         events: list[LifecycleEvent] = []
         if item_id in self._speaking:
             del self._speaking[item_id]
@@ -248,9 +262,9 @@ class OpenAILifecycle:
             # The model's output, or a spoken turn the server committed.
             return []
         elif (input_id := client_item_input(item.id)) is not None:
-            self._ids_echoed = True
             if input_id not in self._messages:
                 return []
+            self._ids_echoed = True
             self._messages.remove(input_id)
         elif self._ids_echoed or not self._messages:
             # No item of ours: seeded or replayed history, or one a browser made on a sideband.
@@ -287,12 +301,15 @@ class OpenAILifecycle:
         """
         placed = [input_id for input_id in self._messages if input_id is not None]
         placed += self._tool_outputs.values()
-        self._pending.extend(InputAdded(input_id=input_id) for input_id in sorted(placed))
+        # Placed once a reconnect succeeds, not before: a connection that never comes back placed nothing.
+        self._carried_over.update(placed)
         self._messages.clear()
         self._tool_outputs.clear()
 
     def reconnected(self, *, restores_in_flight: bool, lost_inputs: Sequence[InputId]) -> None:
         """A reconnect succeeded: settle what it did not carry over, before it is reported."""
+        self._pending.extend(InputAdded(input_id=input_id) for input_id in sorted(self._carried_over))
+        self._carried_over.clear()
         self.requests_dropped(lost_inputs)
         if not restores_in_flight:
             self._requests.clear()
@@ -304,6 +321,7 @@ class OpenAILifecycle:
             [*unanswered, *(input_id for answers, _ in self._requests.values() for input_id in answers)]
         )
         self._requests.clear()
+        self._carried_over.clear()
         self._lose_everything_open()
 
     def _lose_everything_open(self) -> None:

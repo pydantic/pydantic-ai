@@ -412,6 +412,39 @@ async def test_a_malformed_frame_only_the_lifecycle_reads_is_ignored() -> None:
     )
 
 
+async def test_a_response_first_seen_at_its_end_answers_what_its_metadata_names() -> None:
+    stream = Stream(
+        {**done('resp_1'), 'response': {**done('resp_1')['response'], 'metadata': {'pydantic_ai_inputs': '0'}}}
+    )
+    await stream.connection.send(CreateResponse())
+    assert await stream.take(1) == snapshot([ResponseStarted(response_id='resp_1', answers=(0,))])
+
+
+async def test_a_repeated_commit_makes_no_second_turn() -> None:
+    commit = {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None}
+    assert await Stream(commit, commit).rest() == snapshot(
+        [UserTurnStarted(turn_id='item_u1'), UserTurnEnded(turn_id='item_u1'), 'RealtimeSessionErrorEvent']
+    )
+
+
+async def test_an_item_under_an_id_of_ours_for_no_input_waiting_leaves_order_in_charge() -> None:
+    stream = Stream(
+        {**user_message_added(), 'item': {**user_message_added()['item'], 'id': 'pydantic_ai_item_999'}},
+        user_message_added(),
+    )
+    await stream.connection.send(TextContext('First.'))
+    assert await stream.rest() == snapshot([InputAdded(input_id=0), 'RealtimeSessionErrorEvent'])
+
+
+async def test_a_reconnect_that_never_succeeds_places_nothing() -> None:
+    async def dial() -> Any:
+        raise OSError('refused')
+
+    stream = Stream(dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1, 'max_reconnects': 1})
+    await stream.connection.send(TextContext('Unacknowledged.'))
+    assert await stream.rest() == snapshot(['RealtimeSessionErrorEvent'])
+
+
 async def test_a_frame_that_fails_to_decode_still_starts_its_response() -> None:
     stream = Stream(
         {'type': 'response.output_audio.delta', 'response_id': 'resp_1', 'delta': 'not base64!'}, done('resp_1')
