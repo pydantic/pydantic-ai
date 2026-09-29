@@ -209,6 +209,11 @@ def test_non_python_and_broken_python_fall_back_to_windows() -> None:
         assert chunks[1].line == 51  # 10-line overlap
 
 
+def test_long_whitespace_lines_are_skipped_not_fatal() -> None:
+    chunks = windows(['x = 1', ' ' * 13_000, 'y = 2'], 'w.py', size=1, overlap=0)
+    assert [c.text for c in chunks] == ['x = 1', 'y = 2']
+
+
 def test_giant_line_raises_and_giant_window_halves() -> None:
     with pytest.raises(LineTooLong):
         windows(['x' * 13_000], 'min.js')

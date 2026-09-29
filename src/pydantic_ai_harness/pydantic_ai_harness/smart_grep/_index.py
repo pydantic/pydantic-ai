@@ -116,10 +116,14 @@ class SnippetIndex:
             file.skipped = 'binary'
             return file
         try:
-            chunks = source_chunks(raw.decode('utf-8'), path)[0]
+            text = raw.decode('utf-8')
         except UnicodeDecodeError:
             file.skipped = 'not UTF-8'
             return file
+        # Counted the way chunking splits lines, so separators like U+2028 cannot slip past the line budget.
+        file.lines = len(text.splitlines())
+        try:
+            chunks = source_chunks(text, path)[0]
         except LineTooLong as exc:
             file.skipped = str(exc)
             return file
@@ -178,6 +182,8 @@ class _Slot:
 class SnippetIndexes:
     """Snippet indexes by directory and glob, kept between searches for up to `max_cached` of them.
 
+    An index being searched is never evicted, so more may be kept briefly while searches run in parallel.
+
     With `max_cached=0` every search builds a throwaway index. A search holds its directory's lock from
     refresh to shortlist, so parallel searches of one directory build its index once, in turn.
     """
@@ -191,8 +197,10 @@ class SnippetIndexes:
         slot = self._slots.pop(key, None) or _Slot()
         if self._max_cached:
             self._slots[key] = slot  # most recently searched last
-            while len(self._slots) > self._max_cached:
-                self._slots.popitem(last=False)
+            # Never evict an index mid-search: a parallel search of it would then build a second one.
+            idle = [other for other, kept in self._slots.items() if other != key and not kept.lock.locked()]
+            for other in idle[: len(self._slots) - self._max_cached]:
+                del self._slots[other]
         return slot
 
     async def shortlist(self, workspace: Workspace, root: str, glob: str | None, query: str, k: int) -> Shortlist:

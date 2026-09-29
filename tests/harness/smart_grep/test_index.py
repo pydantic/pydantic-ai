@@ -83,6 +83,17 @@ async def test_discover_respects_gitignore_and_reports_paths_as_spelled(tmp_path
     assert (await _discover(_workspace(tmp_path), 'src', glob='*.txt')).chunks == []
 
 
+async def test_glob_cannot_reach_ignored_or_hidden_files(tmp_path: Path) -> None:
+    (tmp_path / '.git').mkdir()
+    (tmp_path / '.gitignore').write_text('ignored.py\n.env\n')
+    (tmp_path / '.env').write_text('SECRET=1\n')
+    (tmp_path / 'ignored.py').write_text('x = 1\n')
+    (tmp_path / 'kept.py').write_text('y = 2\n')
+    workspace = _workspace(tmp_path)
+    assert (await _discover(workspace, '.', glob='.env')).chunks == []  # ripgrep's `--glob` alone would list it
+    assert [c.path for c in (await _discover(workspace, '.', glob='*.py')).chunks] == ['kept.py']
+
+
 async def test_discover_stays_inside_the_working_directory(tmp_path: Path) -> None:
     project, outside = tmp_path / 'project', tmp_path / 'outside'
     project.mkdir()
@@ -169,6 +180,24 @@ async def test_least_recently_searched_index_is_evicted(tmp_path: Path, chunker:
         await _discover(workspace, name, indexes=indexes)
     await _discover(workspace, 'c', indexes=indexes)  # still cached
     assert chunker.paths == ['x.py'] * 4
+
+
+async def test_an_index_being_searched_is_not_evicted() -> None:
+    indexes = SnippetIndexes(1)
+    slots = indexes._slots  # pyright: ignore[reportPrivateUsage]
+    busy = indexes._slot(('a', None))  # pyright: ignore[reportPrivateUsage]
+    async with busy.lock:
+        indexes._slot(('b', None))  # pyright: ignore[reportPrivateUsage]
+        assert list(slots) == [('a', None), ('b', None)]  # over the limit while `a` is searched
+    indexes._slot(('c', None))  # pyright: ignore[reportPrivateUsage]
+    assert list(slots) == [('c', None)]
+
+
+async def test_line_budget_counts_unicode_line_separators(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    (tmp_path / 'a.py').write_text('x = 1\u2028' * 50)  # 50 lines to the chunker, no newline at all
+    monkeypatch.setattr(_index, 'MAX_TOTAL_LINES', 10)
+    with pytest.raises(ModelRetry, match='lines of source'):
+        await _discover(_workspace(tmp_path), '.')
 
 
 async def test_retired_snippets_are_compacted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
