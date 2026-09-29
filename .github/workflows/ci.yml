@@ -29,7 +29,7 @@ env:
   PYDANTIC_AI_HARNESS_VERSION: "0.34.0"
   # Pin the testmon coverage cache while its upstream integration is evaluated.
   # Full-suite jobs install this into the synced environment; uv --with rebuilds workspace packages in a temporary overlay.
-  TESTMON_PACKAGE: "git+https://github.com/Kludex/pytest-testmon@f3f58ba545cc159741c4b3fa4a1a4621e6520748"
+  TESTMON_PACKAGE: "git+https://github.com/Kludex/pytest-testmon@574bf98677878e42007abd2aaa232ebb77c3edd7"
 
 permissions:
   contents: read
