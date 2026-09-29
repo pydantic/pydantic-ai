@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import gc
 import re
@@ -1065,6 +1066,39 @@ async def test_run_replacement_that_drops_the_bound_id_is_refused() -> None:
         "capability's `id`: it identifies the capability across the run, and persisted operation "
         'identity and worker-side recovery are built on it.'
     )
+
+
+async def test_setup_failure_runs_cleanup_when_durable_id_validation_would_fail() -> None:
+    replacement_ready = asyncio.Event()
+    cleaned: list[BaseException] = []
+
+    class IdChangingOperation(Operations):
+        id = 'id_changing_operation'
+
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            replacement = IdChangingOperation()
+            replacement.id = 'renamed_for_this_run'
+            replacement_ready.set()
+            return replacement
+
+    class Failing(AbstractCapability[Any]):
+        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+            await replacement_ready.wait()
+            raise RuntimeError('first failure')
+
+    class Cleanup(AbstractCapability[Any]):
+        async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+            cleaned.append(error)
+            raise error
+
+    agent = Agent(
+        TestModel(),
+        name='cleanup_after_invalid_durable_id',
+        capabilities=[Cleanup(), IdChangingOperation(), Failing(), RecordingDurability()],
+    )
+    with pytest.raises(RuntimeError, match='first failure') as exc_info:
+        await agent.run('test')
+    assert cleaned == [exc_info.value]
 
 
 async def test_shared_capability_dispatch_is_scoped_to_each_agent() -> None:

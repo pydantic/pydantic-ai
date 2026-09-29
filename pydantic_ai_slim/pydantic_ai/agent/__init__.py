@@ -257,7 +257,11 @@ async def _run_setup_error_hook(
         # A failed `for_run` may leave duplicate ids in the partial tree; cleanup still needs
         # the public registry without replacing the setup error with an id validation error.
         run_ctx.capabilities = _build_run_capabilities(run_capability, validate_ids=False)
-    _prepare_run_capability_context(run_capability, run_ctx)
+    try:
+        _prepare_run_capability_context(run_capability, run_ctx)
+    except exceptions.UserError:
+        # A partial tree can fail durable ID validation; cleanup still belongs to the setup error.
+        pass
     # There is no run result to recover here, so preserve the setup error if the hook returns.
     setup_traceback = error.__traceback__
     try:

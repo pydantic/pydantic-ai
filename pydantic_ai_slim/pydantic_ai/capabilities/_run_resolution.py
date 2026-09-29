@@ -129,14 +129,6 @@ def record_partial_run_capability_resolution(
 def replace_resolved_run_capabilities(
     capability: AbstractCapability[AgentDepsT], resolutions: RunCapabilityResolutions
 ) -> AbstractCapability[AgentDepsT]:
-    # A container subclass may replace itself in `for_run`, rather than only rebinding its
-    # children. In that case the completed root resolution is the exact layer used for a run,
-    # and visiting the original container would lose the replacement (CombinedCapability's
-    # visitor deliberately visits children only).
-    root_resolutions = resolutions.resolved.get(id(capability), [])
-    if root_resolutions and _is_capability(root_resolutions[0]):
-        return root_resolutions[0]
-
     occurrences_seen: dict[int, int] = {}
 
     def is_partial_resolution(value: object) -> TypeIs[PartialRunCapabilityResolution[AgentDepsT]]:
@@ -155,6 +147,15 @@ def replace_resolved_run_capabilities(
         return cap
 
     def rebuild(cap: AbstractCapability[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        # A container subclass can replace itself in `for_run`; its visitor only visits children.
+        # Take a completed root record before descending, including roots inside a partial dynamic.
+        capability_id = id(cap)
+        occurrence = occurrences_seen.get(capability_id, 0)
+        resolved_occurrences = resolutions.resolved.get(capability_id, [])
+        resolved = resolved_occurrences[occurrence] if occurrence < len(resolved_occurrences) else None
+        if _is_capability(resolved):
+            occurrences_seen[capability_id] = occurrence + 1
+            return resolved
         return cap.visit_and_replace(replace) or cap
 
     return rebuild(capability)

@@ -1195,6 +1195,33 @@ async def test_setup_failure_cleans_resolved_child_of_partial_dynamic(nested_dyn
     assert cleaned == ['resolved']
 
 
+async def test_setup_failure_cleans_root_replacement_of_partial_dynamic() -> None:
+    cleaned: list[str] = []
+
+    class Cleanup(AbstractCapability[object]):
+        def __init__(self, instance: str) -> None:
+            self.instance = instance
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            cleaned.append(self.instance)
+            raise error
+
+    class ReplacingCombined(CombinedCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            return Cleanup('resolved')
+
+    class FailingDynamic(DynamicCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            await super().for_run(ctx)
+            raise RuntimeError('later setup failed')
+
+    dynamic = FailingDynamic(lambda ctx: ReplacingCombined([Cleanup('original')]))
+    with pytest.raises(RuntimeError, match='later setup failed'):
+        await Agent(TestModel(), capabilities=[dynamic]).run('go')
+
+    assert cleaned == ['resolved']
+
+
 async def test_setup_failure_calls_on_run_error_for_each_repeated_resolved_capability() -> None:
     cleanup_order: list[int] = []
     second_resolution_complete = asyncio.Event()
