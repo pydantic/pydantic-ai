@@ -1,3 +1,7 @@
+---
+description: "Advanced Pydantic AI function tools: return images and files, custom schemas, strict mode, dynamic tools, tool choice, retries, parallel calls and tool search."
+---
+
 # Advanced Tool Features
 
 This page covers advanced features for function tools in Pydantic AI. For basic tool usage, see the [Function Tools](tools.md) documentation.
@@ -234,7 +238,12 @@ A `prepare` method can be registered via the `prepare` kwarg to any of the tool 
 - [`@agent.tool_plain`][pydantic_ai.agent.Agent.tool_plain] decorator
 - [`Tool`][pydantic_ai.tools.Tool] dataclass
 
-The `prepare` method has type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc]. It receives [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]. It can return that definition unchanged or modified, return a new definition, or return `None` to omit the tool for that step.
+The `prepare` method has type [`ToolPrepareFunc`][pydantic_ai.tools.ToolPrepareFunc]. It receives [`RunContext`][pydantic_ai.tools.RunContext] and a pre-built [`ToolDefinition`][pydantic_ai.tools.ToolDefinition]. It can return that definition unchanged, return a modified copy built with [`dataclasses.replace`][dataclasses.replace], or return `None` to omit the tool for that step.
+
+!!! warning "Modify the definition you're given, don't build a new one"
+    A [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] carries more than a name and a parameters schema: `description`, `strict`, `sequential`, `kind`, `metadata`, `timeout`, `defer_loading`, and `toolset_id` all arrive pre-filled. Constructing a fresh one inside a `prepare` function silently resets every field you don't pass back to its default, so modify the definition you were handed or copy it with [`dataclasses.replace`][dataclasses.replace] instead.
+
+    `kind` is the field that bites: it is how [`requires_approval=True`](deferred-tools.md#human-in-the-loop-tool-approval) reaches the agent run. A definition that loses it describes a tool that runs immediately, without pausing for approval. If you'd rather not depend on every `prepare` function preserving it, [`ApprovalRequiredToolset`](toolsets.md#requiring-tool-approval) enforces approval when the tool is called, independently of how its definition was prepared.
 
 Here's a simple `prepare` method that only includes the tool if the value of the dependency is `42`.
 
@@ -244,7 +253,7 @@ As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestM
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
 
-agent = Agent('test')
+agent = Agent('test', deps_type=int)
 
 
 async def only_if_42(
@@ -301,6 +310,7 @@ agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machin
 result = agent.run_sync('testing...', deps='human')
 print(result.output)
 #> {"greet":"hello a"}
+assert test_model.last_model_request_parameters is not None
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
@@ -326,7 +336,7 @@ _(This example is complete, it can be run "as is")_
 
 In addition to per-tool `prepare` methods, you can also define an agent-wide `prepare_tools` function. This function is called at each step of a run and allows you to filter or modify the list of all tool definitions available to the agent for that step. This is especially useful if you want to enable or disable multiple tools at once, or apply global logic based on the current context.
 
-The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns the tool definitions to expose for that step. Return the `tool_defs` argument to keep every tool as-is, or `[]` to expose no tools.
+The `prepare_tools` function should be of type [`ToolsPrepareFunc`][pydantic_ai.tools.ToolsPrepareFunc], which takes the [`RunContext`][pydantic_ai.tools.RunContext] and a list of [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], and returns the tool definitions to expose for that step. Return the `tool_defs` argument to keep every tool as-is, or `[]` to expose no tools. As with per-tool `prepare`, modify the definitions you were given or copy them with [`dataclasses.replace`][dataclasses.replace] rather than constructing new ones.
 
 !!! note
     The list of tool definitions passed to `prepare_tools` includes both regular function tools and tools from any [toolsets](toolsets.md) registered on the agent, but not [output tools](output.md#tool-output).
@@ -360,6 +370,7 @@ def echo(message: str) -> str:
 
 
 agent.run_sync('testing...')
+assert test_model.last_model_request_parameters is not None
 assert test_model.last_model_request_parameters.function_tools[0].strict is None
 
 # Set the system attribute of the test_model to 'openai'
@@ -517,15 +528,20 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking; adaptive thinking is compatible |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1; adaptive thinking accepts forcing but answers without thinking |
 | Google | ✓ | ✓ | |
-| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode |
+| Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. See [thinking and structured output](models/bedrock.md#thinking-and-structured-output) for thinking compatibility |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
 | Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
 | Cohere | ✓ | ✓ | Maps `'required'` to `'REQUIRED'`; a named subset is applied by trimming the tools array |
-| xAI | ✓ | ✓ | Some models may not support forcing; falls back to 'auto' |
+| xAI | ✓ | ✓ | |
 
-The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — behave as the OpenAI row describes, with two exceptions. Ollama documents `tool_choice` as unsupported and ignores it. OpenRouter raises a `UserError` for an explicit `'required'` or named subset on models that can't combine forced tool choice with thinking, rather than silently dropping the reasoning; forcing that Pydantic AI merely inferred falls back to `'auto'` instead.
+With adaptive thinking, Claude answers a forced tool choice with only the tool call and no thinking, so Pydantic AI
+only sends one you asked for explicitly: forcing it inferred itself falls back to `'auto'` while the request thinks.
+
+The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — follow the OpenAI row unless the model profile restricts forcing. Ollama ignores `tool_choice`, and OpenRouter has [separate rules for Anthropic models](models/openrouter.md#forced-tool-choice).
+
+Whether a model can be forced to call a tool is a property of the model, set on its [profile](models/overview.md) by [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] and [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking], so it applies on every provider that serves the model: Claude Opus 5.5 rejects forcing on OpenRouter just as it does on the Anthropic API. Where forcing isn't available, an explicit `'required'` or list of tools raises a [`UserError`][pydantic_ai.exceptions.UserError], while forcing that Pydantic AI inferred itself, for example from an [output tool](output.md#tool-output), falls back to `'auto'`. On OpenRouter, explicitly requested thinking on an Anthropic model makes forcing unavailable, since OpenRouter would otherwise silently drop the reasoning. Thinking enabled by default alone does not add that restriction; the model's own forcing limits still apply.
 
 ### Prompt caching implications {#tool-choice-caching}
 
@@ -540,7 +556,7 @@ The table below covers the cases where Pydantic AI must filter client-side and t
 |----------|---------------------|
 | Anthropic | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | OpenAI Chat | `tool_choice` is a list of multiple tools, OR a single tool on a model that doesn't support forcing |
-| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with thinking enabled or on a model that doesn't support forcing |
+| Bedrock | `tool_choice` is a list of multiple tools, OR a single tool with extended thinking or on a model that doesn't support forcing |
 | Groq / HuggingFace | `tool_choice` is a list of multiple tools |
 | Mistral | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
 | Cohere | `tool_choice` is a list (any size) — the API doesn't accept specific tool names |
@@ -611,7 +627,7 @@ def read_file(path: str) -> str:
     file_path = Path(path)
     if not file_path.is_file():
         raise ToolFailed(f'File not found: {path}')
-    return file_path.read_text()
+    return file_path.read_text(encoding='utf-8')
 ```
 
 The exception message is recorded in message history as a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'`. Where the model API has a native error or failed-status field for tool results, Pydantic AI uses it. For APIs without a native error channel, the model-visible content is JSON-framed as `{"error": ...}` so the failure is still explicit. The failed outcome is preserved in Pydantic AI message history; protocol adapters may need their own carrier when that history is round-tripped, as described for [AG-UI](ui/ag-ui.md#preserving-failed-tool-outcomes). The call is traced as an error in telemetry.

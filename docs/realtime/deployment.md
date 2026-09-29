@@ -1,3 +1,7 @@
+---
+description: "Connect browsers and phone calls to a Pydantic AI realtime voice agent via WebRTC, a WebSocket relay or a Twilio bridge, with keys and tools on your server."
+---
+
 # Connecting a frontend
 
 Keep provider keys, tools, and business logic on the server; connect user devices to your backend,
@@ -137,6 +141,14 @@ whole call, so when the browser disconnects, `receive_bytes()` raises, the `fina
 and leaving the `async with` block hangs up the provider session. Driving the input from a bare
 `asyncio.create_task` instead would swallow that error and leave the billed session open with nobody
 listening.
+
+`handle_barge_in=True` is a no-op for this relay: `played_audio_bytes` counts a chunk as played when
+the relay forwards it, before the browser has actually played it, so the session sees no unplayed
+audio to flush. The relay must obtain the browser's real playback position, call
+[`interrupt(played_bytes=...)`][pydantic_ai.realtime.RealtimeSession.interrupt] with that count, and
+tell the browser to stop playback and clear its own buffer: the session can only drop what it has
+not forwarded yet. Passing `played_ms=` records the provider-side cutoff but never flushes audio
+queued by the session or buffered in the browser.
 
 ## SIP/telephony bridge
 

@@ -1,3 +1,7 @@
+---
+description: "Build multi-agent systems with Pydantic AI: delegate to sub-agents through tools, hand off between agents in your code, or orchestrate them with graphs."
+---
+
 # Multi-agent Applications
 
 There are roughly five levels of complexity when building applications with Pydantic AI:
@@ -241,7 +245,7 @@ class Failed(BaseModel):
 flight_search_agent = Agent[object, FlightDetails | Failed](  # (1)!
     'openai:gpt-5.2',
     name='flight_search_agent',
-    output_type=FlightDetails | Failed,  # type: ignore
+    output_type=FlightDetails | Failed,
     instructions=(
         'Use the "flight_search" tool to find a flight '
         'from the given origin to the given destination.'
@@ -290,7 +294,7 @@ class SeatPreference(BaseModel):
 seat_preference_agent = Agent[object, SeatPreference | Failed](  # (5)!
     'openai:gpt-5.2',
     name='seat_preference_agent',
-    output_type=SeatPreference | Failed,  # type: ignore
+    output_type=SeatPreference | Failed,
     instructions=(
         "Extract the user's seat preference. "
         'Seats A and F are window seats. '
