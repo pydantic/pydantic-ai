@@ -1,0 +1,52 @@
+name: Cache Cleanup
+
+# Keep the Actions cache inside GitHub's 10 GB per-repository budget. Past it, GitHub evicts
+# least-recently-used entries, so a `setup-uv` install or the pinned sentence-transformers
+# model download becomes a coin flip instead of a cache hit. `cache_cleanup.py` drops the
+# entries nothing can reach any more -- closed pull requests first, then entries superseded
+# by a newer lockfile or commit -- and never the newest entry of a group.
+
+on:
+  schedule:
+    # Daily at 04:17 UTC, off the hour so it doesn't queue behind everything else.
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+    inputs:
+      # Underscored: a hyphen in an input name has to be read as `inputs['dry-run']`, because
+      # `inputs.dry-run` parses as an expression rather than one property.
+      dry_run:
+        description: 'Report what would be deleted without deleting anything'
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: cache-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Prune Actions caches
+        run: >-
+          uv run --no-project --with certifi python .github/scripts/cache_cleanup.py
+          ${{ inputs.dry_run && '--dry-run' || '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
