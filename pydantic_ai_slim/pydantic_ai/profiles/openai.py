@@ -509,7 +509,9 @@ def openai_live_model_profile(model_name: str) -> RealtimeModelProfile:
         'async_tool_call_mode': 'always',
         # The backend runs web search; Live refuses every other native Responses tool (checked live).
         'supported_native_tools': frozenset({WebSearchTool}),
-        'supports_thinking': False,
+        # The delegated backend does the reasoning, so `thinking` sets its effort. Whether a given backend
+        # reasons at all is its own profile's call, so a backend that doesn't still ignores the setting.
+        'supports_thinking': True,
         'emits_input_speech_events': False,
         'synthesizes_turn_boundary': True,
         # The spoken replies are inferred turns; the requests that spend tokens are the backend's.
