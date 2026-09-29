@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Generic, Literal, Protocol, TypeVar, get_args, overload
 
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console, RenderableType
 from typing_extensions import Never, TypeVar as DefaultTypeVar
 
@@ -59,6 +59,7 @@ from .status import Status, StatusSegment
 DepsT = DefaultTypeVar('DepsT', default=None)
 EventT = TypeVar('EventT', bound=AgentStreamEvent)
 ModelT = TypeVar('ModelT', bound=BaseModel)
+_SAVED_SETTINGS = TypeAdapter(dict[str, JsonValue])
 
 SessionEndReason = Literal['exit', 'eof', 'error']
 TurnOutcome = Literal['completed', 'failed', 'cancelled']
@@ -295,10 +296,20 @@ class PluginHost(Generic[DepsT]):
         """Remember new settings for this plugin, as `plugins add` would; they are stored in plaintext.
 
         Never save a secret: keep it in `/keys` and save a `KeyReference` naming it. A host built
-        outside the loader keeps the change for this load only.
+        outside the loader keeps the change for this load only. Raises `ValueError`, saving nothing,
+        when the dump is not a JSON object that validates back into the model, as `host.settings`
+        will need on the next load.
         """
-        self._settings = settings.model_dump(mode='json', by_alias=True)
-        self._persist(self._settings)
+        try:
+            saved = _SAVED_SETTINGS.validate_python(settings.model_dump(mode='json', by_alias=True))
+            type(settings).model_validate(saved)
+        except ValidationError as exc:
+            raise ValueError(
+                f'{type(settings).__name__} cannot be saved as plugin settings: they must dump to a JSON'
+                ' object that validates back into the model.'
+            ) from exc
+        self._settings = saved
+        self._persist(saved)
 
     @property
     def configurer(self) -> Callable[[], Awaitable[str]] | None:

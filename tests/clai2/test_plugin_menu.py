@@ -36,6 +36,7 @@ def activate(host: PluginHost) -> None:
     @host.configure
     async def configure() -> str:
         if host.name == 'grumpy':
+            host.save_settings(Settings(greeting='grr'))
             raise ValueError('grumpy refuses to be configured')
         if settings.greeting != 'hi':
             return f'{host.name} already says {settings.greeting}.'
@@ -206,6 +207,7 @@ async def test_enabling_from_the_menu_opens_the_settings_menu_then_returns(tmp_p
     assert notices == [None, *expected]
     grumpy, tuned = loader.entries()
     assert grumpy.host is not None, 'a failing settings menu leaves the plugin on'
+    assert grumpy.declaration.settings == {'greeting': 'grr'}, 'and loaded with what it saved before failing'
     assert tuned.host is not None and tuned.declaration.settings == {'greeting': 'hello'}
 
 

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import get_args
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, RootModel, ValidationError
 from rich.console import Console
 
 from pydantic_ai import (
@@ -177,3 +177,16 @@ def test_host_outside_the_loader_keeps_saved_settings_for_this_load() -> None:
     assert plugin.configurer is None
     plugin.save_settings(AliasedSettings.model_validate({'api-key-name': 'NEW'}))
     assert plugin.settings(AliasedSettings).api_key_name == 'NEW'
+
+
+class SerializationOnlyAlias(BaseModel):
+    api_key_name: str = Field(serialization_alias='api-key-name')
+
+
+@pytest.mark.parametrize('settings', [RootModel[list[str]](['a']), SerializationOnlyAlias(api_key_name='NEW')])
+def test_settings_that_do_not_read_back_are_not_saved(settings: BaseModel) -> None:
+    saved: list[dict[str, JsonValue]] = []
+    plugin = PluginHost[None](name='test', console=Console(file=io.StringIO()), settings={}, save_settings=saved.append)
+    with pytest.raises(ValueError, match='cannot be saved as plugin settings'):
+        plugin.save_settings(settings)
+    assert saved == []

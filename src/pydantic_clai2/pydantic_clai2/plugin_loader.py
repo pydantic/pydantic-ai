@@ -350,11 +350,13 @@ class PluginLoader(Generic[DepsT]):
         if host.configurer is None:
             raise ValueError(f'Plugin {name} has no settings menu; replace its declaration with /plugins add.')
         before = self._entry(name).declaration.settings
-        message = await host.configurer()
-        if self._entry(name).declaration.settings != before:
-            await self.unload(name)
-            await self.load(name)
-        return message
+        try:
+            return await host.configurer()
+        finally:
+            # Also when the menu fails after saving, so the running plugin matches what is saved.
+            if self._entry(name).declaration.settings != before:
+                await self.unload(name)
+                await self.load(name)
 
     def configurable(self, name: str) -> bool:
         """Whether the plugin is loaded and registered a settings menu with `configure`."""
