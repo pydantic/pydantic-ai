@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '490'
+      - '540'
       content-type:
       - application/json
       host:
@@ -17,42 +17,42 @@ interactions:
     parsed_body:
       model: jev-latest
       questions:
+        Ticket.urgent:
+          instructions:
+            field: urgent
+            premise: 'If the user''s request calls for Ticket: Triage a support ticket.'
+            question: Does this need a reply within the hour?
+          type: noul
         route:
           criteria:
             Ticket: Triage a support ticket.
             escalate: Hand the ticket to a person on the support team.
           instructions: Which of these does this call for?
           type: choice
-        urgent:
-          instructions:
-            field: urgent
-            goal: Triage a support ticket.
-            question: Does this need a reply within the hour?
-          type: noul
       state: I have explained this to your bot four times. I want a person to call me back today.
     uri: https://api.typesafe.ai/v1/systemone
   response:
     headers:
       content-length:
-      - '253'
+      - '259'
       content-type:
       - application/json
     parsed_body:
       answers:
+        Ticket.urgent:
+          noul: 0.71
+          type: noul
         route:
           choice: escalate
-          confidence: 0.99
+          confidence: 1.0
           probabilities:
             Ticket: 0.0
             escalate: 1.0
           type: choice
-        urgent:
-          noul: 0.74
-          type: noul
       model: jev-1.13.0
       usage:
-        input_tokens: 388
-        output_tokens: 51
+        input_tokens: 398
+        output_tokens: 54
     status:
       code: 200
       message: OK

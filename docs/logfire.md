@@ -435,6 +435,47 @@ Agent.instrument_all(instrumentation_settings)
 
 The `gen_ai.tool.definitions` attribute (tool name, description, and parameters) is emitted regardless of this setting, so observability platforms that read the available tools from it are unaffected.
 
+### Decision model spans
+
+A [decision model][pydantic_ai.models.decision.DecisionModel], such as [TypeSafe's Jev](models/typesafe.md), answers typed questions about the conversation instead of generating text. With more than one route on offer, such as a union `output_type` or tools, one request asks which route the text calls for, and asks the fields of every route it can fill beside it. When those questions would cost more than a second request, the route is picked first and its fields are filled in a second request instead. The model request span shows the agent-level request and response, so each request gets a `decide {model}` span of its own underneath it, recording exactly what was asked and answered.
+
+A `decide` span is only emitted inside an instrumented model request, and only for a request that is actually sent: when there is one route left and nothing to fill in, the model takes it without asking, and there is no span. Under [durable execution](durable_execution/overview.md), it sits inside the engine's step, task or activity span for the model request. With Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) to carry the trace into the activity, and the agent's own instrumentation (`Agent.instrument_all()`, or an `Instrumentation` capability on the agent) to say how to record it.
+
+| Attribute | Value |
+|-----------|-------|
+| `gen_ai.operation.name` | `decide` |
+| `gen_ai.provider.name`, `gen_ai.request.model`, `server.address`, ... | The same model attributes as the model request span |
+| `gen_ai.response.model` | The model that answered |
+| `gen_ai.response.id` | The provider's ID for the request, when it returns one |
+| `pydantic_ai.decision.thresholds` | The thresholds applied: `{"boolean": ...}` for `decision_boolean_threshold`, plus `"route"` for `decision_route_threshold` when it's set |
+| `pydantic_ai.decision.usage.input_tokens`, `pydantic_ai.decision.usage.output_tokens` | This request's usage |
+| `pydantic_ai.decision.questions` | The questions as sent: `{name: {"type": ..., "instructions": ..., "criteria": ...}}`, where `type` is `noul` (yes/no), `choice` or `score` |
+| `pydantic_ai.decision.state` | The state as sent: the text being judged, or a JSON object that adds the conversation's `history` |
+| `pydantic_ai.decision.answers` | The answers as received: `{"type": "noul", "noul": ...}` for a yes/no, whose `noul` is the probability of yes, `{"type": "choice", "choice": ..., "confidence": ..., "probabilities": {...}}` for a pick, and `{"type": "score", "score": ..., "confidence": ..., "probabilities": {...}, "legend": {...}}` for a rubric |
+| `pydantic_ai.decision.route` | When the request fills a route picked by an earlier request, or the one route left, that route's label |
+| `pydantic_ai.decision.confidence` | When the request asks field questions and their answers are used, each question's confidence as Pydantic AI derived it after applying `decision_boolean_threshold`, keyed like the questions and answers. Each option of a `list` or mapping gets its own entry under `field.option`, where `provider_details['confidence']` on the response gives the field the least sure of its options. A `float` field that asks for a probability has no entry, since the probability is the answer |
+| `pydantic_ai.decision.route_question` | When the request asks which route to take, the key of that question: `route` |
+| `pydantic_ai.decision.route_options` | When the request asks which route to take, the labels of the routes offered, in order, as a JSON array |
+| `pydantic_ai.decision.route_questions` | When the request asks routes' fields beside the route question, the keys of each route's questions, by the route's label: `{"Refund": ["Refund.reason", "Refund.full_refund"], ...}` |
+
+Questions and answers share their keys, so an answer can be matched to the question it answers. A field's question is keyed by the field's name, a nested model's fields as `outer.inner`, and each option of a `list` or of a mapping from options to `bool` as `field.option`, since the model is asked about each option separately. A field asked beside the route question is keyed under its route's label, as `Refund.reason`. The question that picks between routes is keyed by `pydantic_ai.decision.route_question`, and its options are the labels in `pydantic_ai.decision.route_options`. A label and a nested field's name can both contain dots, so use `pydantic_ai.decision.route_questions` to tell which route a question belongs to, rather than splitting its key.
+
+Every route attribute names a route by its [label](models/decision.md#routes-which-thing-to-do), the name the route question offered it under: an output type's class name such as `Refund`, `None` for the `None` member of a union, or a tool's or output function's name. These are the names `provider_details['route']` uses on the response, whose `choice` and `offered` match the route question's answer and `pydantic_ai.decision.route_options`.
+
+The route the model picks is the route the step takes, unless the step can't take it. A pick less likely than `decision_route_threshold` raises [`UnsureRoute`][pydantic_ai.models.decision.UnsureRoute], and a picked route whose fields the model can't fill raises [`UnfillableRoute`][pydantic_ai.models.decision.UnfillableRoute], both before any request to fill it. Both are [`DecisionHandOff`][pydantic_ai.models.decision.DecisionHandOff]s. Either is recorded on the `decide` span that asked the route question, as an error with an `exception` event that carries the picked route's label as `pydantic_ai.decision.route`. With a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] behind the decision model, the model behind it takes the step, and the model request span ends without an error, so the `decide` span is where the hand-off shows. Without one, the model request span records the same error.
+
+The fields asked beside the route question are asked before it's known which route will be picked. Only the picked route's answers are used: `pydantic_ai.decision.confidence` covers only its questions, and the other routes' answers were discarded. A route picked in one request and filled in the next gets a second `decide` span beside the first, whose `route` is the first span's pick.
+
+With [`include_content=False`](#excluding-prompts-and-completions), strings are left out and numbers are kept:
+
+- `pydantic_ai.decision.state` is left out.
+- `pydantic_ai.decision.questions` keeps only each question's `type`, since the instructions and criteria are your own words.
+- `pydantic_ai.decision.answers` keeps only each answer's `type` and its numbers: a yes/no's `noul`, a pick's `confidence`, and a rubric's `score`, `confidence` and `probabilities`, which are keyed by level number. A pick's `choice` and its `probabilities`, keyed by option, and a rubric's `legend` are left out, since options and level descriptions can quote the text being judged. The answer to the route question keeps its `choice` and `probabilities` too, since its options are route labels, but only under the labels the request offered: anything else the backend answered is left out.
+
+Question keys, route labels, and the option names a question key carries for one option of a `list` or mapping are identifiers from your schema, the names of your fields, output types, tools and options, so they're always recorded, in the keys of `pydantic_ai.decision.questions`, `pydantic_ai.decision.answers` and `pydantic_ai.decision.confidence`, and in the route attributes. That includes the options of a [`Choices`][pydantic_ai.output.Choices] set built at run time, which reach the model in the schema just as a `Literal` does.
+
+Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage.*`, and no metrics are recorded for `decide` spans: the model request span above them already reports the total of its `decide` spans' usage, and a backend that adds up usage across spans would count it twice.
+
 ### Adding Custom Metadata
 
 Use the agent's `metadata` parameter to attach additional data to the agent's span.

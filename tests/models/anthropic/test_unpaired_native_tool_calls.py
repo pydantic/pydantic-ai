@@ -49,7 +49,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
 ]
 
 _SEARCH_ID = 'srvtoolu_01EoSNE7k4dUJyGatASCV5qs'

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette
 
 import httpx2
 import pytest
@@ -188,7 +188,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='anthropic not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.filterwarnings(
         "ignore:The model 'claude-sonnet-4-0' is deprecated and will reach end-of-life.*:DeprecationWarning"
@@ -1665,15 +1664,17 @@ async def test_anthropic_task_budget_rejects_unsupported_model(allow_model_reque
         await agent.run('Hello')
 
 
+@pytest.mark.parametrize('unified', [False, True], ids=['anthropic_thinking', 'unified_thinking'])
 @pytest.mark.parametrize('effort', ['xhigh', 'max'])
 async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
-    allow_model_requests: None, effort: Literal['xhigh', 'max']
+    allow_model_requests: None, effort: Literal['xhigh', 'max'], unified: bool
 ):
     """Claude Opus 5 caps effort at `high` once thinking is explicitly disabled.
 
     Verified live: `claude-opus-5` returns a 400 (`output_config.effort 'xhigh' is not supported
     when thinking is disabled on this model`) for `xhigh` and `max`, while `claude-opus-4-8`
     accepts the same combination. We surface it as a `UserError` before sending the request.
+    Unified `thinking=False` sends the same `{'type': 'disabled'}` on Opus 5, which thinks by default.
     """
     c = completion_message(
         [BetaTextBlock(text='Hello!', type='text')],
@@ -1681,14 +1682,23 @@ async def test_anthropic_opus_5_rejects_top_effort_when_thinking_disabled(
     )
     mock_client = MockAnthropic.create_mock(c)
 
-    settings = AnthropicModelSettings(
-        anthropic_thinking={'type': 'disabled'},
-        anthropic_effort=effort,
+    settings = (
+        AnthropicModelSettings(thinking=False, anthropic_effort=effort)
+        if unified
+        else AnthropicModelSettings(anthropic_thinking={'type': 'disabled'}, anthropic_effort=effort)
     )
     model = AnthropicModel('claude-opus-5', provider=AnthropicProvider(anthropic_client=mock_client), settings=settings)
 
     with pytest.raises(UserError, match='does not support `anthropic_effort='):
         await Agent(model).run('Hello')
+
+    # A caller's `extra_body` thinking is what reaches the wire, so it decides.
+    overridden = AnthropicModel(
+        'claude-opus-5',
+        provider=AnthropicProvider(anthropic_client=mock_client),
+        settings={**settings, 'extra_body': {'thinking': {'type': 'adaptive'}}},
+    )
+    assert (await Agent(overridden).run('Hello')).output == 'Hello!'
 
     # Opus 4.8 has the flag off, so the same settings go through untouched.
     allowed = AnthropicModel(
@@ -4442,6 +4452,20 @@ async def test_anthropic_opus_5_5_thinking_false_omits_thinking(
     assert 'thinking' not in single_request_body(vcr)
 
 
+async def test_anthropic_sonnet_5_5_between_tools(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+    """Claude Sonnet 5.5 turns off up-front thinking with `between_tools`, its replacement for `disabled`.
+
+    `anthropic_thinking` passes the type through unchanged, and the model answers without thinking.
+    """
+    m = AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(m, model_settings=AnthropicModelSettings(anthropic_thinking={'type': 'between_tools'}))
+
+    result = await agent.run('What is 2+2?')
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert not any(isinstance(p, ThinkingPart) for p in response.parts)
+    assert single_request_body(vcr)['thinking'] == snapshot({'type': 'between_tools'})
+
+
 _REFUSAL_CASE_PARAMS = [
     pytest.param(
         'cyber',
@@ -4817,28 +4841,25 @@ async def test_anthropic_explicit_extra_body_overrides_the_sampling_setting(allo
     'provider_specific_thinking',
     [pytest.param(True, id='provider_specific'), pytest.param(False, id='unified')],
 )
-async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
+async def test_anthropic_adaptive_thinking_keeps_tool_output_unforced(
     allow_model_requests: None,
     anthropic_model: AnthropicModelFactory,
     request_capture: RequestCapture,
     provider_specific_thinking: bool,
 ):
-    """Adaptive thinking is compatible with Tool Output, so the request keeps `output_mode='tool'`.
+    """An explicit `ToolOutput` with adaptive thinking offers the output tool without forcing it.
 
-    Tool Output without a text fallback resolves to `tool_choice={'type': 'any'}`, i.e. forced tool
-    use, so this exchange proves both halves of the compatibility claim at once. Only extended
-    thinking conflicts: the same request with `{'type': 'enabled'}` is rejected by the API with
-    `Thinking may not be enabled when tool_choice forces tool use.`, which is why that mode still
-    switches away from Tool Output.
+    Anthropic accepts a forced `tool_choice` alongside adaptive thinking, but answers it without thinking, so
+    the output tool goes out with `tool_choice={'type': 'auto'}` and the model calls it anyway.
 
-    Both ways of asking for thinking are exercised, because they reach the compatibility guards
-    differently: the provider-specific setting carries the type itself, while a unified `thinking`
-    only resolves to `adaptive` via the profile's `anthropic_supports_adaptive_thinking` flag.
+    Both ways of asking for thinking are exercised, because they reach the decision differently: the
+    provider-specific setting carries the type itself, while a unified `thinking` only resolves to `adaptive`
+    via the profile's `anthropic_supports_adaptive_thinking` flag.
 
     The outbound `thinking`/`tool_choice` pair is asserted via an httpx event hook so it runs against
     what the client actually sent, not what the cassette happens to hold.
 
-    Regression test for https://github.com/pydantic/pydantic-ai/issues/7195.
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/8772.
     """
     model_settings: ModelSettings = (
         AnthropicModelSettings(anthropic_thinking={'type': 'adaptive'})
@@ -4856,7 +4877,7 @@ async def test_anthropic_opus_46_adaptive_thinking_accepts_tool_output(
 
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
     assert [(body['thinking'], body['tool_choice']) for body in request_capture.bodies()] == snapshot(
-        [({'type': 'adaptive'}, {'type': 'any'})]
+        [({'type': 'adaptive'}, {'type': 'auto'})]
     )
 
 
@@ -9582,30 +9603,63 @@ Don't include any text or Markdown fencing before or after.
     )
 
 
+@pytest.mark.moves_cache_prefix(reason='two separate runs, with and without an output tool, share one cassette')
 async def test_anthropic_output_tool_with_thinking(
     allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
 ):
+    """Extended thinking rejects a forced `tool_choice`, which Tool Output relies on.
+
+    An explicit `ToolOutput` offers the output tool unforced, and a bare structured `output_type` defaults
+    to Native Output instead (or Prompted Output on models without JSON schema output).
+    """
     m = AnthropicModel(
-        'claude-sonnet-4-0',
+        'claude-sonnet-4-5',
         provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
         settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
     )
 
     agent = Agent(m, output_type=ToolOutput(int))
-
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            'Anthropic does not support extended thinking and output tools at the same time. Use `output_type=PromptedOutput(...)` instead.'
-        ),
-    ):
-        await agent.run('What is 3 + 3?')
-
-    # Will default to prompted output
-    agent = Agent(m, output_type=int)
-
     result = await agent.run('What is 3 + 3?')
-    assert request_capture.body()['system'] == snapshot(
+    assert result.output == snapshot(6)
+    assert request_capture.body()['tool_choice'] == snapshot({'type': 'auto'})
+
+    agent = Agent(m, output_type=int)
+    result = await agent.run('What is 3 + 3?')
+    body = request_capture.bodies()[-1]
+    assert 'tool_choice' not in body
+    assert body.get('output_config') == snapshot(
+        {
+            'format': {
+                'type': 'json_schema',
+                'schema': {
+                    'type': 'object',
+                    'properties': {'response': {'type': 'integer'}},
+                    'additionalProperties': False,
+                    'required': ['response'],
+                },
+            }
+        }
+    )
+    assert result.output == snapshot(6)
+
+
+async def test_anthropic_prompted_output_with_thinking(
+    allow_model_requests: None, anthropic_api_key: str, request_capture: RequestCapture
+):
+    """A model profile without JSON-schema output uses Prompted Output under extended thinking."""
+    model = AnthropicModel(
+        'claude-sonnet-4-6',
+        provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+        profile={'supports_json_schema_output': False},
+        settings=AnthropicModelSettings(anthropic_thinking={'type': 'enabled', 'budget_tokens': 3000}),
+    )
+
+    result = await Agent(model, output_type=int).run('What is 3 + 3?')
+    body = request_capture.body()
+    assert body['thinking'] == {'type': 'enabled', 'budget_tokens': 3000}
+    assert 'tool_choice' not in body
+    assert 'output_config' not in body
+    assert body['system'] == snapshot(
         [
             {
                 'type': 'text',
@@ -9621,6 +9675,9 @@ Don't include any text or Markdown fencing before or after.
         ]
     )
     assert result.output == snapshot(6)
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert any(isinstance(part, ThinkingPart) for part in response.parts)
 
 
 async def test_anthropic_tool_with_thinking(
@@ -12690,15 +12747,13 @@ async def test_anthropic_count_tokens_keeps_memory_tool(allow_model_requests: No
 async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
     allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
 ):
-    """`/v1/messages/count_tokens` accepts the forced `tool_choice` that adaptive thinking now keeps.
+    """`/v1/messages/count_tokens` gets the same unforced `tool_choice` as the request it counts.
 
     `count_tokens` builds its payload from the same `prepare_request` result as the real request, so
-    adaptive thinking + Tool Output reaches this endpoint with `tool_choice={'type': 'any'}` too. The
-    endpoint rejects that pair under extended thinking, which would turn a token pre-check into a hard
-    run failure; the recording pins that it does not reject it under adaptive thinking.
+    adaptive thinking + Tool Output reaches this endpoint with `tool_choice={'type': 'auto'}` too.
 
-    The pair is read off an httpx event hook rather than the cassette, so a regression that stops
-    sending it fails here instead of replaying a recording that still holds the old payload.
+    The pair is read off an httpx event hook rather than the cassette, so a regression that changes it
+    fails here instead of replaying a recording that still holds the old payload.
     """
     m = anthropic_model('claude-opus-4-6', capture=True)
 
@@ -12718,7 +12773,7 @@ async def test_anthropic_count_tokens_with_adaptive_thinking_and_output_tools(
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
     count_tokens_body = request_capture.body('/v1/messages/count_tokens')
     assert (count_tokens_body['thinking'], count_tokens_body['tool_choice']) == snapshot(
-        ({'type': 'adaptive'}, {'type': 'any'})
+        ({'type': 'adaptive'}, {'type': 'auto'})
     )
 
 
@@ -12788,6 +12843,88 @@ async def test_anthropic_cache_real_api(allow_model_requests: None, anthropic_ap
             cost=Decimal('0.0024048'),
         )
     )
+
+
+@pytest.mark.vcr()
+@pytest.mark.parametrize(
+    'stream,expected_usage',
+    [
+        pytest.param(
+            False,
+            snapshot(
+                RequestUsage(
+                    details={
+                        'input_tokens': 3,
+                        'output_tokens': 210,
+                        'cache_creation_input_tokens': 2966,
+                        'cache_read_input_tokens': 0,
+                        'ephemeral_1h_input_tokens': 2412,
+                    },
+                    input_tokens=2969,
+                    cache_write_tokens=2966,
+                    cache_write_1h_tokens=2412,
+                    output_tokens=210,
+                    cost=Decimal('0.0197085'),
+                )
+            ),
+            id='request',
+        ),
+        pytest.param(
+            True,
+            snapshot(
+                RequestUsage(
+                    details={
+                        'input_tokens': 3,
+                        'output_tokens': 160,
+                        'cache_creation_input_tokens': 2965,
+                        'cache_read_input_tokens': 0,
+                        'ephemeral_1h_input_tokens': 2411,
+                    },
+                    input_tokens=2968,
+                    cache_write_tokens=2965,
+                    cache_write_1h_tokens=2411,
+                    output_tokens=160,
+                    cost=Decimal('0.0189525'),
+                )
+            ),
+            id='stream',
+        ),
+    ],
+)
+async def test_anthropic_cache_write_ttl_pricing(
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    stream: bool,
+    expected_usage: RequestUsage,
+):
+    """One-hour cache writes are priced at their own rate, not the five-minute one.
+
+    The instructions are cached for an hour and the rest of the prompt for five minutes, so the response reports
+    both kinds of write. In streaming, only `message_start` carries the split, so it has to survive the merge with
+    the later `message_delta` usage.
+
+    For the non-streamed case, the cost is 3 uncached input tokens at $3/MTok, 554 five-minute cache writes at
+    $3.75/MTok, 2412 one-hour cache writes at $6/MTok, and 210 output tokens at $15/MTok. Pricing all 2966 writes at
+    the five-minute rate would report $0.0143 instead.
+    """
+    m = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
+    agent = Agent(
+        m,
+        # Distinct per case, so that recording one case doesn't read the cache the other wrote.
+        instructions=f'You are a helpful assistant ({"streamed" if stream else "not streamed"}). '
+        + 'Answer questions about Python concisely. ' * 300,
+        model_settings=AnthropicModelSettings(anthropic_cache_instructions='1h', anthropic_cache_messages=True),
+    )
+    prompt = 'Please explain what Python is and its main use cases. ' * 50
+
+    if stream:
+        async with agent.run_stream(prompt) as result:
+            await result.get_output()
+    else:
+        result = await agent.run(prompt)
+
+    response = message(result.all_messages(), ModelResponse, index=-1)
+    assert response.usage == expected_usage
 
 
 @pytest.mark.vcr()
@@ -13947,8 +14084,67 @@ async def test_anthropic_compaction_end_to_end(
     assert result2.output
 
 
+@pytest.mark.parametrize(
+    'ttl,expected_usage',
+    [
+        pytest.param(
+            '5m',
+            snapshot(
+                RunUsage(
+                    input_tokens=55425,
+                    cache_write_tokens=55096,
+                    output_tokens=136,
+                    details={
+                        'input_tokens': 229,
+                        'output_tokens': 5,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'compaction_iterations': 1,
+                        'message_iterations': 1,
+                        'compaction_input_tokens': 100,
+                        'compaction_output_tokens': 131,
+                        'compaction_cache_creation_input_tokens': 55096,
+                    },
+                    requests=1,
+                    cost=Decimal('0.209637'),
+                )
+            ),
+            id='5m',
+        ),
+        pytest.param(
+            '1h',
+            snapshot(
+                RunUsage(
+                    details={
+                        'input_tokens': 205,
+                        'output_tokens': 15,
+                        'cache_creation_input_tokens': 0,
+                        'cache_read_input_tokens': 0,
+                        'message_iterations': 1,
+                        'compaction_iterations': 1,
+                        'compaction_input_tokens': 100,
+                        'compaction_output_tokens': 107,
+                        'compaction_cache_creation_input_tokens': 55096,
+                        'compaction_ephemeral_1h_input_tokens': 55096,
+                    },
+                    requests=1,
+                    cache_write_tokens=55096,
+                    output_tokens=122,
+                    cache_write_1h_tokens=55096,
+                    input_tokens=55401,
+                    cost=Decimal('0.333321'),
+                )
+            ),
+            id='1h',
+        ),
+    ],
+)
 async def test_anthropic_compaction_usage_with_cache(
-    allow_model_requests: None, anthropic_model: AnthropicModelFactory, request_capture: RequestCapture
+    allow_model_requests: None,
+    anthropic_model: AnthropicModelFactory,
+    request_capture: RequestCapture,
+    ttl: Literal['5m', '1h'],
+    expected_usage: RunUsage,
 ):
     """Verify usage aggregation when compaction + prompt caching interact in a real response.
 
@@ -13956,7 +14152,8 @@ async def test_anthropic_compaction_usage_with_cache(
     compaction iteration usage — they're silent on cache tokens. This cassette pins the real
     shape: top-level `cache_creation_input_tokens` is `0` even though the compaction iteration
     wrote ~55k tokens to cache, so `_map_usage` must sum the compaction cache back in to avoid
-    understating the real cost.
+    understating the real cost. The compaction iteration writes with the request's TTL, so with a
+    one-hour TTL its writes are also one-hour writes, priced at the one-hour rate.
 
     Where the cache breakpoints sit is asserted off the wire rather than the cassette, because a
     breakpoint that moves still replays against a recording that pins the old position.
@@ -13967,31 +14164,12 @@ async def test_anthropic_compaction_usage_with_cache(
         model=model,
         instructions='You are a helpful assistant. Be very brief.',
         capabilities=[AnthropicCompaction(token_threshold=50_000)],
-        model_settings=AnthropicModelSettings(anthropic_cache=True),
+        model_settings=AnthropicModelSettings(anthropic_cache=ttl),
     )
 
     result = await agent.run(f'Remember this context: {padding}\n\nNow say hello.')
-    assert cache_breakpoints(request_capture.body()) == snapshot(({'type': 'ephemeral', 'ttl': '5m'}, []))
-    assert result.usage == snapshot(
-        RunUsage(
-            input_tokens=55425,
-            cache_write_tokens=55096,
-            output_tokens=136,
-            details={
-                'input_tokens': 229,
-                'output_tokens': 5,
-                'cache_creation_input_tokens': 0,
-                'cache_read_input_tokens': 0,
-                'compaction_iterations': 1,
-                'message_iterations': 1,
-                'compaction_input_tokens': 100,
-                'compaction_output_tokens': 131,
-                'compaction_cache_creation_input_tokens': 55096,
-            },
-            requests=1,
-            cost=Decimal('0.209637'),
-        )
-    )
+    assert cache_breakpoints(request_capture.body()) == ({'type': 'ephemeral', 'ttl': ttl}, [])
+    assert result.usage == expected_usage
 
 
 async def test_anthropic_compaction_usage_with_cache_streaming(
