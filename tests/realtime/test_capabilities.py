@@ -239,6 +239,7 @@ async def test_deferred_capability_with_tools_raises_before_connect(contribution
     A session's tools are fixed when the connection opens, so a mid-session load could never make
     them available — silently loading less than promised is worse than the up-front error.
     """
+    cleanup: list[str] = []
     toolset = FunctionToolset[None]()
 
     @toolset.tool_plain
@@ -248,6 +249,14 @@ async def test_deferred_capability_with_tools_raises_before_connect(contribution
     class DeferredCap(AbstractCapability[None]):
         id = 'deferred'
         defer_loading = True
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            cleanup.append('setup')
+            return self
+
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[None]:
+            cleanup.append('cleanup')
+            raise error
 
         def get_toolset(self) -> FunctionToolset[None] | None:
             return toolset if contribution == 'tools' else None
@@ -265,6 +274,7 @@ async def test_deferred_capability_with_tools_raises_before_connect(contribution
         await _drain(agent, model, capabilities=[DeferredCap()])
 
     assert model.tools is None
+    assert cleanup == ['setup', 'cleanup']
 
 
 async def test_deferred_instruction_capability_loads_through_the_tool() -> None:

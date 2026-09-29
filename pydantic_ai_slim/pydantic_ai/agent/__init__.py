@@ -3743,19 +3743,24 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # so a deferred capability whose loading would have to reveal tools can't be honored, and
         # fails up front rather than silently loading less than it promised. The direct hook calls
         # probe the same contributions extraction reads; their results are discarded.
-        undeliverable_capability_ids = [
-            capability_id
-            for capability_id, capability in run_context.capabilities.items()
-            if capability.defer_loading is True
-            and (capability.get_toolset() is not None or (capability.get_native_tools() or ()))
-        ]
-        if undeliverable_capability_ids:
-            formatted_ids = ', '.join(repr(capability_id) for capability_id in undeliverable_capability_ids)
-            raise exceptions.UserError(
-                'Realtime sessions cannot reveal tools mid-session, so deferred capabilities that '
-                'contribute tools or native tools are not supported; remove `defer_loading=True` '
-                f'from: {formatted_ids}.'
-            )
+        try:
+            undeliverable_capability_ids = [
+                capability_id
+                for capability_id, capability in run_context.capabilities.items()
+                if capability.defer_loading is True
+                and (capability.get_toolset() is not None or (capability.get_native_tools() or ()))
+            ]
+            if undeliverable_capability_ids:
+                formatted_ids = ', '.join(repr(capability_id) for capability_id in undeliverable_capability_ids)
+                raise exceptions.UserError(
+                    'Realtime sessions cannot reveal tools mid-session, so deferred capabilities that '
+                    'contribute tools or native tools are not supported; remove `defer_loading=True` '
+                    f'from: {formatted_ids}.'
+                )
+        except BaseException as error:
+            if run_lifecycle:
+                await _run_setup_error_hook(resolved_caps.resolved_layers, run_context, error)
+            raise
         # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
         # `for_run` below, exactly as the graph run relies on. The root of that chain has to be published
         # too, or the context contradicts itself: `capabilities` populated while `root_capability` is

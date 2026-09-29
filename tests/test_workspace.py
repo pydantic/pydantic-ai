@@ -1176,6 +1176,31 @@ async def test_setup_failure_uses_replacement_returned_by_combined_for_run() -> 
     assert cleanup_order == ['resolved']
 
 
+async def test_setup_failure_cleans_resolved_child_when_wrapper_for_run_fails() -> None:
+    cleaned: list[str] = []
+
+    class Child(AbstractCapability[object]):
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            return Child('resolved')
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            cleaned.append(self.label)
+            raise error
+
+    class FailingWrapper(WrapperCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            await super().for_run(ctx)
+            raise RuntimeError('wrapper setup failed')
+
+    with pytest.raises(RuntimeError, match='wrapper setup failed'):
+        await Agent(TestModel(), capabilities=[FailingWrapper(Child('original'))]).run('go')
+
+    assert cleaned == ['resolved']
+
+
 async def test_setup_error_hook_nested_agent_run_keeps_normal_recovery() -> None:
     nested_results: list[str] = []
 
