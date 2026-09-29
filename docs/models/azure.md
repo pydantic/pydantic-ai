@@ -14,9 +14,6 @@ Pydantic AI supports Azure OpenAI and other model deployments in Microsoft Found
 
 Use your Azure deployment name as the model name. The examples below assume a deployment named `gpt-5.2`.
 
-!!! tip "Voice agents"
-    For live speech-to-speech conversations with Azure OpenAI realtime models or Azure AI Voice Live, see [Azure realtime](../realtime/azure.md).
-
 ## Install
 
 Install Pydantic AI with the OpenAI SDK used by this integration:
@@ -35,6 +32,9 @@ from pydantic_ai import Agent
 agent = Agent('azure:gpt-5.2')
 ...
 ```
+
+!!! tip
+    For voice agents, use an Azure OpenAI realtime deployment or Azure AI Voice Live with a [realtime session](../realtime/azure.md) instead.
 
 Or initialise the model and provider directly:
 

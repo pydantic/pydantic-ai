@@ -10,40 +10,47 @@ Pydantic AI supports model developers, cloud platforms, inference services, gate
 
 Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to select a provider by its prefix. Some routes require an explicit model or client instead; each setup guide shows the available options.
 
+### Model developers and cloud platforms
+
+| Provider and setup | Service | Model selection |
+| --- | --- | --- |
+| [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:` |
+| [Anthropic](anthropic.md) | Model developer | `anthropic:` |
+| [Google / Gemini API](google.md) | Model developer | `google:` |
+| [xAI](xai.md) | Model developer | `xai:` |
+| [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |
+| [Google Cloud / Vertex AI](google-cloud.md) | Cloud platform | `google-cloud:`; Anthropic client |
+| [Microsoft Azure / Foundry](azure.md) | Cloud platform | `azure:`, `azure-responses:`; Anthropic client |
+| [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
+
+### More providers
+
 | Provider and setup | Service | Model selection |
 | --- | --- | --- |
 | [Alibaba Cloud / Qwen (DashScope)](compatible-apis.md#alibaba-cloud-model-studio-dashscope) | Cloud platform; model developer | `alibaba:` |
-| [Anthropic](anthropic.md) | Model developer | `anthropic:` |
-| [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |
 | [Cerebras](cerebras.md) | Inference platform | `cerebras:` |
 | [Cohere](cohere.md) | Model developer | `cohere:` |
 | [Crusoe](crusoe.md) | Inference platform | `crusoe:` |
 | [DeepSeek](deepseek.md) | Model developer | `deepseek:`; explicit Responses model |
 | [Fireworks AI](compatible-apis.md#fireworks-ai) | Inference platform | `fireworks:` |
 | [GitHub Copilot](github-copilot.md) | Subscription access | `github-copilot:` |
-| [Google / Gemini API](google.md) | Model developer | `google:` |
-| [Google Cloud / Vertex AI](google-cloud.md) | Cloud platform | `google-cloud:`; Anthropic client |
 | [Groq](groq.md) | Inference platform | `groq:` |
 | [Heroku AI](compatible-apis.md#heroku-ai) | Cloud platform | `heroku:` |
 | [Hugging Face](huggingface.md) | Inference platform | `huggingface:` |
 | [LiteLLM](compatible-apis.md#litellm) | Self-hosted gateway | `litellm:` |
-| [Microsoft Azure / Foundry](azure.md) | Cloud platform | `azure:`, `azure-responses:`; Anthropic client |
 | [Mistral](mistral.md) | Model developer | `mistral:` |
 | [Moonshot AI / Kimi](moonshotai.md) | Model developer | `moonshotai:` |
 | [Nebius AI Studio](compatible-apis.md#nebius-ai-studio) | Inference platform | `nebius:` |
 | [Ollama](ollama.md) | Local inference; cloud inference | `ollama:` |
-| [OpenAI](openai.md) | Model developer | `openai:`, `openai-chat:`, `openai-responses:` |
 | [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
 | [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
-| [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
 | [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
 | [Together AI](compatible-apis.md#together-ai) | Inference platform | `together:` |
 | [TypeSafe (Jev)](typesafe.md) | [Decision model](decision.md) | `typesafe:` |
 | [Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway) | Gateway | `vercel:` |
 | [vLLM](compatible-apis.md#vllm) | Self-hosted inference | `vllm:` |
-| [xAI](xai.md) | Model developer | `xai:` |
 | [Z.AI](zai.md) | Model developer | `zai:` |
 
 The service descriptions help you find a deployment option; a company may offer more than one kind of service. Feature support depends on the model and API you select, even when two services use the same API format.

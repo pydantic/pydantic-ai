@@ -4,9 +4,6 @@ description: "Use xAI Grok models with Pydantic AI: configure the provider and u
 
 # xAI
 
-!!! tip "Voice agents"
-    For live speech-to-speech conversations with Grok Voice, see [xAI realtime](../realtime/xai.md).
-
 ## Install
 
 To use [`XaiModel`][pydantic_ai.models.xai.XaiModel], you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `xai` optional group:
@@ -37,6 +34,9 @@ from pydantic_ai import Agent
 agent = Agent('xai:grok-4.3')
 ...
 ```
+
+!!! tip
+    For voice agents, use Grok Voice with a [realtime session](../realtime/xai.md) instead.
 
 Or initialise the model directly:
 

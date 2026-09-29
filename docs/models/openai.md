@@ -4,9 +4,6 @@ description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat C
 
 # OpenAI
 
-!!! tip "Voice agents"
-    For live speech-to-speech conversations with GPT-Live and `gpt-realtime` models, see [OpenAI realtime](../realtime/openai.md).
-
 ## Install
 
 To use OpenAI models or OpenAI-compatible APIs, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `openai` optional group:
@@ -38,6 +35,9 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-6-sol')
 ...
 ```
+
+!!! tip
+    For voice agents, use a GPT-Live or `gpt-realtime` model with a [realtime session](../realtime/openai.md) instead.
 
 To pin to the legacy [Chat Completions API](https://platform.openai.com/docs/api-reference/chat) instead, use the `'openai-chat:'` prefix, which resolves to [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel].
 For `gpt-6-sol` and `gpt-6-luna`, Chat Completions supports function calling only when `openai_reasoning_effort='none'`. Use the Responses API when you need reasoning and tools together.
@@ -507,29 +507,6 @@ agent = Agent(model)
 
 Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
 
-For other services using the same API format, see [OpenAI-compatible models](#openai-compatible-models).
-
 ## OpenAI-compatible Models
 
-Many other services serve OpenAI-compatible APIs and have their own provider in Pydantic AI: find yours in the [provider directory](overview.md#provider-directory). To connect to an endpoint without one, see [Other endpoints](compatible-apis.md#other-endpoints). Setup and configuration for these services:
-
-- <span id="model-profile"></span>[Model profile](compatible-apis.md#model-profile)
-- <span id="custom-openai-compatible-provider"></span>[Gateways that serve several model families](compatible-apis.md#custom-openai-compatible-provider)
-- <span id="detect-incomplete-streamed-responses"></span>[Detect incomplete streamed responses](compatible-apis.md#detect-incomplete-streamed-responses)
-- <span id="models-that-accept-only-one-leading-system-message"></span>[Models that accept only one leading system message](compatible-apis.md#models-that-accept-only-one-leading-system-message)
-- <span id="deepseek"></span>[DeepSeek](deepseek.md)
-- <span id="alibaba-cloud-model-studio-dashscope"></span>[Alibaba Cloud Model Studio (DashScope)](compatible-apis.md#alibaba-cloud-model-studio-dashscope)
-- <span id="ollama"></span>[Ollama](ollama.md)
-- <span id="azure-ai-foundry"></span>[Microsoft Azure / Foundry](azure.md)
-- <span id="connecting-to-an-existing-api-version-based-deployment"></span>[Connecting to an existing `api-version`-based deployment](azure.md#connecting-to-an-existing-api-version-based-deployment)
-- <span id="using-azure-with-the-responses-api"></span>[Using Azure with the Responses API](azure.md#using-azure-with-the-responses-api)
-- <span id="vercel-ai-gateway"></span>[Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway)
-- <span id="moonshotai"></span>[MoonshotAI](moonshotai.md)
-- <span id="fireworks-ai"></span>[Fireworks AI](compatible-apis.md#fireworks-ai)
-- <span id="together-ai"></span>[Together AI](compatible-apis.md#together-ai)
-- <span id="heroku-ai"></span>[Heroku AI](compatible-apis.md#heroku-ai)
-- <span id="litellm"></span>[LiteLLM](compatible-apis.md#litellm)
-- <span id="vllm"></span>[vLLM](compatible-apis.md#vllm)
-- <span id="nebius-ai-studio"></span>[Nebius AI Studio](compatible-apis.md#nebius-ai-studio)
-- <span id="ovhcloud-ai-endpoints"></span>[OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints)
-- <span id="sambanova"></span>[SambaNova](compatible-apis.md#sambanova)
+Many other services serve OpenAI-compatible APIs. See [Other compatible APIs](compatible-apis.md) for the ones Pydantic AI has a provider for, and for connecting to any other OpenAI-compatible endpoint.

@@ -14,9 +14,6 @@ Use Gemini and other supported Model Garden models through [`GoogleModel`][pydan
 
 For Gemini through Google AI Studio instead, see [Google's Gemini API](google.md#api-key-gemini-api).
 
-!!! tip "Voice agents"
-    For live speech-to-speech conversations with Gemini Live on Vertex AI, see [Gemini realtime](../realtime/gemini.md).
-
 ## Install
 
 For Gemini and Model Garden models using `GoogleModel`, install the `google` optional group:
@@ -48,6 +45,9 @@ from pydantic_ai import Agent
 agent = Agent('google-cloud:gemini-3.7-flash')
 ...
 ```
+
+!!! tip
+    For voice agents, use a Gemini Live model on Vertex AI with a [realtime session](../realtime/gemini.md) instead.
 
 Or you can explicitly create the provider and model:
 

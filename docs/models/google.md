@@ -12,9 +12,6 @@ Two providers wrap those endpoints:
 - [`GoogleProvider`][pydantic_ai.providers.google.GoogleProvider] — the Gemini API (Google AI Studio), surfaced under the `'google:'` prefix.
 - [`GoogleCloudProvider`][pydantic_ai.providers.google_cloud.GoogleCloudProvider] — [Google Cloud](google-cloud.md) (formerly known as Vertex AI), surfaced under the `'google-cloud:'` prefix.
 
-!!! tip "Voice agents"
-    For live speech-to-speech conversations with Gemini Live, see [Gemini realtime](../realtime/gemini.md).
-
 ## Install
 
 To use `GoogleModel`, you need to either install `pydantic-ai`, or install `pydantic-ai-slim` with the `google` optional group:
@@ -46,6 +43,9 @@ from pydantic_ai import Agent
 agent = Agent('google:gemini-3.7-flash')
 ...
 ```
+
+!!! tip
+    For voice agents, use a Gemini Live model with a [realtime session](../realtime/gemini.md) instead.
 
 Or you can explicitly create the provider:
 
