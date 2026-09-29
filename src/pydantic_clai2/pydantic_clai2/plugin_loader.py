@@ -40,6 +40,15 @@ from .status import Status, StatusSegment
 
 _FOLDER_PACKAGE = 'pydantic_clai2_plugins'
 
+_RETIRED_BUILTINS: dict[str, PluginSettings] = {
+    'google_workspace': PluginSettings(
+        id='google_workspace', factory='pydantic_ai_harness.google_workspace:GoogleWorkspace', enabled=False
+    ),
+    'ordinal': PluginSettings(id='ordinal', factory='pydantic_ai_harness.ordinal:Ordinal', enabled=False),
+    'slack': PluginSettings(id='slack', factory='pydantic_ai_harness.slack:Slack', enabled=False),
+}
+"""Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
+
 
 class PluginError(Exception):
     """A plugin failed while loading or while handling an event."""
@@ -138,7 +147,7 @@ class PluginLoader(Generic[DepsT]):
         if not self.enabled:
             return []
         folder = self._discover()
-        declared = {declaration.id: declaration for declaration in self._store.plugins()}
+        declared = {declaration.id: self._upgrade(declaration) for declaration in self._store.plugins()}
         for name in folder.keys() - declared.keys():
             declared[name] = PluginSettings(id=name, factory=name, path=str(folder[name]))
         for shipped in (self._project, self._builtin):
@@ -161,6 +170,21 @@ class PluginLoader(Generic[DepsT]):
                 refreshed[name] = previous
         self._entries = refreshed
         return list(refreshed.values())
+
+    def _upgrade(self, saved: PluginSettings) -> PluginSettings:
+        """Point a stored copy of a built-in that CLAI has since replaced at the replacement.
+
+        Enabling a built-in saves its whole declaration, so without this an upgrade would keep
+        loading the old factory. Declarations with their own settings are left as the user wrote them.
+        """
+        current = self._builtin.get(saved.id)
+        if current is None or not _same_plugin(saved, _RETIRED_BUILTINS.get(saved.id)):
+            return saved
+        return current.model_copy(update={'enabled': saved.enabled})
+
+    def _saved(self, entry: PluginEntry[DepsT]) -> PluginSettings:
+        """The stored declaration as it is now, without refreshing `entries()` mid-load."""
+        return next((saved for saved in self._store.plugins() if saved.id == entry.name), entry.declaration)
 
     def _registration_order(self) -> list[PluginEntry[DepsT]]:
         """Shipped plugins first, in declaration order, then everything else by name.
@@ -244,8 +268,9 @@ class PluginLoader(Generic[DepsT]):
             full_screen=self._full_screen,
             conversation=self._conversation,
             status=self._status,
+            # The declaration saved now, not at load: another CLAI process may have replaced it since.
             save_settings=lambda settings: self._store.save_plugin(
-                entry.declaration.model_copy(update={'settings': settings, 'enabled': True})
+                self._saved(entry).model_copy(update={'settings': settings, 'enabled': True})
             ),
         )
         try:

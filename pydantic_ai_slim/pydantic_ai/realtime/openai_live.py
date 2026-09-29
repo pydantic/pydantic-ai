@@ -70,7 +70,9 @@ from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
 from ..models.openai import (
     _map_api_errors as map_openai_api_errors,  # pyright: ignore[reportPrivateUsage]
     _map_usage as map_openai_usage,  # pyright: ignore[reportPrivateUsage]
+    _resolve_openai_thinking_effort,  # pyright: ignore[reportPrivateUsage]
 )
+from ..profiles.openai import OpenAIModelProfile, openai_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.gateway import normalize_gateway_provider
 from ..tools import ToolDefinition
@@ -134,6 +136,7 @@ try:
         ResponseOutputItemDoneEvent,
         ResponseStreamEvent,
     )
+    from openai.types.shared import ReasoningEffort
     from websockets.asyncio.client import ClientConnection
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
@@ -257,9 +260,16 @@ class OpenAILiveResponsesDelegation(TypedDict, total=False):
     max_output_tokens: int
     """Maximum output tokens per delegated response."""
     parallel_tool_calls: bool
-    """Whether the backend may request several tool calls in one response."""
+    """Whether the backend may request several tool calls in one response.
+
+    Defaults to the shared [`parallel_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.parallel_tool_calls]
+    setting, since the backend is what calls the tools."""
     reasoning_effort: Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
-    """Reasoning effort for the backend model."""
+    """Reasoning effort for the backend model.
+
+    Takes precedence over the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking]
+    setting, which otherwise sets the backend's effort the way it would on a direct Responses request to
+    that model."""
     verbosity: Literal['low', 'medium', 'high']
     """How much detail the backend generates. Does not affect the Live model's spoken delivery."""
     service_tier: Literal['auto', 'default', 'flex', 'priority']
@@ -386,8 +396,8 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
     """Map prior history to Live's startup `input` list.
 
     Live seeds from text only: user and assistant messages with one text part each. Tool
-    rounds are rendered as readable text — as Gemini Live does for the same reason — because the
-    protocol has no place to put function parts in seeded history. Audio, images, and other media
+    rounds are rendered as readable text because the protocol has no place to put function parts in
+    seeded history. Audio, images, and other media
     cannot be seeded at all, and the profile says so, which is what makes the session reject them
     before we get here.
     """
@@ -1124,6 +1134,30 @@ def _is_voiced(pcm: bytes) -> bool:
     return any(abs(sample) > _VOICE_FLOOR for sample in samples)
 
 
+def _backend_reasoning_effort(
+    delegation_settings: OpenAILiveResponsesDelegation, settings: OpenAILiveModelSettings, backend_model: str
+) -> ReasoningEffort:
+    """The backend's reasoning effort: the delegation's own, else the shared `thinking` setting.
+
+    The backend is the model that reasons, so `thinking` is resolved against *its* profile, exactly as a
+    direct Responses request to it would be: a backend that doesn't reason ignores it, `thinking=False`
+    leaves a backend that always reasons at its default, and `'minimal'` becomes `'low'` where the
+    backend has no minimal effort.
+    """
+    if (effort := delegation_settings.get('reasoning_effort')) is not None:
+        return effort
+    if (thinking := settings.get('thinking')) is None:
+        return None
+    # `openai_model_profile` builds an `OpenAIModelProfile`; its declared return type is the base one.
+    profile = cast(OpenAIModelProfile, openai_model_profile(backend_model))
+    thinking_always_enabled = profile.get('thinking_always_enabled', False)
+    if not (profile.get('supports_thinking', False) or thinking_always_enabled):
+        return None
+    if thinking is False and thinking_always_enabled:
+        return None
+    return _resolve_openai_thinking_effort(thinking, profile)
+
+
 def _resolve_openai_model(model_id: str) -> Model | None:
     """Resolve an agent's model name as its run would, when it names an OpenAI model at all.
 
@@ -1268,12 +1302,15 @@ class OpenAILiveModel(RealtimeModel):
             responses['tool_choice'] = tool_choice_config(tool_choice)
         for setting, key in (
             ('max_output_tokens', 'max_output_tokens'),
-            ('parallel_tool_calls', 'parallel_tool_calls'),
             ('service_tier', 'service_tier'),
         ):
             if (value := delegation_settings.get(setting)) is not None:
                 responses[key] = value
-        if (effort := delegation_settings.get('reasoning_effort')) is not None:
+        # The backend is what calls the tools, so the shared setting applies to it.
+        parallel_tool_calls = delegation_settings.get('parallel_tool_calls', settings.get('parallel_tool_calls'))
+        if parallel_tool_calls is not None:
+            responses['parallel_tool_calls'] = parallel_tool_calls
+        if (effort := _backend_reasoning_effort(delegation_settings, settings, responses['model'])) is not None:
             responses['reasoning'] = {'effort': effort}
         if (verbosity := delegation_settings.get('verbosity')) is not None:
             responses['text'] = {'verbosity': verbosity}
