@@ -287,9 +287,13 @@ Distinct from `ClampOversizedMessages`, which clamps model responses, not tool r
 ## WarnOnCacheBusts
 
 Emits a `CacheBustWarning` (a `UserWarning`) once when a request reads back less than
-`collapse_ratio` of the cached prefix the conversation established, per provider and model. It
-adds no tools or instructions. Options: `collapse_ratio=0.5` (must be in (0, 1]),
-`min_prefix_tokens=1024`, `cache_ttl_seconds=300.0`.
+`collapse_ratio` of the cached prefix the conversation established, per provider, endpoint, and
+model, unless the provider's cache retention window explains it. It shares core instrumentation's
+detector: `warning.reason` is `'unexpected'` (inside the retention window) or `'unknown'` (no
+published window); `ttl-expired` and `unreported` collapses don't warn. It adds no tools or
+instructions. Options: `collapse_ratio=0.5` (must be in (0, 1]), `min_prefix_tokens=1024`.
+`cache_ttl_seconds` is deprecated and ignored: retention comes from the model's settings, its
+profile's `default_cache_retention`, and `CachePoint` TTLs.
 
 ```python
 import warnings
@@ -305,7 +309,8 @@ warnings.filterwarnings('error', category=CacheBustWarning)  # fail CI on busts
 
 Gotchas: reuse one instance across runs (marks are per `conversation_id`, held in process memory);
 it only fires when the provider reports cache tokens; route to Logfire with
-`logging.captureWarnings(True)`. It cannot tell a moved prefix from an expired cache.
+`logging.captureWarnings(True)`. On a provider with no published retention window (`unknown`)
+it can't tell a moved prefix from an expired cache.
 
 ## Media externalization (not a capability)
 

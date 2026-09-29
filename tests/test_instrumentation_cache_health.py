@@ -8,11 +8,8 @@ import pytest
 from pytest_mock import MockerFixture
 
 from pydantic_ai import Agent, CachePoint, ModelMessage, ModelMessagesTypeAdapter, ModelResponse, TextPart, ToolCallPart
-from pydantic_ai.capabilities.instrumentation import (
-    Instrumentation,
-    _CacheMark,  # pyright: ignore[reportPrivateUsage]
-    _ConversationCacheMarkStore,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai._cache_health import CacheMark, ConversationCacheMarkStore
+from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -225,6 +222,57 @@ def test_sub_threshold_collapse_and_rebaseline() -> None:
     assert cache_attributes(spans[3])['pydantic_ai.cache.collapsed'] is True
     assert 'pydantic_ai.cache.collapsed' not in cache_attributes(spans[4])
     assert len([event for span in spans for event in span.events if event.name == 'pydantic_ai.cache.collapse']) == 1
+
+
+def test_sustained_collapse_emits_the_event_once() -> None:
+    """A prefix that moves on every request collapses on every request, and each span records the
+    waste, but the event fires once per collapse: a healthy read-back re-arms it."""
+    spans, _ = cache_spans(
+        [
+            CacheUsage(write=1400),
+            CacheUsage(write=1400),
+            CacheUsage(write=1400),
+            CacheUsage(read=1400),
+            CacheUsage(write=1400),
+        ],
+        retention=timedelta(hours=1),
+    )
+
+    assert [cache_attributes(span).get('pydantic_ai.cache.collapse_reason') for span in spans] == [
+        None,
+        'unexpected',
+        'unexpected',
+        None,
+        'unexpected',
+    ]
+    assert [[event.name for event in span.events] for span in spans] == [
+        [],
+        ['pydantic_ai.cache.collapse'],
+        [],
+        [],
+        ['pydantic_ai.cache.collapse'],
+    ]
+
+
+def test_collapse_without_an_event_does_not_latch(mocker: MockerFixture) -> None:
+    """Only a collapse that emitted the event holds back the next one: an unexpected collapse right after
+    a `ttl-expired` one (the prefix kept moving once the cache was re-written) still emits it."""
+    t0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    mocker.patch(
+        'pydantic_ai._utils.now_utc',
+        side_effect=[t0, t0 + timedelta(hours=2), t0 + timedelta(hours=2, minutes=1)],
+    )
+    spans, _ = cache_spans(
+        [CacheUsage(write=1400), CacheUsage(write=1400), CacheUsage(write=1400)],
+        retention=timedelta(hours=1),
+    )
+
+    assert [cache_attributes(span).get('pydantic_ai.cache.collapse_reason') for span in spans] == [
+        None,
+        'ttl-expired',
+        'unexpected',
+    ]
+    assert [[event.name for event in span.events] for span in spans] == [[], [], ['pydantic_ai.cache.collapse']]
 
 
 def test_no_cache_attributes_and_run_aggregate() -> None:
@@ -535,7 +583,7 @@ def test_idle_conversations_are_forgotten(mocker: MockerFixture) -> None:
 
 
 def test_least_recently_updated_conversations_are_forgotten(mocker: MockerFixture) -> None:
-    mocker.patch.object(_ConversationCacheMarkStore, 'max_conversations', 1)
+    mocker.patch.object(ConversationCacheMarkStore, 'max_conversations', 1)
     model = ConversationModel()
     agent, exporter = conversation_agent(model)
 
@@ -551,7 +599,7 @@ def test_least_recently_updated_conversations_are_forgotten(mocker: MockerFixtur
 
 def test_recently_updated_conversation_outlives_older_ones(mocker: MockerFixture) -> None:
     """Forgetting goes by the last update, not by when a conversation was first seen."""
-    mocker.patch.object(_ConversationCacheMarkStore, 'max_conversations', 2)
+    mocker.patch.object(ConversationCacheMarkStore, 'max_conversations', 2)
     model = ConversationModel()
     agent, exporter = conversation_agent(model)
 
@@ -572,7 +620,7 @@ def test_recently_updated_conversation_outlives_older_ones(mocker: MockerFixture
 def test_marks_forgotten_mid_run_are_kept_by_the_run(mocker: MockerFixture) -> None:
     """A run keeps judging against its conversation's marks even if the store forgot them meanwhile,
     and puts them back, so the next run of the conversation still sees them."""
-    mocker.patch.object(_ConversationCacheMarkStore, 'max_conversations', 1)
+    mocker.patch.object(ConversationCacheMarkStore, 'max_conversations', 1)
     model = ConversationModel()
     agent, exporter = conversation_agent(model)
     other_model = ConversationModel()
@@ -609,9 +657,11 @@ def test_marks_forgotten_mid_run_are_kept_by_the_run(mocker: MockerFixture) -> N
 
 def test_marks_without_a_conversation_are_not_stored() -> None:
     """A run without a conversation id has nothing to share its marks with, so they stay private to it."""
-    store = _ConversationCacheMarkStore()
+    store = ConversationCacheMarkStore()
     marks = store.get(None)
-    marks[('test', None, 'cache-model')] = _CacheMark(established_tokens=1400, last_seen=datetime.now(timezone.utc))
+    marks[('test', None, 'cache-model')] = CacheMark(
+        established_tokens=1400, last_seen=datetime.now(timezone.utc), run_id=None
+    )
     store.update(None, marks, datetime.now(timezone.utc))
 
     assert store.get(None) == {}
