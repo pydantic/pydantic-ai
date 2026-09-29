@@ -647,11 +647,9 @@ def _effective_thinking(
 
 
 _DEFAULT_MAX_TOKENS = 16384
-"""The `max_tokens` sent when the request doesn't set one.
+"""The `max_tokens` sent when the request doesn't set one and the model's maximum output is unknown.
 
-Anthropic requires `max_tokens`. This stays under the SDK's limit for non-streaming requests (about 21,000 tokens,
-8,192 for some Claude Opus 4 and 4.1 model ids), and fits the maximum output of every Claude model that gets it
-(Claude Sonnet 4.5 and later); older models get `_LEGACY_DEFAULT_MAX_TOKENS`.
+This matches Anthropic's guidance for non-streaming requests.
 """
 
 _LEGACY_DEFAULT_MAX_TOKENS = 4096
@@ -664,16 +662,16 @@ _MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
     """The `max_tokens` to send when the request doesn't set one.
 
-    Models that reject input plus `max_tokens` beyond the context window keep a lower default, so conversations close
-    to the window still fit. Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a
-    request whose `max_tokens` isn't greater than the budget, so a large budget raises the default to leave room for
-    the answer.
+    That's the model's maximum output, so responses are only cut off at the model's limit. Above about 21,000 tokens
+    the SDK refuses a non-streaming request, and `AnthropicModel.request` streams it instead. Models that reject input
+    plus `max_tokens` beyond the context window keep a lower default, so conversations close to the window still fit.
+    Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a request whose `max_tokens`
+    isn't greater than the budget, so a large budget raises a lower default to leave room for the answer.
     """
-    default = (
-        _LEGACY_DEFAULT_MAX_TOKENS
-        if profile.get('anthropic_rejects_max_tokens_beyond_context_window', False)
-        else _DEFAULT_MAX_TOKENS
-    )
+    if profile.get('anthropic_rejects_max_tokens_beyond_context_window', False):
+        default = _LEGACY_DEFAULT_MAX_TOKENS
+    else:
+        default = profile.get('anthropic_max_output_tokens') or _DEFAULT_MAX_TOKENS
     wire_thinking: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
     budget = wire_thinking.get('budget_tokens') if wire_thinking.get('type') == 'enabled' else None
     return max(default, (budget if isinstance(budget, int) else 0) + _MIN_TOKENS_AFTER_THINKING_BUDGET)
