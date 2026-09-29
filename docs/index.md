@@ -223,7 +223,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     **Build this →** [Image Generation](image-generation.md)
 
 !!! tip "See your first run in Logfire"
-    Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire), which has a [free tier](https://pydantic.dev/pricing/). Run `logfire auth` and `logfire projects new` once first; the [Logfire guide](logfire.md#using-logfire) has the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
+    Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire). Logfire has a [free tier](https://pydantic.dev/pricing/) that needs no credit card, and you can sign up with just a GitHub account. Run `uvx logfire auth` and `uvx logfire projects new` once first, or point your coding agent at the [Logfire setup skill](https://pydantic.dev/ai-setup.md) to do it for you. The [Logfire guide](logfire.md#using-logfire) has the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
 
     ```python
     import logfire
@@ -464,7 +464,7 @@ uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m 
 
 Or [install Pydantic AI](install.md), pick a [model](models/overview.md) (the [Pydantic AI Gateway](gateway.md) is one key for all of them), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
 
-**See what your agent did.** [Instrument it](logfire.md): one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire), which has a [free tier](https://pydantic.dev/pricing/), is the easiest way to look, any OTLP backend works.
+**See what your agent did.** [Instrument it](logfire.md): one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account), is the easiest way to look, any OTLP backend works.
 
 **Put it to work on a repository.** That same agent, or one you write yourself, runs on issues, pull requests or a schedule as a [GitHub Agentic Workflow](https://pydantic.dev/docs/ai/harness/gh-aw/): headless, in a sandbox, writing back through safe outputs.
 

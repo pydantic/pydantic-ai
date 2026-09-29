@@ -17,36 +17,10 @@ To use any other models or integrations, add the relevant extras to your install
 
 ## Next steps
 
-**See what your agent does.** Pydantic AI is instrumented with [OpenTelemetry](logfire.md), and [Pydantic Logfire](https://pydantic.dev/logfire) shows every run, model request, and tool call, with its cost. The `logfire` SDK comes with `pydantic-ai` (with the ["slim" version](#slim-install), add the `logfire` extra), and Logfire has a [free tier](https://pydantic.dev/pricing/). Authenticate once and create a project:
-
-```bash
-py-cli logfire auth
-py-cli logfire projects new
-```
-
-Then add two lines before your agent runs:
-
-```python {title="hello_logfire.py"}
-import logfire
-
-from pydantic_ai import Agent
-
-logfire.configure()
-logfire.instrument_pydantic_ai()
-
-agent = Agent('openai:gpt-5.2', name='hello_world_agent')
-result = agent.run_sync('Where does "hello world" come from?')
-print(result.output)
-"""
-The first known use of "hello, world" was in a 1974 textbook about the C programming language.
-"""
-```
-
-The [Logfire guide](logfire.md#using-logfire) covers the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
-
-**Reach every model with one key.** The [Pydantic AI Gateway](gateway.md) is one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring: set `PYDANTIC_AI_GATEWAY_API_KEY` and use a `gateway/` model string such as `gateway/openai:gpt-5.2`. Or use a provider's own API key, as described in [Models and Providers](models/overview.md).
-
-**Building with a coding agent?** Install the [Pydantic AI skill](coding-agent-skills.md), so your agent writes current Pydantic AI code and sets up Logfire the way these docs describe.
+Build your first agent with the [Agents guide](agent.md), or start from one of the [examples](examples/setup.md).
+To see what your agent does, [set up Pydantic Logfire](logfire.md#using-logfire), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account).
+To reach models from several providers with one API key, use the [Pydantic AI Gateway](gateway.md).
+If a coding agent is building with you, install the [Pydantic AI skill](coding-agent-skills.md).
 
 ## TLS certificates
 
