@@ -21,6 +21,8 @@ from ..conftest import IsStr, try_import
 from .utils import render_table
 
 with try_import() as imports_successful:
+    from rich.table import Table
+
     from pydantic_evals import Case, Dataset
     from pydantic_evals.dataset import increment_eval_metric, set_eval_attribute
     from pydantic_evals.evaluators import (
@@ -1525,7 +1527,10 @@ async def test_dataset_evaluate_with_non_finite_evaluator_result(
 
 
 async def test_nonfinite_metric_renders_in_report():
-    """Non-finite metric values render in the report, and against a finite baseline show `old → new` with no diff text."""
+    """Non-finite metric values render in the report, and against a finite baseline show `old → new` with no diff text.
+
+    A `nan` change has no direction, so it gets neither the increase nor the decrease style.
+    """
     dataset = Dataset[str, str, None](
         name='non_finite',
         cases=[Case(name=name, inputs=name) for name in ('inf', '-inf', 'nan')],
@@ -1556,7 +1561,9 @@ async def test_nonfinite_metric_renders_in_report():
 │ Averages │ ratio: nan  │
 └──────────┴─────────────┘
 """)
-    assert render_table(report.console_table(baseline=baseline, include_durations=False)) == snapshot("""\
+    diff_table = report.console_table(baseline=baseline, include_durations=False)
+    assert isinstance(diff_table, Table)
+    assert render_table(diff_table) == snapshot("""\
 Evaluation Diff: baseline_task →
               task
 ┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
@@ -1571,6 +1578,14 @@ Evaluation Diff: baseline_task →
 │ Averages │ ratio: 1.50 → nan  │
 └──────────┴────────────────────┘
 """)
+    assert list(diff_table.columns[1].cells) == snapshot(
+        [
+            '[bold]ratio[/]: [green]1.50 → -inf[/]',
+            '[bold]ratio[/]: [red]1.50 → inf[/]',
+            'ratio: 1.50 → nan',
+            'ratio: 1.50 → nan',
+        ]
+    )
 
 
 async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):

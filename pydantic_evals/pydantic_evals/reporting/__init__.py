@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import math
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -960,6 +961,9 @@ class _NumberRenderer:
             return None
 
         diff = new - old
+        # A `nan` difference has no direction, so it gets neither the increase nor the decrease style.
+        if math.isnan(diff):
+            return None
         if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):
             return None
         return self.diff_increase_style if diff > 0 else self.diff_decrease_style
