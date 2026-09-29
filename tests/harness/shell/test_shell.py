@@ -1842,6 +1842,22 @@ class TestLaunch:
         )
 
 
+class _RemovesFileOnReadCheck(LocalWorkspaceBackend):
+    """A local backend whose shell removes a file just as `test -r` checks it, as a concurrent command can."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        if isinstance(command, str):
+            command = 'test() { if [ "$1" = -r ]; then rm -f "$2"; fi; command test "$@"; }\n' + command
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
 class TestReadBgOutputEdgeCases:
     async def test_missing_logs_read_as_empty(self, shell_dir: Path) -> None:
         """A log removed from the workspace reads as empty rather than failing the check."""
@@ -1873,6 +1889,20 @@ class TestReadBgOutputEdgeCases:
         finally:
             stdout_log.chmod(0o600)
             await ts.stop_command(_ctx(shell_dir), command_id)
+
+    async def test_log_removed_between_the_read_checks_reads_as_empty(self, shell_dir: Path) -> None:
+        """A log removed after its existence check but before its readability check reads as empty."""
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(_RemovesFileOnReadCheck(shell_dir)))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'exec sleep 300'))
+        job = await _job(ts, ctx, command_id)
+        stdout_log = Path(job.directory) / 'stdout.log'
+        stdout_log.write_text('removed')
+        try:
+            assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: running]'
+            assert not stdout_log.exists()
+        finally:
+            await ts.stop_command(ctx, command_id)
 
 
 class _NoStatSizes(LocalWorkspaceBackend):
