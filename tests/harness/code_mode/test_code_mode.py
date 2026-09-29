@@ -1,9 +1,7 @@
 """Tests for the `CodeMode` capability and the `CodeModeToolset` it wraps.
 
-Style follows `pydantic_ai/tests/test_toolsets.py`: module-level
-`pytestmark = pytest.mark.anyio`, an `anyio_backend` fixture, async tests, and a
-`build_run_context` factory. The `anyio` package's pytest plugin is already
-loaded by the project (no extra dev dependency needed).
+Style follows `pydantic_ai/tests/test_toolsets.py`: async tests and a `build_run_context`
+factory.
 """
 
 from __future__ import annotations
@@ -81,6 +79,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
     global_mode_is_sequential,
 )
+from pydantic_ai_harness.tool_output_limits import LocalFileStore
 
 _entered_toolsets: list[CodeModeToolset[Never]] = []
 
@@ -94,15 +93,7 @@ async def _close_direct_toolsets(anyio_backend: str) -> AsyncIterator[None]:
         await toolset.__aexit__(None, None, None)
 
 
-pytestmark = pytest.mark.anyio
-
 T = TypeVar('T')
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
 
 
 def build_run_context(deps: T, run_step: int = 0) -> RunContext[T]:
@@ -268,7 +259,7 @@ class _StaticToolset(AbstractToolset[object]):
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover - required by AbstractToolset, never read in tests
+        return None  # pragma: lax no cover - required by AbstractToolset, never read in tests
 
     async def get_tools(self, ctx: RunContext[object]) -> dict[str, ToolsetTool[object]]:
         return {
@@ -637,7 +628,7 @@ class TestCodeMode:
         tools = await wrapper.get_tools(ctx)
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
-        docs = (Path(__file__).parents[2] / 'docs' / 'code-mode.md').read_text()
+        docs = (Path(__file__).parents[3] / 'docs' / 'harness' / 'code-mode.md').read_text()
         documented = re.search(r'Allowed stdlib modules: (.*?) \(', docs)
         assert advertised is not None and documented is not None
         modules = re.findall(r'`(\w+)`', advertised.group(1))
@@ -698,7 +689,7 @@ class TestCodeMode:
             return ModelResponse(parts=[TextPart(returned[0].model_response_str())])
 
         agent: Agent[object, str] = Agent(
-            FunctionModel(model_fn), capabilities=[CodeMode[object](), ToolOutputLimits[object]()]
+            FunctionModel(model_fn), capabilities=[CodeMode[object](), ToolOutputLimits[object](store=LocalFileStore())]
         )
         result = await agent.run('what type is x?')
         assert result.output == "<class 'dict'>"
@@ -2026,6 +2017,37 @@ class TestCodeMode:
         with _warnings.catch_warnings():
             _warnings.simplefilter('error')
             await wrapper.get_tools(ctx)
+
+    async def test_tools_without_return_schema_share_one_warning(self) -> None:
+        """Many schema-less tools (typical of an MCP server) produce one warning, not one each."""
+        tool_defs = [
+            ToolDefinition(name=name, parameters_json_schema={'type': 'object', 'properties': {}})
+            for name in ('list_tags', 'search_code', 'search_issues')
+        ]
+        static = _StaticToolset(tool_defs)
+        wrapper = CodeMode[object]().get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter('always')
+            await wrapper.get_tools(build_run_context(None))
+
+        assert [str(warning.message) for warning in caught] == [
+            "CodeMode: 3 tools have no return schema ('list_tags', 'search_code', 'search_issues'); "
+            'their signatures will show `-> Any`, which may reduce code mode effectiveness.'
+        ]
+
+    async def test_escalated_missing_return_schema_warning_raises_again(self) -> None:
+        """With the warning escalated to an error, a retry raises again instead of passing silently."""
+        td = ToolDefinition(name='search', parameters_json_schema={'type': 'object', 'properties': {}})
+        wrapper = CodeMode[object]().get_wrapper_toolset(_StaticToolset([td]))
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter('error', UserWarning)
+            for _ in range(2):
+                with pytest.raises(UserWarning, match=r"tool 'search' has no return schema"):
+                    await wrapper.get_tools(build_run_context(None))
 
     async def test_tool_with_return_schema_does_not_warn(self) -> None:
         """A sandboxed tool WITH a return_schema does not trigger the warning."""

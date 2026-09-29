@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
@@ -34,13 +35,6 @@ from pydantic_ai_harness.subagents import (
     SubAgents,
     SubAgentToolset,
 )
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 @dataclass
@@ -206,6 +200,10 @@ class TestDelegationEvents:
         assert (start.tool_name, end.tool_name) == ('hand_off', 'hand_off')
         assert start.capability_id == end.capability_id == 'sub_agents'
 
+    @pytest.mark.skipif(
+        sys.version_info < (3, 11),
+        reason='Core leaves the tool call running past `run()`: https://github.com/pydantic/pydantic-ai/pull/8822',
+    )
     async def test_listener_that_raises_aborts_the_parent_run(self) -> None:
         @dataclass
         class Boom(AbstractCapability[object]):
@@ -232,7 +230,7 @@ class TestDelegationEvents:
 class TestOutcomes:
     async def test_timeout(self) -> None:
         # The timeout may fire before the child reaches its model, so no line here is a sure hit.
-        async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
+        async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
             await asyncio.sleep(1)
             return ModelResponse(parts=[TextPart('late')])
 

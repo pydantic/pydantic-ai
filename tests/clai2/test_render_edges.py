@@ -19,11 +19,6 @@ from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEve
 from pydantic_clai2 import StreamRenderer
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @dataclass(kw_only=True)
 class Notice(CapabilityEvent, namespace='test'):
     pass

@@ -30,13 +30,6 @@ from tests.harness.conftest import agent_run_names
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 class _ProviderFunctionModel(FunctionModel):
     def __init__(
@@ -447,7 +440,7 @@ class TestAdvisor:
 
         # This branch pins the composing behaviour; `_RESOLVES_DUPLICATE_IDS` keeps the file
         # runnable against a released core that still raises (see its docstring).
-        if _RESOLVES_DUPLICATE_IDS:  # pragma: no cover - depends on the installed core
+        if _RESOLVES_DUPLICATE_IDS:  # pragma: lax no cover - depends on the installed core
             # An agent has one advisor, so two resolve to one rather than colliding -- which is
             # what lets two packaged harnesses that each carry an `Advisor` compose. The later
             # configuration wins where both state one.

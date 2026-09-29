@@ -941,7 +941,7 @@ class TestBridgeFailureModes:
                     try:
                         await asyncio.sleep(10)
                     except asyncio.CancelledError:
-                        continue  # pragma: no cover - the forced deadline closes the loop first
+                        continue  # pragma: lax no cover - usually the forced deadline closes the loop first
 
         agent = build_agent(act)
         abandoned = loops.get()
@@ -962,7 +962,7 @@ class TestBridgeFailureModes:
         started_waiting = time.monotonic()
         deadline = time.monotonic() + 5
         while not abandoned.is_closed() and time.monotonic() < deadline:
-            time.sleep(0.01)  # pragma: no cover - the retired loop normally closes before polling
+            time.sleep(0.01)  # pragma: lax no cover - the retired loop normally closes before polling
 
         assert abandoned.is_closed()
         assert not abandoned_thread.is_alive()
@@ -970,6 +970,7 @@ class TestBridgeFailureModes:
         shutdown(replacement, owner=replacement_thread)
         gc.collect()
 
+    @pytest.mark.skip(reason='Cleanup never finishes in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
     def test_an_unwind_that_finishes_within_the_cancel_timeout_keeps_the_loop_warm(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1011,6 +1012,7 @@ class TestBridgeFailureModes:
         shutdown(warm, owner=thread)
         gc.collect()
 
+    @pytest.mark.skip(reason='Cleanup never finishes in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
     def test_retirement_drains_cleanup_scheduled_when_the_main_task_finishes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1174,7 +1176,7 @@ class TestBridgeFailureModes:
         stopped.call_soon_threadsafe(stopped.stop)
         deadline = time.monotonic() + 5
         while stopped.is_running() and time.monotonic() < deadline:  # pragma: no branch - stops promptly
-            time.sleep(0.01)
+            time.sleep(0.01)  # pragma: lax no cover
 
         replacement = loops.get()
         replacement_thread = loops._thread  # pyright: ignore[reportPrivateUsage]

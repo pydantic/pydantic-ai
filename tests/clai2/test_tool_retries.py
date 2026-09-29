@@ -5,9 +5,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from menu_script import make_context
 from rich.console import Console
-from test_app_edges import inputs
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.messages import ModelMessage
@@ -17,11 +15,8 @@ from pydantic_clai2 import Session, chat
 from pydantic_clai2.config import Settings
 from pydantic_clai2.set_menu import SettingsSource
 from pydantic_clai2.settings_store import SettingsStore
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import make_context
+from tests.clai2.test_app_edges import inputs
 
 
 def test_menu_validates_persists_and_resets_tool_retries(tmp_path: Path) -> None:

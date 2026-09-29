@@ -38,7 +38,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='realtime provider dependencies not installed'),
 ]
 
@@ -122,7 +121,7 @@ async def test_audio_in_delegated_tool_round(
     assert any(isinstance(part, ToolCallPart) for part in messages[1].parts)
     assert any(isinstance(part, ToolReturnPart) for part in messages[2].parts)
     # Both meters are recorded: the delegated backend's tokens, and Live's own audio seconds, which it
-    # reports on a timer (see the caveat on `docs/realtime/openai-live.md`).
+    # reports on a timer (see the caveat on `docs/realtime/openai.md`).
     assert session.usage.input_tokens > 0
     assert session.usage.output_tokens > 0
     assert session.usage.audio_seconds > 0

@@ -169,7 +169,6 @@ constraint-dependencies = [
     "joserfc>=1.6.7",
     "pydantic-settings>=2.14.2",
     "setuptools>=83.0.0",
-    "vcrpy>=8.2.1",
     "starlette>=1.3.1",
     "aiohttp>=3.14.1",
     "python-multipart>=0.0.31",
@@ -194,8 +193,9 @@ build-constraint-dependencies = [
 
 [tool.uv.exclude-newer-package]
 # These are our own packages, not worth defending from supply chain attacks on them.
-# `listentome` is maintained by a Pydantic team member and counts as one of ours.
+# `listentome` and `cassetter` are maintained by a Pydantic team member and count as ours.
 listentome = false
+cassetter = false
 pydantic = false
 pydantic-core = false
 pydantic-extra-types = false
@@ -211,10 +211,10 @@ logfire-api = false
 # termflow-md 0.9.3 is the first release supporting Python 3.10, which `pydantic-clai2` needs.
 # TODO(Kludex): Remove after 2026-10-01 16:36 UTC.
 termflow-md = "2026-09-24T16:36:46Z"
-# Anthropic 1.8.0 is the first release listing `claude-opus-5-5`.
-# TODO(DouweM): Remove after 2026-09-29 16:25 UTC. https://github.com/pydantic/pydantic-ai/issues/8636
-# This admits only the reviewed 1.8.0 artifacts; later Anthropic artifacts remain quarantined.
-anthropic = "2026-09-22T16:25:39Z"
+# Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
+# TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
+# This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
+anthropic = "2026-09-28T18:04:04Z"
 # OpenAI 3.19.0 is the first release listing `gpt-rosalind-research`, and the `openai` floor.
 # TODO(adtyavrdhn): Remove after 2026-09-30 00:09 UTC.
 openai = "2026-09-23T00:08:49Z"
@@ -224,7 +224,8 @@ google-genai = "2026-09-22T17:23:02Z"
 
 [dependency-groups]
 dev = [
-    "anyio>=4.7.0",
+    # `anyio_mode = "auto"` (pytest plugin) was added in 4.11.0.
+    "anyio>=4.11.0",
     "trio>=0.34.0",
     "asgi-lifespan>=2.1.0",
     "httpx>=0.27",
@@ -242,7 +243,6 @@ dev = [
     "pytest-examples>=0.0.18",
     "pytest-mock>=3.14.0",
     "pytest-pretty>=1.3.0",
-    "pytest-recording>=0.13.2",
     "boto3-stubs[bedrock-runtime]>=1.42.63",
     "pytest-xdist>=3.6.1",
     "pytest-split>=0.11.0",
@@ -263,16 +263,15 @@ dev = [
     # the compat readers' field-name pairs against the real v2 models while running against v1.
     "mcp-types>=2.0.0",
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
-    "blockbuster>=1.5.26,<1.6",
+    "blockbuster>=1.5.28,<1.6",
     "sqlparse>=0.6.0",
     "nest-asyncio>=1.6.0",
     "azure-identity>=1.25.3",
     # Storage backends `pydantic-ai-harness` supports, faked or run against a live server.
     "mongomock-motor>=0.0.36",
     "redis>=8.1.0",
-    # `pydantic-clai2` records `httpx2` traffic with cassetter's context manager; its pytest plugin
-    # stays disabled (`-p no:cassetter`) so `pytest-recording` keeps owning the `vcr` fixture.
-    "cassetter>=0.11.0",
+    # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
+    "cassetter>=0.13.0",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -450,12 +449,24 @@ files = "tests/typed_agent.py"
 strict = true
 
 [tool.pytest.ini_options]
-addopts = "-p no:cassetter"
+# Every `async def` test runs via anyio; no `@pytest.mark.anyio` needed.
+anyio_mode = "auto"
 testpaths = ["tests", ".github/scripts/test_ci_duration.py"]
 xfail_strict = true
-markers = ["modal_live: runs against a real Modal control plane; needs credentials"]
+markers = [
+    "modal_live: runs against a real Modal control plane; needs credentials",
+    "e2b_live: runs against a real E2B sandbox; needs credentials",
+    "sprites_live: runs against a real Sprites control plane; needs credentials",
+    "temporal: starts or connects to a local Temporal dev server",
+]
 filterwarnings = [
     "error",
+    # anyio 4.14+ intentionally leaves a task's coroutine unawaited when the task is cancelled natively
+    # (`asyncio.wait_for`, `Task.cancel()`, Temporal evicting a workflow) before its first step, and the
+    # garbage collector then warns in whatever test is running.
+    # TODO: Replace native cancellation in harness code (e.g. `asyncio.wait_for` in `SubAgents`) with
+    # anyio cancel scopes, which only cancel started tasks: https://github.com/pydantic/pydantic-ai/issues/8824
+    "ignore:coroutine '.*' was never awaited:RuntimeWarning",
     # Experimental harness capabilities warn on import by design; tests assert it where it matters.
     # Matched by message: the warning class lives in a package some install cells do not have.
     "ignore:`pydantic_ai_harness\\.experimental\\.[a-z_.]+` is experimental:UserWarning",
@@ -529,6 +540,7 @@ omit = [
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
     "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
+    "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:

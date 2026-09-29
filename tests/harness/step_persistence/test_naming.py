@@ -14,7 +14,7 @@ from pydantic_ai_harness.step_persistence.naming import NamingResult, SessionNam
 
 
 async def test_structured_name_and_auxiliary_usage(anyio_backend: str) -> None:
-    if anyio_backend == 'trio':
+    if anyio_backend == 'trio':  # pragma: no cover -- only asyncio runs here
         pytest.skip('Pydantic AI Agent requires asyncio; worker tests also run on Trio')
     result = await generate_name(model=TestModel(), prompt='Fix renderer')
     assert isinstance(result.name, SessionName)

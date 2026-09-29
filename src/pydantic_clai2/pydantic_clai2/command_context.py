@@ -56,7 +56,10 @@ class CommandContext:
         return f'Saved {key}. ' + self._when(key)
 
     def validate(self, key: str, raw: str) -> tuple[JsonValue, Settings]:
-        """Parse typed text for `key` and check it against the whole settings model; nothing is saved."""
+        """Parse typed text for `key` and check it against the whole settings model; nothing is saved.
+
+        A model whose provider SDK is not installed raises `ValueError` here, not on the next turn.
+        """
         adapter: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
         value: JsonValue = (
             raw
@@ -65,7 +68,12 @@ class CommandContext:
         )
         updated = self.settings.model_dump()
         updated[SETTING_FIELDS[key]] = value
-        return value, Settings.model_validate(updated)
+        settings = Settings.model_validate(updated)
+        if key == 'model' and settings.model:
+            from .model_catalog import check_installed
+
+            check_installed(settings.model)
+        return value, settings
 
     def model_settings(self, model: str) -> ModelSettings | None:
         """Family defaults plus saved overrides, ready for `agent.run`."""

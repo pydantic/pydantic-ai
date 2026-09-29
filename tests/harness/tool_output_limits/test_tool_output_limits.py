@@ -67,6 +67,7 @@ from tests.harness.conftest import agent_run_names
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -123,11 +124,6 @@ async def _run(cap: ToolOutputLimits[object], result: Any, *, ctx: Any = None, t
         args={},
         result=result,
     )
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 # ---------------------------------------------------------------------------
@@ -998,50 +994,50 @@ class TestReadBack:
     async def test_read_slice_basic(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'line {i}' for i in range(50)).encode('utf-8'))
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=3, from_end=False, pattern=None)
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=3, from_end=False, pattern=None)
         assert 'line 0' in out and 'line 2' in out and 'line 3' not in out
 
     async def test_read_slice_from_end(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'line {i}' for i in range(50)).encode('utf-8'))
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=2, from_end=True, pattern=None)
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=2, from_end=True, pattern=None)
         assert 'line 49' in out and 'line 48' in out
 
     async def test_read_slice_literal_pattern(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', b'apple\nbanana\navocado\ncherry')
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=200, from_end=False, pattern='av')
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=200, from_end=False, pattern='av')
         assert 'avocado' in out and 'apple' not in out and 'banana' not in out
 
     async def test_read_slice_pattern_is_literal_not_regex(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', b'plain line\n^anchored')
         # A regex metacharacter is matched literally, so it cannot trigger backtracking.
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=200, from_end=False, pattern='^a')
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=200, from_end=False, pattern='^a')
         assert 'anchored' in out and 'plain line' not in out
 
     async def test_read_slice_offset_negative(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', b'data')
         with pytest.raises(ModelRetry, match='offset'):
-            await _read_slice(store, 'h/1.0', offset=-1, limit=10, from_end=False, pattern=None)
+            await _read_slice(store.read, 'h/1.0', offset=-1, limit=10, from_end=False, pattern=None)
 
     async def test_read_slice_limit_too_small(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', b'data')
         with pytest.raises(ModelRetry, match='limit'):
-            await _read_slice(store, 'h/1.0', offset=0, limit=0, from_end=False, pattern=None)
+            await _read_slice(store.read, 'h/1.0', offset=0, limit=0, from_end=False, pattern=None)
 
     async def test_read_slice_limit_clamped(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', '\n'.join(f'l{i}' for i in range(2000)).encode('utf-8'))
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=10_000, from_end=False, pattern=None)
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=10_000, from_end=False, pattern=None)
         assert out.count('\n') <= 1_000  # clamped to the line cap
 
     async def test_read_slice_output_capped(self, tmp_path: Path):
         store = LocalFileStore(base_dir=tmp_path)
         await store.write('h/1.0', ('x' * 60_000).encode('utf-8'))
-        out = await _read_slice(store, 'h/1.0', offset=0, limit=10, from_end=False, pattern=None)
+        out = await _read_slice(store.read, 'h/1.0', offset=0, limit=10, from_end=False, pattern=None)
         assert 'output capped' in out
         assert len(out) < 60_000
 
@@ -1049,7 +1045,7 @@ class TestReadBack:
         # A missing/wrong handle returns a guiding message (it does NOT raise): a bad
         # handle must not consume a retry and escalate to a fatal UnexpectedModelBehavior.
         store = LocalFileStore(base_dir=tmp_path)
-        out = await _read_slice(store, 'missing/1.0', offset=0, limit=10, from_end=False, pattern=None)
+        out = await _read_slice(store.read, 'missing/1.0', offset=0, limit=10, from_end=False, pattern=None)
         assert 'No stored tool result' in out
         assert 're-run the original tool' in out
         # The store's error (which can carry the resolved filesystem path) is not leaked.

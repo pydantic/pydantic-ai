@@ -3,19 +3,15 @@
 from pathlib import Path
 
 import pytest
-from menu_script import Script, make_context, pick, typed
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
-from pydantic_clai2.field_menu import FieldMenu, run_flow
+from pydantic_clai2 import field_menu
+from pydantic_clai2.field_menu import SAVE_AND_CLOSE, FieldMenu, is_save_and_close, run_flow, save_and_close_item
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.set_menu import SettingsSource, open_settings_menu
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import Script, make_context, pick, typed
 
 
 def test_rows_details_and_validation(tmp_path: Path) -> None:
@@ -98,6 +94,27 @@ def test_flow_stops_on_cancel(tmp_path: Path) -> None:
         lists=[pick('run.request_limit'), MenuResult(item=None)], choices=[], texts=[TextInputResult(cancelled=True)]
     )
     assert run_flow(FieldMenu(SettingsSource(context)), script.runners) == []
+
+
+def test_save_and_close_is_the_last_row_and_leaves_with_edits_saved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context, _ = make_context(tmp_path)
+    menu = FieldMenu(SettingsSource(context))
+    first, *_, last = menu.items()
+    assert last.label == SAVE_AND_CLOSE and is_save_and_close(last) and not is_save_and_close(first)
+    assert menu.details(last) == 'Leave this menu. Each change was saved as you made it.'
+    pressed = iter(['end', 'R', 'enter', 'R'])
+    monkeypatch.setattr(field_menu, 'menu_key', lambda: next(pressed))
+    left = menu.build().run()
+    assert left.item is not None and is_save_and_close(left.item), 'R on Save & close resets nothing'
+    assert menu.build().run() == menu.reset_marker(object(), first)
+    script = Script(
+        lists=[pick('display.thinking'), MenuResult(item=save_and_close_item())], choices=[pick('false')], texts=[]
+    )
+    assert run_flow(menu, script.runners) == ['Saved display.thinking. Applied.']
+    assert context.store.overrides() == {'display.thinking': False}
+    assert script.opened == ['list', 'choice', 'list']
 
 
 async def test_open_menu_runs_in_a_thread(tmp_path: Path) -> None:

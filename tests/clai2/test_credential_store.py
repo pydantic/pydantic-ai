@@ -23,11 +23,6 @@ from pydantic_clai2.credential_store import (
 )
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 def fake_browser(url: str) -> bool:
     return True
 
@@ -186,7 +181,7 @@ def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None) -> None
     save_codex_credentials(fallback=fallback, value='{"access_token":"refreshed"}')
     assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
     assert list(fallback.parent.iterdir()) == [fallback]
-    if sys.platform != 'win32':
+    if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
 
 
@@ -211,7 +206,7 @@ def test_staging_race_is_refused(fallback: Path, no_keyring: None, monkeypatch: 
     real_open = os.open
 
     def planting_open(path: str, flags: int, mode: int = 0o777) -> int:
-        if flags & os.O_EXCL:
+        if flags & os.O_EXCL:  # pragma: no branch
             Path(path).write_text('{"access_token":"attacker"}', encoding='utf-8')
         return real_open(path, flags, mode)
 

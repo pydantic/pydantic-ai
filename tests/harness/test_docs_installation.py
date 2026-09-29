@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).parent.parent
-_PAGES = sorted((_ROOT / 'docs').rglob('*.md'))
-_READMES = [_ROOT / 'README.md', *sorted((_ROOT / 'pydantic_ai_harness').rglob('README.md'))]
+_ROOT = Path(__file__).parents[2]
+_HARNESS = _ROOT / 'src' / 'pydantic_ai_harness'
+_PAGES = sorted((_ROOT / 'docs' / 'harness').rglob('*.md'))
+_READMES = [_HARNESS / 'README.md', *sorted((_HARNESS / 'pydantic_ai_harness').rglob('README.md'))]
 _INSTALL = re.compile(r'^[ \t]*(?:pip[ \t]+install|uv[ \t]+add)[ \t]+(.+)$', re.MULTILINE)
 
 

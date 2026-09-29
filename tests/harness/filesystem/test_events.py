@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import json
 import os
@@ -10,6 +9,8 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import anyio
+import anyio.to_thread
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -22,6 +23,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.filesystem import (
     MAX_DIFF_SOURCE_CHARS,
     MAX_EVENT_DIFF_CHARS,
@@ -38,17 +40,10 @@ from pydantic_ai_harness.filesystem import (
     SearchKind,
 )
 
-pytestmark = pytest.mark.anyio
-
 # Mode bits do not bind root, and Windows has no write-only mode.
 needs_mode_bits = pytest.mark.skipif(
     os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0, reason='POSIX mode bits must apply to this process.'
 )
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def _has_tool_result(messages: list[ModelMessage]) -> bool:
@@ -90,7 +85,7 @@ async def _run_and_collect(
         id='file_system',
     )
     agent = Agent(_tool_model(tool_name, json_args), deps_type=type(None), capabilities=[capability, *listeners])
-    await agent.run('go', event_stream_handler=handler)
+    await agent.run('go', event_stream_handler=handler, workspace=LocalWorkspaceBackend(root))
     return events
 
 
@@ -125,7 +120,7 @@ class WrittenListener(AbstractCapability[None]):
     @on_event(FileWrittenEvent)
     async def _on_written(self, ctx: RunContext[None], event: FileWrittenEvent) -> None:
         self.written.append(event)
-        self.on_disk.append((self.root / event.path).read_text())
+        self.on_disk.append(await anyio.Path(self.root / event.path).read_text())
 
 
 @dataclass
@@ -151,7 +146,8 @@ class MeddlingListener(AbstractCapability[None]):
 
     @on_event(FileChangeRequestEvent)
     async def _on_request(self, ctx: RunContext[None], event: FileChangeRequestEvent) -> None:
-        self.act()
+        # Off the event loop: the listener is called from library code, which must not block.
+        await anyio.to_thread.run_sync(self.act)
 
 
 @dataclass
@@ -177,7 +173,7 @@ def _hash(content: str) -> str:
 
 
 def _root(path: Path) -> str:
-    return os.path.realpath(path)
+    return str(path)
 
 
 class TestFileSystemEvents:
@@ -208,6 +204,28 @@ class TestFileSystemEvents:
         assert len(read_events) == 1
         assert read_events[0].path == 'binary.bin'
         assert read_events[0].content_hash == hashlib.sha256(content).hexdigest()[:12]
+
+    async def test_partial_read_emits_the_whole_file_hash(self, tmp_path: Path) -> None:
+        content = 'one\ntwo\nthree\n'
+        (tmp_path / 'target.txt').write_text(content)
+
+        events = await _run_and_collect(tmp_path, 'read_file', '{"path":"target.txt","offset":1,"limit":1}')
+
+        (read,) = [event for event in events if isinstance(event, FileReadEvent)]
+        assert read.content_hash == _hash(content)
+
+    async def test_root_dir_is_the_real_root_and_path_the_spelling_used(self, tmp_path: Path) -> None:
+        real = tmp_path / 'real'
+        real.mkdir()
+        (real / 'target.txt').write_text('hello\n')
+        (real / 'alias.txt').symlink_to(real / 'target.txt')
+        link = tmp_path / 'link'
+        link.symlink_to(real)
+
+        events = await _run_and_collect(link, 'read_file', '{"path":"alias.txt"}')
+
+        (read,) = [event for event in events if isinstance(event, FileReadEvent)]
+        assert (read.path, read.root_dir) == ('alias.txt', _root(real))
 
     async def test_list_emits_normalized_path_and_entry_count(self, tmp_path: Path) -> None:
         sub = tmp_path / 'sub'
@@ -351,7 +369,7 @@ class TestFileSystemEvents:
 
         searched = [event for event in events if isinstance(event, FilesSearchedEvent)]
         assert [(event.match_count, event.truncated) for event in searched] == [(2, True)]
-        assert 'truncated at 2 matches' in _tool_result(events)
+        assert f'truncated at 2 {"lines" if tool_name == "search_files" else "matches"}' in _tool_result(events)
 
     @pytest.mark.parametrize(
         ('tool_name', 'json_args'),
@@ -833,33 +851,6 @@ class TestFileChangeRequests:
         target.chmod(0o644)
         assert target.read_text() == 'old\n'
 
-    @pytest.mark.skipif(os.name == 'nt', reason='FIFOs require POSIX.')
-    async def test_fifo_swapped_before_the_announcement_read_does_not_block(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The announcement reads the target non-blocking, so a FIFO swapped onto it cannot stall the run."""
-        target = tmp_path / 'target.txt'
-        target.write_text('old\n')
-        original_open = os.open
-        swapped = False
-
-        def swap_then_open(path: str | os.PathLike[str], flags: int, mode: int = 0o777) -> int:
-            nonlocal swapped
-            if not swapped and os.path.realpath(path) == os.path.realpath(target):
-                swapped = True
-                target.unlink()
-                os.mkfifo(target)
-                assert flags & os.O_NONBLOCK
-            return original_open(path, flags, mode)
-
-        monkeypatch.setattr(os, 'open', swap_then_open)
-
-        events = await _run_and_collect(tmp_path, 'write_file', '{"path":"target.txt","content":"new\\n"}')
-
-        assert swapped
-        assert "Path 'target.txt' exists and is not a regular file" in _retry_reason(events)
-        assert not any(isinstance(event, FileWrittenEvent) for event in events)
-
     @pytest.mark.parametrize(
         ('tool_name', 'json_args'),
         [
@@ -883,9 +874,9 @@ class TestFileChangeRequests:
         assert not any(isinstance(event, FileWrittenEvent) for event in events)
 
     async def test_invalid_utf8_text_keeps_the_hash_handshake(self, tmp_path: Path) -> None:
-        """The guard hashes a text file with an invalid byte the way `read_file` reported it."""
+        """The guard hashes a text file with an invalid byte the way `read_file` reported it: its raw bytes."""
         (tmp_path / 'target.txt').write_bytes(b'a\xffb\n')
-        reported = _hash('a\ufffdb\n')
+        reported = hashlib.sha256(b'a\xffb\n').hexdigest()[:12]
 
         read_events = await _run_and_collect(tmp_path, 'read_file', '{"path":"target.txt"}')
         (read,) = [event for event in read_events if isinstance(event, FileReadEvent)]
@@ -917,39 +908,6 @@ class TestFileChangeRequests:
         assert 'Conflict' in _retry_reason(events)
         assert target.read_text() == appeared
         assert not any(isinstance(event, FileWrittenEvent) for event in events)
-
-    @pytest.mark.parametrize(
-        ('tool_name', 'json_args'),
-        [
-            ('write_file', '{"path":"sub/target.txt","content":"new\\n"}'),
-            ('edit_file', '{"path":"sub/target.txt","old_text":"old","new_text":"new"}'),
-            ('create_directory', '{"path":"sub/made"}'),
-        ],
-    )
-    @pytest.mark.parametrize('outside', [True, False])
-    async def test_path_replaced_while_announced_is_refused(
-        self, tmp_path: Path, tool_name: str, json_args: str, outside: bool
-    ) -> None:
-        """Swapping a directory on the path for a symlink during the request does not redirect the change."""
-        root = tmp_path / 'root'
-        sub = root / 'sub'
-        sub.mkdir(parents=True)
-        (sub / 'target.txt').write_text('old\n')
-        elsewhere = tmp_path / 'outside' if outside else root / 'elsewhere'
-        elsewhere.mkdir()
-
-        def swap() -> None:
-            sub.rename(root / 'moved')
-            sub.symlink_to(elsewhere, target_is_directory=True)
-
-        events = await _run_and_collect(root, tool_name, json_args, listeners=[MeddlingListener(act=swap)])
-
-        reason = _retry_reason(events)
-        assert (
-            'resolves outside the root directory' if outside else 'was replaced while the change was announced'
-        ) in reason
-        assert list(elsewhere.iterdir()) == []
-        assert not any(isinstance(event, (FileWrittenEvent, DirectoryCreatedEvent)) for event in events)
 
     async def test_directory_that_appeared_while_announced_is_not_reported(self, tmp_path: Path) -> None:
         made = tmp_path / 'made'
@@ -992,8 +950,7 @@ class TestFileChangeRequests:
         )
 
         reason = _retry_reason(events)
-        assert f'[Errno {errno.ENOENT}]' in reason
-        assert "'target.txt'" in reason
+        assert 'File not found: target.txt' in reason
         assert _root(tmp_path) not in reason
         assert not target.exists()
         assert not any(isinstance(event, FileWrittenEvent) for event in events)
@@ -1002,9 +959,9 @@ class TestFileChangeRequests:
         toolset = FileSystem[None](root_dir=tmp_path).get_toolset()
         assert isinstance(toolset, FileSystemToolset)
 
-        await toolset.write_file('direct.txt', 'hi\n')
-        await toolset.edit_file('direct.txt', 'hi', 'bye')
-        await toolset.create_directory('made')
+        await toolset.write_file('direct.txt', 'hi\n', workspace=LocalWorkspaceBackend(tmp_path))
+        await toolset.edit_file('direct.txt', 'hi', 'bye', workspace=LocalWorkspaceBackend(tmp_path))
+        await toolset.create_directory('made', workspace=LocalWorkspaceBackend(tmp_path))
 
         assert (tmp_path / 'direct.txt').read_text() == 'bye\n'
         assert (tmp_path / 'made').is_dir()

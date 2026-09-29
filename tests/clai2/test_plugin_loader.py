@@ -12,18 +12,13 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.plugin_loader import PluginError, PluginLoader
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.settings_store import SettingsStore
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 RECORDER = """
 from pydantic_clai2.commands import Command
@@ -202,6 +197,26 @@ async def test_declared_capability_class_and_activate_function(tmp_path: Path, m
     assert len(harness.loader.capabilities()) == 2
     assert await harness.loader.command(['remove', 'greeter']) == 'Removed greeter.'
     assert len(harness.loader.capabilities()) == 1
+
+
+async def test_load_all_skips_missing_plugin_modules_quietly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    package = tmp_path / 'site' / 'clai_broken'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text('')
+    (package / 'plugin.py').write_text('import clai_missing_dependency\n')
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
+    harness = Harness(tmp_path)
+    # Saved by a CLAI version that shipped a `slack` built-in; this one does not.
+    harness.store.save_plugin(PluginSettings(id='slack', factory='pydantic_clai2.slack'))
+    harness.store.save_plugin(PluginSettings(id='gone', factory='clai_gone.plugin:activate'))
+    harness.store.save_plugin(PluginSettings(id='broken', factory='clai_broken.plugin'))
+    await harness.loader.load_all()
+    states = {entry.name: entry.state for entry in harness.loader.entries()}
+    assert states['slack'] == "enabled, failed: ModuleNotFoundError: No module named 'pydantic_clai2.slack'"
+    assert states['gone'] == "enabled, failed: ModuleNotFoundError: No module named 'clai_gone'"
+    assert harness.text == ("Plugin 'broken': ModuleNotFoundError: No module named 'clai_missing_dependency'\n")
+    with pytest.raises(PluginError, match=r"No module named 'pydantic_clai2\.slack'"):
+        await harness.loader.command(['enable', 'slack'])
 
 
 async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
@@ -435,7 +450,9 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
     entry = harness.loader.entries()[0]
     assert entry.builtin and entry.state == 'enabled, loaded'
     model = TestModel(call_tools=[])
-    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run('hi')
+    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
+        'hi', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
     assert model.last_model_request_parameters is not None
     parts = model.last_model_request_parameters.instruction_parts or []
     assert sum('Answer in haiku.' in part.content for part in parts) == 1
@@ -447,7 +464,9 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
     knobs = ['add', 'repo_context', 'pydantic_clai2.repo_context', '{"inventory_tool": true, "walk_up": true}']
     assert await harness.loader.command(knobs) == 'Replaced built-in repo_context.'
     model = TestModel(call_tools=[])
-    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run('hi')
+    await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
+        'hi', workspace=LocalWorkspaceBackend(working_dir=workspace)
+    )
     assert model.last_model_request_parameters is not None
     assert [tool.name for tool in model.last_model_request_parameters.function_tools] == ['inventory_agent_context']
     assert (await harness.loader.command(['remove', 'repo_context'])).startswith('repo_context is built in')

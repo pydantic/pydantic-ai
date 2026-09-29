@@ -68,6 +68,11 @@ navigation:
         slug: "core-concepts/hooks"
         aliases:
           - "hooks"
+      - page: "Workspaces"
+        path: "workspace.md"
+        slug: "core-concepts/workspace"
+        aliases:
+          - "workspace"
       - page: "Capabilities"
         path: "capabilities/overview.md"
         slug: "capabilities/overview"
@@ -269,6 +274,15 @@ navigation:
           - page: "Modal Sandbox"
             path: "harness/modal-sandbox.md"
             slug: "harness/modal-sandbox"
+          - page: "E2B Sandbox"
+            path: "harness/e2b-sandbox.md"
+            slug: "harness/e2b-sandbox"
+          - page: "Sprites Sandbox"
+            path: "harness/sprites-sandbox.md"
+            slug: "harness/sprites-sandbox"
+          - page: "Durable Execution"
+            path: "harness/durable-execution.md"
+            slug: "harness/durable-execution"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:
@@ -544,9 +558,8 @@ navigation:
       - page: "OpenAI"
         path: "realtime/openai.md"
         slug: "realtime/openai"
-      - page: "OpenAI GPT-Live"
-        path: "realtime/openai-live.md"
-        slug: "realtime/openai-live"
+        aliases:
+          - "realtime/openai-live"
       - page: "Azure"
         path: "realtime/azure.md"
         slug: "realtime/azure"
@@ -1225,6 +1238,11 @@ navigation:
             slug: "api/pydantic-ai/run"
             aliases:
               - "api/run"
+          - page: "workspaces"
+            path: "api/workspaces.md"
+            slug: "api/pydantic-ai/workspaces"
+            aliases:
+              - "api/workspaces"
           - page: "settings"
             path: "api/settings.md"
             slug: "api/pydantic-ai/settings"
@@ -1437,6 +1455,8 @@ redirects:
     to: "capabilities/thinking/index.md"
   - from: "core-concepts/storage/index.md"
     to: "core-concepts/persistence/index.md"
+  - from: "realtime/openai-live/index.md"
+    to: "realtime/openai/index.md"
   # Content that moved outside the documentation site.
   - from: "a2a"
     to: "https://github.com/datalayer/fasta2a"

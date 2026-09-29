@@ -6,8 +6,7 @@ overrides with `executionEnvironments = [{ root = 'tests' }]`, which makes `test
 root -- so a `tests/logfire/` directory would shadow the third-party `logfire` package for
 every test file's `import logfire`. Keeping the directory off that name avoids the collision.
 
-Style follows `tests/code_mode/test_code_mode.py`: module-level
-`pytestmark = pytest.mark.anyio` and an `anyio_backend` fixture. All resolution runs
+Style follows `tests/code_mode/test_code_mode.py`. All resolution runs
 against the code default (no Logfire provider is configured), which is exactly the
 safety-net behavior `ManagedPrompt` relies on. Each test uses a unique slug because the
 default Logfire instance keeps its variable registry across `configure()` calls.
@@ -37,8 +36,6 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import ManagedPrompt
 from pydantic_ai_harness.logfire import ManagedPrompt as ManagedPromptFromPackage
 
-pytestmark = pytest.mark.anyio
-
 DEFAULT = 'You are a helpful assistant.'
 
 
@@ -46,11 +43,6 @@ DEFAULT = 'You are a helpful assistant.'
 def _configure_logfire() -> None:
     """Configure Logfire once so variable resolution does not warn (warnings are errors)."""
     logfire.configure(send_to_logfire=False, console=False)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def instructions_seen(result_messages: list[ModelMessage]) -> list[str]:
@@ -219,7 +211,7 @@ async def test_records_variable_resolution_span(capfire: CaptureLogfire) -> None
                     'value': '"You are a helpful assistant."',
                     'label': 'null',
                     'version': 'null',
-                    'reason': 'no_provider',
+                    'reason': 'code_default',
                     'logfire.json_schema': '{"type":"object","properties":{"name":{},"targeting_key":{"type":"null"},"attributes":{"type":"object"},"value":{},"label":{"type":"null"},"version":{"type":"null"},"reason":{}}}',
                 },
             }

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import detach_dbos_logging
+
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -18,10 +20,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Syst
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.compaction import SummarizingCompaction
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+pytestmark = [pytest.mark.xdist_group(name='harness-dbos')]
 
 
 @pytest.fixture
@@ -37,6 +36,7 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
+        detach_dbos_logging()
 
 
 def _history() -> list[ModelMessage]:
@@ -105,7 +105,6 @@ def test_default_id_is_stable() -> None:
     assert _compaction.id == 'summarizing_compaction'
 
 
-@pytest.mark.anyio
 async def test_dbos_replays_the_recorded_summary(dbos: DBOS) -> None:
     global _summary_calls
     _summary_calls = 0
@@ -121,7 +120,6 @@ async def test_dbos_replays_the_recorded_summary(dbos: DBOS) -> None:
     assert 'durable_summary__capability__summarizing_compaction.summarize' in {step['function_name'] for step in steps}
 
 
-@pytest.mark.anyio
 async def test_dbos_uses_custom_id_for_durable_summary(dbos: DBOS) -> None:
     global _summary_calls
     _summary_calls = 0

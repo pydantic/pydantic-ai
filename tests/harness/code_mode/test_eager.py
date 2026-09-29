@@ -36,13 +36,6 @@ from pydantic_ai_harness.code_mode import CodeMode, CodeModeToolset
 
 from .._recording_durability import RecordingDurability
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
 
 def build_run_context() -> RunContext[None]:
     return RunContext[None](
@@ -962,7 +955,7 @@ class TestEagerCodeMode:
             await release.wait()
 
         def stale() -> None:
-            stale_calls.append('stale')  # pragma: no cover - reaching this line fails the assertion below
+            stale_calls.append('stale')  # pragma: lax no cover - reaching this line fails the assertion below
 
         code = 'await slow()\n\nif True:\n    await stale()\nvalue = 1\n"done"'
         async with prepared_eager_toolset([Tool(slow), Tool(stale)]) as (capability, toolset, ctx, run_code):

@@ -28,7 +28,6 @@ from __future__ import annotations
 import textwrap
 from typing import Any
 
-import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, Tool
@@ -48,15 +47,6 @@ from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness import CodeMode
 
 from .conftest import IsDatetime, IsPartialDict, IsStr
-
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (pydantic-ai uses asyncio.create_task internally)."""
-    return 'asyncio'
-
 
 # ---------------------------------------------------------------------------
 # Canned tool responses -- shapes mirror what the cyanheads HN MCP server

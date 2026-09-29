@@ -3,12 +3,12 @@
 from pathlib import Path
 
 import pytest
-from menu_script import make_context
 
 from pydantic_clai2.field_menu import FieldMenu
 from pydantic_clai2.model_menu import ModelSettingsSource
 from pydantic_clai2.model_options import model_options, validate_model_options
 from pydantic_clai2.model_settings import ModelSettingsForm
+from tests.clai2.menu_script import make_context
 
 
 def _form(**values: object) -> ModelSettingsForm:

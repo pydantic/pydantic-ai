@@ -2,8 +2,6 @@
 
 from collections.abc import Callable
 
-from pydantic import ValidationError
-
 from pydantic_ai.models import known_model_names
 
 from .api_keys import set_api_key
@@ -58,7 +56,7 @@ class SettingsSource:
         """Why `text` is not a valid value for the row, or `None` if it is."""
         try:
             self._context.validate(row.key, text)
-        except ValidationError as exc:
+        except ValueError as exc:
             return first_error(exc)
         return None
 
@@ -66,7 +64,7 @@ class SettingsSource:
         """Save and apply. Returns the message to show."""
         try:
             return self._context.set_setting([row.key, raw])
-        except ValidationError as exc:
+        except ValueError as exc:
             return f'{row.key}: {first_error(exc)}'
 
     def reset(self, row: FieldRow) -> str:

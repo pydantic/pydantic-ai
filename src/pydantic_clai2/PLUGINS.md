@@ -521,17 +521,32 @@ for `/agent` and `/mcp`:
  [ ] audit         my_package.audit                  | state   enabled, loaded
                                                      | adds    2 commands, 1 hook, 0 tools
                                                      | error   none
+ Save & close
 
- Up/Down move - Space enable/disable - R reload - D remove - Enter/Q close
+ Up/Down move - Space enable/disable - C configure - R reload - D remove - Enter/Q close
 ```
 
 The left side lists every plugin with `[x]` for on and `[ ]` for off. The right
 side shows details for the highlighted one: where it came from, whether it
 loaded, what it registered, and the last error if loading failed. Every key
-acts immediately; there is no save step, so Enter, Q, Esc, and Ctrl-C all just close.
+acts immediately; there is no pending save step, so the **Save & close** row,
+Enter, Q, Esc, and Ctrl-C all just close.
+
+Turning a plugin on with Space opens its settings menu straight away when it
+offers one (see [`@host.configure`](#offer-a-settings-menu-hostconfigure)).
+When you leave that menu, `/plugins` comes back with the plugin's message in
+the details panel. `C` opens the settings menu of a plugin that is already on.
+Turning a plugin off never opens a menu, and a plugin without a settings menu
+just turns on.
 Closing returns to the prompt without printing the plugin list. Use `/plugins list`
 to print it.
 Adding a plugin needs a name and a module, so that stays a typed command.
+
+At startup, an enabled declaration whose own module cannot be imported (for
+example a built-in saved by a newer CLAI) is skipped quietly and listed as
+failed. A plugin that is installed but fails to import one of its dependencies
+is still reported, and `/plugins enable`, `add`, and `reload` always report
+failures.
 
 With arguments `/plugins` is a plain command, and `clai2 plugins ...` outside
 CLAI does the same thing:
@@ -541,7 +556,8 @@ CLAI does the same thing:
 | `/plugins list` | show every plugin and whether it is on |
 | `/plugins add NAME module[:attr] [JSON]` | save it and load it now |
 | `/plugins remove NAME` | forget an installed declaration; persistently disable a drop-in (delete its file yourself to remove it); reset a built-in or project-declared plugin to its declaration |
-| `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts |
+| `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts; enabling (like `add`) opens the plugin's settings menu if it has one |
+| `/plugins configure NAME` | open a loaded plugin's settings menu (in a CLAI session only) |
 | `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
 | `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
 
@@ -725,6 +741,10 @@ host.commands.register(
 ```
 
 The handler gets the arguments as a list of strings and returns the text to show.
+Return `''` when there is nothing to report, such as a menu closed without
+changes: the shell prints nothing rather than blank lines. A one-line result
+ending in ` unchanged.` (for example `GitHub settings unchanged.`) is treated
+the same way, so no-op notices stay out of the transcript.
 Arguments are split like a shell command line, so quotes group words. Pass
 `raw=True` to receive the unsplit argument text as one string instead (an empty
 list when there is none); `/fork` does this so prompts keep their apostrophes.
@@ -891,6 +911,31 @@ Bad or missing values fail at startup with a message naming your plugin.
 CLAI ignores unknown names in its own saved settings and preserves their values for
 other versions or branches. This does not relax validation of plugin declarations
 or `host.settings(Model)`.
+
+### Offer a settings menu: `@host.configure`
+
+Register an async function that shows a settings menu and returns a line to
+show afterwards. CLAI opens it when the plugin is turned on (Space in
+`/plugins`, `/plugins enable`, or `/plugins add`), on `C` in `/plugins`, and on
+`/plugins configure NAME`. Save each change with `host.save_settings(model)` as
+the user makes it; settings are stored in plaintext, so keep secrets in `/keys`
+and save only a key's name. When the saved settings changed, CLAI loads the
+plugin again afterwards, so `activate` builds from them.
+
+Build the menu with the shared field editor (`FieldMenu` and `run_flow` from
+`pydantic_clai2.field_menu`, run through `run_worker` from
+`pydantic_clai2.menu_worker`), the same one `/set` uses. Its last row is
+**Save & close**: every edit is already saved, so choosing it, like Esc, just
+leaves the menu. A menu you build yourself ends with `save_and_close_item()` and
+treats a result as closed when `picked(result)` is `None`.
+
+```python
+@host.configure
+async def configure() -> str:
+    # `NotifySource` is your `FieldSource`: rows, current values, validation, apply, and reset.
+    messages = await run_worker(lambda: run_flow(FieldMenu(NotifySource(host))))
+    return '\n'.join(messages) or 'Notify settings unchanged.'
+```
 
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 

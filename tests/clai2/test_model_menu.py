@@ -1,15 +1,16 @@
 """The `/add_model` menu, the catalog behind it, and per-model settings."""
 
+import sys
 from pathlib import Path
 
 import pytest
-from menu_script import Script, make_context, pick, typed
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks
+from pydantic_ai.models import infer_model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session
@@ -20,12 +21,9 @@ from pydantic_clai2.model_catalog import catalog, genai_prices_models, runnable_
 from pydantic_clai2.model_menu import ModelMenu, ModelSettingsSource, open_add_model_menu, run_model_flow
 from pydantic_clai2.model_picker import ModelPickerAction, build_model_picker, model_command, model_completions
 from pydantic_clai2.model_settings import ModelSettingsForm, model_settings_from_json
+from pydantic_clai2.set_menu import SettingsSource
 from pydantic_clai2.settings_store import SettingsStore
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import Script, make_context, pick, typed
 
 
 def test_catalog_merges_sources_and_only_lists_runnable_providers() -> None:
@@ -284,3 +282,54 @@ async def test_cancel_adding_from_picker(tmp_path: Path) -> None:
     assert await model_command(context, [], runners=script.runners) == 'No changes.'
     assert context.settings.model == original
     assert applied == []
+
+
+async def test_select_model_whose_provider_extra_is_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip('typesafe_sdk', reason='needs the `typesafe` extra')
+    monkeypatch.setenv('TYPESAFE_API_KEY', 'test-key')
+    context, applied = make_context(tmp_path)
+    context.store.add_model(name='typesafe:jev-latest')
+    assert await model_command(context, ['typesafe:jev-latest']) == 'Saved model. Applied.'
+    assert applied == ['model']
+    assert infer_model('typesafe:jev-latest').system == 'typesafe'
+
+
+@pytest.mark.parametrize(
+    ('model', 'sdk', 'expected'),
+    [
+        pytest.param(
+            'typesafe:jev-latest',
+            'typesafe_sdk',
+            [
+                'Cannot use typesafe:jev-latest: the `typesafe` extra is not installed in the Python CLAI2 runs on',
+                'pip install "pydantic-ai-slim[typesafe]"',
+                'uv run --package pydantic-clai2 --extra typesafe clai2',
+            ],
+            id='clai2-extra',
+        ),
+        pytest.param(
+            'groq:llama-3.3-70b-versatile',
+            'groq',
+            ['Cannot use groq:llama-3.3-70b-versatile with the Python CLAI2 runs on', 'pydantic-ai-slim[groq]'],
+            id='slim-extra',
+        ),
+    ],
+)
+async def test_select_model_whose_provider_sdk_is_missing_fails_before_saving(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model: str, sdk: str, expected: list[str]
+) -> None:
+    monkeypatch.setitem(sys.modules, sdk, None)
+    monkeypatch.delitem(sys.modules, f'pydantic_ai.providers.{model.partition(":")[0]}', raising=False)
+    context, applied = make_context(tmp_path)
+    original = context.settings.model
+    context.store.add_model(name=model)
+    with pytest.raises(ValueError) as exc_info:
+        await model_command(context, [model])
+    message = str(exc_info.value)
+    assert all(part in message for part in expected), message
+    assert sys.executable in message
+    assert context.settings.model == original and context.store.load().model == original and applied == []
+    model_row = FieldMenu(SettingsSource(context)).rows[0]
+    assert model_row.key == 'model'
+    assert SettingsSource(context).problem(model_row, model) == message
+    assert SettingsSource(context).apply(model_row, model) == f'model: {message}'

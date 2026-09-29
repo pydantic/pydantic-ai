@@ -1,12 +1,17 @@
 """Isolate settings and provider access for every CLAI test."""
 
-import os
 from pathlib import Path
 
 import keyring
 import pytest
 
 from pydantic_ai import models
+
+
+@pytest.fixture
+def blockbuster_enabled() -> bool:
+    """Not yet: the suite predates the detector. https://github.com/pydantic/pydantic-ai/issues/8821"""
+    return False
 
 
 @pytest.fixture
@@ -18,7 +23,6 @@ def anyio_backend() -> str:
 @pytest.fixture(autouse=True)
 def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Redirect default databases, including subprocesses, away from user data."""
-    monkeypatch.setenv('PYTEST_ADDOPTS', f'{os.getenv("PYTEST_ADDOPTS", "")} -p no:cassetter')
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'config'))
     monkeypatch.setenv('HOME', str(tmp_path / 'home'))
     monkeypatch.delenv('CLAI_MODEL', raising=False)

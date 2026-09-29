@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import warnings
+from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from copy import deepcopy
@@ -13,10 +14,9 @@ from typing import Any, Literal, cast
 
 import httpx2
 import pytest
+from cassetter import Cassette, RecordMode
 from pydantic import BaseModel
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
-from vcr.record_mode import RecordMode
 
 from pydantic_ai import (
     BinaryContent,
@@ -35,6 +35,7 @@ from pydantic_ai import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryPromptPart,
     SystemPromptPart,
     TextContent,
@@ -64,7 +65,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..cassette_utils import single_request_body
@@ -93,6 +94,7 @@ with try_import() as imports_successful:
     )
     from openai.types.responses.response import IncompleteDetails
     from openai.types.responses.response_compaction_item import ResponseCompactionItem
+    from openai.types.responses.response_function_web_search import ActionSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
     from openai.types.responses.response_output_text import AnnotationURLCitation, ResponseOutputText
@@ -121,7 +123,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -706,7 +707,7 @@ async def test_openai_responses_gpt_5_5_drops_sampling_params_by_default(
     """VCR test: GPT-5.5 reasons by default, so sampling params must be dropped when no effort is set.
 
     The live API rejects `temperature` on gpt-5.5 unless `effort='none'` is sent — i.e.
-    `openai_reasoning_enabled_by_default=True`, unlike the gpt-5.1..5.4 mainline models.
+    `thinking_enabled_by_default=True`, unlike the gpt-5.1..5.4 mainline models.
     The request-body assertion proves `temperature` was dropped so the request succeeds.
     """
     model = OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(api_key=openai_api_key))
@@ -805,7 +806,7 @@ async def test_openai_responses_tool_choice_list_unsupported_raises_error(allow_
         ]
     )
     mock_client = MockOpenAIResponses.create_mock(c)
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    profile = OpenAIModelProfile(supports_forced_tool_choice=False)
     model = OpenAIResponsesModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
     tools = [
@@ -2049,8 +2050,9 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                     cache_read_tokens=92160,
                     output_tokens=1720,
                     output_reasoning_tokens=1472,
-                    details={'reasoning_tokens': 1472},
-                    cost=Decimal('0.0583775'),
+                    details={'reasoning_tokens': 1472, 'web_search_requests': 6},
+                    web_searches=6,
+                    cost=Decimal('0.1183775'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2174,8 +2176,9 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     cache_read_tokens=8448,
                     output_tokens=577,
                     output_reasoning_tokens=512,
-                    details={'reasoning_tokens': 512},
-                    cost=Decimal('0.00788975'),
+                    details={'reasoning_tokens': 512, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.01788975'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2249,8 +2252,9 @@ async def test_openai_responses_model_web_search_tool(allow_model_requests: None
                     cache_read_tokens=8576,
                     output_tokens=439,
                     output_reasoning_tokens=384,
-                    details={'reasoning_tokens': 384},
-                    cost=Decimal('0.0066245'),
+                    details={'reasoning_tokens': 384, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.0166245'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2334,8 +2338,9 @@ async def test_openai_responses_model_web_search_tool_with_user_location(
                     cache_read_tokens=8320,
                     output_tokens=660,
                     output_reasoning_tokens=512,
-                    details={'reasoning_tokens': 512},
-                    cost=Decimal('0.00906875'),
+                    details={'reasoning_tokens': 512, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.01906875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2493,8 +2498,9 @@ async def test_openai_responses_model_web_search_tool_with_allowed_domains(
                     input_tokens=22013,
                     output_tokens=1737,
                     output_reasoning_tokens=1728,
-                    details={'reasoning_tokens': 1728},
-                    cost=Decimal('0.04488625'),
+                    details={'reasoning_tokens': 1728, 'web_search_requests': 2},
+                    web_searches=2,
+                    cost=Decimal('0.06488625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2622,8 +2628,9 @@ async def test_openai_responses_model_web_search_tool_with_invalid_region(
                     cache_read_tokens=8320,
                     output_tokens=1610,
                     output_reasoning_tokens=1344,
-                    details={'reasoning_tokens': 1344},
-                    cost=Decimal('0.01916375'),
+                    details={'reasoning_tokens': 1344, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.02916375'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2718,8 +2725,9 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     cache_read_tokens=8320,
                     output_tokens=582,
                     output_reasoning_tokens=512,
-                    details={'reasoning_tokens': 512},
-                    cost=Decimal('0.00828875'),
+                    details={'reasoning_tokens': 512, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.01828875'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -3068,8 +3076,9 @@ async def test_openai_responses_model_web_search_tool_stream(allow_model_request
                     cache_read_tokens=8576,
                     output_tokens=638,
                     output_reasoning_tokens=576,
-                    details={'reasoning_tokens': 576},
-                    cost=Decimal('0.00886075'),
+                    details={'reasoning_tokens': 576, 'web_search_requests': 1},
+                    web_searches=1,
+                    cost=Decimal('0.01886075'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -4569,6 +4578,207 @@ async def test_openai_responses_usage_without_tokens_details(allow_model_request
     assert result.usage == snapshot(
         RunUsage(input_tokens=14, output_tokens=1, details={'reasoning_tokens': 0}, requests=1)
     )
+
+
+async def test_openai_responses_web_search_usage(allow_model_requests: None):
+    """Native `web_search_call` items must surface as `web_searches` and be priced.
+
+    Test for https://github.com/pydantic/pydantic-ai/issues/8087
+    """
+    from openai.types import responses as resp
+
+    c1 = resp.Response(
+        id='123',
+        # Use a priceable model name so that `cost` is filled.
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,  # 2024-01-01
+        output=[
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-1',
+                action={'type': 'search', 'query': 'pydantic'},
+                status='completed',
+                type='web_search_call',
+            ),
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-2',
+                action={'type': 'search', 'query': 'openai'},
+                status='completed',
+                type='web_search_call',
+            ),
+            # Opening a page isn't a search, so it isn't counted.
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-3',
+                action={'type': 'open_page', 'url': 'https://pydantic.dev'},
+                status='completed',
+                type='web_search_call',
+            ),
+        ],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+        usage=ResponseUsage.model_construct(input_tokens=100, output_tokens=10, total_tokens=110),
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is pydantic?')
+    assert result.usage == snapshot(
+        RunUsage(
+            input_tokens=100,
+            output_tokens=10,
+            web_searches=2,
+            details={'reasoning_tokens': 0, 'web_search_requests': 2},
+            requests=2,
+            cost=Decimal('0.02035'),
+        )
+    )
+
+
+async def test_openai_responses_web_search_usage_without_token_usage(allow_model_requests: None):
+    """`web_search_call` items are counted even when the response carries no `usage` at all."""
+    c1 = response_message(
+        [
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-1',
+                action={'type': 'search', 'query': 'pydantic'},
+                status='completed',
+                type='web_search_call',
+            ),
+        ]
+    )
+    c2 = response_message(
+        [
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    mock_client = MockOpenAIResponses.create_mock([c1, c2])
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+
+    agent = Agent(model=model)
+    result = await agent.run('What is pydantic?')
+    # The mock response's model name (`gpt-4o-123`) is unknown to genai-prices, so `cost` stays `None`.
+    assert result.usage == snapshot(RunUsage(web_searches=1, details={'web_search_requests': 1}, requests=2))
+
+
+async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(allow_model_requests: None):
+    """A search already listed in an `in_progress` snapshot is counted once, from the terminal response.
+
+    Mocked because the recorded streams' `in_progress` snapshots carry no output items.
+    """
+    search = ResponseFunctionWebSearch(
+        id='web-search-1',
+        action=ActionSearch(type='search', query='pydantic'),
+        status='completed',
+        type='web_search_call',
+    )
+    message = ResponseOutputMessage(
+        id='msg_001',
+        content=[ResponseOutputText(text='done', type='output_text', annotations=[])],
+        role='assistant',
+        status='completed',
+        type='message',
+    )
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-4o',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseInProgressEvent(
+            response=base_response.model_copy(update={'status': 'in_progress', 'output': [search]}),
+            type='response.in_progress',
+            sequence_number=1,
+        ),
+        resp.ResponseOutputItemAddedEvent(
+            item=message.model_copy(update={'content': [], 'status': 'in_progress'}),
+            output_index=1,
+            type='response.output_item.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='done',
+            item_id='msg_001',
+            output_index=1,
+            type='response.output_text.delta',
+            sequence_number=3,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed', 'output': [search, message]}),
+            type='response.completed',
+            sequence_number=4,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+
+    async with agent.run_stream('What is pydantic?') as result:
+        assert await result.get_output() == 'done'
+    assert result.usage == snapshot(
+        RunUsage(requests=1, web_searches=1, details={'web_search_requests': 1}, cost=Decimal('0.01'))
+    )
+
+
+async def test_openai_responses_web_search_usage_reported_count(
+    allow_model_requests: None, openai_api_key: str, vcr: Cassette
+):
+    """The web search count comes from OpenAI's own `tool_usage.web_search.num_requests`.
+
+    This recording has `open_page` and `find_in_page` actions alongside the searches, and OpenAI's count matches
+    the `search` actions only, which is what the adapter counts for older responses that lack the field.
+    """
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
+    agent = Agent(
+        model,
+        capabilities=[NativeTool(WebSearchTool())],
+        model_settings=OpenAIResponsesModelSettings(openai_reasoning_effort='medium'),
+    )
+
+    result = await agent.run(
+        'Use web search step by step, one search at a time, where each search depends on the previous answer: '
+        'first find who directed the film that won Best Picture at the most recent Academy Awards; then search for '
+        "that director's birthplace, and open that director's Wikipedia page to confirm it; then search for the "
+        'current mayor of that birthplace. Give all three answers.'
+    )
+
+    actions = Counter(
+        part.args_as_dict()['type']
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, NativeToolCallPart)
+    )
+    assert actions == snapshot(Counter({'search': 4, 'open_page': 2, 'find_in_page': 1}))
+    reported = vcr.interactions[0].response.body.content['tool_usage']['web_search']['num_requests']
+    assert reported == snapshot(4)
+    assert result.usage.details['web_search_requests'] == reported == actions['search']
 
 
 async def test_openai_responses_model_thinking_part(allow_model_requests: None, openai_api_key: str):

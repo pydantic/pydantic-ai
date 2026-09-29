@@ -13,7 +13,7 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from functools import cache, cached_property
+from functools import cache
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, cast, overload
@@ -22,10 +22,9 @@ import httpx
 import httpx2
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
+from cassetter import Cassette, RecordMode
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
-from vcr import VCR, request as vcr_request
-from vcr.record_mode import RecordMode
 
 import pydantic_ai._http
 import pydantic_ai.models
@@ -51,6 +50,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from . import cassette_hooks
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
 
@@ -93,12 +93,6 @@ __all__ = (
     'message_part',
 )
 
-# Configure VCR logger to WARNING as it is too verbose by default
-# specifically, it logs every request and response including binary
-# content in Cassette.append, which is causing log downloads from
-# GitHub action to fail.
-logging.getLogger('vcr.cassette').setLevel(logging.WARNING)
-
 pydantic_ai.models.ALLOW_MODEL_REQUESTS = False
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
@@ -118,7 +112,6 @@ def pytest_configure(config: pytest.Config) -> None:
 if TYPE_CHECKING:
     from blockbuster import BlockBuster
     from pluggy import Result
-    from vcr.cassette import Cassette
 
     from pydantic_ai.providers.bedrock import BedrockProvider
     from pydantic_ai.providers.xai import XaiProvider
@@ -377,10 +370,6 @@ def anyio_backend(pytestconfig: pytest.Config) -> str:
 # Each entry should say why the blocking call is acceptable; anything not listed here should be
 # fixed (e.g. offloaded to a thread with `anyio.to_thread.run_sync`) rather than exempted.
 BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
-    # coverage reads Python source files while collecting coverage data. Remove these once
-    # https://github.com/cbornet/blockbuster/pull/69 is released in a compatible version.
-    ('os.stat', 'coverage/python.py', 'get_python_source'),
-    ('io.BufferedReader.read', 'coverage/python.py', 'read_python_source'),
     # pytest-examples locates the source line of a captured `print()` with `Path.samefile`, so an
     # example printing from inside a running event loop trips the detector on the harness's own
     # `os.stat`. Exempting the capture entry point keeps `os.stat` calls from example and library
@@ -424,6 +413,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.getcwd', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     ('io.TextIOWrapper.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
     ('io.BufferedReader.read', 'pydantic_ai/_utils.py', 'enum_member_docstrings'),
+    # A local workspace built with a relative `working_dir` resolves it against the current directory
+    # once, at construction, which may happen in async code.
+    ('os.getcwd', 'pydantic_ai/workspaces/local.py', '__init__'),
+    # Prefect's `Task` reads its function's source for display when core builds a task, which the
+    # durable workspace tests do while constructing an agent inside a running test.
+    ('os.stat', 'prefect/tasks.py', '__init__'),
     # logfire resolves the current working directory while classifying user stack frames.
     ('os.getcwd', 'logfire/_internal/stack_info.py', 'is_user_code'),
     # `Dataset.to_file`/`from_file` and schema saving are sync serialization APIs; file I/O is
@@ -444,8 +439,10 @@ def _configure_blockbuster(
     # must remain unaffected by that instrumentation.
     from blockbuster import BlockBuster
 
+    # The harness isn't installed in every CI lane (the `pydantic-evals` one, say).
+    harness = ['pydantic_ai_harness'] if importlib.util.find_spec('pydantic_ai_harness') is not None else []
     bb = BlockBuster(
-        ['pydantic_ai', 'pydantic_graph', 'pydantic_evals', 'clai'],
+        ['pydantic_ai', *harness, 'pydantic_graph', 'pydantic_evals', 'clai'],
         excluded_modules=excluded_modules or None,
     )
     for func, filename, functions in exemptions:
@@ -695,66 +692,6 @@ def raise_if_exception(e: Any) -> None:
         raise e
 
 
-_AWS_ACCOUNT_ID_IN_ARN = re.compile(r'(arn(?:%3A|:)aws(?:%3A|:)bedrock(?:%3A|:)[^:%]*(?:%3A|:))\d{12}((?:%3A|:))')
-_SCRUBBED_AWS_ACCOUNT_ID = r'\g<1>123456789012\2'
-
-
-def pytest_recording_configure(config: Any, vcr: VCR):
-    from . import json_body_serializer
-
-    vcr.register_serializer('yaml', json_body_serializer)
-
-    def method_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
-        if r1.method.upper() != r2.method.upper():
-            raise AssertionError(f'{r1.method} != {r2.method}')
-
-    def path_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
-        """Match URL paths after scrubbing AWS account IDs from ARNs."""
-        path1 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r1.path)
-        path2 = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, r2.path)
-        # Normalize Vertex AI paths by replacing region and project (cassettes may be recorded
-        # against a different GCP project than the fixture default)
-        path1 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path1)
-        path2 = re.sub(r'/locations/[a-z0-9-]+/', '/locations/REGION/', path2)
-        path1 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path1)
-        path2 = re.sub(r'/projects/[a-z0-9-]+/', '/projects/PROJECT/', path2)
-        if path1 != path2:
-            raise AssertionError(f'{path1} != {path2}')
-
-    vcr.register_matcher('method', method_matcher)
-    vcr.register_matcher('path', path_matcher)
-
-    def scrub_request(request: vcr_request.Request) -> vcr_request.Request | None:
-        if (request.host, request.path) in {
-            ('oauth2.googleapis.com', '/token'),
-            ('auth.openai.com', '/oauth/token'),
-        }:
-            return None
-        request.uri = _AWS_ACCOUNT_ID_IN_ARN.sub(_SCRUBBED_AWS_ACCOUNT_ID, request.uri)
-        return request
-
-    vcr.before_record_request = scrub_request
-
-    # Normalize Bedrock hostnames to ignore region differences
-    # e.g., bedrock-runtime.us-east-1.amazonaws.com == bedrock-runtime.us-east-2.amazonaws.com
-    bedrock_host_pattern = re.compile(r'bedrock-runtime\.([a-z0-9-]+)\.amazonaws\.com')
-
-    def host_matcher(r1: vcr_request.Request, r2: vcr_request.Request) -> None:
-        host1 = r1.host  # pyright: ignore[reportUnknownVariableType]
-        host2 = r2.host  # pyright: ignore[reportUnknownVariableType]
-        # Normalize Bedrock hosts by removing region
-        host1_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host1)
-        host2_normalized = bedrock_host_pattern.sub('bedrock-runtime.REGION.amazonaws.com', host2)
-        # Normalize Vertex AI hosts by removing region prefix
-        vertex_host_pattern = re.compile(r'^[a-z0-9-]+-aiplatform\.googleapis\.com$')
-        host1_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host1_normalized)
-        host2_normalized = vertex_host_pattern.sub('aiplatform.googleapis.com', host2_normalized)
-        if host1_normalized != host2_normalized:
-            raise AssertionError(f'{host1} != {host2}')
-
-    vcr.register_matcher('host', host_matcher)
-
-
 def pytest_addoption(parser: Any) -> None:
     parser.addoption(
         '--anyio-backend',
@@ -791,30 +728,14 @@ def pytest_runtest_makereport(
     setattr(item, f'rep_{report.when}', report)
 
 
-@pytest.fixture(autouse=True)
-def mock_vcr_aiohttp_content(mocker: MockerFixture):
-    try:
-        from vcr.stubs import aiohttp_stubs
-    except ImportError:  # pragma: lax no cover
-        return
-
-    # google-genai calls `self.response_stream.content.readline()` where `self.response_stream` is a `MockClientResponse`,
-    # which creates a new `MockStream` each time instead of returning the same one, resulting in the readline cursor not being respected.
-    # So we turn `content` into a cached property to return the same one each time.
-    # VCR issue: https://github.com/kevin1024/vcrpy/issues/927. Once that's is resolved, we can remove this patch.
-    cached_content = cached_property(aiohttp_stubs.MockClientResponse.content.fget)  # pyright: ignore[reportArgumentType, reportUnknownVariableType]
-    cached_content.__set_name__(aiohttp_stubs.MockClientResponse, 'content')
-    mocker.patch('vcr.stubs.aiohttp_stubs.MockClientResponse.content', new=cached_content)
-    mocker.patch('vcr.stubs.aiohttp_stubs.MockStream.set_exception', return_value=None)
-
-
 @pytest.fixture(scope='module')
-def vcr_config():
+def vcr_config() -> dict[str, Any]:
+    """Module `conftest.py` overrides should extend this (`{**vcr_config, ...}`) so the hooks stay on."""
     return {
         'ignore_localhost': True,
-        # Note: additional header filtering is done inside the serializer
-        'filter_headers': ['authorization', 'x-api-key', 'cookie'],
-        'decode_compressed_response': True,
+        'before_record_request': cassette_hooks.before_record_request,
+        'before_record_response': cassette_hooks.before_record_response,
+        'uri_normalizer': cassette_hooks.normalize_uri,
     }
 
 
@@ -822,12 +743,15 @@ def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
     if vcr.play_count == 0 and not strict_usage:
         return
 
-    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
-    if unused_indexes:
-        pytest.fail(
-            f'Cassette {getattr(vcr, "_path", "<unknown>")} did not play all interactions: '
-            f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
-        )
+    # Each protocol numbers its interactions from 0, and `play_counts` only covers HTTP.
+    unused = {
+        'HTTP': [index for index in range(len(vcr.interactions)) if vcr.play_counts.get(index, 0) == 0],
+        'gRPC': [index for index, played in enumerate(vcr.grpc_played_indices) if not played],
+        'WebSocket': [index for index, played in enumerate(vcr.ws_played_indices) if not played],
+    }
+    if any(unused.values()):
+        details = '; '.join(f'unused {protocol} indexes: {indexes}' for protocol, indexes in unused.items() if indexes)
+        pytest.fail(f'Cassette {vcr.path} did not play all interactions: {details}')
 
 
 @pytest.fixture(autouse=True)
@@ -858,11 +782,8 @@ def fail_cache_prefix_violations(request: pytest.FixtureRequest, vcr: Cassette |
         return
     if vcr is None or vcr.record_mode != RecordMode.NONE:
         return
-
-    cassette_path_value = getattr(vcr, '_path', None)
-    if cassette_path_value is None or not (cassette_path := Path(cassette_path_value)).is_file():
-        return
-    check_cache_prefix_stability(request.node, cassette_path)
+    # Playback never records, so the interactions cassetter loaded are exactly the file's contents.
+    check_cache_prefix_stability(request.node, vcr)
 
 
 # `validate_json` parses through pydantic-core rather than the stdlib, and types the result without a cast.
@@ -1284,7 +1205,7 @@ async def xai_provider(request: pytest.FixtureRequest) -> AsyncIterator[XaiProvi
     cassette_path = Path(request.node.fspath).parent / 'cassettes' / test_module / f'{cassette_name}.xai.yaml'
     record_mode: str | None
     try:
-        # Provided by `pytest-recording` as `--record-mode=...` (dest is typically `record_mode`).
+        # Provided by cassetter's pytest plugin as `--record-mode=...`.
         record_mode = cast(Any, request.config).getoption('record_mode')
     except Exception:  # pragma: no cover
         record_mode = None

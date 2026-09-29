@@ -31,12 +31,12 @@ def fixed_state(nbytes: int) -> str:
 
 async def never_pasted(message: str) -> str:
     await asyncio.Event().wait()
-    raise AssertionError('unreachable')
+    raise AssertionError('unreachable')  # pragma: no cover
 
 
 async def never_called_back(self: OpenAICodexOAuthFlow) -> OpenAICodexCredentials:
     await asyncio.Event().wait()
-    raise AssertionError('unreachable')
+    raise AssertionError('unreachable')  # pragma: no cover
 
 
 def scripted(values: list[str | BaseException]) -> tuple[list[str], CodexAuth]:
@@ -51,11 +51,6 @@ def scripted(values: list[str | BaseException]) -> tuple[list[str], CodexAuth]:
         return value
 
     return prompts, CodexAuth(Console(file=io.StringIO()), read_line=paste)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 async def test_credentials_round_trip() -> None:

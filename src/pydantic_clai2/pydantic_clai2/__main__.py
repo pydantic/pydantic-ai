@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import sys
+import warnings
 from pathlib import Path
 
 from .splash import Splash
@@ -29,7 +30,13 @@ def main() -> None:
     try:
         from ._cli import run
 
-        run(splash=splash)
+        with warnings.catch_warnings():
+            if not sys.warnoptions:
+                # Library `UserWarning`s are advice for the developer who wired the agent, not the person
+                # at the prompt, and stderr output tears through the live display. `-W` or
+                # `PYTHONWARNINGS` restores them.
+                warnings.simplefilter('ignore', UserWarning)
+            run(splash=splash)
     finally:
         splash.stop()
 

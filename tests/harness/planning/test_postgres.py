@@ -21,14 +21,8 @@ from pydantic_ai_harness.planning import (
 from pydantic_ai_harness.planning._postgres import _deleted_count  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
 ]
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 Row = tuple[object, ...]

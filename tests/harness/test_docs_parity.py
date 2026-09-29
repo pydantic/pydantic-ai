@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parents[2] / 'src' / 'pydantic_ai_harness'
 _PACKAGE = _ROOT / 'pydantic_ai_harness'
 
 # The `experimental` package is a namespace/warning shim, not a capability, so it
@@ -94,14 +94,22 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 # capability, and no leftover "experimental" framing on graduated capabilities.
 # ACP is the one page that stays experimental.
 
-_DOCS_DIR = _ROOT / 'docs'
+_DOCS_DIR = _ROOT / '../../docs/harness'
 # `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
-# and `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, so the
-# capability-page checks do not apply to either.
-_NON_CAPABILITY_PAGES = {'clai2.md', 'examples.md', 'gh-aw.md', 'index.md', 'media.md', 'mutation-testing.md'}
+# `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, and `durable-execution.md` is a
+# guide across capabilities, so the capability-page checks do not apply to them.
+_NON_CAPABILITY_PAGES = {
+    'clai2.md',
+    'durable-execution.md',
+    'examples.md',
+    'gh-aw.md',
+    'index.md',
+    'media.md',
+    'mutation-testing.md',
+}
 _ACP_PAGE = 'acp.md'
 
-_SOURCE_LINK = 'github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/'
+_SOURCE_LINK = 'github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/'
 # Framing that must not appear on a graduated (non-ACP) capability page.
 _EXPERIMENTAL_MARKERS = ('HarnessExperimentalWarning', 'removed in any release', '!!! warning "Experimental')
 # Lifecycle hook names must not lead a page -- mechanism goes below the purpose.
@@ -134,6 +142,8 @@ _CAPABILITY_PAGE_META = {
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
+    'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
+    'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),
     'repo-context.md': ('repo_context', 'Repo Context'),
     'repair-tool-arguments.md': ('repair_tool_arguments', 'Repair Tool Arguments'),
     'researcher.md': ('researcher', 'Researcher'),
@@ -355,8 +365,8 @@ def test_capability_readme_links_source(package: Path) -> None:
 # `coder_agent` actually is; see agent_docs/docs-conventions.md.
 _BLOWN_OUT_MARKER = '<!-- Keep this blown-out example in sync across'
 _BLOWN_OUT_SURFACES = (
-    'docs/coder.md',
-    'docs/index.md',
+    '../../docs/harness/coder.md',
+    '../../docs/harness/index.md',
     'README.md',
     'pydantic_ai_harness/coder/README.md',
 )
@@ -366,7 +376,7 @@ def _blown_out_block(path: Path) -> str:
     text = path.read_text(encoding='utf-8')
     assert _BLOWN_OUT_MARKER in text, f'{path.relative_to(_ROOT)} lost its blown-out keep-in-sync marker'
     after = text.split(_BLOWN_OUT_MARKER, 1)[1]
-    match = re.search(r'```python\n(.*?)```', after, flags=re.DOTALL)
+    match = re.search(r'```python[^\n]*\n(.*?)```', after, flags=re.DOTALL)
     assert match, f'{path.relative_to(_ROOT)} has no python block after the blown-out marker'
     return match.group(1)
 
@@ -382,13 +392,12 @@ def test_blown_out_example_is_identical_across_surfaces(surface: str) -> None:
 
 def test_blown_out_example_matches_coder_defaults() -> None:
     block = _blown_out_block(_ROOT / _BLOWN_OUT_SURFACES[0])
-    assert "capabilities=[Coder('.')]" in block
-    assert "name='coder'" in block
+    assert "capabilities=[LocalWorkspace('.'), Coder()]" in block
     example = (_ROOT / 'examples/coding_agent.py').read_text(encoding='utf-8')
-    assert "name='coder'" in example and 'capabilities=[Coder(workspace or Path.cwd())]' in example
+    assert "name='coder'" in example and "capabilities=[LocalWorkspace(workspace or '.'), Coder()]" in example
 
 
-@pytest.mark.parametrize('surface', ['README.md', 'docs/index.md'])
+@pytest.mark.parametrize('surface', ['README.md', '../../docs/harness/index.md'])
 def test_coder_entry_page_describes_current_tools(surface: str) -> None:
     text = (_ROOT / surface).read_text(encoding='utf-8')
     introduction = text.split('## Capabilities', 1)[0]
