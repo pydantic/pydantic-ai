@@ -12,10 +12,10 @@ A decision model can also work together with a language model. When it picks a r
 
 Pydantic AI supports two decision model backends out of the box:
 
-- TypeSafe's Jev, a hosted API, through [`TypeSafeModel`](typesafe.md), as `typesafe:jev-latest`.
-- Open-weight models that you serve on your own hardware, such as [Contrastive Language Models](system-one.md#contrastive-language-models-clm) (CLM) and [Laya](system-one.md#laya), through [`SystemOneModel`](system-one.md), which speaks the same `/v1/systemone` API as Jev, as `system-one:<model>`.
+- TypeSafe's Jev, through [`TypeSafeModel`](typesafe.md), as `typesafe:jev-latest`.
+- Any other decision model behind the same `/v1/systemone` API as Jev, such as [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) (CLM) or [Laya](https://huggingface.co/convaiinnovations/laya), through [`SystemOneModel`](system-one.md), as `system-one:<model>`.
 
-The examples on this page use Jev, and run on a model you serve yourself by changing the model name. This page covers what `DecisionModel` does for any backend; each backend's page covers its setup, its own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
+The examples on this page use Jev, and run on any other decision model by changing the model name. This page covers what `DecisionModel` does for any backend; each backend's page covers its setup, its own limits and what it answers badly. To use another backend, [implement `decide`](#implementing-a-decision-model).
 
 Reach for one when the answer is a classification — a verdict, a route, a label, a score against a rubric — and you want it cheaper and faster than a language model gives it, with a confidence you can act on. Keep a language model for anything that has to be written: a `str` field, a reply, a summary.
 

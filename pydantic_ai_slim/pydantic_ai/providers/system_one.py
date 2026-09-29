@@ -12,11 +12,10 @@ from pydantic_ai.providers import Provider
 
 
 class SystemOneProvider(Provider[httpx2.AsyncClient]):
-    """Provider for a server that answers the `POST /v1/systemone` decisions API.
+    """Provider for the `POST /v1/systemone` decisions API, at a URL of your choosing.
 
-    Open-weight decision models ship servers for it that you run on your own hardware, such as `clm-serve` for
-    [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) and `laya-serve` for
-    [Laya](https://huggingface.co/convaiinnovations/laya).
+    Decision models such as [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) and
+    [Laya](https://huggingface.co/convaiinnovations/laya) are available over this API.
     """
 
     @property
@@ -33,7 +32,7 @@ class SystemOneProvider(Provider[httpx2.AsyncClient]):
 
     @property
     def api_key(self) -> str | None:
-        """The key sent as a bearer token, if the server needs one."""
+        """The key sent as a bearer token, if the API needs one."""
         return self._api_key
 
     @staticmethod
@@ -50,17 +49,17 @@ class SystemOneProvider(Provider[httpx2.AsyncClient]):
         """Create a new System One provider.
 
         Args:
-            base_url: The URL of the server, without the `/v1/systemone` path. If not provided, the
+            base_url: The URL of the API, without the `/v1/systemone` path. If not provided, the
                 `SYSTEM_ONE_BASE_URL` environment variable is used.
-            api_key: The key the server was started with, sent as a bearer token. If not provided, the
-                `SYSTEM_ONE_API_KEY` environment variable is used if set. Servers started without a key need none.
+            api_key: The API key, sent as a bearer token. If not provided, the
+                `SYSTEM_ONE_API_KEY` environment variable is used if set.
             http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.
         """
         base_url = base_url or os.getenv('SYSTEM_ONE_BASE_URL')
         if not base_url:
             raise UserError(
                 'Set the `SYSTEM_ONE_BASE_URL` environment variable or pass it via `SystemOneProvider(base_url=...)` '
-                'to point the System One provider at your server.'
+                'to point the System One provider at the API.'
             )
         self._base_url = base_url.rstrip('/')
         self._api_key = api_key or os.getenv('SYSTEM_ONE_API_KEY')

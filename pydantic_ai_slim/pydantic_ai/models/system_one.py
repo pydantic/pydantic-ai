@@ -30,11 +30,11 @@ __all__ = (
 )
 
 SystemOneModelName = str
-"""The name the server serves a checkpoint under, such as `clm-latest` for `clm-serve`."""
+"""The name the API serves a model under, such as `clm-latest`."""
 
 
 class SystemOneModelSettings(DecisionModelSettings, total=False):
-    """Settings used for a request to a System One server."""
+    """Settings used for a System One API request."""
 
     # ALL FIELDS MUST BE `system_one_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
     # This class is a placeholder for any future System One-specific settings.
@@ -44,10 +44,9 @@ class SystemOneModelSettings(DecisionModelSettings, total=False):
 class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
     """The model class for [decision models][pydantic_ai.models.decision.DecisionModel] served over the `/v1/systemone` API.
 
-    Open-weight decision models such as [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) and
-    [Laya](https://huggingface.co/convaiinnovations/laya) run on your own hardware behind a server that speaks this
-    API, and an agent whose job is to decide something runs on one like on any other model, with the `output_type`
-    as the questions:
+    Decision models such as [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) and
+    [Laya](https://huggingface.co/convaiinnovations/laya) are available over this API, and an agent whose job is to
+    decide something runs on one like on any other model, with the `output_type` as the questions:
 
     ```python
     from pydantic import BaseModel, Field
@@ -64,13 +63,12 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
     ```
 
     See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for how an agent's output type and tools
-    become questions, and [System One servers](https://pydantic.dev/docs/ai/models/system-one/) for serving a
-    checkpoint and what each model answers badly.
+    become questions, and [System One API](https://pydantic.dev/docs/ai/models/system-one/) for connecting to one.
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    # `max_choice_options` and `max_score_levels` stay `None`: they are the server's to enforce, and it refuses a
+    # `max_choice_options` and `max_score_levels` stay `None`: they are the API's to enforce, and it refuses a
     # request over its limits with an error response.
 
     _model_name: SystemOneModelName = field(repr=False)
@@ -88,8 +86,8 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         """Initialize a System One model.
 
         Args:
-            model_name: The name the server serves the checkpoint under, such as `clm-latest` for `clm-serve`.
-            provider: The provider to use for the server's address and API key.
+            model_name: The name the API serves the model under, such as `clm-latest`.
+            provider: The provider to use for the API's URL and key.
             profile: The model profile to use. Defaults to one selected by the provider.
             settings: Model-specific settings used as defaults for this model.
         """
@@ -119,7 +117,7 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         return self._provider.name
 
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
-        """Send one request to the server's `/v1/systemone` endpoint."""
+        """Send one request to the `/v1/systemone` endpoint."""
         body: dict[str, object] = {
             'state': request.state,
             'model': self._model_name,
@@ -129,9 +127,7 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
             body['temperature'] = temperature
         if (extra_body := model_settings.get('extra_body')) is not None:
             if not isinstance(extra_body, Mapping):
-                raise UserError(
-                    f'`extra_body` must be a mapping to send it to a System One server; got {extra_body!r}.'
-                )
+                raise UserError(f'`extra_body` must be a mapping to send it to the System One API; got {extra_body!r}.')
             body.update(cast('Mapping[str, object]', extra_body))
 
         headers = dict(model_settings.get('extra_headers') or {})
@@ -148,7 +144,7 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
             )
         except (TypeError, ValueError) as e:
             # An `extra_body` that will not encode as JSON is the caller's to fix, not the model's.
-            raise UserError(f'Could not send this request to the System One server: {e}') from e
+            raise UserError(f'Could not send this request to the System One API: {e}') from e
         try:
             response = await self.client.send(http_request)
         except httpx2.TransportError as e:
@@ -164,7 +160,7 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         try:
             parsed = _response_adapter.validate_json(response.content)
         except ValidationError as e:
-            raise UnexpectedModelBehavior(f'Invalid response from the System One server: {e}', response.text) from e
+            raise UnexpectedModelBehavior(f'Invalid response from the System One API: {e}', response.text) from e
         return DecisionResponse(
             answers=parsed.answers,
             model_name=parsed.model,
@@ -180,7 +176,7 @@ class _Usage:
 
 @dataclass(kw_only=True)
 class _SystemOneResponse:
-    """The body a server answers `/v1/systemone` with."""
+    """The body the API answers `/v1/systemone` with."""
 
     model: str
     answers: dict[str, Annotated[DecisionAnswer, Field(discriminator='type')]]

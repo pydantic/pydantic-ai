@@ -65,7 +65,7 @@ def mock_model(handler: Handler, *, api_key: str | None = None) -> SystemOneMode
 
 
 def answers(**answers: Mapping[str, object]) -> httpx2.Response:
-    """A `/v1/systemone` body as `clm-serve` sends it."""
+    """A `/v1/systemone` response body."""
     usage = {'billing_units': len(answers), 'input_tokens': 42, 'output_tokens': 0}
     return httpx2.Response(200, json={'model': 'clm-latest', 'answers': answers, 'usage': usage})
 
@@ -97,21 +97,21 @@ class Captured:
 
 
 def test_init(env: TestEnv):
-    env.set('SYSTEM_ONE_BASE_URL', 'http://gpu-box:8700/')
+    env.set('SYSTEM_ONE_BASE_URL', 'https://decisions.example.com/')
     env.remove('SYSTEM_ONE_API_KEY')
     model = SystemOneModel('clm-latest')
     assert model.model_name == 'clm-latest'
     assert model.system == 'system-one'
-    assert model.base_url == 'http://gpu-box:8700'
+    assert model.base_url == 'https://decisions.example.com'
     assert isinstance(model.client, httpx2.AsyncClient)
     assert model._api_key is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_provider_reads_the_environment(env: TestEnv):
-    env.set('SYSTEM_ONE_BASE_URL', 'http://gpu-box:8700/')
+    env.set('SYSTEM_ONE_BASE_URL', 'https://decisions.example.com/')
     env.set('SYSTEM_ONE_API_KEY', 'secret')
     provider = SystemOneProvider()
-    assert provider.base_url == 'http://gpu-box:8700'
+    assert provider.base_url == 'https://decisions.example.com'
     assert provider.api_key == 'secret'
     assert provider.name == 'system-one'
 
@@ -210,7 +210,7 @@ async def test_output_type(allow_model_requests: None):
 
 
 async def test_score_levels_come_back_as_numbers(allow_model_requests: None):
-    """A server keys a rubric's probabilities and legend by level as strings, as JSON has to."""
+    """The API keys a rubric's probabilities and legend by level as strings, as JSON has to."""
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         return answers(
@@ -236,7 +236,7 @@ async def test_score_levels_come_back_as_numbers(allow_model_requests: None):
 
 
 async def test_laya_response(allow_model_requests: None):
-    """`laya-serve` adds keys of its own to the body and each answer, and leaves `billing_units` out of the usage."""
+    """Laya's API adds keys of its own to the body and each answer, and leaves `billing_units` out of the usage."""
 
     def handler(request: httpx2.Request) -> httpx2.Response:
         action = {'act_probability': 1.0}
@@ -301,7 +301,7 @@ async def test_extra_body_must_be_a_mapping(allow_model_requests: None):
 
 async def test_extra_body_that_will_not_encode(allow_model_requests: None):
     agent = Agent(mock_model(ticket_answers), output_type=Ticket)
-    with pytest.raises(UserError, match='Could not send this request to the System One server'):
+    with pytest.raises(UserError, match='Could not send this request to the System One API'):
         await agent.run('Charged twice.', model_settings={'extra_body': {'when': object()}})
 
 
@@ -351,7 +351,7 @@ async def test_invalid_response(allow_model_requests: None):
         return answers(urgent={'type': 'noul'})
 
     agent = Agent(mock_model(handler), output_type=Ticket)
-    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the System One server'):
+    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the System One API'):
         await agent.run('Charged twice.')
 
 

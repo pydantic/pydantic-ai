@@ -197,7 +197,7 @@ navigation:
       - page: "Decision models"
         path: "models/decision.md"
         slug: "models/decision"
-      - page: "System One servers"
+      - page: "System One API"
         path: "models/system-one.md"
         slug: "models/system-one"
       - page: "TypeSafe (Jev)"
