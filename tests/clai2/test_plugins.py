@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import get_args
 
 import pytest
-from pydantic import BaseModel, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import (
@@ -155,3 +155,25 @@ def test_transcript_hands_out_snapshots_like_session() -> None:
     transcript.replace_messages([second])
     assert transcript.messages == [second]
     assert host().conversation.messages == []
+
+
+class AliasedSettings(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    api_key_name: str = Field(alias='api-key-name')
+
+
+def test_saved_settings_round_trip_through_aliases() -> None:
+    saved: list[dict[str, JsonValue]] = []
+    plugin = PluginHost[None](
+        name='test', console=Console(file=io.StringIO()), settings={'api-key-name': 'OLD'}, save_settings=saved.append
+    )
+    plugin.save_settings(AliasedSettings.model_validate({'api-key-name': 'NEW'}))
+    assert saved == [{'api-key-name': 'NEW'}]
+    assert plugin.settings(AliasedSettings).api_key_name == 'NEW'
+
+
+def test_host_outside_the_loader_keeps_saved_settings_for_this_load() -> None:
+    plugin = host(**{'api-key-name': 'OLD'})
+    assert plugin.configurer is None
+    plugin.save_settings(AliasedSettings.model_validate({'api-key-name': 'NEW'}))
+    assert plugin.settings(AliasedSettings).api_key_name == 'NEW'
