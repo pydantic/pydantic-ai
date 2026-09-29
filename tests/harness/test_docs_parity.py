@@ -142,6 +142,7 @@ _CAPABILITY_PAGE_META = {
     'shell.md': ('shell', 'Shell'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
+    'pixeltable.md': ('pixeltable', 'Pixeltable'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),
     'e2b-sandbox.md': ('e2b_sandbox', 'E2B Sandbox'),
     'sprites-sandbox.md': ('sprites_sandbox', 'Sprites Sandbox'),

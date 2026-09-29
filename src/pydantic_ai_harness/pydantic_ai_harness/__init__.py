@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from .memory import Memory
     from .modal_sandbox import ModalSandbox, ModalSandboxBackend
     from .ordinal import Ordinal
+    from .pixeltable import Pixeltable
     from .planning import Planning
     from .posthog import PostHog
     from .prompt_injection_defender import PromptInjectionDefender
@@ -110,6 +111,7 @@ __all__ = [
     'ModalSandbox',
     'ModalSandboxBackend',
     'Ordinal',
+    'Pixeltable',
     'OutputBlocked',
     'OutputGuardrail',
     'OutputGuardrailFunc',
@@ -175,6 +177,7 @@ _CAPABILITY_EXPORTS = {
     'Memory': 'memory',
     'ModalSandbox': 'modal_sandbox',
     'Ordinal': 'ordinal',
+    'Pixeltable': 'pixeltable',
     'Planning': 'planning',
     'PostHog': 'posthog',
     'PromptInjectionDefender': 'prompt_injection_defender',
