@@ -158,6 +158,7 @@ _KEY_CONSUMERS = {
     'openrouter': '/add_model',
     'google-workspace': '/google_workspace',
     'pylon': '/pylon',
+    'ordinal': '/ordinal',
 }
 """Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
 

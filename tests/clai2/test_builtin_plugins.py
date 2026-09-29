@@ -27,11 +27,13 @@ CURATED = {
     'logfire',
     'notifications',
     'mcp',
+    'day_ai',
+    'ordinal',
     'github',
     'google_workspace',
     'pylon',
 }
-OPT_IN = {'github', 'google_workspace', 'pylon'}
+OPT_IN = {'day_ai', 'github', 'google_workspace', 'ordinal', 'pylon'}
 
 
 class Menu:
@@ -61,7 +63,7 @@ def test_builtins_are_the_curated_set_with_opt_in_integrations_off() -> None:
 def test_menu_offers_no_uncurated_harness_capabilities(tmp_path: Path) -> None:
     menu = PluginMenu(_loader(SettingsStore(tmp_path / 'settings.db'), DEFAULT_PLUGINS), apply=_apply)
     *rows, _save_and_close = menu.items()
-    assert {item.value for item in rows} == CURATED
+    assert {item.value for item in rows} == CURATED | OPT_IN
 
 
 def test_capability_saved_from_the_old_catalog_still_loads(tmp_path: Path) -> None:

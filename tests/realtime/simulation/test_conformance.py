@@ -18,9 +18,28 @@ from pydantic_ai.messages import RealtimeSessionErrorEvent, RealtimeSessionRecon
 from ...conftest import try_import
 
 with try_import() as imports_successful:
-    from pydantic_ai.realtime.codec import AudioDelta, RealtimeCodecEvent, ResponseDone, ToolCall, ToolCallCancelled
+    from pydantic_ai.realtime._lifecycle import (
+        InputAdded,
+        InputLost,
+        LifecycleEvent,
+        ResponseEnded,
+        ResponseRequestRefused,
+        ResponseStarted,
+        UserTurnDiscarded,
+        UserTurnEnded,
+        UserTurnStarted,
+    )
+    from pydantic_ai.realtime.codec import (
+        AudioDelta,
+        RealtimeCodecEvent,
+        ResponseDone,
+        SessionUsage,
+        ToolCall,
+        ToolCallCancelled,
+    )
+    from pydantic_ai.usage import RequestUsage
 
-    from ._cassette_replay import replay_codec_events, websocket_cassettes
+    from ._cassette_replay import replay_codec_events, replay_lifecycle_events, websocket_cassettes
     from ._conformance import LifecycleChecker
 
 pytestmark = [
@@ -40,6 +59,12 @@ async def test_cassette_obeys_the_codec_lifecycle(recording: Path) -> None:
         checker = LifecycleChecker()
         for event in events:
             checker.feed(event)
+        assert checker.issues == []
+    for events in await replay_lifecycle_events(recording):
+        checker = LifecycleChecker(lifecycle=True)
+        for event in events:
+            checker.feed(event)
+        checker.finish()
         assert checker.issues == []
 
 
@@ -64,3 +89,53 @@ def test_lifecycle_rules() -> None:
     assert feed_all(done, RealtimeSessionReconnectEvent(), done) == snapshot([])
     fatal = RealtimeSessionErrorEvent('gone', recoverable=False)
     assert feed_all(fatal, done) == snapshot(['codec.event_after_fatal'])
+
+
+def feed_lifecycle(*events: RealtimeCodecEvent | LifecycleEvent, inputs_sent: int = 0) -> list[str]:
+    checker = LifecycleChecker(lifecycle=True, inputs_sent=lambda: inputs_sent)
+    for event in events:
+        checker.feed(event)
+    checker.finish()
+    return [issue.code for issue in checker.issues]
+
+
+def test_lifecycle_contract_rules() -> None:
+    start = ResponseStarted(response_id='resp_1', answers=(0,))
+    end = ResponseEnded(response_id='resp_1', status='completed')
+    audio = AudioDelta(b'\x00', response_id='resp_1')
+    assert feed_lifecycle(start, audio, ResponseDone(provider_response_id='resp_1'), end, inputs_sent=1) == snapshot([])
+    assert feed_lifecycle(audio, start, end, start, end, end, inputs_sent=1) == snapshot(
+        [
+            'lifecycle.content_outside_response',
+            'lifecycle.duplicate_start',
+            'lifecycle.input_settled_twice',
+            'lifecycle.duplicate_end',
+            'lifecycle.duplicate_end',
+        ]
+    )
+    assert feed_lifecycle(ResponseEnded(response_id='resp_2', status='lost')) == snapshot(
+        ['lifecycle.end_without_start']
+    )
+    assert feed_lifecycle(start) == snapshot(['lifecycle.unknown_answer', 'lifecycle.unended_at_close'])
+    assert feed_lifecycle(
+        ResponseStarted(response_id='resp_4', answers=(-1,)),
+        ResponseEnded(response_id='resp_4', status='completed'),
+        InputLost(input_ids=(0, 0)),
+        inputs_sent=1,
+    ) == snapshot(['lifecycle.unknown_answer', 'lifecycle.input_settled_twice'])
+    assert feed_lifecycle(
+        SessionUsage(RequestUsage(), provider_response_id='resp_3'),
+        SessionUsage(RequestUsage(), response_scoped=False),
+        InputLost(input_ids=(0,)),
+        ResponseRequestRefused(input_ids=(0, 1)),
+        InputAdded(input_id=0),
+        InputAdded(input_id=0),
+        inputs_sent=2,
+    ) == snapshot(
+        ['lifecycle.content_outside_response', 'lifecycle.input_settled_twice', 'lifecycle.input_added_twice']
+    )
+    turn = UserTurnStarted(turn_id='item_u1')
+    assert feed_lifecycle(turn, UserTurnEnded(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u1')) == snapshot(
+        ['lifecycle.turn_end_without_start']
+    )
+    assert feed_lifecycle(turn, turn) == snapshot(['lifecycle.turn_started_twice', 'lifecycle.turn_unended_at_close'])
