@@ -802,6 +802,17 @@ class TestMarkdownConverter:
         html = '<ol start="' + '٠' * 4300 + '">' + '<li>x</li>' * 5000 + '</ol>'
         assert _convert_html(html)[1] == '\n'.join(f'{index}. x' for index in range(5000))
 
+    @pytest.mark.parametrize(('item', 'expected'), [('<li></li>', ''), ('<li>x</li>', '1. x')])
+    def test_oversized_decimal_list_start_is_ignored(self, item: str, expected: str):
+        """A start past Python's integer digit limit cannot abort conversion."""
+        html = '<ol start="' + '9' * 4301 + '">' + item + '</ol>'
+        assert _convert_html(html)[1] == expected
+
+    def test_ordered_list_start_growth_past_digit_limit(self):
+        """Numbering can cross the integer digit limit after the initial value parses."""
+        html = '<ol start="' + '9' * 4300 + '"><li>x</li><li>x</li></ol>'
+        assert _convert_html(html)[1] == '1. x\n2. x'
+
     def test_ordered_list_start_is_scanned_once(self):
         """A shared invalid start attribute is parsed once for the whole list."""
         scans = 0
@@ -911,6 +922,13 @@ class TestMarkdownConverter:
         html = '<div>' * 300 + f'<a href="{value}">{value}</a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
 
+    def test_escaped_autolink_is_not_overcharged(self):
+        """The anchor replaces escaped link text with the unescaped URL before ancestors copy it."""
+        value = '_' * 1000
+        html = '<div>' * 300 + f'<a href="{value}">{value}</a>' + '</div>' * 300
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 350_000):
+            assert _convert_html(html)[1] == f'<{value}>'
+
     def test_wrapped_deep_autolink_is_not_overcharged(self):
         """Transparent descendants preserve the converter's autolink shortcut."""
         value = 'x' * 9_000_000
@@ -1008,17 +1026,23 @@ class TestMarkdownConverter:
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 6_500_000):
             assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
-    def test_plain_backticks_skip_code_run_scan(self):
-        """Backtick runs are measured only when a deep code tag needs their delimiter width."""
-        text = '`x' * 1000
-        with patch('pydantic_ai.common_tools.web_fetch._BACKTICK_RUN_RE') as pattern:
-            assert _convert_html(text)[1] == text
-            pattern.finditer.assert_not_called()
+    def test_tag_separated_backtick_runs_are_not_overcharged(self):
+        """Formatting between code fragments separates their backtick runs."""
+        ticks = '`' * 1000
+        html = '<div>' * 300 + f'<code><div>{ticks}</div><div>{ticks}</div></code>' + '</div>' * 300
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 1_500_000):
+            assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
     def test_pre_padding_is_not_overcharged(self):
         """Preformatted whitespace is stripped before enclosing blocks scan it."""
         html = '<div>' * 300 + '<pre>' + ' ' * 18_000_000 + '</pre>' + '</div>' * 300
         assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
+
+    def test_pre_padding_inside_heading_is_not_overcharged(self):
+        """A heading's underline measures rendered preformatted text after trimming."""
+        html = '<div>' * 300 + '<h1><pre>' + ' ' * 1000 + '</pre></h1>' + '</div>' * 300
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 10_000):
+            assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
     @pytest.mark.parametrize('container', ['<table><tr><td>{content}</td></tr></table>', '<h3>{content}</h3>'])
     def test_collapsed_newlines_are_not_overcharged(self, container: str):
