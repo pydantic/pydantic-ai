@@ -853,12 +853,19 @@ async def test_a_capability_function_supplies_the_workspace_after_for_run(tmp_pa
 
 
 async def test_for_run_cannot_change_the_workspace_selected_before_it(tmp_path: Path) -> None:
-    class ReadOnlyPerRun(LocalWorkspace[Any]):
-        async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
-            return LocalWorkspace(self.working_dir, read_only=True)
+    cleaned: list[bool] = []
+
+    class ReadOnlyPerRun(LocalWorkspace[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            return ReadOnlyPerRun(self.working_dir, read_only=True)
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            cleaned.append(self.read_only)
+            raise error
 
     with pytest.raises(UserError, match="A capability's `for_run` changed the workspace"):
         await Agent(TestModel(), capabilities=[ReadOnlyPerRun(tmp_path)]).run('go')
+    assert cleaned == [True]
 
 
 async def test_failed_run_error_hook_exposes_workspace_ref_for_cleanup() -> None:

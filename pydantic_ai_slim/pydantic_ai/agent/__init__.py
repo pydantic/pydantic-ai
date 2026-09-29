@@ -1856,32 +1856,36 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         # A workspace capability that exists only after `for_run` (a capability function's) is asked now.
         # One selected before `for_run` is final: `for_run` may have used it.
-        initial_ctx.root_capability = run_capability
-        if explicit is None and not model_layers_unchanged and run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
-            candidate = select_workspace(
-                run_capability, initial_ctx, ref=offered_ref, run_layer=resolved_caps.run_layer
-            )
-            if selected is None:
-                selected = candidate
-                if selected is not None:
-                    initial_ctx.workspace = run_capability._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
-                        initial_ctx, selected, explicit=False
-                    )
-            elif candidate is None or (workspace_layers(candidate), candidate.ref) != (
-                workspace_layers(selected),
-                selected.ref,
-            ):
-                raise exceptions.UserError(
-                    "A capability's `for_run` changed the workspace this run selected before `for_run`. The "
-                    'workspace is selected first so that `for_run` can use it; configure it on the capability the '
-                    'agent is built with, or pass it to the run with `workspace=`.'
+        try:
+            initial_ctx.root_capability = run_capability
+            if explicit is None and not model_layers_unchanged and run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
+                candidate = select_workspace(
+                    run_capability, initial_ctx, ref=offered_ref, run_layer=resolved_caps.run_layer
                 )
-        if selected is None:
-            _raise_for_unresolved_workspace(
-                workspace,
-                history_ref=historical_workspace_ref,
-                has_resolvers=pre_run_root._has_get_workspace or run_capability._has_get_workspace,  # pyright: ignore[reportPrivateUsage]
-            )
+                if selected is None:
+                    selected = candidate
+                    if selected is not None:
+                        initial_ctx.workspace = run_capability._prepare_workspace(  # pyright: ignore[reportPrivateUsage]
+                            initial_ctx, selected, explicit=False
+                        )
+                elif candidate is None or (workspace_layers(candidate), candidate.ref) != (
+                    workspace_layers(selected),
+                    selected.ref,
+                ):
+                    raise exceptions.UserError(
+                        "A capability's `for_run` changed the workspace this run selected before `for_run`. The "
+                        'workspace is selected first so that `for_run` can use it; configure it on the capability the '
+                        'agent is built with, or pass it to the run with `workspace=`.'
+                    )
+            if selected is None:
+                _raise_for_unresolved_workspace(
+                    workspace,
+                    history_ref=historical_workspace_ref,
+                    has_resolvers=pre_run_root._has_get_workspace or run_capability._has_get_workspace,  # pyright: ignore[reportPrivateUsage]
+                )
+        except BaseException as error:
+            await _run_setup_error_hook(resolved_caps.resolved_layers, initial_ctx, error)
+            raise
 
         # Build model settings resolver using per-run capability. Shared with `realtime_session` via
         # `_layer_model_settings` (agent -> capability -> run order; the model's own settings are the
