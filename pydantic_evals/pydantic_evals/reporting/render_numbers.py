@@ -34,7 +34,7 @@ def default_render_number(value: float | int) -> str:
 
     # Non-finite floats would raise in the log10-based logic below.
     if not math.isfinite(value):
-        return 'nan' if math.isnan(value) else ('inf' if value > 0 else '-inf')
+        return str(value)
 
     abs_val = abs(value)
 

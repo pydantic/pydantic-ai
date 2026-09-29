@@ -1524,69 +1524,33 @@ async def test_dataset_evaluate_with_non_finite_evaluator_result(
         assert repr(output) in failure.error_message
 
 
-@pytest.mark.parametrize(
-    'metric_value,expected_marker',
-    [
-        pytest.param(float('inf'), 'inf', id='inf'),
-        pytest.param(float('-inf'), '-inf', id='negative-inf'),
-        pytest.param(float('nan'), 'nan', id='nan'),
-    ],
-)
-async def test_nonfinite_metric_renders_in_report(
-    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], metric_value: float, expected_marker: str
-):
-    """Non-finite metric values should render instead of raising in the default number formatter."""
+async def test_nonfinite_metric_renders_in_report():
+    """Non-finite metric values render in the report instead of raising in the default number formatter."""
+    dataset = Dataset[str, str, None](
+        name='non_finite',
+        cases=[Case(name=name, inputs=name) for name in ('inf', '-inf', 'nan')],
+    )
 
-    async def task(inputs: TaskInput) -> TaskOutput:
-        increment_eval_metric('ratio', metric_value)
-        return TaskOutput(answer=inputs.query.upper())
+    async def task(inputs: str) -> str:
+        increment_eval_metric('ratio', float(inputs))
+        return inputs
 
-    report = await example_dataset.evaluate(task)
+    report = await dataset.evaluate(task)
 
-    rendered = report.render()
-    assert 'ratio' in rendered
-    assert expected_marker in rendered
-
-
-async def test_nonfinite_metric_prints_in_report(
-    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], capsys: pytest.CaptureFixture[str]
-):
-    """Non-finite metric values should print instead of raising in the default number formatter."""
-
-    async def task(inputs: TaskInput) -> TaskOutput:
-        increment_eval_metric('ratio', float('inf'))
-        return TaskOutput(answer=inputs.query.upper())
-
-    report = await example_dataset.evaluate(task)
-
-    report.print()
-    captured = capsys.readouterr()
-    assert 'ratio' in captured.out
-    assert 'inf' in captured.out
-
-
-@pytest.mark.parametrize(
-    'metric_value,expected_marker',
-    [
-        pytest.param(float('inf'), 'inf', id='inf'),
-        pytest.param(float('-inf'), '-inf', id='negative-inf'),
-        pytest.param(float('nan'), 'nan', id='nan'),
-    ],
-)
-async def test_nonfinite_aggregate_metric_renders_in_console_table(
-    example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata], metric_value: float, expected_marker: str
-):
-    """The aggregate metrics row shares the default formatter and should render non-finite values."""
-
-    async def task(inputs: TaskInput) -> TaskOutput:
-        increment_eval_metric('ratio', metric_value)
-        return TaskOutput(answer=inputs.query.upper())
-
-    report = await example_dataset.evaluate(task)
-
-    table = render_table(report.console_table())
-    assert 'ratio' in table
-    assert expected_marker in table
+    assert render_table(report.console_table(include_durations=False)) == snapshot("""\
+ Evaluation Summary: task
+┏━━━━━━━━━━┳━━━━━━━━━━━━━┓
+┃ Case ID  ┃ Metrics     ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━┩
+│ inf      │ ratio: inf  │
+├──────────┼─────────────┤
+│ -inf     │ ratio: -inf │
+├──────────┼─────────────┤
+│ nan      │ ratio: nan  │
+├──────────┼─────────────┤
+│ Averages │ ratio: nan  │
+└──────────┴─────────────┘
+""")
 
 
 async def test_dataset_evaluate_with_custom_name(example_dataset: Dataset[TaskInput, TaskOutput, TaskMetadata]):
