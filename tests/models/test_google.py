@@ -7473,22 +7473,21 @@ high: Needs attention today.\
 
 
 @pytest.mark.parametrize(
-    ('call', 'content', 'content_type', 'cause'),
+    ('call', 'content', 'content_type'),
     [
-        pytest.param('request', b'   ', 'application/json', json.JSONDecodeError, id='request'),
+        pytest.param('request', b'   ', 'application/json', id='request'),
         pytest.param(
             'stream',
             b'data: {"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello"}]}, "index": 0}]}\r\n\r\n'
             b'data: {not json\r\n\r\n',
             'text/event-stream',
-            errors.UnknownApiResponseError,
             id='stream',
         ),
-        pytest.param('count_tokens', b'   ', 'application/json', json.JSONDecodeError, id='count_tokens'),
+        pytest.param('count_tokens', b'   ', 'application/json', id='count_tokens'),
     ],
 )
 async def test_google_non_json_response_body_raises_model_api_error(
-    allow_model_requests: None, call: str, content: bytes, content_type: str, cause: type[Exception]
+    allow_model_requests: None, call: str, content: bytes, content_type: str
 ) -> None:
     """A 200 response body, or a streamed chunk, that can't be decoded as JSON surfaces as `ModelAPIError`.
 
@@ -7513,5 +7512,7 @@ async def test_google_non_json_response_body_raises_model_api_error(
             else:
                 await Agent(model).run('Hello')
 
+    # The SDK wraps a bad streamed chunk in its own error type.
+    cause = errors.UnknownApiResponseError if call == 'stream' else json.JSONDecodeError
     assert isinstance(exc_info.value.__cause__, cause)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
