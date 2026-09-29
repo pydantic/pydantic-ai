@@ -977,7 +977,7 @@ Pydantic AI fills the window size from [genai-prices](https://github.com/pydanti
 
 #### Scheduling maintenance into cache-cold windows
 
-See [Prompt Caching](prompt-caching.md) for the full prefix-stability contract and monitoring guidance.
+See [Prompt Caching](prompt-caching.md#prefix-stability-guarantees) for the full prefix-stability contract and monitoring guidance.
 
 History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
 
