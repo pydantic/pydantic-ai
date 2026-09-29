@@ -1,35 +1,31 @@
 """Toolset for the `DynamicWorkflow` capability.
 
-Exposes a single `run_workflow` tool: the model writes a Python orchestration
-script (run in a Monty sandbox) that calls named sub-agents as async functions
-and composes their results -- fan-out, chaining, voting, loops -- in one step.
+Exposes the `run_workflow` tool: the model writes a Python orchestration script (run in a Monty
+sandbox) that calls sub-agents as async functions and composes their results -- fan-out, chaining,
+voting, loops -- in one step, or runs a saved workflow by name. With saving enabled it also
+exposes `save_workflow`, which writes a script to the workflow library for later runs.
 """
 
 from __future__ import annotations
 
-import contextvars
 import copy
-import json
-import keyword
+import posixpath
 import warnings
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
-from functools import partial
-from typing import Annotated, Any, Generic, Literal, cast
+from contextlib import nullcontext
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, TypeAdapter
-from pydantic_core import to_jsonable_python
-from typing_extensions import Self, TypedDict
+from pydantic import Field, JsonValue, TypeAdapter
+from typing_extensions import NotRequired, Self, TypedDict
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
-from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
-from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
-from pydantic_ai.function_signature import FunctionSignature
-from pydantic_ai.models import Model
+from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.workspaces import WorkspaceError
 
 try:
     from pydantic_monty import (
@@ -45,18 +41,25 @@ except ImportError as _import_error:  # pragma: no cover
         'Install it with: uv add "pydantic-ai-harness[dynamic-workflow]"'
     ) from _import_error
 
-from pydantic_ai_harness._monty_exec import (
-    MontyExecutor,
-    MontyRunState,
-    PrintCapture,
-    in_temporal_workflow,
-    is_sandbox_panic,
+from pydantic_ai_harness._monty_exec import in_temporal_workflow, is_sandbox_panic
+from pydantic_ai_harness._workspace import raise_tool_failure, workspace_path
+from pydantic_ai_harness.dynamic_workflow._catalog import (
+    WorkflowAgent,
+    build_type_check_stubs,
+    index_workflow_agents,
+    render_description,
+    render_reveal,
+    validate_workflow_agent,
 )
-
-# Set while a workflow script is executing, so a sub-agent that itself tries to run a workflow can
-# be refused -- workflows do not nest. asyncio copies the context into each task `asyncio.gather`
-# schedules, so concurrently-dispatched sub-agents inherit this flag (the capability is asyncio-only).
-_in_workflow: contextvars.ContextVar[bool] = contextvars.ContextVar('pydantic_ai_harness_in_workflow', default=False)
+from pydantic_ai_harness.dynamic_workflow._library import SavedWorkflow, WorkflowLibrary
+from pydantic_ai_harness.dynamic_workflow._prelude import ARGS_NAME, HELPER_NAMES, render_prelude
+from pydantic_ai_harness.dynamic_workflow._results import (
+    budget_terminal_result,
+    completed_retry_section,
+    completed_workflow_result,
+    worker_crash_result,
+)
+from pydantic_ai_harness.dynamic_workflow._run import CallBudget, Frame, WorkflowRun, in_workflow
 
 
 class WorkflowResourceLimits(TypedDict, total=False):
@@ -91,11 +94,6 @@ def _default_resource_limits() -> ResourceLimits:
 # runtime, so a typo (e.g. `max_durations_secs`) would otherwise merge through and be silently
 # dropped -- quietly disabling the only guard against a pure-CPU `while True`. We reject unknowns.
 _RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__)
-_MODEL_SAFE_EXCEPTION_MESSAGE_TYPES = (UsageLimitExceeded,)
-_MAX_COMPLETED_DISPATCHES = 20
-_MAX_TASK_PREVIEW_CHARS = 120
-_MAX_RESULT_PREVIEW_CHARS = 300
-_TRUNCATED_MARKER = ' ... [truncated]'
 
 
 def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited'] | None) -> ResourceLimits:
@@ -125,340 +123,62 @@ class _WorkflowArguments(TypedDict):
     code: Annotated[str, Field(description='The Python orchestration script to execute in the sandbox.')]
 
 
-_WORKFLOW_ARGS_ADAPTER = TypeAdapter(_WorkflowArguments)
-_WORKFLOW_ARGS_JSON_SCHEMA = _WORKFLOW_ARGS_ADAPTER.json_schema()
-_WORKFLOW_ARGS_VALIDATOR: SchemaValidatorProt = _WORKFLOW_ARGS_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
-
-
-class _BudgetExhausted(RuntimeError):
-    """The run's `max_agent_calls` budget is spent; no further sub-agent runs are allowed."""
-
-    def __init__(self, max_agent_calls: int) -> None:
-        super().__init__(f'sub-agent call budget ({max_agent_calls}) exhausted')
-
-
-_WORKFLOW_BASE_DESCRIPTION = """\
-Write and run a Python orchestration script in a sandbox to coordinate multiple sub-agents.
-
-Use this to break a task across specialized sub-agents and combine their results in a single step --
-fan work out in parallel, chain one agent's output into the next, vote across several, or loop until
-done -- instead of delegating to one sub-agent at a time.
-
-The sandbox uses Monty, a subset of Python. Key restrictions:
-- **No third-party libraries**.
-- **Importable standard-library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`,
-  `unicodedata`, `datetime`, `time`, `random`, `os`, and `pathlib`. Import what you use at the top
-  of the script. Filesystem, environment, and clock operations are not configured for workflow
-  scripts.
-- **No clock or randomness**: `datetime.datetime.now()`, `datetime.date.today()`, `time.time()`,
-  and unseeded `random` fail. `time.sleep` and `asyncio.sleep` really wait.
-
-Each sub-agent below is an async function. Await it and pass `task` by keyword:
-`result = await reviewer(task="...")`, not `reviewer("...")`; all parameters are keyword-only. A
-sub-agent returns that agent's output: a string by default, or -- if it has a structured
-`output_type` -- a dict, whose fields you read by subscript (`r["field"]`), not attribute
-(`r.field`). Each sub-agent call is an independent run with no memory of earlier calls; include all
-needed context in `task`. Run several at once with `asyncio.gather` rather than awaiting each
-sequentially:
-
-```python
-import asyncio
-reviews = await asyncio.gather(reviewer(task="check auth"), reviewer(task="check parsing"))
-```
-
-`asyncio.gather` accepts positional awaitables but no keyword arguments, including
-`return_exceptions=True`. Other task creation and wait APIs are unavailable. A sub-agent failure
-surfaces as `RuntimeError`: catch it with `try`/`except RuntimeError`, or let it abort the whole
-script and retry.
-
-The last expression's value is captured as the result -- you do **not** need to `print()` it, and
-printing produces a string representation, not structured data. Use `print()` only for debug logging.
-Return shapes: no print returns the last expression value (or `{}` if it is `None`); print plus a
-non-`None` value returns `{"output": "<printed text>", "result": <last expression>}`; print plus
-`None` returns `{"output": "<printed text>"}`. If a script fails after some sub-agent calls complete,
-bounded previews of up to the 20 most recent results are reported so a retry can reuse untruncated
-values.\
-"""
-
-
-def _is_valid_sandbox_name(name: str) -> bool:
-    """Whether `name` can be exposed as a sandbox function: a non-keyword Python identifier.
-
-    `str.isidentifier()` alone is not enough -- Python keywords (`for`, `class`, `async`, ...) are
-    valid identifiers but cannot be used as function names, so the model could never call them.
-    Callers guard the empty/`None` case before this is reached.
-    """
-    return name.isidentifier() and not keyword.iskeyword(name)
-
-
-# Every sub-agent is exposed with the same fixed parameters -- `(*, task: str)` -- and a per-agent
-# return schema. Render each catalog entry through core's `FunctionSignature` (the renderer
-# code_mode and Pydantic AI already use). This keeps the catalog format consistent across
-# capabilities, forces keyword-only `task` to match `dispatch` (which reads `kwargs['task']`), and
-# renders docstrings safely -- a hand-rolled f-string breaks on a newline or a quote inside a
-# description.
-_SUB_AGENT_PARAMS_SCHEMA: dict[str, Any] = {
-    'type': 'object',
-    'properties': {'task': {'type': 'string'}},
-    'required': ['task'],
-}
-_NO_CONFLICTING_TYPE_NAMES: frozenset[str] = frozenset()
-
-
-def _agent_return_schema(agent: AbstractAgent[AgentDepsT, object]) -> dict[str, Any] | None:
-    """The sub-agent's output JSON schema, or `None` when it cannot be derived."""
-    try:
-        return agent.output_json_schema()
-    except Exception:
-        return None
-
-
-def _agent_signature(name: str, agent: AbstractAgent[AgentDepsT, object]) -> FunctionSignature:
-    """Build the sandbox function signature for one sub-agent."""
-    return FunctionSignature.from_schema(
-        name=name,
-        parameters_schema=_SUB_AGENT_PARAMS_SCHEMA,
-        return_schema=_agent_return_schema(agent),
-    )
-
-
-def _render_agent_block(
-    signature: FunctionSignature,
-    description: str | None,
-    *,
-    conflicting_type_names: frozenset[str] = _NO_CONFLICTING_TYPE_NAMES,
-) -> str:
-    """Render one sub-agent as the async function signature shown to the model."""
-    return signature.render(
-        '...',
-        description=description,
-        is_async=True,
-        conflicting_type_names=conflicting_type_names,
-    )
-
-
-def _render_catalog(catalog: Mapping[str, WorkflowAgent[AgentDepsT]], *, max_agent_calls: int) -> str:
-    """Render the available sub-agents as async function signatures for the tool description."""
-    signatures = {name: _agent_signature(name, entry.agent) for name, entry in catalog.items()}
-    signature_list = list(signatures.values())
-    conflicting = FunctionSignature.get_conflicting_type_names(signature_list)
-    type_blocks = FunctionSignature.render_type_definitions(signature_list, conflicting)
-    function_blocks = [
-        _render_agent_block(signatures[name], entry.resolved_description, conflicting_type_names=conflicting)
-        for name, entry in catalog.items()
+class _NamedWorkflowArguments(TypedDict):
+    code: NotRequired[
+        Annotated[
+            str, Field(description='A Python orchestration script to execute in the sandbox. Pass this or `name`.')
+        ]
     ]
-    listing = '```python\n' + '\n\n'.join([*type_blocks, *function_blocks]) + '\n```'
-    budget = (
-        f'This run can make at most {max_agent_calls} sub-agent calls in total -- one budget shared across '
-        'every `run_workflow` call in the run, not per script; plan fan-out width accordingly.'
-    )
-    return f'{_WORKFLOW_BASE_DESCRIPTION}\n\n{budget}\n\nAvailable sub-agents:\n\n{listing}'
-
-
-def _render_reveal(
-    name: str,
-    catalog: Mapping[str, WorkflowAgent[AgentDepsT]],
-    tool_name: str,
-) -> str:
-    """Announcement enqueued when a sub-agent is revealed mid-run.
-
-    Delivered as a conversation message (not folded into the cached tool description), so the
-    prompt-cache prefix stays stable while the model still learns the agent is now callable.
-    """
-    signatures = {agent_name: _agent_signature(agent_name, entry.agent) for agent_name, entry in catalog.items()}
-    signature = signatures[name]
-    conflicting = FunctionSignature.get_conflicting_type_names(list(signatures.values()))
-    type_blocks = FunctionSignature.render_type_definitions([signature], conflicting)
-    function_block = _render_agent_block(
-        signature, catalog[name].resolved_description, conflicting_type_names=conflicting
-    )
-    block = '\n\n'.join([*type_blocks, function_block])
-    return f'A new sub-agent is now available to call from inside the `{tool_name}` script:\n\n```python\n{block}\n```'
-
-
-def _workflow_result(result: object, printed: str) -> object:
-    """Shape the tool return: the script's result, its captured `print()` output, or both."""
-    if not printed:
-        return result if result is not None else {}
-    if result is None:
-        return {'output': printed}
-    return {'output': printed, 'result': result}
-
-
-@dataclass(frozen=True)
-class _CompletedDispatch:
-    """One sub-agent result completed by the failed workflow script."""
-
-    agent_name: str
-    task: str
-    result: object
-
-
-def _truncate_preview(value: str, max_chars: int) -> str:
-    """Trim a preview with an explicit marker so the model can see it is incomplete."""
-    if len(value) <= max_chars:
-        return value
-    return value[: max_chars - len(_TRUNCATED_MARKER)] + _TRUNCATED_MARKER
-
-
-def _json_preview(value: object, max_chars: int) -> str:
-    """Render a compact JSON preview of a completed sub-agent result."""
-    rendered = json.dumps(value, ensure_ascii=True, separators=(',', ':'))
-    return _truncate_preview(rendered, max_chars)
-
-
-def _completed_dispatch_lines(completed: list[_CompletedDispatch]) -> list[str]:
-    """Format the most recent completed sub-agent results for model-facing salvage."""
-    shown = completed[-_MAX_COMPLETED_DISPATCHES:]
-    lines = [
-        f'{entry.agent_name}(task={json.dumps(_truncate_preview(entry.task, _MAX_TASK_PREVIEW_CHARS), ensure_ascii=True)})'
-        f' -> {_json_preview(entry.result, _MAX_RESULT_PREVIEW_CHARS)}'
-        for entry in shown
+    name: NotRequired[Annotated[str, Field(description='The name of a saved workflow to run. Pass this or `code`.')]]
+    args: NotRequired[
+        Annotated[dict[str, JsonValue], Field(description='Arguments for the script, bound to its `args` global.')]
     ]
-    omitted = len(completed) - len(shown)
-    if omitted:
-        lines.insert(0, f'... {omitted} earlier completed result(s) omitted ...')
-    return lines
 
 
-def _completed_retry_section(completed: list[_CompletedDispatch]) -> str:
-    """Build the optional retry-message section listing salvageable completed results."""
-    lines = _completed_dispatch_lines(completed)
-    if not lines:
-        return ''
-    listing = '\n'.join(f'- {line}' for line in lines)
-    return (
-        '\n\nCompleted sub-agent results from the failed script '
-        '(up to 20 bounded previews; reuse untruncated values instead of re-calling them; '
-        'their budget was already spent):\n'
-        f'{listing}'
-    )
+class _SaveWorkflowArguments(TypedDict):
+    name: Annotated[
+        str, Field(description='File-stem name: 1-64 lowercase letters, digits, `-` and `_`, such as `triage-files`.')
+    ]
+    description: Annotated[str, Field(description='What the workflow does, shown when listing saved workflows.')]
+    code: Annotated[
+        str,
+        Field(description='The script, as you would pass it to `run_workflow`, reading its inputs from `args`.'),
+    ]
+    when_to_use: NotRequired[Annotated[str, Field(description='When to reach for this workflow.')]]
+    args: NotRequired[
+        Annotated[dict[str, JsonValue], Field(description='JSON schema of the `args` the workflow expects.')]
+    ]
+    agents: NotRequired[Annotated[list[str], Field(description='Sub-agents the script calls.')]]
+    returns: NotRequired[Annotated[str, Field(description='What the workflow returns.')]]
+    overwrite: NotRequired[
+        Annotated[bool, Field(description='Replace a saved workflow of the same name. Defaults to false.')]
+    ]
 
 
-def _budget_terminal_result(
-    *,
-    max_agent_calls: int,
-    last_error: str,
-    completed_dispatches: list[_CompletedDispatch],
-) -> dict[str, object]:
-    """Build the terminal result returned after the exact sub-agent-call budget is exhausted."""
-    return {
-        'error': (
-            f'This run exhausted its sub-agent call budget ({max_agent_calls}). '
-            'Conclude using the results already gathered; further sub-agent calls in '
-            'this run will be refused.'
-        ),
-        'last_error': last_error,
-        'completed': _completed_dispatch_lines(completed_dispatches),
-    }
+def _tool_schema(arguments: type[object]) -> tuple[dict[str, Any], SchemaValidatorProt]:
+    adapter = TypeAdapter(arguments)
+    validator: SchemaValidatorProt = adapter.validator  # pyright: ignore[reportAssignmentType]
+    return adapter.json_schema(), validator
 
 
-def _worker_crash_result(
-    *,
-    crash: MontyCrashedError,
-    budget_exhausted: bool,
-    max_agent_calls: int,
-    completed_dispatches: list[_CompletedDispatch],
-) -> dict[str, object]:
-    if budget_exhausted:
-        return _budget_terminal_result(
-            max_agent_calls=max_agent_calls,
-            last_error='The workflow script crashed the sandbox worker after exhausting the sub-agent budget.',
-            completed_dispatches=completed_dispatches,
-        )
-    raise ModelRetry(
-        'The workflow script crashed the sandbox worker. Revise the script and try again.'
-        f'{_completed_retry_section(completed_dispatches)}'
-    ) from crash
-
-
-def _completed_workflow_result(
-    *,
-    completed_output: object,
-    printed: str,
-    budget_exhausted: bool,
-    max_agent_calls: int,
-    completed_dispatches: list[_CompletedDispatch],
-) -> object:
-    """Return a normal result unless the script caught a terminal budget error."""
-    if budget_exhausted:
-        return _budget_terminal_result(
-            max_agent_calls=max_agent_calls,
-            last_error='The workflow caught the budget error and completed after exhausting the sub-agent budget.',
-            completed_dispatches=completed_dispatches,
-        )
-    return _workflow_result(completed_output, printed)
-
-
-@dataclass(frozen=True)
-class WorkflowAgent(Generic[AgentDepsT]):
-    """One sub-agent exposed to the orchestration script as an async function.
-
-    `WorkflowAgent` is the per-use-site override for when the agent's own `name`
-    or `description` is not what this workflow should show, such as renaming the
-    sandbox function or re-describing the agent for this catalog. Passing a bare
-    agent to `DynamicWorkflow(agents=[...])` is equivalent to `WorkflowAgent(agent)`.
-    """
-
-    agent: AbstractAgent[AgentDepsT, object]
-    """The sub-agent to run when the script calls this function."""
-
-    name: str | None = None
-    """Sandbox function name; must be a valid Python identifier and unique across the
-    workflow. Falls back to the agent's `name`."""
-
-    description: str | None = None
-    """Description shown to the model in the sub-agent catalog, rendered as the sandbox
-    function's docstring. An explicit value overrides the agent's own `description`.
-    When neither is set, the model sees only the bare signature."""
-
-    @property
-    def resolved_name(self) -> str | None:
-        """The sandbox function name: the explicit `name`, else the agent's `name`."""
-        return self.name or self.agent.name
-
-    @property
-    def resolved_description(self) -> str | None:
-        """The catalog description: the explicit `description`, else the agent's own `description`."""
-        return self.description or self.agent.description
-
-
-def validate_workflow_agent(entry: WorkflowAgent[AgentDepsT], existing_names: set[str]) -> str:
-    """Validate one sub-agent entry against the names already taken."""
-    name = entry.resolved_name
-    if not name:
-        raise UserError(
-            'DynamicWorkflow sub-agent has no `name` and its agent has no `name`; '
-            'set `WorkflowAgent(name=...)` so it can be exposed as a sandbox function.'
-        )
-    if not _is_valid_sandbox_name(name):
-        raise UserError(
-            f'DynamicWorkflow sub-agent name {name!r} cannot be exposed as a sandbox function: '
-            'it must be a Python identifier that is not a reserved keyword. Rename it.'
-        )
-    if name in existing_names:
-        raise UserError(f'DynamicWorkflow has two sub-agents named {name!r}; names must be unique.')
-    return name
-
-
-def index_workflow_agents(
-    agents: Sequence[WorkflowAgent[AgentDepsT]],
-) -> dict[str, WorkflowAgent[AgentDepsT]]:
-    """Index validated sub-agent entries by resolved sandbox name."""
-    if not agents:
-        raise UserError('DynamicWorkflow requires at least one sub-agent in `agents`.')
-    by_name: dict[str, WorkflowAgent[AgentDepsT]] = {}
-    existing_names: set[str] = set()
-    for entry in agents:
-        name = validate_workflow_agent(entry, existing_names)
-        existing_names.add(name)
-        by_name[name] = entry
-    return by_name
+_WORKFLOW_ARGS_SCHEMA = _tool_schema(_WorkflowArguments)
+_NAMED_WORKFLOW_ARGS_SCHEMA = _tool_schema(_NamedWorkflowArguments)
+_SAVE_WORKFLOW_ARGS_SCHEMA = _tool_schema(_SaveWorkflowArguments)
+SAVE_TOOL_NAME = 'save_workflow'
+_SAVE_DESCRIPTION = (
+    'Save a workflow script to the workflow library, so this and later runs can run it by name with '
+    '`run_workflow` or from a script with `await workflow(name, args)`. Save a script once it works, '
+    'reading its inputs from the `args` global rather than hard-coding them.'
+)
+_NESTED_REFUSAL = (
+    'Workflows do not nest: this sub-agent was invoked from a workflow and cannot start '
+    'its own. Return your result to the orchestrating workflow instead.'
+)
 
 
 @dataclass(kw_only=True)
 class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
-    """Single-tool toolset that runs sub-agent orchestration scripts in a Monty sandbox."""
+    """Toolset that runs sub-agent orchestration scripts in a Monty sandbox, and saves them."""
 
     agents: list[WorkflowAgent[AgentDepsT]]
     """Sub-agents callable from the orchestration script, each as an async function.
@@ -504,11 +224,37 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     wrapper capability is registered in place of what it wraps. `None` (a toolset used directly,
     outside any capability) is always visible."""
 
-    # Per-run count of sub-agent calls; reset on `for_run`.
-    _call_count: int = field(default=0, init=False, repr=False)
+    default_agent: str | None = None
+    """The sub-agent `agent()` runs when the script passes no `name`. See `DynamicWorkflow.default_agent`."""
+
+    max_concurrent_agents: int = 16
+    """Most sub-agents running at once in one `run_workflow` call, nested workflows included."""
+
+    max_workflow_depth: int = 3
+    """Most saved workflows running inside one another. See `DynamicWorkflow.max_workflow_depth`."""
+
+    max_items_per_call: int = 4096
+    """Most items one `parallel()` or `pipeline()` call accepts."""
+
+    library: WorkflowLibrary | None = None
+    """Saved workflows scripts can run by name; `None` turns saved workflows off.
+
+    `save_workflow` adds to it, so a workflow saved in a run can be run later in that run.
+    """
+
+    save_directory: str | Path | None = None
+    """Where `save_workflow` writes, in the run's workspace; `None` leaves the tool out.
+
+    `DynamicWorkflow` sets this to its first `workflows` directory.
+
+    The tool is also left out of a run whose workspace is missing or read-only, and when `library` is `None`.
+    """
+
+    # Per-run count of sub-agent calls; replaced on `for_run`.
+    _budget: CallBudget = field(init=False, repr=False)
 
     # Sub-agents indexed by resolved sandbox name; seeded from `agents` in `__post_init__` and
-    # extended in place as runtime appends to `agents` are revealed (`_reveal_pending`).
+    # extended in place as runtime appends to `agents` are revealed (`_fold_reveals`).
     _by_name: dict[str, WorkflowAgent[AgentDepsT]] = field(init=False, repr=False)
 
     # Tool description, frozen at run start. Rendered from the agents present when the run began
@@ -516,11 +262,38 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     # prefix -- never changes mid-run.
     _description: str = field(init=False, repr=False)
 
+    # Whether this run offers `save_workflow`: decided from the run's workspace in `for_run`.
+    _can_save: bool = field(default=False, init=False, repr=False)
+
     def __post_init__(self) -> None:
-        if self.max_agent_calls < 1:
-            raise UserError('DynamicWorkflow `max_agent_calls` must be at least 1.')
+        for option in ('max_agent_calls', 'max_concurrent_agents', 'max_workflow_depth', 'max_items_per_call'):
+            if getattr(self, option) < 1:
+                raise UserError(f'DynamicWorkflow `{option}` must be at least 1.')
         _resolve_resource_limits(self.resource_limits)  # validate keys now, not at the first tool call
+        self._budget = CallBudget(self.max_agent_calls)
         self._rebuild()
+        if self.default_agent is not None and self.default_agent not in self._by_name:
+            raise UserError(
+                f'DynamicWorkflow `default_agent` {self.default_agent!r} is not a sub-agent; '
+                f'choose one of: {", ".join(self._by_name)}.'
+            )
+
+    @property
+    def _call_count(self) -> int:
+        """Sub-agent calls made so far in this run."""
+        return self._budget.used
+
+    @property
+    def _saved_workflows_enabled(self) -> bool:
+        """Whether scripts can use saved workflows: `run_workflow(name=...)`, `workflow()` and `args`."""
+        return self.library is not None
+
+    def _omitted_helpers(self) -> set[str]:
+        """Helpers left out of the scripts: shadowed by a sub-agent's name, or with nothing to do."""
+        omitted = set(self._by_name) & HELPER_NAMES
+        if not self._saved_workflows_enabled:
+            omitted |= {'workflow', ARGS_NAME}
+        return omitted
 
     def _rebuild(self) -> None:
         """Rebuild the name index and the frozen tool description from the current `agents`.
@@ -529,9 +302,15 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         `DynamicWorkflow.reveal()` validate entries eagerly, so this fails only when the
         lower-level toolset list was mutated outside those APIs.
         """
-        by_name = index_workflow_agents(self.agents)
-        self._by_name = by_name
-        self._description = _render_catalog(by_name, max_agent_calls=self.max_agent_calls)
+        self._by_name = index_workflow_agents(self.agents)
+        self._description = render_description(
+            self._by_name,
+            max_agent_calls=self.max_agent_calls,
+            max_concurrent_agents=self.max_concurrent_agents,
+            max_items_per_call=self.max_items_per_call,
+            default_agent=self.default_agent,
+            omitted_helpers=self._omitted_helpers(),
+        )
 
     @property
     def id(self) -> str | None:
@@ -547,7 +326,14 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         APIs. That is unsupported and fails fast.
         """
         clone = copy.copy(self)
-        clone._call_count = 0
+        clone._budget = CallBudget(self.max_agent_calls)
+        workspace = ctx.workspace
+        clone._can_save = (
+            self.library is not None
+            and self.save_directory is not None
+            and workspace.attached
+            and not workspace.read_only
+        )
         clone._rebuild()
         return clone
 
@@ -576,7 +362,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             name = validate_workflow_agent(entry, set(self._by_name))
             self._by_name[name] = entry
             try:
-                ctx.enqueue(_render_reveal(name, self._by_name, self.tool_name))
+                ctx.enqueue(render_reveal(name, self._by_name, self.tool_name))
             except UserError as exc:
                 warnings.warn(
                     f'DynamicWorkflow revealed sub-agent {name!r}, but could not enqueue its announcement: '
@@ -618,198 +404,176 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         # model loads the capability.
         if self._visible_to_model(ctx):
             self._fold_reveals(ctx)
-        return {
+        schema, validator = _NAMED_WORKFLOW_ARGS_SCHEMA if self._saved_workflows_enabled else _WORKFLOW_ARGS_SCHEMA
+        tools = {
             self.tool_name: ToolsetTool(
                 toolset=self,
                 tool_def=ToolDefinition(
                     name=self.tool_name,
                     description=self._description,
-                    parameters_json_schema=_WORKFLOW_ARGS_JSON_SCHEMA,
+                    parameters_json_schema=schema,
                     metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
                     sequential=True,
                 ),
                 max_retries=self.max_retries,
-                args_validator=_WORKFLOW_ARGS_VALIDATOR,
+                args_validator=validator,
             )
         }
-
-    async def _run_one(self, agent_name: str, task: str, ctx: RunContext[AgentDepsT]) -> Any:
-        """Run one sub-agent against the shared per-run budget.
-
-        The budget check + increment must stay suspension-free: there must be no `await`
-        between them. asyncio only switches tasks at suspension points, so an await-free
-        check-then-increment is atomic across the concurrently-gathered dispatches, which
-        is what makes `max_agent_calls` an exact ceiling under fan-out. Insert an `await`
-        here (e.g. an async permission check) and the count can race past the limit; you
-        would then need an explicit reservation instead.
-
-        This exists precisely because `usage_limits` cannot give an exact ceiling here:
-        core's own limit check is split from its increment by the model-request `await`
-        (a TOCTOU race -- N gathered sub-agents all pass the check before any increments;
-        measured ~20x overshoot), and `RunContext` exposes `usage` but not `usage_limits`,
-        so the parent's configured limit can't be forwarded to sub-agents at all.
-        TODO: file upstream on pydantic-ai -- (a) expose `usage_limits` on `RunContext`,
-        (b) atomic reserve-then-request in the run loop. Until then, tree-wide token caps
-        stay best-effort (see `forward_usage` / `sub_agent_usage_limits` docstrings).
-        """
-        if self._call_count >= self.max_agent_calls:
-            raise _BudgetExhausted(self.max_agent_calls)
-        self._call_count += 1
-        # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a sub-agent
-        # run. A realtime run's model isn't one, so fall back to the sub-agent's own default rather
-        # than forwarding a model it cannot run with. Bind to a local, then `cast` to recover
-        # `Model[Any]` from the generic `Model` (which `isinstance` narrows to `Model[Unknown]`),
-        # mirroring core's own `reinject_system_prompt` idiom.
-        ctx_model = ctx.model
-        inherited_model = cast('Model[Any]', ctx_model) if self.inherit_model and isinstance(ctx_model, Model) else None
-        try:
-            result = await self._by_name[agent_name].agent.run(
-                task,
-                deps=ctx.deps,
-                model=inherited_model,
-                usage=ctx.usage if self.forward_usage else None,
-                usage_limits=self.sub_agent_usage_limits,
+        if self._can_save:
+            schema, validator = _SAVE_WORKFLOW_ARGS_SCHEMA
+            tools[SAVE_TOOL_NAME] = ToolsetTool(
+                toolset=self,
+                tool_def=ToolDefinition(
+                    name=SAVE_TOOL_NAME,
+                    description=_SAVE_DESCRIPTION,
+                    parameters_json_schema=schema,
+                    metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
+                ),
+                max_retries=self.max_retries,
+                args_validator=validator,
             )
-            return to_jsonable_python(result.output)
-        except Exception as exc:
-            # Don't leak host internals (file paths, deps/agent reprs) to the model;
-            # surface the failing agent and error type by default.
-            message = f'sub-agent {agent_name!r} raised {type(exc).__name__}'
-            if isinstance(exc, _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES):
-                message = f'{message}: {exc}'
-            raise RuntimeError(message) from exc
-
-    def _build_type_check_stubs(self) -> str:
-        """Render sub-agent signatures as stubs for Monty's static type checker.
-
-        Fed to `checkout(type_check=True, type_check_stubs=...)`, they let `feed_start`
-        reject a positional `task`, a misspelled function, or a wrong-typed argument
-        before the script runs -- costing a retry but no sub-agent budget. Each
-        `run_workflow` call is a fresh sandbox with no accumulated state, so the check
-        is always sound.
-        """
-        signatures = [_agent_signature(name, entry.agent) for name, entry in self._by_name.items()]
-        conflicting = FunctionSignature.get_conflicting_type_names(signatures)
-        parts = ['import asyncio\nfrom typing import Any, TypedDict, NotRequired, Literal']
-        parts.extend(FunctionSignature.render_type_definitions(signatures, conflicting))
-        parts.extend(
-            signature.render('raise NotImplementedError()', is_async=True, conflicting_type_names=conflicting)
-            for signature in signatures
-        )
-        return '\n\n'.join(parts)
+        return tools
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
-        if _in_workflow.get():
-            return {
-                'error': (
-                    'Workflows do not nest: this sub-agent was invoked from a workflow and cannot start '
-                    'its own. Return your result to the orchestrating workflow instead.'
-                )
-            }
+        if name == SAVE_TOOL_NAME:
+            return await self._save_workflow(tool_args, ctx)
+        if in_workflow.get():
+            return {'error': _NESTED_REFUSAL}
 
-        code = tool_args['code']
-        budget_exhausted = False
-        completed_dispatches: list[_CompletedDispatch] = []
+        code: str | None = tool_args.get('code')
+        workflow_name: str | None = tool_args.get('name')
+        args: dict[str, JsonValue] = tool_args.get('args') or {}
+        if (code is None) == (workflow_name is None):
+            raise ModelRetry('Pass exactly one of `code`, a script to run, or `name`, a saved workflow to run.')
 
-        async def dispatch(agent_name: str, kwargs: dict[str, Any]) -> Any:
-            nonlocal budget_exhausted
-            # The sandbox signature is `(*, task: str)`, but Monty does not validate kwargs against
-            # it at runtime, and the static check can be evaded through `Any` (e.g. `json.loads`
-            # results) -- so check here: a dropped extra kwarg or a non-string `task` would
-            # otherwise run the sub-agent on silently-wrong input. Each raises before the budget
-            # is touched.
-            if 'task' not in kwargs:
-                raise TypeError(f'{agent_name}() missing required keyword argument: task')
-            extra = sorted(set(kwargs) - {'task'})
-            if extra:
-                raise TypeError(f'{agent_name}() got unexpected keyword argument(s): {", ".join(extra)}; only task')
-            task = kwargs['task']
-            if not isinstance(task, str):
-                raise TypeError(f'{agent_name}() task must be a string, got {type(task).__name__}')
+        omitted = self._omitted_helpers()
+        run = WorkflowRun(
+            ctx=ctx,
+            agents=self._by_name,
+            library=self.library,
+            budget=self._budget,
+            default_agent=self.default_agent,
+            max_concurrent_agents=self.max_concurrent_agents,
+            max_workflow_depth=self.max_workflow_depth,
+            forward_usage=self.forward_usage,
+            inherit_model=self.inherit_model,
+            sub_agent_usage_limits=self.sub_agent_usage_limits,
+            prelude=render_prelude(shadowed=omitted, max_items=self.max_items_per_call),
+            stubs=build_type_check_stubs(self._by_name, omitted_helpers=omitted),
+            bind_args=ARGS_NAME not in omitted,
+            limits=_resolve_resource_limits(self.resource_limits),
+            in_temporal=in_temporal_workflow(),
+        )
+        frame = Frame()
+        if workflow_name is not None:
             try:
-                output = await self._run_one(agent_name, task, ctx)
-            except _BudgetExhausted:
-                budget_exhausted = True
-                raise
-            completed_dispatches.append(_CompletedDispatch(agent_name=agent_name, task=task, result=output))
-            return output
+                saved, args, frame = run.enter_saved(workflow_name, args, frame)
+            except ValueError as error:
+                raise ModelRetry(f'Cannot run saved workflow: {error}') from error
+            code = saved.source
+        assert code is not None
 
-        in_temporal = in_temporal_workflow()
-        limits = _resolve_resource_limits(self.resource_limits)
-        capture = PrintCapture()
-        type_check_stubs = self._build_type_check_stubs()
-        in_workflow_token = _in_workflow.set(True)
-        monty = MontyRunState()
+        capture = run.capture
+        in_workflow_token = in_workflow.set(True)
         try:
-            session = await monty.get_session(
-                type_check=True, type_check_stubs=type_check_stubs, limits=limits, in_temporal_workflow=in_temporal
-            )
-            # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
-            # which does not interleave with `call_tool`), so it is a stable name registry for
-            # the whole script. Sub-agents always run concurrently (the executor's defaults);
-            # durable ordering (global_sequential) lands with durability.
-            completed = await MontyExecutor(
-                dispatch=dispatch,
-                valid_names=self._by_name,
-                portal=monty.portal,
-                max_sleep_secs=limits.get('max_feed_duration_secs'),
-            ).run(partial(session.feed_start, code, print_callback=capture.callback))
+            with run.workflow_span(frame, args) if frame.stack else nullcontext():
+                session = await run.main_session()
+                completed = await run.execute(session, code, frame=frame, args=args)
         except MontyTypingError as e:
             raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(e.display())}') from e
         except MontySyntaxError as e:  # pragma: no cover -- backstop; the type checker parses first
             raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(e.display())}') from e
         except MontyRuntimeError as e:
-            if budget_exhausted:
+            if run.budget_exhausted:
                 # The script may catch the budget error and fail later on something else, so
                 # the flag -- not the displayed error -- proves this script hit the budget;
                 # under gather, the displayed error may also be an independently surfaced
                 # failure from the same batch.
-                return _budget_terminal_result(
+                return budget_terminal_result(
                     max_agent_calls=self.max_agent_calls,
                     last_error=capture.prepend_to(e.display()),
-                    completed_dispatches=completed_dispatches,
+                    completed_dispatches=run.completed,
                 )
             raise ModelRetry(
-                f'Runtime error in workflow:\n{capture.prepend_to(e.display())}'
-                f'{_completed_retry_section(completed_dispatches)}'
+                f'Runtime error in workflow:\n{capture.prepend_to(e.display())}{completed_retry_section(run.completed)}'
             ) from e
         except MontyCrashedError as e:
             # The worker died mid-script (e.g. resource exhaustion or request timeout);
             # the pool replaces it transparently. Completed sub-agent results are listed
             # so the retry can reuse them as plain values.
-            return _worker_crash_result(
+            return worker_crash_result(
                 crash=e,
-                budget_exhausted=budget_exhausted,
+                budget_exhausted=run.budget_exhausted,
                 max_agent_calls=self.max_agent_calls,
-                completed_dispatches=completed_dispatches,
+                completed_dispatches=run.completed,
             )
         except BaseException as e:
             # Convert a sandbox panic to a retry (see `is_sandbox_panic`);
             # anything else (CancelledError, ...) re-raises unchanged.
             if not is_sandbox_panic(e):
                 raise
-            if budget_exhausted:
-                return _budget_terminal_result(
+            if run.budget_exhausted:
+                return budget_terminal_result(
                     max_agent_calls=self.max_agent_calls,
                     last_error='The workflow script aborted inside the sandbox after exhausting the sub-agent budget.',
-                    completed_dispatches=completed_dispatches,
+                    completed_dispatches=run.completed,
                 )
             raise ModelRetry(
                 'The workflow script aborted inside the sandbox. Revise the script and try again.'
-                f'{_completed_retry_section(completed_dispatches)}'
+                f'{completed_retry_section(run.completed)}'
             ) from e
         finally:
-            _in_workflow.reset(in_workflow_token)
-            await monty.close()
+            in_workflow.reset(in_workflow_token)
+            await run.monty.close()
 
         # Monty lets workflow code catch host exceptions. Exhausting the budget remains
         # terminal even if the script catches that error and otherwise finishes normally.
-        return _completed_workflow_result(
+        return completed_workflow_result(
             completed_output=completed.output,
             printed=capture.joined,
-            budget_exhausted=budget_exhausted,
+            budget_exhausted=run.budget_exhausted,
             max_agent_calls=self.max_agent_calls,
-            completed_dispatches=completed_dispatches,
+            completed_dispatches=run.completed,
+        )
+
+    async def _save_workflow(self, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT]) -> str:
+        """Write a workflow to the library directory, refusing to replace one unless asked to."""
+        assert self.library is not None and self.save_directory is not None
+        agents: list[str] = tool_args.get('agents', [])
+        if missing := [agent for agent in agents if agent not in self._by_name]:
+            raise ModelRetry(
+                f'Cannot save workflow: unknown sub-agents {", ".join(missing)}; available: {", ".join(self._by_name)}.'
+            )
+        try:
+            workflow = SavedWorkflow.create(
+                name=tool_args['name'],
+                description=tool_args['description'],
+                code=tool_args['code'],
+                when_to_use=tool_args.get('when_to_use'),
+                args=tool_args.get('args'),
+                agents=agents,
+                returns=tool_args.get('returns'),
+            )
+        except ValueError as error:
+            raise ModelRetry(f'Cannot save workflow: {error}') from error
+        workspace = ctx.workspace
+        path = posixpath.join(await workspace.resolve(workspace_path(Path(self.save_directory))), f'{workflow.name}.py')
+        try:
+            if not tool_args.get('overwrite', False) and await workspace.exists(path):
+                raise ModelRetry(
+                    f'A workflow named {workflow.name!r} is already saved at {path}; '
+                    'pass `overwrite: true` to replace it.'
+                )
+            await workspace.write_text(path, workflow.source)
+        # `WorkspaceError` first: some are also `OSError`s, and `raise_tool_failure` knows which end the run.
+        except WorkspaceError as error:
+            raise_tool_failure(error)
+        except OSError as error:
+            raise ToolFailed(f'Cannot save workflow: {error}') from error
+        self.library.workflows[workflow.name] = replace(workflow, path=path)
+        return (
+            f'Saved workflow {workflow.name!r} to {path}. Run it with `{self.tool_name}` by name, '
+            f'or from a script with `await workflow({workflow.name!r}, args)`.'
         )

@@ -19,8 +19,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
-from collections.abc import Awaitable, Callable, Container, Coroutine
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from collections.abc import AsyncGenerator, Awaitable, Callable, Container, Coroutine
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
@@ -175,6 +175,24 @@ class MontyRunState:
             self.session = await _enter_monty(self._session_stack, checkout, self.portal)
         return self.session
 
+    @asynccontextmanager
+    async def extra_session(
+        self, *, type_check: bool, type_check_stubs: str | None, limits: ResourceLimits
+    ) -> AsyncGenerator[AsyncMontySession]:
+        """Check out another REPL session from the open pool, returned when the block exits.
+
+        For a nested script that runs while the main session is suspended on a host call.
+        """
+        assert self.pool is not None, 'open the main session first'
+        stack = AsyncExitStack()
+        try:
+            checkout = self.pool.checkout(
+                limits=limits, type_check=type_check, type_check_stubs=type_check_stubs, os_policy=_OS_POLICY
+            )
+            yield await _enter_monty(stack, checkout, self.portal)
+        finally:
+            await _release_monty(stack)
+
     async def reset(self) -> None:
         """Return the current worker and make the next call start a fresh REPL."""
         # Detach before awaiting the exit, so a session checked out meanwhile is not dropped.
@@ -254,6 +272,10 @@ class MontyExecutor:
     dispatch: DispatchFn
     valid_names: Container[str]
     sequential_names: set[str] = field(default_factory=set[str])
+    # Sync (`def`) functions resolved inline *without* the sequential barrier: pending parallel
+    # calls keep running. For cheap host bookkeeping (progress events, counters) that must not
+    # serialize a fan-out.
+    inline_names: Container[str] = frozenset[str]()
     global_sequential: bool = False
     # Set inside a Temporal workflow; see `call_monty`.
     portal: BlockingPortal | None = None
@@ -336,14 +358,15 @@ class MontyExecutor:
                 snapshot, TypeError(f'{name}() does not accept positional arguments; use keyword arguments')
             )
 
-        if name in self.sequential_names:
+        if name in self.sequential_names or name in self.inline_names:
             # Rendered as `def` (sync), so the sandbox code doesn't `await` the result --
-            # resolve inline. Await pending parallel tasks first (barrier) for ordering.
-            # The dispatch coroutine is created only after the barrier: it is not in
-            # `_pending`, so if it existed while the barrier awaits and we were cancelled
-            # there, `run`'s cleanup would never close it.
-            for cid in list(self._pending):
-                self._pre_resolved[cid] = await _await_external(self._pending.pop(cid))
+            # resolve inline. A sequential name awaits pending parallel tasks first (barrier)
+            # for ordering; an inline name does not. The dispatch coroutine is created only
+            # after the barrier: it is not in `_pending`, so if it existed while the barrier
+            # awaits and we were cancelled there, `run`'s cleanup would never close it.
+            if name in self.sequential_names:
+                for cid in list(self._pending):
+                    self._pre_resolved[cid] = await _await_external(self._pending.pop(cid))
             try:
                 call = self._dispatch(snapshot, parallel=False)
             except Exception as exc:
