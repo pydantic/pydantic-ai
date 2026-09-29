@@ -267,6 +267,26 @@ pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
+## Your own agent
+
+```bash
+clai2 --agent pydantic_ai.main:my_cool_agent
+clai2 -a my_agents:reviewer -p "Review the staged diff"
+```
+
+`--agent MODULE:ATTR` (short form `-a`) chats with an existing Pydantic AI `Agent`
+instance instead of CLAI's default agent. CLAI appends the launch directory to
+`sys.path`, after installed packages, so a module next to where you start CLAI
+resolves without installing it. `ATTR` must
+name an instance, not a class; the agent runs with `deps=None`. For that session
+only, no plugins load: no built-ins (including the stock coder tools), no saved or
+drop-in user plugins, and no project plugins, and `/plugins` reports that they are
+off. Nothing saved changes, so plain `clai2` loads plugins as before. The agent
+keeps its own model unless `-m` or `CLAI_MODEL` selects another. `-p`, `--resume`,
+and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
+To pass deps or plugins, write a launcher that calls `chat` (see
+`customization.md`).
+
 ## Headless mode
 
 ```bash
@@ -387,7 +407,8 @@ Use a separate OS account or isolated environment for untrusted repositories.
 
 The requested default does not guarantee model availability for a subscription.
 Custom agents supplied to `chat` retain their model unless settings explicitly
-select an override. `/login` is async, and plugin command handlers may also return
+select an override. `clai2 --agent MODULE:ATTR` keeps the agent's model over saved
+and project models; only `-m` or `CLAI_MODEL` replaces it. `/login` is async, and plugin command handlers may also return
 an awaitable string.
 
 ## GitHub Copilot subscriptions
@@ -721,6 +742,11 @@ shows `(editing)` meanwhile. Clearing the draft and pressing Enter removes the
 message from the queue. If the run takes the message before you press Enter,
 the edit is queued as a new follow-up. With nothing queued, Up/down only walk
 history.
+While you walk history, Up/down stay on history even when a recalled slash
+command shows completion suggestions. Press Tab to pick a suggestion; Up/down
+then move through the suggestions. Editing the recalled text ends the walk, so
+suggestions for a prefix you type take Up/down as before. Esc closes the
+suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
 To steer instead, first queue the message with Enter, then press Alt+Enter
 (Option+Enter). This sends the oldest queued follow-up to the active run at its

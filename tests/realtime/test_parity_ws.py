@@ -164,7 +164,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
-        supports_text_output=False,  # every Gemini Live model rejects a TEXT response modality
+        supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
         audio_input_sample_rate=16000,
     ),
     RealtimeParityCase(
@@ -176,7 +176,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
-        supports_text_output=False,  # every Gemini Live model rejects a TEXT response modality
+        supports_text_output=False,  # the Developer API Live models reject a TEXT response modality
         audio_input_sample_rate=16000,
     ),
     RealtimeParityCase(
@@ -198,7 +198,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=False,
         supports_interruption=False,
         supports_native_tools=True,
-        supports_text_output=False,  # every Gemini Live model rejects a TEXT response modality
+        # The Vertex half-cascade model is the one Gemini Live model that answers in text.
         audio_input_sample_rate=16000,
     ),
 ]
