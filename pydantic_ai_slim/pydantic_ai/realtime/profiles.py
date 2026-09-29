@@ -83,7 +83,8 @@ class RealtimeModelProfile(TypedDict, total=False):
     [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret], and
     [`connect_webrtc`][pydantic_ai.realtime.RealtimeModel.connect_webrtc].
 
-    Supported by OpenAI and Azure OpenAI. Gemini Live and xAI Grok Voice are WebSocket-only."""
+    Supported by OpenAI and Azure OpenAI. OpenAI GPT-Live supports the offer relay and the sideband but has
+    no client secrets. Gemini Live and xAI Grok Voice are WebSocket-only."""
     supports_seeding_images: bool
     """Whether prior images can be included when seeding a session with `message_history`."""
     supports_seeding_audio: bool
