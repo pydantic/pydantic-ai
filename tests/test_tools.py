@@ -1809,6 +1809,20 @@ def test_test_model_same_name_calls_get_distinct_ids_and_both_run():
     ]
     assert [p.tool_call_id for p in single_parts] == ['pyd_ai_tool_call_id__add']
 
+    # A tool whose own name ends in `__<n>` doesn't collide with a repeated call's suffixed id.
+    def add__2(left: int, right: int) -> int:
+        return left + right
+
+    suffix_agent = Agent(TestModel(call_tools=['add', 'add', 'add__2'], custom_output_text='done'))
+    suffix_agent.tool_plain(add)
+    suffix_agent.tool_plain(add__2)
+    suffix_result = suffix_agent.run_sync('hello')
+    assert [p.tool_call_id for m in suffix_result.all_messages() for p in m.parts if isinstance(p, ToolCallPart)] == [
+        'pyd_ai_tool_call_id__add',
+        'pyd_ai_tool_call_id__add__2',
+        'pyd_ai_tool_call_id__add__2__2',
+    ]
+
 
 def test_tool_raises_approval_required():
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

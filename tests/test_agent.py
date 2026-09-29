@@ -11343,6 +11343,44 @@ async def test_distinct_tool_call_ids_still_bind_correctly():
     assert [(p.tool_call_id, p.content) for p in tool_returns.values()] == [('DUP1', 'A1'), ('DUP2', 'B2')]
 
 
+async def test_duplicate_tool_call_id_across_graceful_batches_binds_each_call():
+    """`'graceful'` splits function calls into batches at an output call; each batch binds its own calls."""
+    executed: list[tuple[str, int]] = []
+
+    def alpha(n: int) -> str:
+        executed.append(('alpha', n))
+        return f'A{n}'
+
+    def beta(n: int) -> str:
+        executed.append(('beta', n))
+        return f'B{n}'
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='alpha', args={'n': 1}, tool_call_id='DUP'),
+                ToolCallPart(tool_name='final_result', args={'response': 42}, tool_call_id='OUT'),
+                ToolCallPart(tool_name='beta', args={'n': 2}, tool_call_id='DUP'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model_function), output_type=int, end_strategy='graceful')
+    agent.tool_plain(alpha)
+    agent.tool_plain(beta)
+
+    result = await agent.run('go')
+    assert result.output == 42
+
+    assert executed == [('alpha', 1), ('beta', 2)]
+    function_returns = [
+        (p.tool_name, p.tool_call_id, p.content)
+        for m in result.all_messages()
+        for p in m.parts
+        if isinstance(p, ToolReturnPart) and p.tool_name != 'final_result'
+    ]
+    assert function_returns == [('alpha', 'DUP', 'A1'), ('beta', 'DUP', 'B2')]
+
+
 async def test_user_prompt_with_deferred_tool_results():
     """Test that user_prompt can be provided alongside deferred_tool_results."""
     from pydantic_ai.exceptions import ApprovalRequired

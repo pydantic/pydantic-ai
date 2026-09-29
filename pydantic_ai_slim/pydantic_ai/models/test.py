@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import itertools
 import re
 import string
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable
@@ -259,19 +260,18 @@ class TestModel(Model):
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
             # Multiple calls to the same tool would otherwise share the documented
             # `pyd_ai_tool_call_id__{name}` id, which tool execution rejects as ambiguous, so
-            # uniquify only from the second occurrence of a name onward.
-            name_call_counts: dict[str, int] = {}
+            # uniquify only on collision, including with a tool whose own name ends in `__<n>`.
+            emitted_ids: set[str] = set()
             parts: list[ToolCallPart] = []
             for name, args in tool_calls:
-                call_count = name_call_counts.get(name, 0) + 1
-                name_call_counts[name] = call_count
-                parts.append(
-                    ToolCallPart(
-                        name,
-                        self.gen_tool_args(args),
-                        tool_call_id=f'pyd_ai_tool_call_id__{name}' + (f'__{call_count}' if call_count > 1 else ''),
-                    )
+                base_id = f'pyd_ai_tool_call_id__{name}'
+                tool_call_id = next(
+                    candidate
+                    for candidate in itertools.chain([base_id], (f'{base_id}__{n}' for n in itertools.count(2)))
+                    if candidate not in emitted_ids
                 )
+                emitted_ids.add(tool_call_id)
+                parts.append(ToolCallPart(name, self.gen_tool_args(args), tool_call_id=tool_call_id))
             return ModelResponse(parts=parts, model_name=self._model_name)
 
         if messages:  # pragma: no branch

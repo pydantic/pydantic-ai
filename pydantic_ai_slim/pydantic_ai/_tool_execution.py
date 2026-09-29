@@ -644,6 +644,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         """
         # Function calls and their results/executions are matched back by `tool_call_id`, so duplicate
         # ids would make the binding ambiguous (last write wins). Fail closed before any call in this batch executes.
+        # Batches bind independently (each has its own `validated_calls`), so an id repeated across the batches
+        # `'graceful'` splits at an output call still binds each call to its own tool.
         if duplicate_ids := _duplicate_tool_call_ids(calls):
             raise exceptions.UnexpectedModelBehavior(
                 f'Function tool calls must have unique `tool_call_id` values; duplicate `tool_call_id`s: {duplicate_ids}'
