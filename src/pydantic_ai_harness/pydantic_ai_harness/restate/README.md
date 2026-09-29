@@ -14,8 +14,16 @@ releases, so the API may change between minor releases. See the repository
 
 ## Installation
 
+uv:
+
 ```bash
 uv add "pydantic-ai-harness[restate]" "pydantic-ai-slim[openai]"
+```
+
+pip:
+
+```bash
+pip install "pydantic-ai-harness[restate]" "pydantic-ai-slim[openai]"
 ```
 
 ## Quick start
@@ -90,6 +98,9 @@ with its recorded result, so the handler's step sequence must stay stable across
 - Tool calls run one at a time inside a handler. A journal entry's identity is its encounter order,
   so concurrently scheduled tool calls could claim each other's entries on replay. Outside a Restate
   context the agent keeps its configured parallelism.
+- A nested agent run started by a journaled operation executes inline inside the parent step, so
+  Restate does not receive an unsupported nested `run_typed` call. The parent step journals the
+  nested run's aggregate result.
 - A step is journaled after it runs, so a crash between a tool's side effect and its journal entry
   re-runs the tool on recovery: keep tool side effects idempotent.
 - Streaming inside a handler is a replay, not a live wire: the model stream is consumed and captured
@@ -97,9 +108,9 @@ with its recorded result, so the handler's step sequence must stay stable across
 - `ctx.enqueue()` is not available inside a journaled tool, because a replay serves the recorded step
   output and would drop the enqueued messages. Enqueue from handler-level code instead.
 - Each step is attempted at most three times by default. Set `max_attempts` on
-  `RestateDurability` to another positive integer, or set it to `None` to opt in to Restate's
-  invocation-level retry policy. Provider-client and Pydantic AI retries are separate and can
-  multiply the total attempts.
+  `RestateDurability` to an integer from 1 through 4,294,967,295, or set it to `None` to opt in to
+  Restate's invocation-level retry policy. Provider-client and Pydantic AI retries are separate and
+  can multiply the total attempts.
 
 ## Per-tool opt-out
 

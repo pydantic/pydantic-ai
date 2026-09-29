@@ -142,9 +142,9 @@ class TestModelRequestCheckpoint:
 
         assert ctx.max_attempts == [None]
 
-    @pytest.mark.parametrize('max_attempts', [0, -1, True])
-    def test_max_attempts_must_be_positive(self, max_attempts: int) -> None:
-        with pytest.raises(UserError, match='positive integer or `None`'):
+    @pytest.mark.parametrize('max_attempts', [0, -1, True, 1.5, 2**32])
+    def test_max_attempts_must_fit_restate_u32(self, max_attempts: int) -> None:
+        with pytest.raises(UserError, match='integer from 1 to 4294967295, or `None`'):
             RestateDurability(max_attempts=max_attempts)
 
     async def test_request_journaled_and_replay_serves_entry(self) -> None:
@@ -430,6 +430,40 @@ class TestCrashMidRunRetry:
         assert replay.invoked == [tool_step, model_step]
         assert model_calls['n'] == 2
         assert tool_attempts['n'] == 2
+
+
+class TestNestedAgent:
+    async def test_nested_agent_runs_inline_inside_parent_step(self) -> None:
+        child_calls = {'calls': 0}
+        child = Agent(_text_model(child_calls), name='child', capabilities=[RestateDurability()])
+        toolset = FunctionToolset[object](id='tools')
+
+        @toolset.tool_plain
+        async def delegate() -> str:
+            return str((await child.run('nested')).output)
+
+        parent = Agent(
+            _tool_then_done_model('delegate', {}),
+            name='parent',
+            toolsets=[toolset],
+            capabilities=[RestateDurability()],
+        )
+
+        ctx = FakeRestateContext()
+        with restate_context(ctx):
+            first = await parent.run('delegate')
+
+        assert first.output == 'done'
+        assert child_calls['calls'] == 1
+        assert not any(name.startswith('child__') for name in ctx.step_names)
+
+        replay = ctx.replay()
+        with restate_context(replay):
+            second = await parent.run('delegate')
+
+        assert second.output == 'done'
+        assert child_calls['calls'] == 1
+        assert replay.invoked == []
 
 
 class TestPerToolOptOut:

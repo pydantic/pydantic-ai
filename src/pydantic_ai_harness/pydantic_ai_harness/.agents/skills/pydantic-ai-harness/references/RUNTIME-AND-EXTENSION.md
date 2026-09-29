@@ -204,11 +204,12 @@ app = restate.app([service])
 ```
 
 Parameters: `RestateDurability(*, models=None, event_stream_handler=None, name=None, max_attempts=3)`.
-Set `max_attempts=None` only when the Restate invocation retry policy should govern step retries.
-Function tools can opt out with `metadata={'restate': False}`; MCP tools cannot. Tool calls are
-sequential inside a Restate handler, toolsets need stable ids, step side effects must be idempotent,
-and `ctx.enqueue()` is unavailable inside a step. Do not combine this capability with the Restate
-SDK's separate `RestateAgent` adapter.
+The attempt limit accepts integers from 1 through 4,294,967,295; set `max_attempts=None` only when
+the Restate invocation retry policy should govern step retries. Function tools can opt out with
+`metadata={'restate': False}`; MCP tools cannot. Tool calls are sequential inside a Restate handler,
+toolsets need stable ids, step side effects must be idempotent, and `ctx.enqueue()` is unavailable
+inside a step. A nested agent invoked by a step executes inline and is covered by the parent step.
+Do not combine this capability with the Restate SDK's separate `RestateAgent` adapter.
 
 ## AWSLambdaDurability
 

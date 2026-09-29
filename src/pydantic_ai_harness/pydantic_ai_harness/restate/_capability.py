@@ -23,6 +23,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 from collections.abc import Awaitable, Callable, Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import ClassVar, Literal
 
@@ -47,6 +48,8 @@ from pydantic_ai.toolsets import ToolsetTool
 
 _ENGINE_NAME = 'Restate'
 _TOOL_CONFIG_KEY = 'restate'
+_MAX_ATTEMPTS = 2**32 - 1
+_IN_RESTATE_STEP: ContextVar[bool] = ContextVar('pydantic_ai_harness.restate.in_step', default=False)
 
 
 def _current_restate_context() -> restate.Context | None:
@@ -93,7 +96,15 @@ class _RestateOperationBackend(JournalCallableOperationBackend[Mapping[str, obje
         assert not config
         context = current_context()
         assert context is not None
-        return await context.run_typed(name, body, self._run_options)
+
+        async def body_in_step() -> object:
+            token = _IN_RESTATE_STEP.set(True)
+            try:
+                return await body()
+            finally:
+                _IN_RESTATE_STEP.reset(token)
+
+        return await context.run_typed(name, body_in_step, self._run_options)
 
 
 @dataclass(init=False)
@@ -180,16 +191,21 @@ class RestateDurability(BaseDurabilityCapability[AgentDepsT]):
                 agent's `name` when the capability is bound.
             max_attempts: Maximum attempts for each Restate run step, including the initial
                 attempt. Defaults to 3 so a persistently failing operation terminates instead of
-                retrying indefinitely. Set to `None` to use Restate's invocation retry policy.
+                retrying indefinitely. Must be between 1 and 4,294,967,295; set to `None` to use
+                Restate's invocation retry policy.
         """
-        if isinstance(max_attempts, bool) or (max_attempts is not None and max_attempts < 1):
-            raise UserError('`max_attempts` must be a positive integer or `None`.')
+        if max_attempts is not None and (
+            isinstance(max_attempts, bool)
+            or not isinstance(max_attempts, int)
+            or not 1 <= max_attempts <= _MAX_ATTEMPTS
+        ):
+            raise UserError(f'`max_attempts` must be an integer from 1 to {_MAX_ATTEMPTS}, or `None`.')
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self._max_attempts = max_attempts
 
     @property
     def in_durable_context(self) -> bool:
-        return _current_restate_context() is not None
+        return _current_restate_context() is not None and not _IN_RESTATE_STEP.get()
 
     def get_durable_operation_backend(self) -> _RestateOperationBackend:
         return _RestateOperationBackend(self.name, self.default_model_id, self._max_attempts)
