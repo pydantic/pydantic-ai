@@ -53,6 +53,12 @@ Under core durable execution the routing call is durable, and every selectable m
 registered in the durability capability's `models=` mapping. `ModelRouter` is Python-only and cannot
 be loaded from an agent spec.
 
+### ModelChoice
+
+Each `ModelChoice(model, description)` pairs a model name or configured `Model` instance with the
+criteria the router should use for that option. Choice keys and descriptions must be non-empty, and
+the configured `default` must name one of the keys.
+
 ## StepPersistence
 
 Records an append-only event log, full-history snapshots at settled tool-cycle boundaries, and a ledger

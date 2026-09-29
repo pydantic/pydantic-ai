@@ -26,8 +26,9 @@ from pydantic_ai.usage import RequestUsage, UsageLimits
 from pydantic_ai_harness.compaction import SummarizingCompaction
 from pydantic_ai_harness.guardrails import GuardrailResult, InputGuardrail
 from pydantic_ai_harness.model_router import ModelChoice, ModelRouter
-from tests.conftest import IsDatetime, IsInstance, IsStr, agent_run_names  # pyright: ignore[reportMissingTypeStubs]
+from tests.conftest import IsDatetime, IsInstance, IsStr  # pyright: ignore[reportMissingTypeStubs]
 from tests.harness._recording_durability import RecordingDurability
+from tests.harness.conftest import agent_run_names
 
 if TYPE_CHECKING:
     from logfire.testing import CaptureLogfire
