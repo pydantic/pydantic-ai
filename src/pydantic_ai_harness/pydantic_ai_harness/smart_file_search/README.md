@@ -4,20 +4,20 @@ Plain-English code search: the agent describes the behavior it is looking for in
 source excerpts with file and line ranges, judged by any Pydantic AI model, with TypeSafe's Jev decision model
 as the recommended judge.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_grep/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_file_search/)
 
 ## Installation
 
 uv:
 
 ```bash
-uv add "pydantic-ai-harness[smart-grep]"
+uv add "pydantic-ai-harness[smart-file-search]"
 ```
 
 pip:
 
 ```bash
-pip install "pydantic-ai-harness[smart-grep]"
+pip install "pydantic-ai-harness[smart-file-search]"
 ```
 
 The extra adds tree-sitter grammars for syntax-aware chunking of fifteen languages beyond Python; without it,
@@ -32,7 +32,7 @@ only finds what you can already name.
 
 ## The solution
 
-`SmartFileSearch` adds a `smart_grep` tool that lists the files in the run's workspace with `rg`, cuts them into
+`SmartFileSearch` adds a `smart_file_search` tool that lists the files in the run's workspace with `rg`, cuts them into
 syntax-aware snippets, shortlists them with local BM25, and has a judge model rate each shortlisted snippet's
 relevance to the query.
 
@@ -50,5 +50,5 @@ agent = Agent(
 The judge is pluggable: pass any model or model name as `model`. Left unset, it is `'typesafe:jev-latest'`
 when the `typesafe` SDK is installed and `TYPESAFE_API_KEY` is set, and the run's own model otherwise.
 
-See the [Smart File Search docs](https://pydantic.dev/docs/ai/harness/smart-grep/) for the search pipeline, the result
-shape, choosing the judge and tuning `threshold`.
+See the [Smart File Search docs](https://pydantic.dev/docs/ai/harness/smart-file-search/) for the search
+pipeline, the result shape, choosing the judge and tuning `threshold`.

@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from pydantic_ai.exceptions import ModelRetry, ToolFailed
 from pydantic_ai.workspaces import Workspace, WorkspaceError
 from pydantic_ai_harness.filesystem._ripgrep import RipgrepMissing, run_ripgrep
-from pydantic_ai_harness.smart_grep._structure import Range, python_ranges
-from pydantic_ai_harness.smart_grep._treesitter import treesitter_ranges
+from pydantic_ai_harness.smart_file_search._structure import Range, python_ranges
+from pydantic_ai_harness.smart_file_search._treesitter import treesitter_ranges
 
 # A search is bounded by files and lines, sized to fit the Linux kernel (~96k files, ~39M lines). Snippet
 # count is not capped: only the ranked shortlist is judged, and the index only reads the query's postings.
@@ -145,7 +145,7 @@ async def _ripgrep_files(
         )
     except RipgrepMissing:
         raise ToolFailed(
-            'smart_grep needs ripgrep (`rg`) in the workspace. Install it there '
+            'smart_file_search needs ripgrep (`rg`) in the workspace. Install it there '
             '(the `coder` extra does for a local workspace), or use regular file search instead.'
         ) from None
     if capped:
@@ -168,5 +168,5 @@ async def searchable_root(workspace: Workspace, directory: str) -> str:
     root = await workspace.resolve(directory)
     cwd, real = await asyncio.gather(workspace.realpath(await workspace.working_dir()), workspace.realpath(root))
     if posixpath.commonpath([cwd, real]) != cwd:
-        raise ModelRetry(f'`{directory}` is outside the working directory; smart_grep only searches inside it.')
+        raise ModelRetry(f'`{directory}` is outside the working directory; smart_file_search only searches inside it.')
     return real

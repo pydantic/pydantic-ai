@@ -2,7 +2,7 @@
 
 JavaScript/TypeScript, Go, Rust, Java, C, C++, C#, Ruby, PHP, Kotlin, Swift, Scala, Bash and Lua.
 
-Grammars are pinned, offline wheels (one package per language, installed by the `smart-grep` extra);
+Grammars are pinned, offline wheels (one package per language, installed by the `smart-file-search` extra);
 nothing is downloaded at runtime. They are optional at runtime: if tree-sitter or a grammar cannot be
 imported (not installed, or an unsupported platform) or the installed tree-sitter is a known-bad version,
 `treesitter_ranges` returns `None` and the caller falls back to line windows. A file with parse errors
@@ -19,7 +19,7 @@ from functools import cache
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING
 
-from pydantic_ai_harness.smart_grep._structure import Range, structure_ranges
+from pydantic_ai_harness.smart_file_search._structure import Range, structure_ranges
 
 if TYPE_CHECKING:
     from tree_sitter import Node, Parser
@@ -179,7 +179,7 @@ _MAX_ABSORBED_TAIL = 3
 _BROKEN_TREE_SITTER = ((0, 26),)
 """py-tree-sitter 0.26.0 segfaults walking ordinary trees (reproduced on CPython 3.13 and 3.14; 0.25.2 is
 clean on the same input). A native crash would kill the whole process, so refuse it even if something pins it.
-The `smart-grep` extra caps `tree-sitter<0.26` for the same reason."""
+The `smart-file-search` extra caps `tree-sitter<0.26` for the same reason."""
 
 
 def _tree_sitter_is_safe() -> bool:

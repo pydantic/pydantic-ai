@@ -1,4 +1,4 @@
-"""The `smart_grep` tool: plain-English code search over the run's workspace."""
+"""The `smart_file_search` tool: plain-English code search over the run's workspace."""
 
 from __future__ import annotations
 
@@ -7,15 +7,15 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._workspace import raise_tool_failure, require_workspace, supports_commands
-from pydantic_ai_harness.smart_grep._index import MAX_CACHED_INDEXES, SnippetIndexes
-from pydantic_ai_harness.smart_grep._judge import JudgeModel, resolve_judge_model
-from pydantic_ai_harness.smart_grep._search import DEFAULT_CANDIDATES, SmartFileSearchResult, search_code
+from pydantic_ai_harness.smart_file_search._index import MAX_CACHED_INDEXES, SnippetIndexes
+from pydantic_ai_harness.smart_file_search._judge import JudgeModel, resolve_judge_model
+from pydantic_ai_harness.smart_file_search._search import DEFAULT_CANDIDATES, SmartFileSearchResult, search_code
 
-TOOL_NAME = 'smart_grep'
+TOOL_NAME = 'smart_file_search'
 
 
 class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
-    """Registers `smart_grep`, which searches the run's workspace and judges snippets with a model.
+    """Registers `smart_file_search`, which searches the run's workspace and judges snippets with a model.
 
     Files are listed with `rg` and read through `ctx.workspace`, so the tool is only offered when the
     workspace can run commands. A run with no workspace fails at its start. With `cache_index`, each
@@ -36,7 +36,7 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
         self._threshold = threshold
         self._concurrency = concurrency
         self._indexes = SnippetIndexes(MAX_CACHED_INDEXES if cache_index else 0)
-        self.add_function(self.smart_grep, name=TOOL_NAME)
+        self.add_function(self.smart_file_search, name=TOOL_NAME)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         """Offer no tools when the workspace cannot execute commands; fail a run with no workspace."""
@@ -46,7 +46,7 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
             return {}
         return await super().get_tools(ctx)
 
-    async def smart_grep(
+    async def smart_file_search(
         self,
         ctx: RunContext[AgentDepsT],
         query: str,
@@ -94,4 +94,4 @@ class SmartFileSearchToolset(FunctionToolset[AgentDepsT]):
             raise_tool_failure(error)
         except (ModelAPIError, UnexpectedModelBehavior) as error:
             # Report the judge's failure to the model, which can fall back to regular search.
-            raise ToolFailed(f'smart_grep failed: {type(error).__name__}: {error}') from error
+            raise ToolFailed(f'smart_file_search failed: {type(error).__name__}: {error}') from error

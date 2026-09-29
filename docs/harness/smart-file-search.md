@@ -10,7 +10,7 @@ English ("where do we reject expired sessions?") and gets back ranked source exc
 ranges, without first having to guess the symbol names a text search needs. Relevance is decided by a judge
 model you choose: any Pydantic AI model works, and TypeSafe's Jev decision model is the recommended one.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_grep/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/smart_file_search/)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 
@@ -24,7 +24,7 @@ only finds what you can already name.
 ## Usage
 
 ```bash
-pip/uv-add "pydantic-ai-harness[smart-grep]" "pydantic-ai-slim[typesafe]"
+pip/uv-add "pydantic-ai-harness[smart-file-search]" "pydantic-ai-slim[typesafe]"
 ```
 
 Set `TYPESAFE_API_KEY` to judge with [Jev](#choosing-the-judge), or pass any other model as `model`.
@@ -53,14 +53,14 @@ without a workspace fails at its start.
 
 | Tool | Purpose |
 |---|---|
-| `smart_grep` | Find code by what it does: `query` in plain English, optionally scoped by `directory` and a ripgrep `glob`, returning up to `limit` matches after judging up to `candidates` snippets. |
+| `smart_file_search` | Find code by what it does: `query` in plain English, optionally scoped by `directory` and a ripgrep `glob`, returning up to `limit` matches after judging up to `candidates` snippets. |
 
 A search runs in four steps:
 
 1. **List** the files under `directory` with `rg --files`, which honors `.gitignore` and skips hidden
    files. Binary, non-UTF-8 and minified files are skipped and counted.
 2. **Chunk** each file into snippets along its syntax: functions, methods and classes, with the blocks of a
-   long function as snippets of their own. Python is parsed with the standard library; the `smart-grep`
+   long function as snippets of their own. Python is parsed with the standard library; the `smart-file-search`
    extra adds [tree-sitter](https://tree-sitter.github.io/) grammars for JavaScript, TypeScript, Go, Rust,
    Java, C, C++, C#, Ruby, PHP, Kotlin, Swift, Scala, Bash and Lua. Other files, and any file without its
    grammar installed, are cut into overlapping 60-line windows.
@@ -94,7 +94,7 @@ SmartFileSearch(model='typesafe:jev-latest', cache_index=True)
 
 Later searches of the same directory still read every file, to catch changes by content hash on any
 workspace, but only chunk and index the files that changed, and look up the query in the index instead of
-scoring every snippet. Parallel `smart_grep` calls on one directory take turns, so its index is built once
+scoring every snippet. Parallel `smart_file_search` calls on one directory take turns, so its index is built once
 rather than by each call. On the kernel (96,000 files, 39 million lines, 4 million snippets), the first search
 took about five minutes and later ones about 25 seconds, holding about 2.3 GiB. Up to four directories
 (each with its `glob`) are kept, least recently searched evicted first.
@@ -113,7 +113,7 @@ model takes to write one, which is what 128 judgments per search need. To use it
 the key:
 
 ```bash
-pip/uv-add "pydantic-ai-harness[smart-grep]" "pydantic-ai-slim[typesafe]"
+pip/uv-add "pydantic-ai-harness[smart-file-search]" "pydantic-ai-slim[typesafe]"
 ```
 
 Any language model works as well, since the two ratings are ordinary structured output. As one search makes
@@ -127,15 +127,14 @@ calibrated, so check a few searches and adjust it if results are too sparse or t
 
 ## Privacy
 
-`smart_grep` sends the query, the shortlisted snippets and their paths to the judge model's provider. It only searches
-inside the workspace's working directory (symlinks followed), so the model can't send source from elsewhere
-on the machine. The
-default instructions tell the model to honor requests to keep code local by using local search instead; pick a
-local judge model if no source may leave the machine.
+`smart_file_search` sends the query, the shortlisted snippets and their paths to the judge model's provider.
+It only searches inside the workspace's working directory (symlinks followed), so the model can't send source
+from elsewhere on the machine. The default instructions tell the model to honor requests to keep code local by
+using local search instead; pick a local judge model if no source may leave the machine.
 
 ## Instructions
 
-`SmartFileSearch` adds discovery guidance to the system prompt: reach for `smart_grep` before exploratory text
+`SmartFileSearch` adds discovery guidance to the system prompt: reach for `smart_file_search` before exploratory text
 search when locating unfamiliar behavior, use exact search for known symbols and exhaustive references, and
 fall back to regular search when results are weak or the tool fails. Pass `guidance` to replace it, or
 `guidance=''` to add none.
@@ -143,7 +142,7 @@ fall back to regular search when results are weak or the tool fails. Pass `guida
 ## Telemetry
 
 `SmartFileSearch` adds no spans of its own. With instrumentation on, each judgment is an agent run named
-`smart_grep` under the tool call's span, so a search's judge cost is grouped under that name.
+`smart_file_search` under the tool call's span, so a search's judge cost is grouped under that name.
 
 ## Agent spec (YAML/JSON)
 
@@ -169,10 +168,10 @@ Attach the workspace when running the agent, with `agent.run(..., workspace=...)
 
 ## API reference
 
-::: pydantic_ai_harness.smart_grep.SmartFileSearch
+::: pydantic_ai_harness.smart_file_search.SmartFileSearch
 
-::: pydantic_ai_harness.smart_grep.SmartFileSearchResult
+::: pydantic_ai_harness.smart_file_search.SmartFileSearchResult
 
-::: pydantic_ai_harness.smart_grep.SmartFileSearchMatch
+::: pydantic_ai_harness.smart_file_search.SmartFileSearchMatch
 
-::: pydantic_ai_harness.smart_grep.SmartFileSearchCoverage
+::: pydantic_ai_harness.smart_file_search.SmartFileSearchCoverage

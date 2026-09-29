@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
-from pydantic_ai_harness.smart_grep._chunks import Chunk
+from pydantic_ai_harness.smart_file_search._chunks import Chunk
 
 TYPESAFE_MODEL = 'typesafe:jev-latest'
 """The recommended judge, used by default when TypeSafe is installed and `TYPESAFE_API_KEY` is set."""
@@ -87,7 +87,7 @@ def build_agent(model: JudgeModel, query: str) -> Agent[None, Relevance]:
     """The one-shot judge agent for `query`, named after the capability for tracing."""
     return Agent(
         model,
-        name='smart_grep',
+        name='smart_file_search',
         output_type=Relevance,
         instructions=f'The text is a snippet of source code from a repository. A developer is searching the codebase for: {query}',
         model_settings={'timeout': REQUEST_TIMEOUT_SECONDS},

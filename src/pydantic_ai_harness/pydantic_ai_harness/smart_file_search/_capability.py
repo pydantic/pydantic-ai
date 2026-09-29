@@ -8,29 +8,29 @@ from typing import TYPE_CHECKING
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.tools import AgentDepsT
-from pydantic_ai_harness.smart_grep._toolset import SmartFileSearchToolset
+from pydantic_ai_harness.smart_file_search._toolset import SmartFileSearchToolset
 
 if TYPE_CHECKING:
     from pydantic_ai._instructions import AgentInstructions
 
 _INSTRUCTIONS = """\
-## Code discovery: smart_grep first
-Use `smart_grep` as your first tool for gathering code context about an unfamiliar implementation.
+## Code discovery: smart_file_search first
+Use `smart_file_search` as your first tool for gathering code context about an unfamiliar implementation.
 Describe the behavior you need to find in plain English, scoped to the relevant directory. Do this
 instead of guessing symbol names, running exploratory grep chains, or listing and reading many files
 just to locate the implementation.
 
 Use the returned excerpts and line ranges to decide which files need a targeted read. Do not
 automatically read every match or repeat searches when the excerpts already answer the question.
-Read the relevant code before editing; `smart_grep` is discovery, not a substitute for
+Read the relevant code before editing; `smart_file_search` is discovery, not a substitute for
 understanding it.
 
 Use regular text search for exact symbols, regexes, and exhaustive references, and read a known file
 directly when its location is already established.
 
 The lexical shortlist is not exhaustive, and no matches do not prove absence. If results are weak,
-rephrase or narrow the query, or fall back to exact search. If `smart_grep` fails, fall back to
-regular search and targeted reads rather than retrying. `smart_grep` sends selected source, paths and
+rephrase or narrow the query, or fall back to exact search. If `smart_file_search` fails, fall back to
+regular search and targeted reads rather than retrying. `smart_file_search` sends selected source, paths and
 the query to the judge model's provider, so honor requests to keep code local by using local search
 instead."""
 
@@ -39,7 +39,7 @@ instead."""
 class SmartFileSearch(AbstractCapability[AgentDepsT]):
     """Plain-English code search: find code by what it does, described in plain English.
 
-    Adds a `smart_grep` tool. A search lists the files under a directory in the
+    Adds a `smart_file_search` tool. A search lists the files under a directory in the
     run's workspace with `rg`, cuts them into syntax-aware snippets (functions,
     methods, and the blocks of long ones), shortlists the snippets with local
     BM25, and has a judge model score each shortlisted snippet's relevance.
@@ -69,7 +69,7 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     that can run commands and has `rg` on its `PATH` (the `coder` extra
     installs it for a local workspace); the tool is not offered on one that
     cannot run commands, and a run without a workspace fails at its start.
-    Install the `smart-grep` extra for syntax-aware chunking of fifteen
+    Install the `smart-file-search` extra for syntax-aware chunking of fifteen
     languages beyond Python; without it, those files are cut into overlapping
     line windows.
     """
@@ -106,7 +106,7 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
     """Custom discovery guidance for the system prompt.
 
     Leave as `None` for the default, which tells the model to reach for
-    `smart_grep` before exploratory text search, or set `''` to contribute no
+    `smart_file_search` before exploratory text search, or set `''` to contribute no
     instructions at all.
     """
 
@@ -118,13 +118,13 @@ class SmartFileSearch(AbstractCapability[AgentDepsT]):
             raise ValueError(f'concurrency must be a positive integer, got {self.concurrency}')
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
-        """The discovery policy: smart_grep first for unfamiliar behaviour, exact search for exact symbols."""
+        """The discovery policy: smart_file_search first for unfamiliar behaviour, exact search for exact symbols."""
         if self.guidance is not None:
             return self.guidance or None
         return _INSTRUCTIONS
 
     def get_toolset(self) -> SmartFileSearchToolset[AgentDepsT]:
-        """Build the toolset providing `smart_grep`."""
+        """Build the toolset providing `smart_file_search`."""
         return SmartFileSearchToolset[AgentDepsT](
             model=self.model,
             threshold=self.threshold,

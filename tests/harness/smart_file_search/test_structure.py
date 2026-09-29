@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from pydantic_ai_harness.smart_grep._chunks import (
+from pydantic_ai_harness.smart_file_search._chunks import (
     Chunk,
     _chunks_from_ranges as chunks_from_ranges,  # pyright: ignore[reportPrivateUsage]
     source_chunks,
     windows,
 )
-from pydantic_ai_harness.smart_grep._structure import Range, structure_ranges
+from pydantic_ai_harness.smart_file_search._structure import Range, structure_ranges
 
 
 @dataclass

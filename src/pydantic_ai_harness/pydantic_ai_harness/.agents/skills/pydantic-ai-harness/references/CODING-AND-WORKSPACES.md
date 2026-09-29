@@ -170,11 +170,11 @@ descendants), `read_only=False` (`True` registers only read tools), `content_has
 
 ## SmartFileSearch
 
-Plain-English code search (`.smart_grep`, `[smart-grep]` for tree-sitter chunking beyond Python). One tool,
-`smart_grep(query, directory='.', glob=None, limit=5, candidates=128)`, returns a `SmartFileSearchResult`
-(`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with `rg --files` in the workspace
-(needs `rg` on the workspace `PATH`; hidden on a workspace that cannot run commands), shortlisted with BM25,
-and each shortlisted snippet is judged by a model.
+Plain-English code search (`.smart_file_search`, `[smart-file-search]` for tree-sitter chunking beyond
+Python). One tool, `smart_file_search(query, directory='.', glob=None, limit=5, candidates=128)`, returns a
+`SmartFileSearchResult` (`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with
+`rg --files` in the workspace (needs `rg` on the workspace `PATH`; hidden on a workspace that cannot run
+commands), shortlisted with BM25, and each shortlisted snippet is judged by a model.
 
 ```python
 from pydantic_ai import Agent

@@ -34,17 +34,17 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceTimeoutError
 from pydantic_ai_harness import SmartFileSearch
-from pydantic_ai_harness.smart_grep import (
+from pydantic_ai_harness.smart_file_search import (
     SmartFileSearchResult,
     SmartFileSearchToolset,
     _index,
     _judge,
 )
-from pydantic_ai_harness.smart_grep._chunks import Chunk, LineTooLong, source_chunks, windows
-from pydantic_ai_harness.smart_grep._index import SnippetIndexes
-from pydantic_ai_harness.smart_grep._judge import TYPESAFE_MODEL, judge, resolve_judge_model
-from pydantic_ai_harness.smart_grep._retrieve import terms
-from pydantic_ai_harness.smart_grep._search import search_code
+from pydantic_ai_harness.smart_file_search._chunks import Chunk, LineTooLong, source_chunks, windows
+from pydantic_ai_harness.smart_file_search._index import SnippetIndexes
+from pydantic_ai_harness.smart_file_search._judge import TYPESAFE_MODEL, judge, resolve_judge_model
+from pydantic_ai_harness.smart_file_search._retrieve import terms
+from pydantic_ai_harness.smart_file_search._search import search_code
 
 from ..conftest import agent_run_names
 from .conftest import CountingChunker
@@ -389,15 +389,17 @@ def test_capability_validates_its_settings() -> None:
 
 def test_guidance_replaces_or_disables_the_discovery_policy() -> None:
     default = SmartFileSearch[None]().get_instructions()
-    assert isinstance(default, str) and 'smart_grep first' in default
+    assert isinstance(default, str) and 'smart_file_search first' in default
     assert SmartFileSearch[None](guidance='Use it.').get_instructions() == 'Use it.'
     assert SmartFileSearch[None](guidance='').get_instructions() is None
 
 
-def _calls_smart_grep(**args: object) -> FunctionModel:
+def _calls_smart_file_search(**args: object) -> FunctionModel:
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('smart_grep', {'query': 'reject expired sessions', **args})])
+            return ModelResponse(
+                parts=[ToolCallPart('smart_file_search', {'query': 'reject expired sessions', **args})]
+            )
         return ModelResponse(parts=[TextPart('done')])
 
     return FunctionModel(respond)
@@ -410,7 +412,9 @@ def _tool_return(messages: list[ModelMessage]) -> ToolReturnPart:
 async def test_agent_searches_its_workspace_with_the_configured_judge(tmp_path: Path) -> None:
     _repo(tmp_path)
     judge_model = FakeJev('expired')
-    agent = Agent(_calls_smart_grep(), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=judge_model)])
+    agent = Agent(
+        _calls_smart_file_search(), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=judge_model)]
+    )
     result = await agent.run('find it')
     content = _tool_return(result.all_messages()).content
     assert isinstance(content, SmartFileSearchResult)
@@ -430,7 +434,7 @@ async def test_agent_judges_with_its_own_model_when_typesafe_is_unavailable(
             judged.append(str(messages[-1]))
             return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'entity': 1, 'operation': 1})])
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart('smart_grep', {'query': 'assign x'})])
+            return ModelResponse(parts=[ToolCallPart('smart_file_search', {'query': 'assign x'})])
         return ModelResponse(parts=[TextPart('done')])
 
     agent = Agent(FunctionModel(respond), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch()])
@@ -445,16 +449,17 @@ async def test_judge_failure_is_reported_to_the_model(tmp_path: Path) -> None:
         raise ModelHTTPError(503, 'judge', 'backend down')
 
     agent = Agent(
-        _calls_smart_grep(), capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=FunctionModel(respond))]
+        _calls_smart_file_search(),
+        capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=FunctionModel(respond))],
     )
     result = await agent.run('find it')
     content = str(_tool_return(result.all_messages()).content)
-    assert 'smart_grep failed: ModelHTTPError' in content
+    assert 'smart_file_search failed: ModelHTTPError' in content
 
 
 async def test_workspace_failure_is_reported_to_the_model(tmp_path: Path) -> None:
     (tmp_path / 'slow.py').write_text('x = 1\n')
-    agent = Agent(_calls_smart_grep(), capabilities=[SmartFileSearch(model=FakeJev('x'))])
+    agent = Agent(_calls_smart_file_search(), capabilities=[SmartFileSearch(model=FakeJev('x'))])
     result = await agent.run('find it', workspace=Workspace(VanishingBackend(tmp_path)))
     assert 'read timed out' in str(_tool_return(result.all_messages()).content)
 
@@ -469,7 +474,7 @@ async def test_tool_is_hidden_on_a_workspace_that_cannot_run_commands(tmp_path: 
     agent = Agent(FunctionModel(respond), capabilities=[SmartFileSearch(model=FakeJev('x'))])
     await agent.run('hi', workspace=ReadOnlyWorkspace(_workspace(tmp_path)))
     await agent.run('hi', workspace=_workspace(tmp_path))
-    assert seen == [[], ['smart_grep']]
+    assert seen == [[], ['smart_file_search']]
 
 
 async def test_run_without_a_workspace_fails_at_its_start() -> None:
@@ -481,7 +486,7 @@ async def test_run_without_a_workspace_fails_at_its_start() -> None:
 def test_toolset_advertises_the_upstream_schema() -> None:
     toolset = SmartFileSearch[None]().get_toolset()
     assert isinstance(toolset, SmartFileSearchToolset)
-    schema = toolset.tools['smart_grep'].function_schema.json_schema
+    schema = toolset.tools['smart_file_search'].function_schema.json_schema
     assert set(schema['properties']) == {'query', 'directory', 'glob', 'limit', 'candidates'}
     assert schema['properties']['candidates']['default'] == 128
     assert schema['required'] == ['query']
@@ -491,10 +496,12 @@ def test_toolset_advertises_the_upstream_schema() -> None:
 async def test_judge_runs_are_named_after_the_capability(capfire: CaptureLogfire, tmp_path: Path) -> None:
     (tmp_path / 'a.py').write_text('expired = True\n')
     agent = Agent(
-        _calls_smart_grep(), name='outer', capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=FakeJev('x'))]
+        _calls_smart_file_search(),
+        name='outer',
+        capabilities=[LocalWorkspace(tmp_path), SmartFileSearch(model=FakeJev('x'))],
     )
     await agent.run('find it')
-    assert agent_run_names(capfire).count('smart_grep') == 1
+    assert agent_run_names(capfire).count('smart_file_search') == 1
 
 
 @pytest.mark.parametrize(('cache_index', 'chunked'), [(True, 1), (False, 2)])
@@ -503,7 +510,7 @@ async def test_cache_index_keeps_the_index_across_runs(
 ) -> None:
     (tmp_path / 'a.py').write_text('expired = True\n')
     capability = SmartFileSearch(model=FakeJev('x'), cache_index=cache_index)
-    agent = Agent(_calls_smart_grep(), capabilities=[LocalWorkspace(tmp_path), capability])
+    agent = Agent(_calls_smart_file_search(), capabilities=[LocalWorkspace(tmp_path), capability])
     await agent.run('find it')
     await agent.run('find it again')
     assert chunker.paths == ['a.py'] * chunked

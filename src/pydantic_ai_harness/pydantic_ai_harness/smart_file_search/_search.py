@@ -8,10 +8,10 @@ from typing import Literal
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace
-from pydantic_ai_harness.smart_grep._chunks import Chunk, searchable_root
-from pydantic_ai_harness.smart_grep._index import SnippetIndexes, read_snippets
-from pydantic_ai_harness.smart_grep._judge import JudgeModel, judge
-from pydantic_ai_harness.smart_grep._retrieve import terms
+from pydantic_ai_harness.smart_file_search._chunks import Chunk, searchable_root
+from pydantic_ai_harness.smart_file_search._index import SnippetIndexes, read_snippets
+from pydantic_ai_harness.smart_file_search._judge import JudgeModel, judge
+from pydantic_ai_harness.smart_file_search._retrieve import terms
 
 MAX_QUERY_CHARS = 2000
 DEFAULT_CANDIDATES = 128
@@ -64,7 +64,7 @@ class SmartFileSearchCoverage:
 
 @dataclass(kw_only=True)
 class SmartFileSearchResult:
-    """What one `smart_grep` call found, and how thoroughly it looked."""
+    """What one `smart_file_search` call found, and how thoroughly it looked."""
 
     matches: list[SmartFileSearchMatch] = field(default_factory=list[SmartFileSearchMatch])
     """Relevant snippets, best first, overlapping snippets collapsed into the best one."""

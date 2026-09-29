@@ -25,7 +25,7 @@ import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.workspaces import Workspace
-from pydantic_ai_harness.smart_grep._chunks import (
+from pydantic_ai_harness.smart_file_search._chunks import (
     MAX_TOTAL_LINES,
     Chunk,
     LineTooLong,
@@ -33,7 +33,7 @@ from pydantic_ai_harness.smart_grep._chunks import (
     read_or_error,
     source_chunks,
 )
-from pydantic_ai_harness.smart_grep._retrieve import Bm25
+from pydantic_ai_harness.smart_file_search._retrieve import Bm25
 
 MAX_CACHED_INDEXES = 4
 """Directories (with their glob) whose index is kept between searches, least recently searched evicted first."""

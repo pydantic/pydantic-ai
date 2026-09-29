@@ -9,8 +9,8 @@ import textwrap
 
 import pytest
 
-from pydantic_ai_harness.smart_grep import _treesitter as treesitter
-from pydantic_ai_harness.smart_grep._chunks import source_chunks
+from pydantic_ai_harness.smart_file_search import _treesitter as treesitter
+from pydantic_ai_harness.smart_file_search._chunks import source_chunks
 
 Ranges = list[tuple[int, int, str | None]]
 

@@ -139,7 +139,7 @@ _CAPABILITY_PAGE_META = {
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('filesystem', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
-    'smart-grep.md': ('smart_grep', 'Smart File Search'),
+    'smart-file-search.md': ('smart_file_search', 'Smart File Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
     'modal-sandbox.md': ('modal_sandbox', 'Modal Sandbox'),

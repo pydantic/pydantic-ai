@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from pydantic_ai_harness.smart_grep import _index
-from pydantic_ai_harness.smart_grep._chunks import Chunk, source_chunks
+from pydantic_ai_harness.smart_file_search import _index
+from pydantic_ai_harness.smart_file_search._chunks import Chunk, source_chunks
 
-# Syntax-aware chunking beyond Python needs the `smart-grep` extra; without it those files use line windows.
+# Syntax-aware chunking beyond Python needs the `smart-file-search` extra; without it those files use line windows.
 collect_ignore = ['test_treesitter.py'] if importlib.util.find_spec('tree_sitter') is None else []
 
 
