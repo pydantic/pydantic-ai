@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections.abc import Callable
 from dataclasses import KW_ONLY, dataclass, field
 
@@ -53,6 +54,8 @@ _MAX_HTML_CONVERSION_COST = 20_000_000
 # Unchanged text is copied much faster: 10 MB inside 300 `<div>` tags took ~0.85 s,
 # despite ~2.8 billion estimated character copies. Budget those separately.
 _MAX_HTML_TEXT_SCAN_COST = 5_000_000_000
+# Decimal-to-int conversion becomes expensive before its small Markdown output spends either work budget.
+_MAX_HTML_DECIMAL_DIGITS = 4300
 
 
 class WebFetchResult(TypedDict):
@@ -222,6 +225,10 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             continue
         if isinstance(node, Tag):
             depth += 1
+            if len(node.name) > _MAX_HTML_DECIMAL_DIGITS:
+                heading = _HTML_HEADING_RE.match(node.name)
+                if heading is not None and heading.end() - 1 > _MAX_HTML_DECIMAL_DIGITS:
+                    raise ModelRetry('the document is too complex')
             if node.name == 'li' or (node.name in ('blockquote', 'dd') and not inline):
                 indent_depth += 1
                 indent_width += 4
@@ -230,6 +237,12 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             work = 8 * (indent_depth + 1)
             if node.name in ('td', 'th'):
                 colspan_attr = node.get('colspan')
+                if (
+                    isinstance(colspan_attr, str)
+                    and len(colspan_attr) > _MAX_HTML_DECIMAL_DIGITS
+                    and colspan_attr.isdigit()
+                ):
+                    raise ModelRetry('the document is too complex')
                 digits = colspan_attr.lstrip('0') if isinstance(colspan_attr, str) and colspan_attr.isdecimal() else ''
                 colspan = min(1000, int(digits[:4] or '1'))
                 # A first-row cell can also generate two full-width header lines.
@@ -547,6 +560,11 @@ class _MarkdownConverter(MarkdownConverter):
             start_attr = parent.get('start')
             start = 1
             if isinstance(start_attr, str) and start_attr.isdecimal():
+                if len(start_attr) > _MAX_HTML_DECIMAL_DIGITS:
+                    # Preserve the existing fallback when Python's own digit cap would reject it.
+                    digit_limit = sys.get_int_max_str_digits() if hasattr(sys, 'get_int_max_str_digits') else 0
+                    if not digit_limit or len(start_attr) <= digit_limit:
+                        raise ModelRetry('the document is too complex')
                 try:
                     start = int(start_attr)
                 except ValueError:

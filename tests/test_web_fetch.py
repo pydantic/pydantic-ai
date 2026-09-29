@@ -812,6 +812,36 @@ class TestMarkdownConverter:
         html = '<ol start="' + '9' * 4301 + '">' + item + '</ol>'
         assert _convert_html(html)[1] == expected
 
+    @pytest.mark.parametrize('digit_limit', [0, 10_000])
+    def test_large_list_start_is_rejected_before_integer_conversion(self, digit_limit: int):
+        """A numeric start the interpreter would parse cannot monopolize conversion."""
+        html = '<ol start="' + '9' * 5000 + '"><li>x</li></ol>'
+        with patch(
+            'pydantic_ai.common_tools.web_fetch.sys.get_int_max_str_digits', return_value=digit_limit, create=True
+        ):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+
+    @pytest.mark.parametrize(
+        'html',
+        [
+            '<table><tr><td colspan="' + '9' * 5000 + '">x</td></tr></table>',
+            '<table><tr><th colspan="' + '9' * 5000 + '">x</th></tr></table>',
+            '<h' + '9' * 5000 + '>x</h' + '9' * 5000 + '>',
+        ],
+        ids=['table-cell', 'table-header', 'heading'],
+    )
+    def test_large_numeric_html_attributes_are_rejected_before_integer_conversion(self, html: str):
+        """Small output cannot hide expensive decimal parsing from the conversion budget."""
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+
+    def test_large_non_numeric_tag_name_preserves_output(self):
+        """A long tag name that needs no numeric conversion remains usable."""
+        name = 'custom' + 'x' * 5000
+        html = f'<{name}>x</{name}>'
+        assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
+
     @pytest.mark.skipif(not _default_int_digit_limit, reason='requires the default integer string digit limit')
     def test_ordered_list_start_growth_past_digit_limit(self):
         """Numbering can cross the integer digit limit after the initial value parses."""
