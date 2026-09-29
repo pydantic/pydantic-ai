@@ -402,6 +402,19 @@ async def test_instruction_updates_unknown_serialized_addresses_round_trip_and_r
     )
 
 
+async def test_instruction_updates_removed_source_withdraws_its_blocks():
+    """An agent with no instructions left still withdraws the blocks the baseline tracks, keeping the prefix."""
+    first = await Agent(
+        TestModel(custom_output_text='ok'),
+        instructions=InstructionPart(content='A', name='state', on_change='append'),
+    ).run('Continue.')
+    result = await Agent(TestModel(custom_output_text='ok')).run('Continue.', message_history=first.all_messages())
+    request = result.new_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert [(p.id, p.content) for p in request.parts if isinstance(p, InstructionDeltaPart)] == [('agent:state', None)]
+    assert request.instructions == 'A'
+
+
 async def test_instruction_updates_empty_baseline_keeps_other_block_positions():
     agent = Agent(
         TestModel(custom_output_text='ok'),
