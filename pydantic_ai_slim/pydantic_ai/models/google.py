@@ -2200,11 +2200,7 @@ def _usage_metadata_as_usage(
         new_usage.input_audio_tokens = new_usage.input_audio_tokens or existing_usage.input_audio_tokens
         new_usage.cache_audio_read_tokens = new_usage.cache_audio_read_tokens or existing_usage.cache_audio_read_tokens
         new_usage.output_audio_tokens = new_usage.output_audio_tokens or existing_usage.output_audio_tokens
-        # `web_searches` is the same kind of value: computed per chunk from the response candidates, never in
-        # the cumulative `usage_metadata`, so a later chunk that drops the grounding metadata would lose it.
-        web_searches = getattr(existing_usage, 'web_searches', None)
-        if web_searches:
-            new_usage.web_searches = web_searches  # pyright: ignore[reportAttributeAccessIssue]
+
     return new_usage
 
 
