@@ -831,6 +831,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # its contributed toolsets extracted into `self._cap_toolsets` (and thereby
         # `self.toolsets`). The flip side is that `innermost` capabilities can't
         # contribute toolsets of their own.
+        _reject_second_of_a_kind([self._root_capability])
         self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=False)
         cap_toolset = self._root_capability.get_toolset()
         if cap_toolset is not None:
@@ -2177,6 +2178,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             override_caps = list(resolved.capability.capabilities)
             _inject_auto_capabilities(override_caps)
+            _reject_second_of_a_kind(override_caps)
             override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps).for_agent(
                 self
             )
@@ -3078,6 +3080,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
         unbound, a silent divergence. KEEP the two call sites in sync.
         """
+        _reject_second_of_a_kind([self._effective_root_capability(), *extra_capabilities])
         return [capability.for_agent(self) for capability in extra_capabilities]
 
     async def _resolve_model_selection(
@@ -4598,6 +4601,33 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
     for cap_type in _AUTO_INJECT_CAPABILITY_TYPES:
         if not has_capability_type(capabilities, cap_type):
             capabilities.append(cap_type())
+
+
+def _reject_second_of_a_kind(capabilities: Sequence[AbstractCapability[Any]]) -> None:
+    """Refuse two capabilities of a kind an agent can hold only one of (see `_one_per_agent`).
+
+    Called before `for_agent`, on every capability the agent will end up holding, because binding is
+    where a durability capability registers its durable operations: a pair that is going to be
+    refused must be refused before either registers. Occurrences are counted rather than distinct
+    instances, so one engine listed twice is refused too.
+
+    Walks the tree the way `BaseDurabilityCapability.from_agent` does: `apply` stops at a wrapper
+    around a single capability, so an engine behind `prefix_tools()` would otherwise go uncounted.
+    """
+    by_kind: dict[str, list[AbstractCapability[Any]]] = {}
+    for root in capabilities:
+        for capability in leaf_capabilities(root):
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if (kind := capability._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
+                by_kind.setdefault(kind, []).append(capability)
+    for kind, found in by_kind.items():
+        if len(found) > 1:
+            names = ', '.join(f'`{type(capability).__name__}`' for capability in found)
+            raise exceptions.UserError(
+                f'An agent can have only one {kind}, but this one would have {len(found)}: {names}. '
+                "That counts the agent's own capabilities together with any passed for a run. Keep one."
+            )
 
 
 def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> set[str]:

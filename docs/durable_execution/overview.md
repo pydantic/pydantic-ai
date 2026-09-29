@@ -26,3 +26,5 @@ Additional external SDK integrations:
 
 - [Kitaru](./kitaru.md)
 - [Apache Airflow](./airflow.md)
+
+An agent runs under one durable execution engine. Each engine wraps every model request and tool call as its own durable unit, so attaching a second one, to the agent or for a single run, raises a `UserError` before either is bound.

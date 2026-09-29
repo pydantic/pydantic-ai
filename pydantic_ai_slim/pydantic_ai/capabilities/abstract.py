@@ -200,6 +200,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    _one_per_agent: ClassVar[str | None] = None
+    """A kind of capability an agent can hold only one of, counting a run's capabilities with its own.
+
+    Internal, in-tree only. The durability capabilities set it, since an agent runs under one durable
+    engine. The agent checks it before binding anything, so a configuration it refuses has not yet
+    registered durable operations.
+    """
+
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 

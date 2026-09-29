@@ -14,7 +14,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
-from pydantic_ai.agent import AgentRunResult
+from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Instrumentation,
@@ -250,6 +250,78 @@ def _tracked_model_resolver(
         return model
 
     return resolve
+
+
+class _BindLoggingDurability(RecordingDurability):
+    """Logs each bind, which is where an engine registers its durable operations."""
+
+    def __init__(self, bound: list[str]) -> None:
+        super().__init__()
+        self._bound = bound
+
+    def _bind_for_agent(self, agent: AbstractAgent[Any, Any]) -> _BindLoggingDurability:
+        self._bound.append(self.engine_name)
+        return super()._bind_for_agent(agent)
+
+
+class _OtherEngineDurability(_BindLoggingDurability):
+    engine_spec = DurabilityEngineSpec(
+        engine_name='other',
+        durable_unit_noun='unit',
+        durable_container_noun='journal',
+        codec=JSON_CODEC,
+    )
+
+
+_SECOND_ENGINE = re.escape(
+    'An agent can have only one durable execution engine, but this one would have 2: '
+    '`_BindLoggingDurability`, `_OtherEngineDurability`.'
+)
+
+
+def test_a_second_durable_engine_is_refused_at_construction() -> None:
+    bound: list[str] = []
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        Agent(
+            TestModel(),
+            name='two_engines',
+            capabilities=[_BindLoggingDurability(bound), _OtherEngineDurability(bound)],
+        )
+    assert bound == []
+
+
+async def test_two_durable_engines_for_one_run_are_refused_before_either_binds() -> None:
+    bound: list[str] = []
+    agent = Agent(TestModel(), name='two_engines')
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        await agent.run('hi', capabilities=[_BindLoggingDurability(bound), _OtherEngineDurability(bound)])
+    assert bound == []
+
+
+async def test_a_durable_engine_for_a_run_is_refused_beside_the_agents_own() -> None:
+    bound: list[str] = []
+    agent = Agent(TestModel(), name='two_engines', capabilities=[_BindLoggingDurability(bound)])
+    assert bound == ['recording']
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        await agent.run('hi', capabilities=[_OtherEngineDurability(bound)])
+    assert bound == ['recording'], 'the run-level engine never bound'
+
+
+async def test_one_durable_engine_listed_twice_is_refused() -> None:
+    engine = _BindLoggingDurability([])
+    agent = Agent(TestModel(), name='one_engine_twice')
+    with pytest.raises(UserError, match='would have 2: `_BindLoggingDurability`, `_BindLoggingDurability`'):
+        await agent.run('hi', capabilities=[engine, engine])
+
+
+def test_a_wrapped_durable_engine_still_counts() -> None:
+    bound: list[str] = []
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        Agent(
+            TestModel(),
+            name='wrapped_engine',
+            capabilities=[_BindLoggingDurability(bound).prefix_tools('p'), _OtherEngineDurability(bound)],
+        )
 
 
 async def test_capability_operation_is_direct_outside_durable_context() -> None:
