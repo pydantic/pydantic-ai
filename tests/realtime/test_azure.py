@@ -8,6 +8,7 @@ from typing import Any, cast
 import pytest
 
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 from ..conftest import try_import
@@ -214,6 +215,91 @@ def test_voice_live_session_config_options() -> None:
     assert config['input_audio_transcription'] == {'model': 'azure-speech'}
 
 
+def test_voice_live_maps_session_settings() -> None:
+    """The settings Voice Live has a counterpart for reach its session config; unset, they're left out."""
+    provider = AzureProvider(
+        azure_endpoint='https://resource.services.ai.azure.com',
+        api_version='2026-04-10',
+        api_key='azure-key',
+    )
+    model = AzureRealtimeModel('gpt-realtime', provider=provider)
+
+    def config(**settings: Any) -> dict[str, Any]:
+        return model._session_config(  # pyright: ignore[reportPrivateUsage]
+            '', None, model_settings=AzureRealtimeModelSettings(azure_voice_live=True, **settings)
+        )
+
+    baseline = config()
+    for key in ('input_audio_noise_reduction', 'temperature', 'reasoning_effort'):
+        assert key not in baseline
+
+    mapped = config(
+        openai_input_noise_reduction='far_field',
+        openai_turn_detection=SemanticVAD(type='semantic_vad', eagerness='high'),
+        azure_voice_live_temperature=0.7,
+    )
+    assert mapped['input_audio_noise_reduction'] == {'type': 'far_field'}
+    assert mapped['turn_detection'] == {
+        'type': 'semantic_vad',
+        'eagerness': 'high',
+        'create_response': True,
+        'interrupt_response': True,
+    }
+    assert mapped['temperature'] == 0.7
+
+    # `openai_turn_detection` overrides the shared `turn_detection`, and the Voice Live setting overrides both.
+    assert config(openai_turn_detection=None, turn_detection=True)['turn_detection'] is None
+    assert (
+        config(
+            azure_voice_live_turn_detection=ServerVAD(type='server_vad'),
+            openai_turn_detection=SemanticVAD(type='semantic_vad'),
+        )['turn_detection']['type']
+        == 'server_vad'
+    )
+
+    # `gpt-realtime` doesn't reason (Voice Live rejects `reasoning_effort` for it), so `thinking` is dropped.
+    assert 'reasoning_effort' not in config(thinking='high')
+
+
+@pytest.mark.parametrize(
+    'model_name,thinking,expected',
+    [
+        # Reasoning cascade chat models take their thinking support from the chat model profile.
+        ('gpt-5', 'high', 'high'),
+        ('gpt-5', False, 'none'),
+        ('gpt-5.2', True, 'medium'),
+        # Non-reasoning models: Voice Live accepts the effort for `gpt-4.1`, then fails every response.
+        ('gpt-4.1', 'high', None),
+        ('gpt-5-chat', 'high', None),
+        ('phi4-mm-realtime', 'high', None),
+    ],
+)
+def test_voice_live_thinking_maps_to_reasoning_effort(
+    model_name: str, thinking: ThinkingLevel, expected: str | None
+) -> None:
+    provider = AzureProvider(
+        azure_endpoint='https://resource.services.ai.azure.com',
+        api_version='2026-04-10',
+        api_key='azure-key',
+    )
+    model = AzureRealtimeModel(model_name, provider=provider)
+    settings = AzureRealtimeModelSettings(azure_voice_live=True, thinking=thinking)
+    config = model._session_config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert config.get('reasoning_effort') == expected
+    assert model.profile.get('supports_thinking') is (expected is not None)
+
+
+def test_voice_live_cascade_thinking_respects_profile_override() -> None:
+    """A user `profile=` still has the last word on a cascade model's thinking support."""
+    provider = AzureProvider(
+        azure_endpoint='https://resource.services.ai.azure.com',
+        api_version='2026-04-10',
+        api_key='azure-key',
+    )
+    model = AzureRealtimeModel('gpt-5', provider=provider, profile={'supports_thinking': False})
+    assert model.profile.get('supports_thinking') is False
+
+
 def test_voice_live_rejects_openai_custom_voice_id() -> None:
     """Voice Live addresses a voice by provider + name, so an OpenAI custom `VoiceID` fails loudly."""
     provider = AzureProvider(
@@ -360,7 +446,7 @@ def test_voice_live_profile_layers_over_the_user_profile() -> None:
 
 
 def test_voice_live_silently_ignores_openai_only_settings() -> None:
-    """OpenAI-only settings inherited by `AzureRealtimeModelSettings` are dropped on the Voice Live path."""
+    """The OpenAI-only settings Voice Live has no counterpart for are dropped on the Voice Live path."""
     provider = AzureProvider(azure_endpoint='https://r.services.ai.azure.com', api_version='2024-10-01', api_key='k')
     model = AzureRealtimeModel('gpt-realtime', provider=provider)
     config = model._session_config(  # pyright: ignore[reportPrivateUsage]
@@ -369,26 +455,17 @@ def test_voice_live_silently_ignores_openai_only_settings() -> None:
         model_settings=AzureRealtimeModelSettings(
             azure_voice_live=True,
             openai_output_speed=1.5,
-            openai_input_noise_reduction='near_field',
             openai_truncation='auto',
-            openai_turn_detection=SemanticVAD(type='semantic_vad', eagerness='high'),
-            thinking='low',
             parallel_tool_calls=False,
         ),
     )
-    # The Voice Live session config is built from a fixed field set; the OpenAI-only knobs don't appear,
-    # under their OpenAI names or the names Voice Live's own session object uses for the two that have a
-    # counterpart (`input_audio_noise_reduction`, `truncation_strategy` — see the class docstring).
+    # The Voice Live session config is built from a fixed field set; these knobs don't appear, under
+    # their OpenAI names or under Voice Live's own `truncation_strategy` (see the class docstring).
     assert 'speed' not in config
     assert 'output_audio' not in config
-    assert 'noise_reduction' not in config
-    assert 'input_audio_noise_reduction' not in config
     assert 'truncation' not in config
     assert 'truncation_strategy' not in config
-    assert 'reasoning' not in config
     assert 'parallel_tool_calls' not in config
-    # `openai_turn_detection` is *not* what configures Voice Live's VAD; the default server VAD stands.
-    assert config['turn_detection']['type'] == 'server_vad'
 
 
 def test_sideband_url_uses_the_ga_realtime_path() -> None:

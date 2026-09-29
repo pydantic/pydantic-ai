@@ -14,6 +14,7 @@ from openai.types.realtime.realtime_audio_config_output import VoiceID
 from pydantic import BaseModel
 
 from ..exceptions import UserError
+from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
 from ..tools import ToolDefinition
@@ -190,24 +191,19 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     """Settings specific to Azure realtime models.
 
     This inherits every [`OpenAIRealtimeModelSettings`][pydantic_ai.realtime.openai.OpenAIRealtimeModelSettings]
-    field, but when [`azure_voice_live`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live]
-    is set the Voice Live session config is built from only the cross-protocol fields — `instructions`,
-    `openai_voice` (by name), `turn_detection` (or `azure_voice_live_turn_detection`),
-    `input_transcription_model`, `output_modality`, `max_tokens`, `tool_choice`, and tools. The
-    inherited `openai_*` fields, plus `thinking` and `parallel_tool_calls`, are **silently ignored**
-    under Voice Live; they still apply on the GA path.
+    field. When [`azure_voice_live`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live]
+    is set, the Voice Live session config is built from the fields Voice Live's beta session object
+    has a counterpart for: `instructions`, `openai_voice` (by name), `turn_detection` (or
+    `openai_turn_detection`, or `azure_voice_live_turn_detection`), `openai_input_noise_reduction`,
+    `thinking` (as `reasoning_effort`, on models whose profile reports
+    [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]),
+    `input_transcription_model`, `output_modality`, `max_tokens`, `tool_choice`, and tools, plus the
+    `azure_voice_live_*` settings.
 
-    They fall into two groups, and only the first is settled:
-
-    - `openai_output_speed`, `openai_turn_detection`, `thinking`, and `parallel_tool_calls` have no
-      counterpart in Voice Live's beta session object (see the recorded `session.created` payload in
-      `tests/realtime/cassettes/test_azure_voice_live_ws/`), so there is nothing to map them to.
-      Voice Live's own turn detection is configured with `azure_voice_live_turn_detection`.
-    - `openai_input_noise_reduction` and `openai_truncation` *do* have counterparts —
-      `input_audio_noise_reduction` and `truncation_strategy` — but under Azure's own vocabulary, which
-      the recording pins as `null` and so does not evidence. Mapping OpenAI's values onto them would be
-      guessing at the accepted shape, so they stay unmapped until a recording proves it; a dedicated
-      `azure_voice_live_*` setting is the natural home when it does.
+    The remaining inherited fields — `openai_output_speed`, `openai_truncation`, and
+    `parallel_tool_calls` — are **silently ignored** under Voice Live; they still apply on the GA path.
+    Voice Live's own `truncation_strategy` takes different values from `openai_truncation` (`'auto'` or
+    `'last_messages'`, not a retention ratio), so the two don't map onto each other.
     """
 
     azure_voice_live: bool
@@ -218,7 +214,19 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     credentials as a fallback to the `AZURE_OPENAI_*` variables.
     """
     azure_voice_live_turn_detection: ServerVAD | SemanticVAD
-    """Voice Live server or semantic VAD config; only applies when `azure_voice_live=True`."""
+    """Voice Live server or semantic VAD config; only applies when `azure_voice_live=True`.
+
+    When present, it overrides `openai_turn_detection` and `turn_detection` on Voice Live. Semantic VAD
+    works only with the native-audio `gpt-realtime*` models: the cascade models (e.g. `gpt-5`) reject it
+    with `OpenAI Semantic VAD is not supported in cascaded pipeline`.
+    """
+    azure_voice_live_temperature: float
+    """Sampling temperature for a Voice Live session, from 0 to 2; only applies when the session uses Voice Live.
+
+    The GA realtime API has no temperature setting. The reasoning cascade models (e.g. `gpt-5`) accept
+    only the default of 1: Voice Live takes another value when the session starts, and each response
+    then fails.
+    """
 
 
 class _VoiceLiveSession(BaseModel):
@@ -344,6 +352,21 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         forced = self.settings is not None and cast('AzureRealtimeModelSettings', self.settings).get('azure_voice_live')
         if forced or (resolved_apis is not None and 'azure_openai' not in resolved_apis):
             profile = merge_realtime_profile(profile, RealtimeModelProfile(supports_webrtc=False))
+        return profile
+
+    def _adjust_provider_profile(self, profile: RealtimeModelProfile) -> RealtimeModelProfile:
+        """Take `supports_thinking` for a Voice-Live-only cascade model from its chat model profile.
+
+        The OpenAI realtime profile only knows the `gpt-realtime-2*` reasoning models, but Voice Live
+        also serves reasoning chat models like `gpt-5` behind Azure speech-to-text and text-to-speech,
+        and applies `reasoning_effort` to them. A model that can't reason must stay excluded, because
+        Voice Live accepts the setting at session start and then fails every response for a model like
+        `gpt-4.1`.
+        """
+        if _default_azure_realtime_apis(self.model) == _VOICE_LIVE and openai_model_profile(self.model).get(
+            'supports_thinking', False
+        ):
+            profile = merge_realtime_profile(profile, RealtimeModelProfile(supports_thinking=True))
         return profile
 
     def _resolve_voice_live(self, model_settings: RealtimeModelSettings | None) -> bool:
@@ -476,6 +499,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
 
         if 'azure_voice_live_turn_detection' in settings:
             turn_detection: ServerVAD | SemanticVAD | None = settings['azure_voice_live_turn_detection']
+        elif 'openai_turn_detection' in settings:
+            turn_detection = settings['openai_turn_detection']
         elif 'turn_detection' in settings:
             turn_detection = resolve_base_turn_detection(settings['turn_detection'])
         else:
@@ -494,6 +519,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         }
         if transcription_model is not None:
             config['input_audio_transcription'] = {'model': transcription_model}
+        if (noise_reduction := settings.get('openai_input_noise_reduction')) is not None:
+            config['input_audio_noise_reduction'] = {'type': noise_reduction}
         if voice := settings.get('openai_voice'):
             if isinstance(voice, VoiceID):
                 # Voice Live's session schema addresses a voice by provider + *name*, with no place for
@@ -510,6 +537,12 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             config['max_response_output_tokens'] = max_tokens
         if tool_choice is not None:
             config['tool_choice'] = tool_choice_config(tool_choice)
+        if (temperature := settings.get('azure_voice_live_temperature')) is not None:
+            config['temperature'] = temperature
+        if (thinking := settings.get('thinking')) is not None and self.profile.get('supports_thinking', False):
+            # Voice Live takes the effort flat, as `reasoning_effort`, rather than GA's `reasoning.effort`.
+            # Unlike the Chat Completions API, it accepts `'none'` for `gpt-5` too (verified live).
+            config['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
         return config
 
     def _connection_class(self, model_settings: OpenAIRealtimeModelSettings) -> type[OpenAIRealtimeConnection]:

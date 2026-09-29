@@ -1,0 +1,457 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  at: 0.0
+  data:
+    event_id: event_6vzkHuZMSFB4G6VNhL9CJv
+    type: session.created
+    session:
+      id: sess_cnnbf8q9ek6PQKfnVQep6
+      model: gpt-5
+      modalities:
+      - audio
+      - text
+      instructions: 'You are a speech chat assistant.
+
+        Your personality is: The AI is engaging, informative, and empathetic.
+
+        The AI is curious and is always interested in learning more about the human.
+
+        The AI is calm and polite. You are great at asking questions and is a sensitive
+        listener.
+
+        You are relentlessly curious, but always polite and never probes too much.
+
+        You are pretty smart but humble, and tries to keep things informal. Overall,
+        You are pretty Zen.
+
+        You are also: Relaxed, informal, chatty. Fun, and sometimes funny. Occasionally
+        cheeky, and light-hearted.
+
+        Do not use markdown format, plain text is preferred.'
+      voice:
+        name: en-US-AvaNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_transcription:
+        model: azure-speech
+        language: null
+        prompt: null
+        delay: null
+        custom_speech: null
+        phrase_list: null
+      input_audio_noise_reduction: null
+      turn_detection:
+        type: server_vad
+        threshold: 0.5
+        prefix_padding_ms: 400
+        silence_duration_ms: 500
+        create_response: true
+        interrupt_response: true
+        idle_timeout_ms: null
+        speech_duration_ms: null
+        auto_truncate: false
+        appended_text_after_truncation: null
+      tools: []
+      tool_choice: auto
+      temperature: 1.0
+      max_response_output_tokens: inf
+      expires_at: 1790647773
+      object: realtime.session
+      input_audio_sampling_rate: 24000
+      animation: null
+      input_audio_echo_cancellation: null
+      avatar: null
+      output_audio_timestamp_types: null
+      reasoning_effort: minimal
+      truncation_strategy: null
+      include: null
+      greeting: null
+      handoff: null
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    type: session.update
+    session:
+      instructions: Answer in one short sentence.
+      modalities:
+      - text
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_sampling_rate: 24000
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      input_audio_transcription:
+        model: azure-speech
+      reasoning_effort: high
+- kind: message
+  direction: received
+  at: 0.07
+  data:
+    event_id: event_4tpbVFJGwrjSyETivyobH0
+    type: session.updated
+    session:
+      id: sess_cnnbf8q9ek6PQKfnVQep6
+      model: gpt-5
+      modalities:
+      - text
+      instructions: Answer in one short sentence.
+      voice:
+        name: en-US-AvaNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      input_audio_format: pcm16
+      output_audio_format: pcm16
+      input_audio_transcription:
+        model: azure-speech
+        language: ''
+        prompt: null
+        delay: null
+        custom_speech: null
+        phrase_list: null
+      input_audio_noise_reduction: null
+      turn_detection:
+        type: server_vad
+        threshold: null
+        prefix_padding_ms: null
+        silence_duration_ms: null
+        create_response: true
+        interrupt_response: true
+        idle_timeout_ms: null
+        speech_duration_ms: null
+        auto_truncate: false
+        appended_text_after_truncation: null
+      tools: []
+      tool_choice: auto
+      temperature: 1.0
+      max_response_output_tokens: inf
+      expires_at: 1790647773
+      object: realtime.session
+      input_audio_sampling_rate: 24000
+      animation: null
+      input_audio_echo_cancellation: null
+      avatar: null
+      output_audio_timestamp_types: null
+      reasoning_effort: high
+      truncation_strategy: null
+      include: null
+      greeting: null
+      handoff: null
+- kind: message
+  direction: sent
+  at: 0.071
+  data:
+    type: conversation.item.create
+    event_id: pydantic_ai.content.0
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: A bat and a ball cost 1.10 in total, and the bat costs 1.00 more than
+          the ball. How much is the ball?
+- kind: message
+  direction: sent
+  at: 0.071
+  data:
+    type: response.create
+    event_id: pydantic_ai.response.0
+- kind: message
+  direction: received
+  at: 0.136
+  data:
+    event_id: event_3nUAZenaXfmyYN9UKFAquB
+    type: conversation.item.created
+    previous_item_id: ''
+    item:
+      id: item_3dnVbLECDI1ycBj8woXfxT
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: A bat and a ball cost 1.10 in total, and the bat costs 1.00 more than
+          the ball. How much is the ball?
+- kind: message
+  direction: received
+  at: 0.136
+  data:
+    event_id: event_7MqIuDlv3LvxJM66Co2swI
+    type: response.created
+    response:
+      object: realtime.response
+      id: resp_4bi9xLicGpo8mOhaXmG2U1
+      status: in_progress
+      status_details: null
+      output: []
+      usage: null
+      conversation_id: ''
+      modalities:
+      - text
+      voice:
+        name: en-US-AvaNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      output_audio_format: pcm16
+      temperature: 1.0
+      max_output_tokens: null
+      metadata: null
+- kind: message
+  direction: received
+  at: 2.918
+  data:
+    event_id: event_pQrlqZQj0gAXyHMeUalwJ
+    type: response.output_item.added
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    output_index: 0
+    item:
+      id: msg_357ljiV9kUmBBKIqz0oiq1
+      object: realtime.item
+      type: message
+      status: incomplete
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 2.918
+  data:
+    event_id: event_4dHG9aINJS96hihCfNZHYx
+    type: conversation.item.created
+    previous_item_id: ''
+    item:
+      id: msg_357ljiV9kUmBBKIqz0oiq1
+      object: realtime.item
+      type: message
+      status: incomplete
+      role: assistant
+      content: []
+- kind: message
+  direction: received
+  at: 2.918
+  data:
+    event_id: event_4IkWORcSzWnqqu3WivqFjP
+    type: response.content_part.added
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: ''
+- kind: message
+  direction: received
+  at: 2.918
+  data:
+    event_id: event_4BfOUAlDdlCEugFTG6RTbs
+    type: response.text.delta
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    delta: The
+- kind: message
+  direction: received
+  at: 2.918
+  data:
+    event_id: event_38j6zmP6FJwax1CarYtM5Q
+    type: response.text.delta
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    delta: ' ball'
+- kind: message
+  direction: received
+  at: 2.918
+  data:
+    event_id: event_7BmmClzRw1R5JtfzJZNrBQ
+    type: response.text.delta
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    delta: ' costs'
+- kind: message
+  direction: received
+  at: 2.936
+  data:
+    event_id: event_5MXGJzYNhT698ink0lfl82
+    type: response.text.delta
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    delta: ' $'
+- kind: message
+  direction: received
+  at: 2.936
+  data:
+    event_id: event_4V94kLIlDNpfZ23yjwsnOC
+    type: response.text.delta
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    delta: '0'
+- kind: message
+  direction: received
+  at: 2.942
+  data:
+    event_id: event_3nkd2m2fFIH4BOIBN0SShf
+    type: response.text.delta
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    delta: .
+- kind: message
+  direction: received
+  at: 2.955
+  data:
+    event_id: event_6upSEDm8eMYnQHYFbbwpwN
+    type: response.text.delta
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    delta: '05'
+- kind: message
+  direction: received
+  at: 2.98
+  data:
+    event_id: event_72BLWodb634S0ruGl64RnT
+    type: response.text.delta
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    delta: .
+- kind: message
+  direction: received
+  at: 2.983
+  data:
+    event_id: event_4nFtkLQkbbNyNNdbKZ8FI7
+    type: response.text.done
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    text: The ball costs $0.05.
+- kind: message
+  direction: received
+  at: 2.983
+  data:
+    event_id: event_2ijq4D5N5OnDWLB8fDUkxN
+    type: response.content_part.done
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    output_index: 0
+    content_index: 0
+    part:
+      type: text
+      text: The ball costs $0.05.
+- kind: message
+  direction: received
+  at: 2.983
+  data:
+    event_id: event_5ndKieHJujMLgqrrPwZ59
+    type: response.output_item.done
+    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    output_index: 0
+    item:
+      id: msg_357ljiV9kUmBBKIqz0oiq1
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+      content:
+      - type: text
+        text: The ball costs $0.05.
+- kind: message
+  direction: received
+  at: 3.146
+  data:
+    event_id: event_2v8UIQxgbaK7dlPDT1Aas6
+    type: response.done
+    response:
+      object: realtime.response
+      id: resp_4bi9xLicGpo8mOhaXmG2U1
+      status: completed
+      status_details: null
+      output:
+      - id: msg_357ljiV9kUmBBKIqz0oiq1
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: text
+          text: The ball costs $0.05.
+      usage:
+        total_tokens: 193
+        input_tokens: 48
+        output_tokens: 145
+        input_token_details:
+          cached_tokens: 0
+          cache_write_tokens: 0
+          text_tokens: 48
+          audio_tokens: 0
+          image_tokens: 0
+          cached_tokens_details:
+            text_tokens: 0
+            audio_tokens: 0
+            image_tokens: 0
+        output_token_details:
+          text_tokens: 145
+          audio_tokens: 0
+          reasoning_tokens: 128
+      conversation_id: ''
+      modalities:
+      - text
+      voice:
+        name: en-US-AvaNeural
+        type: azure-standard
+        temperature: null
+        custom_lexicon_url: null
+        custom_text_normalization_url: null
+        prefer_locales: null
+        locale: null
+        style: null
+        pitch: null
+        rate: null
+        volume: null
+      output_audio_format: pcm16
+      temperature: 1.0
+      max_output_tokens: null
+      metadata: null
