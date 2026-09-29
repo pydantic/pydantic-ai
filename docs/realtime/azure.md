@@ -1,3 +1,7 @@
+---
+description: "Run Pydantic AI realtime voice agents on Azure OpenAI or Azure AI Voice Live with AzureRealtimeModel: deployment names, transcription, Entra ID auth and WebRTC."
+---
+
 # Azure Realtime
 
 [`AzureRealtimeModel`][pydantic_ai.realtime.azure.AzureRealtimeModel] connects to Azure's realtime
@@ -26,9 +30,10 @@ agent = Agent(instructions='You are a helpful voice assistant.')
 
 async def main():
     async with agent.realtime('azure:my-realtime-deployment').session() as session:
+        transcripts = session.stream_transcripts()  # subscribe before prompting
         await session.send('Say hello.')
 
-        async for part in session.stream_transcripts():
+        async for part in transcripts:
             print(f'{part.speaker}: {part.transcript}')
             #> assistant: Hello from the realtime assistant.
             if part.speaker == 'assistant':
@@ -62,7 +67,7 @@ realtime counterpart of [model run settings](../agent.md#model-run-settings) —
 - `openai_turn_detection` for server or semantic VAD (see [turn detection](turns.md#automatic-turn-detection));
 - `openai_truncation` for session context management.
 
-See [OpenAI settings](openai.md#settings) for the shared settings. Azure realtime does not
+See [OpenAI settings](openai.md#gpt-realtime-settings) for the shared settings. Azure realtime does not
 expose `temperature` through Pydantic AI.
 
 ### Input transcription deployment
@@ -176,12 +181,18 @@ model = AzureRealtimeModel(
 async def main():
     async with agent.realtime(model).session() as session:
         await session.send('Say hello.')
-        async for event in session:
-            ...
+        await session.wait_for_reply()  # keep listening in a real call; we stop after one reply
 ```
 
 Voice-Live-only knobs use the `azure_voice_live_*` prefix (e.g.
 [`azure_voice_live_turn_detection`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_turn_detection]).
+Voice Live defaults input transcription to `whisper-1` when the deployment name starts with
+`gpt-realtime`, and to `azure-speech` otherwise. This is a name match, so a custom-named
+`gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
+`input_transcription_model` explicitly when that is not the intended deployment.
+
+Voice Live silently ignores the inherited `openai_*` settings plus `thinking` and
+`parallel_tool_calls`. Use Voice-Live-specific settings where available.
 
 ### Which models use which API
 

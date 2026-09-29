@@ -37,7 +37,6 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -340,9 +339,8 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
 
     assert '100' in result.output
 
-    recorded_error = vcr.responses[1]
-    recorded_error_body = json.loads(recorded_error['body']['string'])
-    assert (recorded_error['status']['code'], recorded_error_body['error']['type']) == snapshot((500, 'api_error'))
+    recorded_error = vcr.interactions[1].response
+    assert (recorded_error.status, recorded_error.body.content['error']['type']) == snapshot((500, 'api_error'))
 
     # Both attempts are on the wire, and only the first carries the dead id.
     bodies = request_capture.bodies('/v1/messages')

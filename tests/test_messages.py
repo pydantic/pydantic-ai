@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json, to_jsonable_python
 
 from pydantic_ai import (
@@ -64,8 +64,10 @@ from pydantic_ai import (
 from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
     _FILE_URL_KINDS,  # pyright: ignore[reportPrivateUsage]
+    _USER_CONTENT_TYPES,  # pyright: ignore[reportPrivateUsage]
     INVALID_JSON_KEY,
     MULTI_MODAL_CONTENT_TYPES,
+    CachePoint,
     CompactionPart,
     FileUrl,
     LoadCapabilityCallPart,
@@ -646,6 +648,7 @@ def test_pre_usage_refactor_messages_deserializable():
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {},
             'cost': None,
         }
@@ -691,6 +694,7 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {'reasoning_tokens': 3},
             'cost': None,
             'future_tokens': 42,
@@ -710,7 +714,6 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     assert loaded.usage.__dict__['future_tokens'] == 42
 
 
-@pytest.mark.anyio
 async def test_legacy_vendor_message_history_replays_through_agent():
     """1.x message history serialized with `vendor_details` / `vendor_id` keys still routes through `agent.run(message_history=...)`.
 
@@ -843,6 +846,7 @@ def test_file_part_serialization_roundtrip():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -858,6 +862,7 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -2002,11 +2007,13 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     thousands of Rust→Python crossings, paid on every message-history load, UI adapter round-trip, and
     Temporal activity resolution and replay.
 
-    Counting Python calls rather than timing is what makes this pin usable in CI: the count is
-    deterministic and machine-independent, where a wall-clock threshold would either flake on a noisy
-    runner or be loose enough to catch nothing. The bound is generous on purpose — the regression it
-    guards adds tens of thousands of calls, so a handful of tolerance costs no signal and removes any
-    dependence on ambient interpreter activity. `cProfile` rather than a `sys.setprofile` callback
+    Counting Python calls rather than timing is what makes this pin usable in CI: the count is far
+    steadier than a wall-clock threshold, which would either flake on a noisy runner or be loose
+    enough to catch nothing. It is not perfectly machine-independent, though — the delta is 0 on a
+    developer machine but around 110 on some CI runners, from something ambient that has never been
+    tracked down — so the bound has to clear that. The gap it separates is enormous: a per-node
+    Python call costs ~2,770 extra calls here, one per JSON value node in the larger payload, so a
+    bound of 1,000 sits an order of magnitude above the noise and well under the regression. `cProfile` rather than a `sys.setprofile` callback
     because the interpreter does not trace the callback's own body, leaving it unmeasurable by
     coverage.
 
@@ -2047,7 +2054,7 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     for dump in (False, True):
         small, large = python_calls(payload(2), dump), python_calls(payload(200), dump)
         direction = 'dump_json' if dump else 'validate_json'
-        assert large - small < 100, f'{direction} cost {large - small} extra Python calls for a 100x larger payload'
+        assert large - small < 1_000, f'{direction} cost {large - small} extra Python calls for a 100x larger payload'
 
 
 def test_multimodal_nested_in_kind_colliding_mapping_rehydrates():
@@ -2884,6 +2891,7 @@ def test_speech_part_serialization_roundtrip():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -2898,6 +2906,7 @@ def test_speech_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'workspace_ref': None,
                 'state': 'complete',
             },
         ]
@@ -3058,7 +3067,6 @@ def test_prepare_messages_passes_through_without_speech_parts():
     assert prepared[1] is history[1]
 
 
-@pytest.mark.anyio
 async def test_agent_run_with_speech_history():
     """History from a realtime session (containing both speaker variants) replays through
     `agent.run(message_history=...)` against a standard model: the seam converts the parts before the
@@ -3099,7 +3107,6 @@ async def test_agent_run_with_speech_history():
     )
 
 
-@pytest.mark.anyio
 async def test_agent_run_with_speech_only_response():
     """A custom model returning only realtime `SpeechPart`s yields their transcript as text output.
 
@@ -3116,7 +3123,6 @@ async def test_agent_run_with_speech_only_response():
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
-@pytest.mark.anyio
 async def test_openai_mapping_of_prepared_speech_history():
     """A real provider model's message mapping handles realtime session history once it has passed
     through `prepare_messages`, which the framework applies before every request.
@@ -3135,7 +3141,6 @@ async def test_openai_mapping_of_prepared_speech_history():
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
-@pytest.mark.anyio
 async def test_unprepared_speech_history_raises():
     """A `SpeechPart` that reaches an adapter unconverted raises rather than silently vanishing.
 
@@ -3149,7 +3154,6 @@ async def test_unprepared_speech_history_raises():
         await model._map_messages(history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_function_model_estimates_usage_from_unprepared_speech():
     """`FunctionModel.request()` doesn't run `prepare_messages`, so user speech can arrive unconverted;
     its transcript still counts toward estimated usage — the same as its converted text form — rather
@@ -3279,3 +3283,93 @@ def test_post_compaction_window_accepts_a_minimal_sequence():
     assert len(window) == 2
     assert isinstance(window[0], ModelResponse)
     assert isinstance(window[1], ModelRequest)
+
+
+def test_user_prompt_part_content_must_be_a_str_or_sequence():
+    """A non-sequence like a `dict` is iterable, so without a guard every model mapper would send its keys as the prompt.
+
+    A unit test rather than a VCR test: the guard fires before any request is built, so there is nothing to record.
+    """
+    error = re.escape(
+        '`UserPromptPart.content` must be a `str` or a sequence of `UserContent` items, got `dict`. '
+        'Serialize the value yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) '
+        'or `pydantic_ai.format_as_xml()`.'
+    )
+
+    with pytest.raises(ValueError, match=error):
+        UserPromptPart(cast(Any, {'name': 'John', 'height': 6}))
+
+    # Non-string keys used to reach `assert_never` and raise a bare `AssertionError` from inside the model mapper.
+    with pytest.raises(ValueError, match=error):
+        UserPromptPart(cast(Any, {1: 'John'}))
+
+    # Deserialized message history is validated by Pydantic before `__post_init__` runs.
+    with pytest.raises(ValidationError):
+        ModelMessagesTypeAdapter.validate_python(
+            [{'kind': 'request', 'parts': [{'part_kind': 'user-prompt', 'content': {'name': 'John'}}]}]
+        )
+
+    # `bytes` is a `Sequence` of `int`, so it is named as the container the caller actually passed.
+    with pytest.raises(
+        ValueError, match=re.escape('must be a `str` or a sequence of `UserContent` items, got `bytes`')
+    ):
+        UserPromptPart(cast(Any, b'hello'))
+
+    # Valid content is unaffected.
+    assert UserPromptPart('hello').content == 'hello'
+    assert UserPromptPart(['hello', ImageUrl('https://example.com/image.png')]).content == [
+        'hello',
+        ImageUrl('https://example.com/image.png'),
+    ]
+
+
+def test_user_prompt_part_content_items_must_be_user_content():
+    """A `list` passes the container check, so without a per-item check the mapper is where it goes wrong.
+
+    Each item reaches an exhaustive match in every model's message mapper, which raises a bare
+    `AssertionError: Expected code to be unreachable` on anything that is not `UserContent`.
+    """
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            '`UserPromptPart.content[0]` must be a `UserContent` item, got `dict`. Serialize the value '
+            'yourself before passing it, e.g. with Pydantic (`pydantic_core.to_json()`) or '
+            '`pydantic_ai.format_as_xml()`.'
+        ),
+    ):
+        UserPromptPart(cast(Any, [{'name': 'John'}, {'name': 'Jane'}]))
+
+    # The index is the caller's way back to the item, which matters once the good items outnumber the bad one.
+    with pytest.raises(
+        ValueError, match=re.escape('`UserPromptPart.content[1]` must be a `UserContent` item, got `int`')
+    ):
+        UserPromptPart(cast(Any, ['hello', 7]))
+
+    # `BinaryImage` is what an image `BinaryContent` narrows to on validation, and it is not in the tuple
+    # by name, so a subclass has to be accepted for a round-tripped image to survive this guard.
+    image = BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png')
+    assert UserPromptPart([image]).content == [image]
+
+    # Every member of the union is accepted, so adding one cannot be forgotten here.
+    assert UserPromptPart(['hello', TextContent(content='hi'), ImageUrl('https://example.com/i.png'), CachePoint()])
+
+
+def test_user_content_types_matches_union():
+    """`_USER_CONTENT_TYPES` is what the guard checks against, so a new `UserContent` member has to reach it.
+
+    Mirrors `test_multi_modal_content_types_matches_union`: without this, adding a member to the union would
+    leave the guard refusing it as if the user had written something unsupported.
+    """
+    union_members = {
+        get_args(m)[0] if get_origin(m) is Annotated else m
+        for member in get_args(UserContent)
+        for m in (get_args(get_args(member)[0]) if get_origin(member) is Annotated else (member,))
+    }
+    assert set(_USER_CONTENT_TYPES) == union_members
+
+
+async def test_agent_run_rejects_non_sequence_user_prompt():
+    """The same guard reached through the public API, where the prompt becomes a `UserPromptPart` inside the run."""
+    agent = Agent(TestModel())
+    with pytest.raises(ValueError, match='must be a `str` or a sequence of `UserContent` items, got `dict`'):
+        await agent.run(cast(Any, {'name': 'John'}))

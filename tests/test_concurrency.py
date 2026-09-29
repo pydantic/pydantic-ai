@@ -24,8 +24,6 @@ if TYPE_CHECKING:
 
 logfire_installed = importlib.util.find_spec('logfire') is not None
 
-pytestmark = pytest.mark.anyio
-
 READINESS_WAIT_TIMEOUT = 5
 
 
