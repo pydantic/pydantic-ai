@@ -1064,8 +1064,13 @@ class TestSpeculationEdgeCases:
             run_code_task = asyncio.create_task(
                 toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'c1'), run_code)
             )
-            await asyncio.wait_for(cancellation_seen.wait(), timeout=5)
-            result = await asyncio.wait_for(run_code_task, timeout=0.75)
+            try:
+                await asyncio.wait_for(cancellation_seen.wait(), timeout=5)
+                result = await asyncio.wait_for(run_code_task, timeout=0.75)
+            finally:
+                if not run_code_task.done():
+                    run_code_task.cancel()
+                    await asyncio.wait({run_code_task}, timeout=0.75)
 
         assert isinstance(result, ToolReturn)
         assert run_capability.speculation_stats.evicted == 1
