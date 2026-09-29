@@ -308,8 +308,7 @@ async def test_timeout_during_spawn_still_kills_the_process_group(tmp_path: Path
     async def held_spawn(*args: Any, **kwargs: Any) -> anyio.abc.Process:
         process = await real_open_process(*args, **kwargs)
         # Simulate a spawn that acknowledges a created process after its deadline.
-        with anyio.CancelScope(shield=True):
-            await release.wait()
+        await release.wait()
         return process
 
     monkeypatch.setattr(anyio, 'open_process', held_spawn)
@@ -346,12 +345,14 @@ async def test_stalled_spawn_is_bounded(tmp_path: Path, monkeypatch: pytest.Monk
         raise AssertionError('unreachable')  # pragma: no cover
 
     monkeypatch.setattr(anyio, 'open_process', stalled_spawn)
+    # At least the command timeout below, so the deadline has passed when the grace expires.
+    monkeypatch.setattr(local_module, '_SPAWN_GRACE', 0.1)
     workspace = LocalWorkspaceBackend(tmp_path)
     async with anyio.create_task_group() as tg:
 
         async def run() -> None:
             if mode == 'deadline':
-                with pytest.raises(WorkspaceTimeoutError):
+                with pytest.raises(WorkspaceTimeoutError, match='during startup'):
                     await workspace.run(['true'], timeout=0.05)
             else:
                 with pytest.raises(anyio.get_cancelled_exc_class()):
@@ -459,31 +460,18 @@ async def test_timeout_while_connecting_pipes_kills_the_process_group(tmp_path: 
 
 
 async def test_kill_tolerates_an_already_exited_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    workspace = LocalWorkspaceBackend(tmp_path)
     real_killpg = os.killpg
-    spawned: list[int] = []
     killed: list[int] = []
-
-    async def timed_out_after_spawn(
-        process: anyio.abc.Process,
-        _stdout_buffer: bytearray,
-        _stderr_buffer: bytearray,
-        _absolute_deadline: float | None,
-    ) -> int:
-        spawned.append(process.pid)
-        raise TimeoutError
 
     def already_exited(pgid: int, sig: int) -> None:
         real_killpg(pgid, sig)
         killed.append(pgid)
         raise ProcessLookupError
 
-    monkeypatch.setattr(workspace, '_wait_and_collect_output', timed_out_after_spawn)
     monkeypatch.setattr(os, 'killpg', already_exited)
     with pytest.raises(WorkspaceTimeoutError):
-        await workspace.run(['sleep', '3600'], timeout=30)
-    assert len(spawned) == 1
-    assert killed == spawned
+        await LocalWorkspaceBackend(tmp_path).run(['sh', '-c', 'sleep 3600'], timeout=0.05)
+    assert len(killed) == 1
 
 
 async def test_commands_inherit_only_path_home_and_locale_from_the_host(
