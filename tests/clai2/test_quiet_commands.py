@@ -28,6 +28,7 @@ from tests.clai2.test_app_edges import inputs
         ('GitHub settings unchanged.\n', True),
         ('Token saved.', False),
         ('Saved.\nGitHub settings unchanged.', False),
+        ('Saved.\rGitHub settings unchanged.', False),
         ('unchanged.', False),
     ],
 )

@@ -797,14 +797,13 @@ def _report_interrupt(completed: bool, console: Console) -> None:
 async def _execute_command(commands: Commands, text: str, *, console: Console, status: Status) -> None:
     try:
         result = await commands.execute_async(text)
-    except Exception as exc:
-        console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
-        console.print()
-    else:
         # The echoed command already ends in a blank line; a menu closed without changes adds nothing.
         if not is_silent(result):
             console.print(result, markup=False)
             console.print()
+    except Exception as exc:
+        console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+        console.print()
     _reset_status(text, status)
 
 
