@@ -20,13 +20,10 @@ from ...conftest import try_import
 with try_import() as imports_successful:
     from pydantic_ai.realtime.codec import AudioDelta, RealtimeCodecEvent, ResponseDone, ToolCall, ToolCallCancelled
 
-    from ._cassette_replay import replay_codec_events, websocket_cassettes
+    from ._cassette_replay import CASSETTES_DIR, replay_codec_events, websocket_cassettes
     from ._conformance import LifecycleChecker
 
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs not installed'),
-]
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs not installed')
 
 
 @pytest.mark.parametrize(
@@ -64,3 +61,14 @@ def test_lifecycle_rules() -> None:
     assert feed_all(done, RealtimeSessionReconnectEvent(), done) == snapshot([])
     fatal = RealtimeSessionErrorEvent('gone', recoverable=False)
     assert feed_all(fatal, done) == snapshot(['codec.event_after_fatal'])
+
+
+async def test_recorded_abnormal_close_is_replayed_as_one() -> None:
+    """A socket the recording saw drop with 1011 ends its replay the same way, not as a clean close."""
+    dropped, resumed = await replay_codec_events(
+        CASSETTES_DIR / 'test_xai_ws' / 'test_session_resumption_after_drop.yaml'
+    )
+    assert isinstance(error := dropped[-1], RealtimeSessionErrorEvent)
+    assert '1011' in error.message
+    assert isinstance(error := resumed[-1], RealtimeSessionErrorEvent)
+    assert '1011' not in error.message
