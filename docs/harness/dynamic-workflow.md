@@ -118,8 +118,10 @@ Besides the sub-agent functions, every script can use a few helpers. None of the
 | Helper | What it does |
 | --- | --- |
 | `await agent(task, *, name=None, schema=None, model=None, phase=None)` | Runs one sub-agent. `name` picks it; without it, `default_agent` runs, or the only sub-agent when there is one. `schema` is a JSON schema (`{"type": "object", ...}`) the output must follow for this call, so the result is a `dict`. `model` names the model to run it with, such as `'openai:gpt-5'`. `phase` also calls `phase(phase)` first. |
-| `await parallel(tasks)` | Runs awaitables, or zero-argument functions, concurrently and returns their results in order. A failed item becomes `None`; `parallel` itself never raises. |
+| `await parallel(tasks)` | Runs awaitables, or zero-argument functions, concurrently and returns their results in order. A failed item becomes `None`, so one failure does not sink the batch. |
 | `await pipeline(items, *stages)` | Runs every item through each stage in turn, without waiting for the other items between stages. A stage is called as `stage(prev, item, index)`; a stage that raises or returns `None` ends that item with `None`. |
+
+Both raise `ValueError` up front when given more than `max_items_per_call` items.
 | `log(message)` / `phase(title)` | Reports progress, as a `WorkflowLogEvent` or `WorkflowPhaseEvent` in the agent's event stream. |
 | `budget()` | `{"max": ..., "used": ..., "remaining": ...}` sub-agent calls for this run. |
 | `args` | The arguments the script was run with. See [saved workflows](#saved-workflows). |

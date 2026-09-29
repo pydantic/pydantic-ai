@@ -484,3 +484,9 @@ async def test_workflows_none_turns_saved_workflows_off(tmp_path: Path) -> None:
     tools = await (await toolset.for_run(ctx)).get_tools(ctx)
     assert list(tools) == ['run_workflow']
     assert list(tools['run_workflow'].tool_def.parameters_json_schema['properties']) == ['code']
+
+
+def test_tool_name_cannot_take_the_save_tools_name() -> None:
+    with pytest.raises(UserError, match="`tool_name` cannot be 'save_workflow'"):
+        _toolset(save_directory='workflows', tool_name='save_workflow')
+    assert _toolset(tool_name='save_workflow').tool_name == 'save_workflow'

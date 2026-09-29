@@ -304,10 +304,11 @@ that only awaits sub-agents and uses `asyncio.gather` works as before.
   (`{"type": "object", ...}`) the output must follow for this call, so the result is a `dict`.
   `model` names the model to run it with. `phase` also calls `phase(phase)` first.
 - `await parallel(tasks)` runs awaitables, or zero-argument functions, concurrently and returns
-  their results in order. A failed item becomes `None`; `parallel` itself never raises.
+  their results in order. A failed item becomes `None`, so one failure does not sink the batch.
 - `await pipeline(items, *stages)` runs every item through each stage in turn, without waiting for
   the other items between stages. A stage is called as `stage(prev, item, index)`; one that raises
-  or returns `None` ends that item with `None`.
+  or returns `None` ends that item with `None`. Both raise `ValueError` up front when given more
+  than `max_items_per_call` items.
 - `log(message)` and `phase(title)` report progress, as a `WorkflowLogEvent` or
   `WorkflowPhaseEvent` in the agent's event stream.
 - `budget()` returns `{"max": ..., "used": ..., "remaining": ...}` sub-agent calls for this run.

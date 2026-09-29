@@ -117,7 +117,7 @@ _HELPER_DOCS: dict[str, str] = {
     ),
     'parallel': (
         '`await parallel(tasks)`: run awaitables (such as `agent(...)` calls) or zero-argument functions '
-        'concurrently and return their results in order. A failed item becomes `None`; `parallel` never raises.'
+        'concurrently and return their results in order. A failed item becomes `None`, so one failure does not sink the batch.'
     ),
     'pipeline': (
         '`await pipeline(items, *stages)`: run every item through each stage in turn, without waiting '

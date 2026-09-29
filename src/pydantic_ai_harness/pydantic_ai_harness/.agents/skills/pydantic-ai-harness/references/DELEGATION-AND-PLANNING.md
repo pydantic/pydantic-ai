@@ -203,7 +203,7 @@ models; `True` makes them follow the parent run's resolved model, e.g. after a p
 
 Scripts also get helpers: `await agent(task, name=, schema=, model=, phase=)` (`schema` is a JSON
 object schema for this call's output, `model` any model name), `await parallel(tasks)` (a failed item
-becomes `None`, never raises), `await pipeline(items, *stages)` (each stage called as
+becomes `None`; more than `max_items_per_call` items raise), `await pipeline(items, *stages)` (each stage called as
 `stage(prev, item, index)`; raising or returning `None` ends that item), `log(msg)`/`phase(title)`
 (emit `WorkflowLogEvent`/`WorkflowPhaseEvent`), `budget()`, and the `args` global.
 

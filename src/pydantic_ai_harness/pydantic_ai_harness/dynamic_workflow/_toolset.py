@@ -270,6 +270,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             if getattr(self, option) < 1:
                 raise UserError(f'DynamicWorkflow `{option}` must be at least 1.')
         _resolve_resource_limits(self.resource_limits)  # validate keys now, not at the first tool call
+        if self.save_directory is not None and self.tool_name == SAVE_TOOL_NAME:
+            raise UserError(f"DynamicWorkflow `tool_name` cannot be {SAVE_TOOL_NAME!r}, the saving tool's name.")
         self._budget = CallBudget(self.max_agent_calls)
         self._rebuild()
         if self.default_agent is not None and self.default_agent not in self._by_name:

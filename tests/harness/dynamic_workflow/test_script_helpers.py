@@ -270,7 +270,7 @@ async def test_description_documents_the_helpers() -> None:
     assert helpers == snapshot("""\
 These helpers are already defined:
 - `await agent(task, *, name=None, schema=None, model=None, phase=None)`: run one sub-agent (`name` picks it). `schema` is a JSON schema (`{"type": "object", ...}`) the output must follow for this call, so the result is a dict. `model` names a model (such as `"openai:gpt-5"`) to run it with. `phase` also calls `phase(phase)` first.
-- `await parallel(tasks)`: run awaitables (such as `agent(...)` calls) or zero-argument functions concurrently and return their results in order. A failed item becomes `None`; `parallel` never raises.
+- `await parallel(tasks)`: run awaitables (such as `agent(...)` calls) or zero-argument functions concurrently and return their results in order. A failed item becomes `None`, so one failure does not sink the batch.
 - `await pipeline(items, *stages)`: run every item through each stage in turn, without waiting for the other items between stages. A stage is called as `stage(prev, item, index)`, where `prev` is the previous stage's result (the item itself for the first stage), and may be `async` or return an awaitable. A stage that raises or returns `None` ends that item with `None`.
 - `log(message)`: report progress to the user.
 - `phase(title)`: start a named phase of progress for the user.
