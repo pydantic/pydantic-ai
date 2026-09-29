@@ -87,6 +87,7 @@ def _make_ctx(
         usage: RunUsage
         run_id: str | None
         retry: int
+        messages: list[ModelMessage] = dataclasses.field(default_factory=list[ModelMessage])
         usage_limits: UsageLimits | None = None
         tool_call_id: str | None = 'call-1'
         model: Any = dataclasses.field(default_factory=_FakeModel)

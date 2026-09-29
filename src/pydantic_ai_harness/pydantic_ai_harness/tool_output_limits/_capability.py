@@ -258,6 +258,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         """Drop `read_tool_result` when active general file tools can read every workspace spill."""
+        if not any(tool.name == READ_TOOL_NAME for tool in tool_defs):
+            return tool_defs
         if await self._file_tools(ctx, tool_names={tool.name for tool in tool_defs}) is not None:
             return [tool_def for tool_def in tool_defs if tool_def.name != READ_TOOL_NAME]
         return tool_defs

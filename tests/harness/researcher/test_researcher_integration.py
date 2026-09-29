@@ -133,6 +133,7 @@ html\\#c\\.PyUnstable_Module_SetGIL>\\ \\ \\
                                 regex='.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_ThjTLUpjfRlxSV43zSkDc4qF\\.0'
                             ),
                             'overflow_bytes': 20757,
+                            'overflow_requires_reader': True,
                         },
                         timestamp=IsDatetime(),
                     )
@@ -756,6 +757,7 @@ hon\\ Software\\ Foundation\\ License\\ Version\\ 2\\.\\\\n\\ \\ \\\\nExamples,\
                                 regex='.*/\\.pydantic\\-ai\\-harness/tool\\-output/01[a-z0-9]{6}(?:\\-[a-z0-9]{4}){3}\\-[a-z0-9]{12}/call_dmEMWZ9DEj1LpBAv20CBRl4f\\.0'
                             ),
                             'overflow_bytes': 28155,
+                            'overflow_requires_reader': True,
                         },
                         timestamp=IsDatetime(),
                     )
