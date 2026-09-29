@@ -56,6 +56,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
+    RealtimeError,
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
@@ -2181,7 +2182,11 @@ async def test_connection_send_text() -> None:
     assert create['item']['content'][0]['text'] == 'hello'
     # Both frames name the input they serve, so a refusal of either can be taken back.
     assert create['event_id'] == 'pydantic_ai.content.0'
-    assert json.loads(ws.sent[1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
+    assert json.loads(ws.sent[1]) == {
+        'type': 'response.create',
+        'event_id': 'pydantic_ai.response.0',
+        'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+    }
 
 
 async def test_connection_send_text_context() -> None:
@@ -2193,6 +2198,7 @@ async def test_connection_send_text_context() -> None:
             'type': 'conversation.item.create',
             'event_id': 'pydantic_ai.content.0',
             'item': {
+                'id': 'pydantic_ai_item_0',
                 'type': 'message',
                 'role': 'user',
                 'content': [{'type': 'input_text', 'text': 'background'}],
@@ -2207,7 +2213,11 @@ async def test_connection_send_tool_result_triggers_response() -> None:
     await conn.send(ToolResult(tool_call_id='call_1', output='42'))
     item = json.loads(ws.sent[0])
     assert item['item'] == {'type': 'function_call_output', 'call_id': 'call_1', 'output': '42'}
-    assert json.loads(ws.sent[1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
+    assert json.loads(ws.sent[1]) == {
+        'type': 'response.create',
+        'event_id': 'pydantic_ai.response.0',
+        'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+    }
 
 
 async def test_connection_send_tool_result_with_follow_up_user_content() -> None:
@@ -2241,7 +2251,11 @@ async def test_connection_send_tool_result_with_follow_up_user_content() -> None
                 ],
             },
         },
-        {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'},
+        {
+            'type': 'response.create',
+            'event_id': 'pydantic_ai.response.0',
+            'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+        },
     ]
 
 
@@ -2294,7 +2308,11 @@ async def test_connection_send_create_response() -> None:
     ws = FakeWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     await conn.send(CreateResponse())
-    assert json.loads(ws.sent[0]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.0'}
+    assert json.loads(ws.sent[0]) == {
+        'type': 'response.create',
+        'event_id': 'pydantic_ai.response.0',
+        'response': {'metadata': {'pydantic_ai_inputs': '0'}},
+    }
 
 
 async def test_connection_send_cancel_when_response_active() -> None:
@@ -2777,6 +2795,86 @@ class DroppingWebSocket(FakeWebSocket):
         yield  # pragma: no cover  (makes this an async generator)
 
 
+class _DroppableAfterHandshake(FakeWebSocket):
+    """Completes the handshake, then stays open until `drop()`, after which sends and reads fail."""
+
+    def __init__(self) -> None:
+        super().__init__([_created(), _updated()])
+        self.dropped = asyncio.Event()
+
+    async def send(self, data: str) -> None:
+        if self.dropped.is_set():
+            raise rt_openai.websockets.ConnectionClosed(None, None)
+        await super().send(data)
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        await self.dropped.wait()
+        raise rt_openai.websockets.ConnectionClosed(None, None)
+        yield  # pragma: no cover  (makes this an async generator)
+
+
+class _FailingRedial:
+    """Stand-in for `websockets.connect`: the first dial gets `ws`, every re-dial fails once `release` is set."""
+
+    def __init__(self, ws: FakeWebSocket) -> None:
+        self._ws: FakeWebSocket | None = ws
+        self.redialing = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> _FailingRedial:
+        return self
+
+    async def __aenter__(self) -> FakeWebSocket:
+        if (ws := self._ws) is not None:
+            self._ws = None
+            return ws
+        self.redialing.set()
+        await self.release.wait()
+        raise OSError('server is down')
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+async def test_audio_is_dropped_only_while_a_reconnect_can_still_come(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mic chunk (or a one-shot clip) sent while the link is re-dialed is dropped, not raised.
+
+    Once the reconnect has failed and a consumer has already been handed that failure, nothing will
+    replace the link, so the next chunk raises instead of being dropped silently forever.
+    """
+    ws = _DroppableAfterHandshake()
+    connect = _FailingRedial(ws)
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    agent: Agent[None, str] = Agent()
+    async with agent.realtime(model).session() as session:
+        failures: list[RealtimeError] = []
+
+        async def consume() -> None:
+            try:
+                async for _ in session:
+                    pass  # pragma: no cover - nothing but the failure arrives
+            except RealtimeError as e:
+                failures.append(e)
+
+        consumer = asyncio.create_task(consume())
+        await session.send_audio(b'\x00\x01')
+        ws.dropped.set()
+        await connect.redialing.wait()
+        await session.send_audio(b'\x02\x03')  # a one-shot clip during the re-dial: dropped, not raised
+        connect.release.set()
+        await asyncio.wait_for(consumer, 5)
+        assert failures and 'reconnect failed' in str(failures[0])
+        with pytest.raises(RealtimeError, match='failed while sending'):
+            await session.send_audio(b'\x04\x05')
+
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['session.update', 'input_audio_buffer.append']
+
+
 async def test_connection_closed_yields_fatal_error() -> None:
     ws = DroppingWebSocket([])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
@@ -3102,6 +3200,28 @@ async def test_reconnect_replays_a_deferred_response_request() -> None:
     assert conn._response_active is True  # pyright: ignore[reportPrivateUsage]
 
 
+async def test_openai_connection_cannot_reconnect_once_a_reconnect_has_failed() -> None:
+    async def dial() -> Any:
+        raise OSError('server is down')
+
+    conn = OpenAIRealtimeConnection(DroppingWebSocket([]), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})  # type: ignore[arg-type]
+    assert conn._can_reconnect  # pyright: ignore[reportPrivateUsage]
+    events = [event async for event in conn]
+    assert isinstance(events[-1], RealtimeSessionErrorEvent) and 'reconnect failed' in events[-1].message
+    assert conn._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_openai_connection_can_reconnect_only_with_a_policy() -> None:
+    async def dial() -> Any:
+        raise NotImplementedError  # pragma: no cover
+
+    assert OpenAIRealtimeConnection(FakeWebSocket([]))._can_reconnect is False  # type: ignore[arg-type]
+    assert OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect={})._can_reconnect  # type: ignore[arg-type]
+    # A spent budget means no reconnect is coming, so a failed audio chunk raises rather than dropping.
+    spent = OpenAIRealtimeConnection(FakeWebSocket([]), dial=dial, reconnect={'max_reconnects': 0})  # type: ignore[arg-type]
+    assert spent._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
+
+
 def test_openai_connection_does_not_restore_in_flight_state_on_reconnect() -> None:
     # OpenAI reconnects by replaying finalized history only, so the session settles the in-flight turn.
     conn = OpenAIRealtimeConnection(FakeWebSocket([]))  # type: ignore[arg-type]
@@ -3240,7 +3360,9 @@ async def test_response_done_settles_a_response_whose_id_was_never_announced() -
     await collect_codec_events(conn)
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
     await conn.send(CreateResponse())
-    assert ws.sent == ['{"type":"response.create","event_id":"pydantic_ai.response.0"}']
+    assert ws.sent == [
+        '{"type":"response.create","event_id":"pydantic_ai.response.0","response":{"metadata":{"pydantic_ai_inputs":"0"}}}'
+    ]
 
 
 def _refusal_frame(event_id: str | None) -> str:
@@ -3280,7 +3402,11 @@ async def test_refused_response_request_releases_the_connection() -> None:
     assert len(ws.sent) == 1
 
     assert await collect_codec_events(conn) == [InputRejected(0, refused='response'), _REFUSAL]
-    assert json.loads(ws.sent[-1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.1'}
+    assert json.loads(ws.sent[-1]) == {
+        'type': 'response.create',
+        'event_id': 'pydantic_ai.response.1',
+        'response': {'metadata': {'pydantic_ai_inputs': '1'}},
+    }
     assert conn._response_request_inputs == (1,)  # pyright: ignore[reportPrivateUsage]
 
 
@@ -3299,7 +3425,11 @@ async def test_refused_shared_response_request_reports_every_input_it_served() -
         await conn.send(CreateResponse())
 
     events = await collect_codec_events(conn)
-    assert json.loads(ws.sent[-1]) == {'type': 'response.create', 'event_id': 'pydantic_ai.response.1-2'}
+    assert json.loads(ws.sent[-1]) == {
+        'type': 'response.create',
+        'event_id': 'pydantic_ai.response.1-2',
+        'response': {'metadata': {'pydantic_ai_inputs': '1-2'}},
+    }
     assert events[-3:] == [InputRejected(1, refused='response'), InputRejected(2, refused='response'), _REFUSAL]
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
 
@@ -3353,7 +3483,9 @@ async def test_malformed_response_done_still_releases_the_response() -> None:
     assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
     # The session can speak again, rather than only ever deferring.
     await conn.send(CreateResponse())
-    assert ws.sent == ['{"type":"response.create","event_id":"pydantic_ai.response.0"}']
+    assert ws.sent == [
+        '{"type":"response.create","event_id":"pydantic_ai.response.0","response":{"metadata":{"pydantic_ai_inputs":"0"}}}'
+    ]
 
 
 async def test_reconnect_propagates_unexpected_dial_error() -> None:
@@ -3427,11 +3559,16 @@ async def test_truncate_resets_generated_audio_between_items() -> None:
 
 async def test_truncate_resets_generated_audio_between_responses() -> None:
     done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
-    ws = FakeWebSocket([_audio_delta('item_7', audio_bytes=480), done, _audio_delta('item_7', audio_bytes=240)])
+    ws = FakeWebSocket([_audio_delta('item_7', audio_bytes=480), done, _audio_delta('item_8', audio_bytes=240)])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     _ = [e async for e in conn]
     await conn.send(TruncateOutput(audio_end_ms=20))
-    assert json.loads(ws.sent[0])['audio_end_ms'] == 5
+    assert json.loads(ws.sent[0]) == {
+        'type': 'conversation.item.truncate',
+        'item_id': 'item_8',
+        'content_index': 0,
+        'audio_end_ms': 5,
+    }
 
 
 async def test_truncate_sideband_connection_does_not_clamp() -> None:
@@ -3531,17 +3668,61 @@ async def test_sideband_playback_end_retires_output_item() -> None:
         RealtimeOutputSpeechEndEvent(),
     ]
     await conn.send(TruncateOutput(audio_end_ms=800))
+    await conn.send(TruncateOutput(audio_end_ms=800, item_id='item_done'))
     assert ws.sent == []
 
 
-async def test_websocket_clear_active_response_retires_output_item() -> None:
-    """A connection that observes output audio retires the item on `response.done` as before."""
+async def test_sideband_truncate_names_an_earlier_item_with_its_content_index() -> None:
+    ws = FakeWebSocket([_content_part_added('item_a', content_index=1), _content_part_added('item_b')])
+    conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]
+    _ = await collect_codec_events(conn, sideband=True)
+    await conn.send(TruncateOutput(audio_end_ms=800, item_id='item_a'))
+    assert json.loads(ws.sent[0]) == {
+        'type': 'conversation.item.truncate',
+        'item_id': 'item_a',
+        'content_index': 1,
+        'audio_end_ms': 800,
+    }
+
+
+async def test_truncate_names_an_earlier_item_clamped_to_its_own_audio() -> None:
+    """A reply still being heard after a newer one was generated can be truncated by its item id."""
+    done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
+    ws = FakeWebSocket(
+        [_audio_delta('item_a', audio_bytes=4800), done, _audio_delta('item_b', content_index=1, audio_bytes=960)]
+    )
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=500, item_id='item_a'))
+    await conn.send(TruncateOutput(audio_end_ms=0, item_id='item_b'))
+    assert [json.loads(frame) for frame in ws.sent] == [
+        {'type': 'conversation.item.truncate', 'item_id': 'item_a', 'content_index': 0, 'audio_end_ms': 100},
+        {'type': 'conversation.item.truncate', 'item_id': 'item_b', 'content_index': 1, 'audio_end_ms': 0},
+    ]
+
+
+async def test_truncate_skips_an_item_the_connection_no_longer_tracks() -> None:
+    """Only the most recent items are kept; an older (or unknown) one can't still be playing."""
+    ws = FakeWebSocket([_audio_delta(f'item_{index}') for index in range(40)])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=10, item_id='item_0'))
+    await conn.send(TruncateOutput(audio_end_ms=10, item_id='unknown'))
+    assert ws.sent == []
+    await conn.send(TruncateOutput(audio_end_ms=10, item_id='item_39'))
+    assert json.loads(ws.sent[0])['item_id'] == 'item_39'
+
+
+async def test_websocket_clear_active_response_keeps_output_item_reachable_by_name() -> None:
+    """Over a WebSocket a finished item is no longer the current one, but a barge-in can still name it."""
     ws = FakeWebSocket([_audio_delta('item_ws')])
     conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
     _ = await collect_codec_events(conn)
     conn._clear_active_response()  # pyright: ignore[reportPrivateUsage]
     await conn.send(TruncateOutput(audio_end_ms=800))
     assert ws.sent == []
+    await conn.send(TruncateOutput(audio_end_ms=800, item_id='item_ws'))
+    assert json.loads(ws.sent[0])['item_id'] == 'item_ws'
 
 
 async def test_sideband_cancel_clears_playback_once() -> None:
@@ -3597,12 +3778,74 @@ async def test_truncate_without_current_item_is_noop() -> None:
     assert ws.sent == []
 
 
-async def test_response_done_resets_tracked_item() -> None:
+async def test_truncate_after_response_done_names_the_finished_item() -> None:
+    """Generation outruns playback, so a barge-in usually lands after `response.done`.
+
+    The finished reply's item is still the one being heard, so the truncation names it and is still
+    clamped to the audio it generated.
+    """
+    done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
+    ws = FakeWebSocket([_audio_delta('item_9', audio_bytes=4800), done])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=500, item_id='item_9'))
+    assert json.loads(ws.sent[0]) == {
+        'type': 'conversation.item.truncate',
+        'item_id': 'item_9',
+        'content_index': 0,
+        'audio_end_ms': 100,
+    }
+
+
+async def test_unnamed_truncate_after_response_done_leaves_a_finished_reply_alone() -> None:
+    """An unnamed truncate means the item being generated; a finished reply may have been heard in full.
+
+    With the next response started but no audio from it yet, `interrupt(played_ms=...)` only cancels.
+    """
+    done = json.dumps({'type': 'response.done', 'response': {'id': 'resp_a', 'status': 'completed', 'output': []}})
+    created = json.dumps({'type': 'response.created', 'response': {'id': 'resp_b'}})
+    created_a = json.dumps({'type': 'response.created', 'response': {'id': 'resp_a'}})
+    ws = FakeWebSocket([created_a, _audio_delta('item_a', audio_bytes=4800), done, created])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=0))
+    await conn.send(CancelResponse())
+    assert [json.loads(frame)['type'] for frame in ws.sent] == ['response.cancel']
+
+
+async def test_unnamed_truncates_after_a_turn_detection_cancel_send_nothing() -> None:
+    """The provider's own VAD cancelled the response: its item is no longer the current one."""
+    done = json.dumps(
+        {
+            'type': 'response.done',
+            'response': {
+                'status': 'cancelled',
+                'status_details': {'type': 'cancelled', 'reason': 'turn_detected'},
+                'output': [],
+            },
+        }
+    )
+    ws = FakeWebSocket([_audio_delta('item_a', audio_bytes=4800), done])
+    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    await conn.send(TruncateOutput(audio_end_ms=40))
+    await conn.send(TruncateOutput(audio_end_ms=60))
+    assert ws.sent == []
+
+
+async def test_reconnect_forgets_the_finished_output_item() -> None:
+    """A re-dialed socket holds none of the old one's items, so there is nothing left to truncate."""
     done = json.dumps({'type': 'response.done', 'response': {'status': 'completed', 'output': []}})
     ws = FakeWebSocket([_audio_delta('item_9'), done])
-    conn = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
-    _ = [e async for e in conn]  # delta sets the item, response.done clears it
+
+    async def dial() -> Any:
+        return ws
+
+    conn = OpenAIRealtimeConnection(ws, dial=dial, reconnect={'base_delay': 0.0})  # type: ignore[arg-type]
+    _ = [e async for e in conn]
+    assert await conn._attempt_reconnect() is True  # pyright: ignore[reportPrivateUsage]
     await conn.send(TruncateOutput(audio_end_ms=500))
+    await conn.send(TruncateOutput(audio_end_ms=500, item_id='item_9'))
     assert ws.sent == []
 
 
@@ -4188,6 +4431,165 @@ async def test_reconnect_without_a_session_does_not_replay(monkeypatch: pytest.M
 
     assert events[0] == RealtimeSessionReconnectEvent(state_restored=False)
     assert not [frame for frame in fresh.sent if 'conversation.item.create' in frame]
+
+
+class _DroppableWebSocket:
+    """A socket fed live: `drop()` closes it, after which sends raise like a closed `websockets` socket."""
+
+    close_code: int | None = 1006
+    close_reason: str = ''
+
+    def __init__(self) -> None:
+        self._inbox: asyncio.Queue[str | None] = asyncio.Queue()
+        for frame in (_created(), _updated()):
+            self._inbox.put_nowait(json.dumps(sdk_frame(json.loads(frame))))
+        self.sent: list[dict[str, Any]] = []
+        self.dropped = False
+
+    async def recv(self) -> Any:
+        return await self._inbox.get()
+
+    async def send(self, data: str) -> None:
+        if self.dropped:
+            raise rt_openai.websockets.ConnectionClosed(None, None)
+        self.sent.append(json.loads(data))
+
+    async def __aiter__(self) -> AsyncIterator[str]:
+        while (frame := await self._inbox.get()) is not None:
+            yield frame
+        raise rt_openai.websockets.ConnectionClosed(None, None)
+
+    def push(self, frame: dict[str, Any]) -> None:
+        self._inbox.put_nowait(json.dumps(sdk_frame(frame)))
+
+    def drop(self) -> None:
+        self.dropped = True
+        self._inbox.put_nowait(None)
+
+
+class _GatedConnectSequence:
+    """Hands out `sockets` in order; every dial after the first waits for `release`."""
+
+    def __init__(self, sockets: list[_DroppableWebSocket]) -> None:
+        self._sockets = list(sockets)
+        self._dials = 0
+        self.redialing = asyncio.Event()
+        self.release = asyncio.Event()
+
+    def __call__(self, url: str, *, additional_headers: dict[str, str] | None = None) -> _GatedConnectSequence:
+        return self
+
+    async def __aenter__(self) -> _DroppableWebSocket:
+        self._dials += 1
+        if self._dials > 1:
+            self.redialing.set()
+            await self.release.wait()
+        return self._sockets.pop(0)
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
+async def test_a_response_request_lost_to_a_drop_is_not_asked_for_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `response.create` that hit the dead socket never reached the server, so it isn't left active.
+
+    Left active, the reconnect would re-ask for it as an unstarted response, although the caller was
+    told the request failed.
+    """
+    first, second = _DroppableWebSocket(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        first.drop()
+        with pytest.raises(rt_openai.websockets.ConnectionClosed):
+            await conn.send(CreateResponse())
+        assert conn._response_active is False  # pyright: ignore[reportPrivateUsage]
+        connect.release.set()
+        async for event in conn:  # pragma: no branch
+            assert event == RealtimeSessionReconnectEvent(state_restored=False)
+            break
+
+    assert [frame['type'] for frame in second.sent] == ['session.update']
+
+
+async def test_a_deferred_response_request_the_receive_loop_fails_to_send_is_replayed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deferred `response.create` that the receive loop fails to send is still asked for after the reconnect.
+
+    Only a caller's own failed request is taken back (it was told it failed); the receive loop's has no
+    caller to tell, so the reply the second turn is waiting for must come from the new connection.
+    """
+    first, second = _DroppableWebSocket(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    connect.release.set()
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        await conn.send('first')  # asks for response A, now active
+        first.push({'type': 'response.created', 'response': {'id': 'A'}})
+        events = conn.__aiter__()
+        await conn.send('second')  # deferred behind A
+        first.dropped = True  # the link is dead for writes before A's terminal arrives
+        first.push(_response_done({'id': 'A', 'status': 'completed', 'output': []}))
+        first.drop()
+        async for event in events:  # pragma: no branch
+            assert isinstance(event, RealtimeSessionReconnectEvent)
+            break
+
+    assert [frame['type'] for frame in second.sent] == ['session.update', 'response.create']
+
+
+async def test_a_stale_response_request_failing_after_the_redial_keeps_the_replayed_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller's `response.create` that fails on the old socket after the re-dial doesn't clear the new socket's response.
+
+    The re-dial already re-asked for that response on the new socket; the caller's late failure is about
+    the old one, so marking no response active would let the next request start a second response.
+    """
+
+    class _SlowCreate(_DroppableWebSocket):
+        def __init__(self) -> None:
+            super().__init__()
+            self.gate = asyncio.Event()
+
+        async def send(self, data: str) -> None:
+            if json.loads(data)['type'] == 'response.create':
+                await self.gate.wait()
+            await super().send(data)
+
+    first, second = _SlowCreate(), _DroppableWebSocket()
+    connect = _GatedConnectSequence([first, second])
+    connect.release.set()
+    monkeypatch.setattr(rt_openai.websockets, 'connect', connect)
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1, 'jitter': False}},
+    )
+    async with _connect(model, 'be brief') as conn:
+        sender = asyncio.ensure_future(conn.send('hi'))  # its `response.create` is stuck on the old socket
+        await _settle()
+        first.drop()
+        async for event in conn:  # pragma: no branch
+            assert isinstance(event, RealtimeSessionReconnectEvent)
+            break
+        first.gate.set()
+        with pytest.raises(rt_openai.websockets.ConnectionClosed):
+            await sender
+        await conn.send(CreateResponse())  # the replayed response is still active, so this one waits
+
+    assert [frame['type'] for frame in second.sent].count('response.create') == 1
 
 
 @pytest.mark.anyio

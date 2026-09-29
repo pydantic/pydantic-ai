@@ -161,7 +161,7 @@ other shared message parts, including [`TextPart`][pydantic_ai.messages.TextPart
 [`ToolCallPart`][pydantic_ai.messages.ToolCallPart], and
 [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
-[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], inline deferred resolution
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], deferred calls and their resolution
 as [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
 [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], enqueued-message delivery
 as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as realtime
@@ -260,6 +260,8 @@ _FULL_PROFILE = RealtimeModelProfile(
 # 24 kHz PCM16 is about 14 MB. Transcript items are short strings, and dropping one silently corrupts
 # the text a user is reading, so they get a deep window for a trivial cost.
 _AUDIO_TAP_SECONDS = 300
+_MAX_TRUNCATABLE_AUDIO_ITEMS = 32
+"""How many recent assistant audio parts a barge-in can still truncate: far more than can be queued for playback."""
 # How long a user turn that barged in waits for the response it interrupted to be recorded, so it can
 # follow that response in history. The provider's terminal for a cut-off response normally arrives within
 # a second of the user starting to speak; past this, the turn is recorded where history stands instead of
@@ -926,6 +928,10 @@ class RealtimeSession:
         self._turn_audio_start_bytes = 0
         self._audio_part_index: int | None = None
         self._interrupted_audio_part_index: int | None = None
+        # Where each recent assistant audio part begins in the emitted audio, with its provider output
+        # item. Generation outruns playback, so the reply being heard is often not the last one
+        # generated: a barge-in truncates the item actually playing (and later ones, never heard, at 0).
+        self._audio_items: deque[tuple[int, str | None]] = deque(maxlen=_MAX_TRUNCATABLE_AUDIO_ITEMS)
         # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
         # turn so far and a renderer can replace rather than append.
         self._transcript_so_far: dict[int, str] = {}
@@ -1769,6 +1775,12 @@ class RealtimeSession:
         [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
         first (24 kHz on the OpenAI-protocol providers, 16 kHz on Gemini):
         raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
+
+        With a [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy, a chunk sent
+        while a dropped connection is being re-dialed is discarded rather than raised, so a microphone
+        task survives the reconnect. That includes a one-shot clip passed as a single chunk: resend it
+        after the
+        [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] if it matters.
         """
         self._require_media_ownership('send_audio')
         self._ensure_can_send()
@@ -1810,11 +1822,22 @@ class RealtimeSession:
                 self._input_audio.extend(data)
             self._audio_uncommitted = True
             await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
-        except BaseException:
+        except BaseException as e:
             self._user_turn_active = user_turn_was_active
             self._audio_uncommitted = audio_was_uncommitted
             if previous_length is not None and len(self._input_audio) == previous_length + len(data):
                 del self._input_audio[previous_length:]
+            if (
+                isinstance(e, RealtimeError)
+                and isinstance(e.__cause__, self._connection.transport_errors)
+                and self._connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+                and not (self._pump_finished or self._receive_ending)
+            ):
+                # The link dropped and the connection's reconnect policy is replacing it, with receiving
+                # still live to deliver it. A chunk of live audio is worthless once late, so it is dropped
+                # rather than raised: the capture loop outlives the reconnect instead of dying on it. Once
+                # the reconnect fails, the next chunk raises again.
+                return
             raise
 
     async def commit_audio(self) -> None:
@@ -1875,7 +1898,9 @@ class RealtimeSession:
         """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
 
         This is server-side only — it stops generation and (when a playback position is given) syncs
-        the provider's transcript to what was actually heard.
+        the provider's transcript to what was actually heard. Generation outruns playback, so the reply
+        being heard has often finished generating: the provider's copy is still truncated, while the
+        reply keeps its full transcript and `complete` state in history, which is append-only.
 
         With `played_ms`, the caller owns all playback accounting: flushing locally buffered
         playback is the caller's responsibility, and deciding whether to interrupt at all is too.
@@ -1932,7 +1957,9 @@ class RealtimeSession:
             frames.append(CancelResponse())
         if frames:
             await self._send_frame(*frames)
-        self._pending_interrupted_at_ms = played_ms
+        # Only a response still being generated records the position: a finished one keeps what history
+        # recorded, and the position must not land on the next one instead.
+        self._pending_interrupted_at_ms = played_ms if self._response_in_flight else None
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
@@ -1988,15 +2015,39 @@ class RealtimeSession:
             self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
             return True
         # A playhead still inside a previous turn's audio means none of the current turn was heard.
-        played_ms = max(0, playhead - self._turn_audio_start_bytes) * 1000 // (self.audio_output_sample_rate * 2)
+        played_ms = self._bytes_to_ms(playhead - self._turn_audio_start_bytes)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
-        await self._send_frame(
-            TruncateOutput(audio_end_ms=played_ms),
-            *([CancelResponse()] if cancel else []),
-        )
-        self._pending_interrupted_at_ms = played_ms
+        await self._send_frame(*self._truncations_at(playhead), *([CancelResponse()] if cancel else []))
+        # Only a response still being generated can record the position: history is append-only, so a
+        # finished one keeps what it recorded, and the position must not land on the next one instead.
+        self._pending_interrupted_at_ms = played_ms if self._response_in_flight else None
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
+
+    def _bytes_to_ms(self, audio_bytes: int) -> int:
+        """Milliseconds of output audio in `audio_bytes`; a negative span (a position before it) is 0."""
+        return max(0, audio_bytes) * 1000 // (self.audio_output_sample_rate * 2)
+
+    def _truncations_at(self, playhead: int) -> list[TruncateOutput]:
+        """Truncate every output item the listener didn't finish hearing at an emitted-audio playhead.
+
+        The item the playhead is inside is cut where playback stopped, and items generated after it,
+        never heard, at 0 — even when their replies have finished generating, since generation outruns
+        playback. An item the provider gave no id can only be truncated as its current item, the last.
+        """
+        items = list(self._audio_items)
+        ends = [start for start, _ in items[1:]] + [self._emitted_audio_bytes]
+        cuts = [
+            (item_id, self._bytes_to_ms(playhead - start))
+            for (start, item_id), end in zip(items, ends)
+            if end > playhead
+        ]
+        truncations = [
+            TruncateOutput(audio_end_ms=played_ms, item_id=item_id) for item_id, played_ms in cuts if item_id
+        ]
+        if cuts[-1][0] is None:
+            truncations.append(TruncateOutput(audio_end_ms=cuts[-1][1]))
+        return truncations
 
     def _flush_tap(self, tap: _AudioTap) -> None:
         """Discard the tap's buffered chunks, counting them as dropped for position mapping."""
@@ -2822,9 +2873,9 @@ class RealtimeSession:
                 if self._history[index] is anchor:
                     insert_at = index + 1
                     break
-            else:  # pragma: no cover
-                # An invariant fallback, like `_insert_tool_return`'s: nothing withdraws a message a user
-                # turn has already anchored to, but keep history complete rather than losing the turn.
+            else:
+                # The message a user turn anchored to can be withdrawn (a refused input taken back): keep
+                # history complete rather than losing the turn.
                 self._history.append(request)
                 return
         # Step over what already sits in the anchor's slot: an earlier response's tool returns, which must
@@ -3175,6 +3226,13 @@ class RealtimeSession:
                 return text
         return None
 
+    async def _announce_deferred_requests(self, requests: DeferredToolRequests) -> None:
+        """Surface a deferred call before a handler is asked to resolve it, as a run does.
+
+        So a consumer can relay the request — e.g. to a person a handler is awaiting — while it's pending.
+        """
+        self._queue_put(DeferredToolRequestsEvent(requests))
+
     async def _execute_tool(
         self,
         call_part: ToolCallPart,
@@ -3198,11 +3256,7 @@ class RealtimeSession:
             for prerequisite in execution_prerequisites:
                 await prerequisite.wait()
 
-        async def on_inline_deferred(
-            requests: DeferredToolRequests,
-            results: DeferredToolResults,
-        ) -> None:
-            self._queue_put(DeferredToolRequestsEvent(requests))
+        async def on_inline_deferred(requests: DeferredToolRequests, results: DeferredToolResults) -> None:
             self._queue_put(DeferredToolResultsEvent(results))
 
         try:
@@ -3233,6 +3287,7 @@ class RealtimeSession:
             tool_result = await tool_manager.handle_call(
                 call_part,
                 on_validate=on_validate,
+                on_deferred_requests=self._announce_deferred_requests,
                 on_inline_deferred=on_inline_deferred,
             )
         except ToolRetryError as e:
@@ -3807,6 +3862,10 @@ class RealtimeSession:
                         # everything before this offset belongs to earlier turns.
                         self._audio_part_index = event.index
                         self._turn_audio_start_bytes = self._emitted_audio_bytes
+                        item_id = (
+                            self._active_assistant_item_id if event.index == self._active_assistant_index else None
+                        )
+                        self._audio_items.append((self._emitted_audio_bytes, item_id))
                     self._emitted_audio_bytes += len(delta.audio_chunk)
                     for tap in self._audio_taps:
                         self._audio_tap_drops += tap.put(delta.audio_chunk)

@@ -385,8 +385,10 @@ repeated CLAI heading. Intermediate text is flushed when a tool-call part begins
 before the tool's arguments finish streaming. Incomplete lines within a text part
 still wait for a newline or part boundary, as in Code Puppy's Markdown path.
 
-Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Long names
-are truncated to one terminal row. Completion activity remains in the footer
+Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
+without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and
+muted compact-JSON values. Each value shows at most 40 characters by default; `/set display.tool_arg_chars 80`
+changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
 
 ## Grep previews

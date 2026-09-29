@@ -26,7 +26,7 @@ from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkfl
 from pydantic_ai_harness.shell import Shell
 from tests.harness.conftest import skip_temporal_sandbox_on_314
 
-pytestmark = skip_temporal_sandbox_on_314
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), skip_temporal_sandbox_on_314]
 
 
 async def test_completed_run_removes_cwd_state(tmp_path: Path) -> None:
