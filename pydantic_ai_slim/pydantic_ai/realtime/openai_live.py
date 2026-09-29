@@ -1130,15 +1130,19 @@ def _check_seeded_history(expected: list[dict[str, Any]], started: SessionStarte
     Live takes history only when a session starts, which on a WebRTC call is the offer. A sideband opened
     with other history would record a conversation the model never saw, so it raises rather than attach.
     """
-    seeded = [(item.role, [part.text for part in item.content]) for item in started.session.input or []]
-    wanted = [(item['role'], [part['text'] for part in item['content']]) for item in expected]
+    # Compared with whitespace collapsed: what matters is that it is the same conversation, and a false
+    # mismatch would leave the call running with nothing to run its tools.
+    seeded = [
+        (item.role, [' '.join(part.text.split()) for part in item.content]) for item in started.session.input or []
+    ]
+    wanted = [(item['role'], [' '.join(part['text'].split()) for part in item['content']]) for item in expected]
     if seeded == wanted:
         return
     raise UserError(
         'An OpenAI GPT-Live session takes its history when it starts, which on a WebRTC call is when '
         '`answer_webrtc_offer()` starts it, so the sideband must be opened with the same `message_history`. '
         'Bind the history once with `agent.realtime(model, message_history=...)` and use that for both the '
-        'offer and the session.'
+        'offer and the session, or pass the same history to `answer_webrtc_offer()` and `connect_webrtc()`.'
     )
 
 

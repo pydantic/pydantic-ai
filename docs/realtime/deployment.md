@@ -73,9 +73,9 @@ short-lived credential for client-led negotiation. Either way the browser is a p
 session and can send provider-native control events, so authorize every server-side tool against
 trusted [`deps`](../dependencies.md), not session instructions supplied to the model.
 
-To continue an earlier conversation, bind it with `agent.realtime(model, message_history=...)` and
-answer the offer and open the sideband from that same object: the call starts from that history on
-every provider.
+To continue an earlier conversation, create the `AgentRealtime` per call inside the offer handler,
+`realtime = agent.realtime(model, message_history=...)`, and answer the offer and open the sideband from
+that same object: the call picks up that history on every provider once the sideband attaches.
 
 !!! warning "The browser can read seeded history"
     Seeding a WebRTC call with [`message_history`](history.md) sends those prior turns into the

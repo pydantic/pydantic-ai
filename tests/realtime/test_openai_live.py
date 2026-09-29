@@ -2236,6 +2236,22 @@ async def test_a_sideband_opened_with_the_offers_history_seeds_nothing(model: Op
     assert ws.sent == []
 
 
+async def test_a_sideband_accepts_history_live_echoes_with_other_whitespace(model: OpenAILiveModel) -> None:
+    """The check is that it is the same conversation, so whitespace Live might normalize doesn't fail a call."""
+    echoed = [
+        {'role': 'user', 'content': [{'type': 'input_text', 'text': 'My name  is\nAda.'}]},
+        _SEEDED_INPUT[1],
+    ]
+    with _patched_connect(_FakeWebSocket([_started_frame(input=echoed)])):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=_HISTORY,
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass
+
+
 @pytest.mark.parametrize(
     'started_input',
     [
