@@ -860,11 +860,47 @@ class TestMarkdownConverter:
         html = '<div>' * 30 + f'<{tag} {attribute}="{value}"></{tag}>' + '</div>' * 30
         assert _convert_html(html)[1] == ''
 
-    @pytest.mark.parametrize('source', ['text', 'link'])
-    def test_deep_text_scan_is_bounded(self, source: str):
+    @pytest.mark.parametrize('element', ['<source src="{value}">', '<a href="{value}"></a>'])
+    def test_unused_output_attribute_is_not_overcharged(self, element: str):
+        """An orphan source or empty link does not include its URL in Markdown."""
+        html = '<div>' * 300 + element.format(value='x' * 18_000_000) + '</div>' * 300
+        assert _convert_html(html)[1] == ''
+
+    @pytest.mark.parametrize('container', ['<table><tr><td>{content}</td></tr></table>', '<h2>{content}</h2>'])
+    def test_inline_indentation_is_not_overcharged(self, container: str):
+        """Blockquotes inside inline cells and headings do not indent their lines."""
+        content = '<blockquote>' * 15 + 'x\n' * 300_000 + '</blockquote>' * 15
+        html = container.format(content=content)
+        assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
+
+    def test_shallow_table_colspan_is_bounded(self):
+        """A small table can generate millions of cell and header separators."""
+        html = '<table><tr>' + '<td colspan="1000">x</td>' * 3000 + '</tr></table>'
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+
+    def test_small_table_colspan_converts(self):
+        """Small decimal colspans retain the converter's output."""
+        html = '<table><tr><td colspan="002">x</td></tr></table>'
+        assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
+
+    def test_anchor_in_code_does_not_use_href(self):
+        """A link inside code keeps only its text, even when deeply nested."""
+        html = '<div>' * 300 + '<code><a href="' + 'x' * 18_000_000 + '">link</a></code>' + '</div>' * 300
+        assert _convert_html(html)[1] == '`link`'
+
+    @pytest.mark.parametrize(
+        'template',
+        [
+            pytest.param('{value}', id='text'),
+            pytest.param('<a href="{value}">link</a>', id='link'),
+            pytest.param('<video src="{value}"></video>', id='video'),
+            pytest.param('<video><source src="{value}"></video>', id='video-source'),
+        ],
+    )
+    def test_deep_text_scan_is_bounded(self, template: str):
         """Large output text copied through hundreds of ancestors has a separate work bound."""
-        value = 'x' * 18_000_000
-        content = value if source == 'text' else f'<a href="{value}">link</a>'
+        content = template.format(value='x' * 18_000_000)
         html = '<div>' * 300 + content + '</div>' * 300
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
