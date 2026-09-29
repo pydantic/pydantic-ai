@@ -3,10 +3,10 @@ revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.15' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version >= '3.13' and python_full_version < '3.15' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
     "python_full_version >= '3.15' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
-    "python_full_version >= '3.13' and python_full_version < '3.15' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
     "python_full_version >= '3.15' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
+    "python_full_version >= '3.13' and python_full_version < '3.15' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
+    "python_full_version >= '3.13' and python_full_version < '3.15' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
     "python_full_version >= '3.13' and python_full_version < '3.15' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
     "python_full_version == '3.12.*' and extra != 'extra-16-pydantic-ai-slim-huggingface' and extra == 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
     "python_full_version == '3.12.*' and extra == 'extra-16-pydantic-ai-slim-huggingface' and extra != 'extra-16-pydantic-ai-slim-outlines-vllm-offline'",
@@ -7508,7 +7508,7 @@ requires-dist = [
     { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.6.1,<1" },
     { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=3.3.0,<4" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<4" },
-    { name = "genai-prices", specifier = ">=0.0.62" },
+    { name = "genai-prices", specifier = ">=0.0.62,<0.1" },
     { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.70.0" },
     { name = "griffelib", specifier = ">=2.0" },
