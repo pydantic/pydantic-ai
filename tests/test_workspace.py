@@ -959,6 +959,49 @@ async def test_setup_failure_runs_every_run_capability_error_hook_without_worksp
     assert set(cleaned) == {'first', 'second', 'deferred'}
 
 
+async def test_setup_failure_finishes_cleanup_under_anyio_cancellation() -> None:
+    cleaned: list[str] = []
+
+    class Cleanup(AbstractCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            await anyio.sleep_forever()
+            raise AssertionError('for_run must not finish')
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            cleaned.append('started')
+            await anyio.sleep(0)
+            cleaned.append('finished')
+            raise error
+
+    with anyio.move_on_after(0.01) as scope:
+        await Agent(TestModel(), capabilities=[Cleanup()]).run('go')
+
+    assert scope.cancel_called
+    assert cleaned == ['started', 'finished']
+
+
+async def test_setup_failure_exposes_capabilities_to_cleanup_hook() -> None:
+    observed: list[bool] = []
+
+    class Cleanup(AbstractCapability[object]):
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            observed.append(ctx.capabilities.get('cleanup') is self and 'fails' in ctx.capabilities)
+            raise error
+
+    class Fails(AbstractCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            raise RuntimeError('capability setup failed')
+
+    cleanup = Cleanup()
+    cleanup.id = 'cleanup'
+    failing = Fails()
+    failing.id = 'fails'
+    with pytest.raises(RuntimeError, match='capability setup failed'):
+        await Agent(TestModel(), capabilities=[cleanup, failing]).run('go')
+
+    assert observed == [True]
+
+
 @pytest.mark.parametrize('dynamic', [False, True])
 async def test_setup_failure_calls_on_run_error_on_resolved_capability(dynamic: bool) -> None:
     cleaned: list[str] = []

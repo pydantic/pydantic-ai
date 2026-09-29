@@ -241,11 +241,15 @@ async def _run_setup_error_hook(
     # must all get a chance to clean up setup side effects.
     run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
     run_ctx.root_capability = run_capability
+    if not run_ctx.capabilities:
+        # A failed `for_run` may leave duplicate ids in the partial tree; cleanup still needs
+        # the public registry without replacing the setup error with an id validation error.
+        run_ctx.capabilities = _build_run_capabilities(run_capability, validate_ids=False)
     _prepare_run_capability_context(run_capability, run_ctx)
     # There is no run result to recover here, so preserve the setup error if the hook returns.
     setup_traceback = error.__traceback__
     try:
-        with setup_error_dispatch_scope(run_ctx):
+        with anyio.CancelScope(shield=True), setup_error_dispatch_scope(run_ctx):
             await run_capability.on_run_error(run_ctx, error=error)
     except BaseException as hook_error:
         if hook_error is error:
@@ -4876,7 +4880,9 @@ def _layer_model_settings(
     return merged
 
 
-def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[str, AbstractCapability[AgentDepsT]]:
+def _build_run_capabilities(
+    capability: AbstractCapability[AgentDepsT], *, validate_ids: bool = True
+) -> dict[str, AbstractCapability[AgentDepsT]]:
     capabilities: list[AbstractCapability[AgentDepsT]] = []
     capability.apply(capabilities.append)
 
@@ -4884,7 +4890,11 @@ def _build_run_capabilities(capability: AbstractCapability[AgentDepsT]) -> dict[
     # survives to here is one no `combine` accepted. Still needed at run time, not just at
     # construction: `defer_loading` and `id` can be set after the agent was built, and `for_run` may
     # hand back a capability carrying neither of the values construction saw.
-    explicit_ids = _validate_capability_ids(capabilities)
+    explicit_ids = (
+        _validate_capability_ids(capabilities)
+        if validate_ids
+        else {cap.id for cap in capabilities if cap.id is not None}
+    )
 
     by_id: dict[str, AbstractCapability[AgentDepsT]] = {}
     for cap in capabilities:
