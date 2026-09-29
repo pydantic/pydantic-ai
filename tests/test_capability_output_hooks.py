@@ -5,6 +5,7 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
@@ -289,7 +290,8 @@ class TestOnOutputValidateError:
             ]
         )
 
-    async def test_union_member_error_hook_preserves_error_details(self):
+    @pytest.mark.parametrize('invalid_name', ['invalid', '{{reason}}'])
+    async def test_union_member_error_hook_preserves_error_details(self, invalid_name: str):
         """The error hook sees member errors with their original context and documentation URL."""
 
         class ErrorMember(BaseModel):
@@ -299,8 +301,11 @@ class TestOnOutputValidateError:
             @field_validator('name')
             @classmethod
             def validate_name(cls, value: str) -> str:
-                if value == 'invalid':
-                    raise PydanticCustomError('invalid_name', 'Invalid name: {reason}', {'reason': 'reserved'})
+                if value != 'valid':
+                    context: dict[str, str] = {'reason': value}
+                    if value == '{{reason}}':
+                        context['_pydantic_ai_message'] = 'original'
+                    raise PydanticCustomError('invalid_name', 'Invalid name: {reason}', context)
                 return value
 
         call_count = 0
@@ -308,10 +313,12 @@ class TestOnOutputValidateError:
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             nonlocal call_count
             call_count += 1
+            data: dict[str, int | str]
             if call_count == 1:
-                text = '{"result": {"kind": "ErrorMember", "data": {"value": 3, "name": "invalid"}}}'
+                data = {'value': 3, 'name': invalid_name}
             else:
-                text = '{"result": {"kind": "ErrorMember", "data": {"value": 6, "name": "valid"}}}'
+                data = {'value': 6, 'name': 'valid'}
+            text = json.dumps({'result': {'kind': 'ErrorMember', 'data': data}})
             return ModelResponse(parts=[TextPart(content=text)])
 
         errors_seen: list[ErrorDetails] = []
@@ -330,15 +337,31 @@ class TestOnOutputValidateError:
             raise error
 
         with pytest.raises(ValidationError) as exc_info:
-            ErrorMember.model_validate({'value': 3, 'name': 'invalid'})
-        expected_errors = [{**item, 'loc': ('result', 'data', *item['loc'])} for item in exc_info.value.errors()]
+            ErrorMember.model_validate({'value': 3, 'name': invalid_name})
+        expected_errors = exc_info.value.errors()
 
         agent = Agent(
             FunctionModel(model_fn), output_type=PromptedOutput([ErrorMember, MyOutput]), capabilities=[hooks]
         )
         result = await agent.run('hello')
 
-        assert errors_seen == expected_errors
+        if invalid_name == '{{reason}}':
+            for actual, expected in zip(errors_seen, expected_errors, strict=True):
+                assert actual['loc'] == ('result', 'data', *expected['loc'])
+                assert actual['type'] == expected['type']
+                assert actual['msg'] == expected['msg']
+                assert actual['input'] == expected['input']
+                assert actual.get('url') == expected.get('url')
+                actual_context = actual.get('ctx')
+                expected_context = expected.get('ctx')
+                assert actual_context is not None
+                assert expected_context is not None
+                for key, value in expected_context.items():
+                    assert key in actual_context
+                    assert actual_context[key] == value
+                assert len(actual_context) <= len(expected_context) + 1
+        else:
+            assert errors_seen == [{**item, 'loc': ('result', 'data', *item['loc'])} for item in expected_errors]
         assert result.output == ErrorMember(value=6, name='valid')
         assert call_count == 2
 

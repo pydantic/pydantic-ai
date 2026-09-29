@@ -9,7 +9,7 @@ from types import NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
 
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
-from pydantic_core import PydanticCustomError, SchemaValidator
+from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator
 from typing_extensions import Self, TypedDict, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
@@ -1248,26 +1248,44 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         except ValidationError as e:
             # Re-root member errors under the envelope path so retry feedback matches what the
             # model sent; shallow locs would have their input stripped when the retry prompt is rendered.
+            errors: list[InitErrorDetails] = []
+            for error in e.errors():
+                loc = ('result', 'data', *error['loc'])
+                error_context = error.get('ctx')
+                if 'url' in error:
+                    error_type: str | PydanticCustomError = error['type']
+                else:
+                    custom_error = PydanticCustomError(
+                        error['type'],  # pyright: ignore[reportArgumentType]
+                        error['msg'],  # pyright: ignore[reportArgumentType]
+                        error_context,
+                    )
+                    if custom_error.message() != error['msg']:
+                        # Keep the rendered message exact when it contains placeholders also present in its context.
+                        error_context = dict(error_context) if error_context is not None else {}
+                        message_key = '_pydantic_ai_message'
+                        while message_key in error_context:
+                            message_key += '_'
+                        error_context[message_key] = error['msg']
+                        custom_error = PydanticCustomError(
+                            error['type'],  # pyright: ignore[reportArgumentType]
+                            f'{{{message_key}}}',
+                            error_context,
+                        )
+                    error_type = custom_error
+
+                error_details: InitErrorDetails = {
+                    'type': error_type,
+                    'loc': loc,
+                    'input': error['input'],
+                }
+                if error_context is not None:
+                    error_details['ctx'] = error_context
+                errors.append(error_details)
+
             raise ValidationError.from_exception_data(
                 e.title,
-                [
-                    {
-                        'type': (
-                            error['type']
-                            if 'url' in error
-                            else PydanticCustomError(
-                                # Runtime strings from the original error details are not the `LiteralString` the signature asks for.
-                                error['type'],  # pyright: ignore[reportArgumentType]
-                                error['msg'],  # pyright: ignore[reportArgumentType]
-                                error.get('ctx'),
-                            )
-                        ),
-                        'loc': ('result', 'data', *error['loc']),
-                        'input': error['input'],
-                        **({'ctx': error['ctx']} if 'ctx' in error else {}),
-                    }
-                    for error in e.errors()
-                ],
+                errors,
             ) from e
         # Unwrap to semantic here so the wrapper's `data` is always what hooks / callers
         # expect — e.g. a `MyModel` instance or an `int`, not `{'response': 42}`.
