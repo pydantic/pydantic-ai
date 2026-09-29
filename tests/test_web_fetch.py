@@ -825,6 +825,21 @@ class TestMarkdownConverter:
         html = f'<ol start="{start}"><li>x</li><li></li></ol>'
         assert _convert_html(html)[1] == f'{start}. x'
 
+    def test_empty_ordered_list_does_not_parse_start(self):
+        """An empty item never needs an expensive numeric start attribute."""
+
+        class UnparsedStart(str):
+            def isdecimal(self) -> bool:
+                raise AssertionError('empty list start was parsed')
+
+        html = '<ol><li></li></ol>'
+        soup = BeautifulSoup(html, 'html.parser')
+        ordered_list = soup.ol
+        assert ordered_list is not None
+        ordered_list['start'] = UnparsedStart('9' * 100_000)
+        with patch('pydantic_ai.common_tools.web_fetch.BeautifulSoup', return_value=soup):
+            assert _convert_html(html)[1] == ''
+
     def test_ordered_list_start_is_scanned_once(self):
         """A shared invalid start attribute is parsed once for the whole list."""
         scans = 0

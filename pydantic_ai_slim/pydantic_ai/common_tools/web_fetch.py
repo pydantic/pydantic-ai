@@ -224,19 +224,6 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             depth += 1
             if node.name == 'li' or (node.name in ('blockquote', 'dd') and not inline):
                 indent_depth += 1
-                if node.name == 'li' and isinstance(node.parent, Tag) and node.parent.name == 'ol':
-                    parent_id = id(node.parent)
-                    if parent_id not in converter.ordered_list_starts:
-                        start_attr = node.parent.get('start')
-                        start = 1
-                        if isinstance(start_attr, str) and start_attr.isdecimal():
-                            try:
-                                start = int(start_attr)
-                            except ValueError:
-                                # Python limits decimal integer conversion length independently of HTML size.
-                                pass
-                        converter.ordered_list_starts[parent_id] = start
-                    # `convert_li` bounds the actual marker before indenting lines.
                 indent_width += 4
             # A tag can emit line breaks even without any text children (for example, `<br>`).
             cost += indent_width + indent_depth
@@ -555,6 +542,17 @@ class _MarkdownConverter(MarkdownConverter):
         text = (text or '').strip()
         if not text:
             return '\n'
+        parent_id = id(parent)
+        if parent_id not in self.ordered_list_starts:
+            start_attr = parent.get('start')
+            start = 1
+            if isinstance(start_attr, str) and start_attr.isdecimal():
+                try:
+                    start = int(start_attr)
+                except ValueError:
+                    # Python limits decimal integer conversion length independently of HTML size.
+                    pass
+            self.ordered_list_starts[parent_id] = start
         if id(el) not in self._ol_indexes:
             # Upstream counts each item's previous siblings, which is quadratic per list; index
             # the list once instead.
@@ -563,7 +561,7 @@ class _MarkdownConverter(MarkdownConverter):
                 if isinstance(child, Tag) and child.name == 'li':
                     self._ol_indexes[id(child)] = index
                     index += 1
-        start = self.ordered_list_starts[id(parent)]
+        start = self.ordered_list_starts[parent_id]
         try:
             bullet = f'{start + self._ol_indexes[id(el)]}. '
         except ValueError:
