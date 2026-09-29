@@ -19,7 +19,7 @@ pip/uv-add "pydantic-ai-slim[openai-realtime]"
 ```
 
 Set `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY` as for the
-[Azure AI Foundry provider](../models/openai.md#azure-ai-foundry). Use the `azure:` prefix followed
+[Microsoft Azure / Foundry provider](../models/azure.md). Use the `azure:` prefix followed
 by your Azure deployment name:
 
 ```python
@@ -67,8 +67,10 @@ realtime counterpart of [model run settings](../agent.md#model-run-settings) —
 - `openai_turn_detection` for server or semantic VAD (see [turn detection](turns.md#automatic-turn-detection));
 - `openai_truncation` for session context management.
 
-See [OpenAI settings](openai.md#gpt-realtime-settings) for the shared settings. Azure realtime does not
-expose `temperature` through Pydantic AI.
+See [OpenAI settings](openai.md#gpt-realtime-settings) for the shared settings. The GA realtime API has
+no `temperature`; on Voice Live, use
+[`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
+(see [Azure AI Voice Live](#azure-ai-voice-live)).
 
 ### Input transcription deployment
 
@@ -191,8 +193,39 @@ Voice Live defaults input transcription to `whisper-1` when the deployment name 
 `gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
 `input_transcription_model` explicitly when that is not the intended deployment.
 
-Voice Live silently ignores the inherited `openai_*` settings plus `thinking` and
-`parallel_tool_calls`. Use Voice-Live-specific settings where available.
+Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_reduction` as on GA,
+adapting them to the model: for example, semantic VAD on a
+[cascade model][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade] uses
+Voice Live's own semantic VAD. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
+sets the sampling temperature. Voice Live ignores `openai_output_speed`, `openai_truncation`, and
+`parallel_tool_calls`.
+
+### Voices
+
+Cascade models (and `phi4-mm-realtime`) speak only through Azure text-to-speech voices: they reject
+`openai_voice` with `Only Azure voice is supported`, which fails the session as it starts. Choose their
+voice with
+[`azure_voice_live_voice`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_voice],
+either a standard voice name or an
+[`AzureVoiceLiveVoice`][pydantic_ai.realtime.azure.AzureVoiceLiveVoice] for a custom, personal, or
+`azure-realtime-native` voice, or to tune its rate, pitch, or style:
+
+```python
+from pydantic_ai.realtime.azure import AzureRealtimeModelSettings, AzureVoiceLiveVoice
+
+standard_voice = AzureRealtimeModelSettings(azure_voice_live_voice='en-US-AvaMultilingualNeural')
+tuned_hd_voice = AzureRealtimeModelSettings(
+    azure_voice_live_voice=AzureVoiceLiveVoice(
+        type='azure-standard', name='en-US-Ava:DragonHDLatestNeural', temperature=0.8, rate='1.1'
+    )
+)
+```
+
+Native-audio models like `gpt-realtime` accept both an Azure voice and `openai_voice`;
+`azure_voice_live_voice` takes precedence when both are set. Without either, Voice Live uses the model's
+default voice. See Microsoft's
+[voice reference](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to#audio-output-through-azure-text-to-speech)
+for the available voices and fields.
 
 ### Which models use which API
 
