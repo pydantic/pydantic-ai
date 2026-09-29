@@ -309,21 +309,32 @@ class _ContinuationStreamedResponse(StreamedResponse):
         falling back to another model. No events are consumed, so nothing the consumer hasn't seen
         is reflected in `get()`.
 
+        When the stream resumes a suspended response, the first segment is its continuation: the
+        provider's requested delay is waited out first, and a failure to open it cancels the
+        server-side job, as it would once iteration had started.
+
         Must be awaited in the task that consumes the stream: the segment's `model.request_stream(...)`
-        context is exited by the task that iterates it. A no-op once iteration has started, or when
-        the stream resumes a suspended response, whose first segment is a continuation.
+        context is exited by the task that iterates it. A no-op once iteration has started.
         """
         if self._event_iterator is not None or self._primed_segment is not None:
             return
-        if self.initial_suspended_response is not None:
-            return
+        messages = self.base_messages
+        if (seed := self.initial_suspended_response) is not None:
+            if delay := self.model.continuation_delay(seed):
+                await self.sleep_func(delay)
+            messages = [*self.base_messages, seed]
         stack = AsyncExitStack()
-        with self.segment_context():
-            sub = await stack.enter_async_context(
-                self.model.request_stream(
-                    self.base_messages, self.model_settings, self.model_request_parameters, self.run_context
+        try:
+            with self.segment_context():
+                sub = await stack.enter_async_context(
+                    self.model.request_stream(
+                        messages, self.model_settings, self.model_request_parameters, self.run_context
+                    )
                 )
-            )
+        except BaseException:
+            if seed is not None:
+                await cancel_suspended_job(self.model, seed)
+            raise
         self._primed_segment = (stack, sub)
 
     async def release_primed_segment(self) -> None:
@@ -452,7 +463,8 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     accumulate_count, replace_count = self._count_continuation(
                         response, last_mode, accumulate_count, replace_count
                     )
-                    if delay := self.model.continuation_delay(response):
+                    # A primed first segment already waited out the delay before it was opened.
+                    if self._primed_segment is None and (delay := self.model.continuation_delay(response)):
                         await self.sleep_func(delay)
                         # A `cancel()`/`close_stream()` from another task during the inter-poll sleep
                         # already tore down the server-side job; don't open the next sub-stream, which

@@ -26,7 +26,9 @@ from .._fallback import (
     FallbackPredicates,
     ResponseHandler,
     ResponseRejected,
+    continuation_pin,
     raise_fallback_exception_group,
+    stamp_continuation_pin,
 )
 from .._genai_prices import fill_response_cost
 from ..exceptions import ModelAPIError
@@ -49,7 +51,6 @@ if TYPE_CHECKING:
 __all__ = 'FallbackModel', 'FallbackOn', 'ExceptionHandler', 'ResponseHandler', 'ResponseRejected'
 
 _PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
-_FALLBACK_MODEL_ID_KEY = 'fallback_model_id'
 # Must match `_continuation._REPLACE_PREVIOUS_RESPONSE_KEY`: the merge module reads this exact key
 # (under `__pydantic_ai__`) to fold a post-rewind response as a replace. Duplicated as a literal rather
 # than imported because that constant is module-private (importing it trips `reportPrivateUsage`).
@@ -401,8 +402,7 @@ class FallbackModel(Model):
 
     def _pinned_continuation_model(self, response: ModelResponse) -> Model | None:
         """Resolve the underlying model pinned to this continuation from its routing metadata."""
-        pydantic_ai_meta = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
-        if model_id := pydantic_ai_meta.get(_FALLBACK_MODEL_ID_KEY):
+        if model_id := continuation_pin(response):
             return next((m for m in self.models if m.model_id == model_id), None)
         return None
 
@@ -433,15 +433,8 @@ class FallbackModel(Model):
 
 
 def _stamp_continuation(response: ModelResponse | StreamedResponse, model: Model) -> None:
-    """Stamp the model's identifier into metadata for stateless continuation routing.
-
-    Uses `metadata['__pydantic_ai__']` to avoid conflating framework-level routing state
-    with provider-specific data in `provider_details`.
-    """
-    if response.metadata is None:
-        response.metadata = {}
-    pydantic_ai_meta = response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})
-    pydantic_ai_meta[_FALLBACK_MODEL_ID_KEY] = model.model_id
+    """Stamp the model's identifier into metadata for stateless continuation routing."""
+    stamp_continuation_pin(response, model.model_id)
 
 
 def _stamp_replace_previous(response: ModelResponse | StreamedResponse) -> None:

@@ -3707,9 +3707,10 @@ async def test_prefect_durability_allows_instrumented_default_model() -> None:
 
 def test_prefect_durability_get_ordering() -> None:
     """PrefectDurability declares innermost ordering."""
+    from pydantic_ai.capabilities import Fallback
     from pydantic_ai.capabilities.abstract import CapabilityOrdering
 
-    assert PrefectDurability().get_ordering() == CapabilityOrdering(position='innermost')
+    assert PrefectDurability().get_ordering() == CapabilityOrdering(position='innermost', wrapped_by=(Fallback,))
 
 
 def test_prefect_durability_get_serialization_name() -> None:

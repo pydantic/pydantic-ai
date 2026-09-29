@@ -370,10 +370,24 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         model: AgentModel[AgentDepsT] | None = None
+        default: AgentModel[AgentDepsT] | None = None
         for capability in self.capabilities:
             if capability.defer_loading is not True and (capability_model := capability.get_model()) is not None:
-                model = capability_model
-        return model
+                if capability._model_is_default():
+                    default = capability_model
+                else:
+                    model = capability_model
+        return model if model is not None else default
+
+    def _model_is_default(self) -> bool:
+        return any(
+            capability.defer_loading is not True and capability.get_model() is not None
+            for capability in self.capabilities
+        ) and all(
+            capability._model_is_default()
+            for capability in self.capabilities
+            if capability.defer_loading is not True and capability.get_model() is not None
+        )
 
     @property
     def has_resolve_model_id(self) -> bool:

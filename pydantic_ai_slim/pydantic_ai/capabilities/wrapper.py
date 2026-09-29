@@ -234,6 +234,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         return self.wrapped.get_model()
 
+    def _model_is_default(self) -> bool:
+        return self.wrapped._model_is_default()
+
     @property
     def has_resolve_model_id(self) -> bool:
         return (

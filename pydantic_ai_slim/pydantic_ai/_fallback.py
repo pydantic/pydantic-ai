@@ -26,7 +26,31 @@ __all__ = (
     'FallbackPredicates',
     'ResponseRejected',
     'raise_fallback_exception_group',
+    'stamp_continuation_pin',
+    'continuation_pin',
 )
+
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_FALLBACK_MODEL_ID_KEY = 'fallback_model_id'
+
+
+def stamp_continuation_pin(response: Any, model_id: str) -> None:
+    """Record which fallback candidate produced a suspended response, so its continuation goes back to it.
+
+    Stored in `metadata['__pydantic_ai__']` to keep framework routing state apart from provider data.
+    `response` is a `ModelResponse` or a `StreamedResponse`, whose metadata ends up on the response.
+    """
+    if response.metadata is None:
+        response.metadata = {}
+    response.metadata.setdefault(_PYDANTIC_AI_METADATA_KEY, {})[_FALLBACK_MODEL_ID_KEY] = model_id
+
+
+def continuation_pin(response: ModelResponse) -> str | None:
+    """The candidate a suspended response was pinned to by `stamp_continuation_pin`, if any."""
+    pydantic_ai_meta = (response.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY, {})
+    model_id = pydantic_ai_meta.get(_FALLBACK_MODEL_ID_KEY) if isinstance(pydantic_ai_meta, dict) else None
+    return model_id if isinstance(model_id, str) else None
+
 
 ExceptionHandler = Callable[[Exception], Awaitable[bool]] | Callable[[Exception], bool]
 """A sync or async callable that decides whether an exception should trigger fallback."""

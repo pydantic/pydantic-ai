@@ -356,6 +356,8 @@ class _AttemptBaseline:
     messages: list[_messages.ModelMessage]
     model_settings: ModelSettings | None
     model_request_parameters: models.ModelRequestParameters
+    request_counted: bool = False
+    """Whether the step's request has been counted in `usage.requests`, which happens once per step."""
 
     @classmethod
     def capture(cls, request_context: ModelRequestContext) -> _AttemptBaseline:
@@ -364,6 +366,20 @@ class _AttemptBaseline:
             model_settings=request_context.model_settings,
             model_request_parameters=request_context.model_request_parameters,
         )
+
+    def rewind_suspended(self) -> None:
+        """Drop the suspended response a resumed step would continue, so the next attempt starts over.
+
+        A resumed step's first attempt continues the provider-side job of a suspended response. Once
+        that attempt has failed (which cancels the job) or its continuation was rejected, there is
+        nothing left to continue: the next attempt generates the turn afresh from the history before it.
+        """
+        if (
+            self.messages
+            and isinstance(last := self.messages[-1], _messages.ModelResponse)
+            and last.state == 'suspended'
+        ):
+            self.messages.pop()
 
     def restore(self, request_context: ModelRequestContext) -> None:
         # Fresh containers, so a hook that edits the settings or parameters in place for one attempt
@@ -1809,16 +1825,23 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             baseline.restore(request_context)
             state.response = None
             state.usage_recorded = False
-            request_context = await self._prepare_attempt(ctx, run_context, request_context)
+            try:
+                request_context = await self._prepare_attempt(ctx, run_context, request_context, baseline)
+            except exceptions.RetryModelRequest as retry:
+                # A `prepare_model_request` hook asked for another model before this attempt was sent.
+                await self._start_next_attempt(ctx, request_context, retry)
+                continue
             capture_model_request_span_context(request_context)
-            if request_context.attempt == 1:
+            if not baseline.request_counted:
                 # One request step, however many attempts it takes: `usage.requests` counts steps, so
                 # `UsageLimits.request_limit` bounds the agent loop rather than how many models a
                 # fallback chain tried.
                 _usage_attribution.record_request(ctx.state.usage)
+                baseline.request_counted = True
             try:
                 return await self._request_attempt(ctx, run_context, request_context, state)
             except exceptions.RetryModelRequest as retry:
+                baseline.rewind_suspended()
                 await self._start_next_attempt(ctx, request_context, retry)
 
     async def _request_attempt(
@@ -2122,6 +2145,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
+        baseline: _AttemptBaseline,
     ) -> ModelRequestContext:
         """Prepare one attempt at the request for the model that is about to serve it.
 
@@ -2145,7 +2169,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         run_context.model_settings = model_settings
 
-        if self._resume_suspended is None:
+        # A resumed step continues a suspended response, until an attempt at that fails and it's rewound.
+        resuming = (
+            bool(messages) and isinstance(last := messages[-1], _messages.ModelResponse) and last.state == 'suspended'
+        )
+        if not resuming:
             # Normalize consecutive trailing requests for model adapters without changing stored history.
             messages = _clean_message_history(list(messages), repair_last_response=True)
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
@@ -2212,7 +2240,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             request_context.model_request_parameters = model_request_parameters
             usage = ctx.state.usage
 
-        if request_context.attempt > 1:
+        if baseline.request_counted:
             # The step's request was counted when its first attempt was sent, so the request limit
             # must not count it again; the token and cost limits still apply to every attempt.
             usage = replace(usage, requests=usage.requests - 1)
@@ -2246,14 +2274,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         while True:
             baseline.restore(request_context)
-            request_context = await self._prepare_attempt(ctx, run_context, request_context)
+            try:
+                request_context = await self._prepare_attempt(ctx, run_context, request_context, baseline)
+            except exceptions.RetryModelRequest as retry:
+                # A `prepare_model_request` hook asked for another model before this attempt was sent.
+                await self._start_next_attempt(ctx, request_context, retry)
+                continue
             # After the before-chain and `prepare_model_request`, so the check applies to the model
             # actually being called (a hook or an earlier attempt may have swapped it).
             _ensure_model_supports_streaming(request_context.model)
             capture_model_request_span_context(request_context)
-            if request_context.attempt == 1:
+            if not baseline.request_counted:
                 # Counted once for the step: continuations and further attempts aren't separate steps.
                 _usage_attribution.record_request(ctx.state.usage)
+                baseline.request_counted = True
             # Stamp the request-issue instant so the instrumentation capability can record
             # `gen_ai.client.operation.time_to_first_chunk` (TTFT). `StreamedResponse` records
             # the first-chunk instant; the delta is the client-side time to first token.
@@ -2283,6 +2317,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 try:
                     recovered = await self._recover_model_request_error(ctx, run_context, request_context, e)
                 except exceptions.RetryModelRequest as retry:
+                    baseline.rewind_suspended()
                     await self._start_next_attempt(ctx, request_context, retry)
                     continue
                 except Exception as error:
