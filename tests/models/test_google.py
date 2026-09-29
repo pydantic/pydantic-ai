@@ -7470,3 +7470,48 @@ high: Needs attention today.\
             },
         }
     )
+
+
+@pytest.mark.parametrize(
+    ('call', 'content', 'content_type', 'cause'),
+    [
+        pytest.param('request', b'   ', 'application/json', json.JSONDecodeError, id='request'),
+        pytest.param(
+            'stream',
+            b'data: {"candidates": [{"content": {"role": "model", "parts": [{"text": "Hello"}]}, "index": 0}]}\r\n\r\n'
+            b'data: {not json\r\n\r\n',
+            'text/event-stream',
+            errors.UnknownApiResponseError,
+            id='stream',
+        ),
+        pytest.param('count_tokens', b'   ', 'application/json', json.JSONDecodeError, id='count_tokens'),
+    ],
+)
+async def test_google_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, call: str, content: bytes, content_type: str, cause: type[Exception]
+) -> None:
+    """A 200 response body, or a streamed chunk, that can't be decoded as JSON surfaces as `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(200, content=content, headers={'content-type': content_type})
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'count_tokens':
+                await model.count_tokens([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters())
+            elif call == 'stream':
+                async with Agent(model).run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await Agent(model).run('Hello')
+
+    assert isinstance(exc_info.value.__cause__, cause)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

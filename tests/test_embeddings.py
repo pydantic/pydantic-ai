@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -13,6 +14,7 @@ from urllib.parse import urlparse
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from pytest_mock import MockerFixture
 
@@ -51,6 +53,8 @@ with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
 with try_import() as openai_imports_successful:
+    from openai import AsyncOpenAI
+
     from pydantic_ai.embeddings.openai import LatestOpenAIEmbeddingModelNames, OpenAIEmbeddingModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -2364,3 +2368,53 @@ async def test_instrumentation_exception_honors_include_content(capfire: Capture
         assert set(attributes) == {'exception.type', 'exception.escaped'}
         assert span.status.description is None
         assert 'embed-secret' not in str(capfire.exporter.exported_spans)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_openai_embedding_non_json_response_body_raises_model_api_error():
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        model = OpenAIEmbeddingModel('text-embedding-3-small', provider=OpenAIProvider(openai_client=client))
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.embed('hello', input_type='query')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google not installed')
+@pytest.mark.parametrize('call', ['embed', 'count_tokens'])
+async def test_google_embedding_non_json_response_body_raises_model_api_error(call: str):
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+        model = GoogleEmbeddingModel('gemini-embedding-001', provider=provider)
+        with pytest.raises(ModelAPIError) as exc_info:
+            if call == 'count_tokens':
+                await model.count_tokens('hello')
+            else:
+                await model.embed('hello', input_type='query')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

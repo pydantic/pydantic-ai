@@ -4704,3 +4704,30 @@ async def test_instrumentation_exception_honors_include_content(capfire: Capture
         assert set(attributes) == {'exception.type', 'exception.escaped'}
         assert span.status.description is None
         assert 'image-secret' not in str(capfire.exporter.exported_spans)
+
+
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+@pytest.mark.parametrize('edit', [False, True], ids=['generate', 'edit'])
+async def test_openai_image_generation_non_json_response_body_raises_model_api_error(edit: bool):
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='http://localhost/v1',
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as client:
+        model = OpenAIImageGenerationModel('gpt-image-1', provider=OpenAIProvider(openai_client=client))
+        images = [BinaryImage(data=TINY_PNG, media_type='image/png')] if edit else None
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.generate('tiny robot', images=images)
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
