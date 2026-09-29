@@ -74,7 +74,9 @@ def websocket_cassettes() -> list[Path]:
     return sorted(
         path
         for path in CASSETTES_DIR.glob('*/*.yaml')
-        if cassette_protocol(path) is not None and path.read_text(encoding='utf-8').startswith('version:')
+        # A WebSocket recording's interactions are frames (`kind: message`); an HTTP one (WebRTC signaling,
+        # GPT-Live's session setup) records requests, in the same `version: 1` format.
+        if cassette_protocol(path) is not None and '\n- kind: ' in path.read_text(encoding='utf-8')
     )
 
 
