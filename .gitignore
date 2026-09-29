@@ -16,6 +16,8 @@ env*/
 .vscode/
 /question_graph_history.json
 /docs-site/.wrangler/
+# Generated locally by `make docs-map`
+/docs/map.html
 node_modules/
 **.idea/
 .coverage*

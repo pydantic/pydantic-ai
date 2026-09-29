@@ -87,7 +87,8 @@ jobs:
 
           is_docs_markdown() {
             case "$1" in
-              README.md|docs/*.md|examples/*.md) ;;
+              # The docs atlas is generated from `docs/`; the `docs-only` job's pre-commit run gates it.
+              README.md|docs/*.md|examples/*.md|scripts/docs_map/docs-atlas.md) ;;
               *) return 1 ;;
             esac
             case "$1" in

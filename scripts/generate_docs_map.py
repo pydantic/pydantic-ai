@@ -23,7 +23,7 @@ REGION_SUBAGENT_TOKENS = 40_000
 HIGHWAY_LIMIT = 15
 API_REGION = 'API Reference'
 NAV_RELATIVE_PATH = Path('docs/navigation.yml')
-ATLAS_RELATIVE_PATH = Path('agent_docs/docs-atlas.md')
+ATLAS_RELATIVE_PATH = Path('scripts/docs_map/docs-atlas.md')
 HTML_RELATIVE_PATH = Path('docs/map.html')
 GRAPH_PLACEHOLDER = '__GRAPH_JSON__'
 _SKIP_SCHEMES = ('http://', 'https://', 'mailto:', 'ftp://', 'javascript:')
@@ -106,15 +106,12 @@ def main(argv: list[str] | None = None) -> int:
     atlas_path = root / ATLAS_RELATIVE_PATH
 
     html = render_html(docs_map)
-    default_html_path = root / HTML_RELATIVE_PATH
 
     if args.check:
         status = _check_file(atlas_path, markdown, 'Docs atlas')
-        if status == 0:
-            status = _check_file(default_html_path, html, 'Docs map HTML')
     else:
         atlas_path.write_text(markdown, encoding='utf-8')
-        default_html_path.write_text(html, encoding='utf-8')
+        (root / HTML_RELATIVE_PATH).write_text(html, encoding='utf-8')
         status = 0
 
     if args.html is not None:

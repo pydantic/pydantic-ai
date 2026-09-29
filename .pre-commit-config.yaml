@@ -73,7 +73,7 @@ repos:
         entry: uv
         args: [run, python, scripts/generate_docs_map.py]
         language: system
-        files: ^(docs/.*\.md|docs/navigation\.yml|docs/map\.html|agent_docs/docs-atlas\.md|scripts/generate_docs_map\.py|scripts/docs_map/.*)$
+        files: ^(docs/.*\.md|docs/navigation\.yml|scripts/generate_docs_map\.py|scripts/docs_map/.*)$
         pass_filenames: false
       - id: format
         name: Format
