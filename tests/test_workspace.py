@@ -1064,7 +1064,7 @@ async def test_setup_failure_finishes_cleanup_under_anyio_cancellation() -> None
     class Cleanup(AbstractCapability[object]):
         async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
             await anyio.sleep_forever()
-            raise AssertionError('for_run must not finish')
+            raise AssertionError('for_run must not finish')  # pragma: no cover
 
         async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
             cleaned.append('started')

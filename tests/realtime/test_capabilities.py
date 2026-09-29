@@ -233,8 +233,9 @@ async def test_capability_toolset_reaches_session() -> None:
 
 
 @pytest.mark.parametrize('contribution', ['tools', 'native_tools'])
-async def test_deferred_capability_with_tools_raises_before_connect(contribution: str) -> None:
-    """A deferred capability whose loading would have to reveal tools fails at session open.
+@pytest.mark.parametrize('operation', ['session', 'signaling'])
+async def test_deferred_capability_with_tools_raises_before_provider_call(contribution: str, operation: str) -> None:
+    """A deferred capability whose loading would have to reveal tools fails before the provider call.
 
     A session's tools are fixed when the connection opens, so a mid-session load could never make
     them available — silently loading less than promised is worse than the up-front error.
@@ -264,17 +265,20 @@ async def test_deferred_capability_with_tools_raises_before_connect(contribution
         def get_native_tools(self) -> Sequence[AbstractNativeTool]:
             return [WebSearchTool()] if contribution == 'native_tools' else []
 
-    agent = Agent()
+    agent = Agent(deps_type=type(None))
     model = _RecordingModel(supported_native_tools=frozenset({WebSearchTool}))
 
     with pytest.raises(
         UserError,
         match=r"Realtime sessions cannot reveal tools mid-session.*'deferred'",
     ):
-        await _drain(agent, model, capabilities=[DeferredCap()])
+        if operation == 'session':
+            await _drain(agent, model, capabilities=[DeferredCap()])
+        else:
+            await agent.realtime(model, capabilities=[DeferredCap()]).create_client_secret()
 
     assert model.tools is None
-    assert cleanup == ['setup', 'cleanup']
+    assert cleanup == (['setup', 'cleanup'] if operation == 'session' else ['setup'])
 
 
 async def test_deferred_instruction_capability_loads_through_the_tool() -> None:

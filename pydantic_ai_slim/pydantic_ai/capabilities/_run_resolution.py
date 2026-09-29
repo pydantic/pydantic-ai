@@ -111,7 +111,7 @@ def record_partial_run_capability_resolution(
     active = _current_resolution.get()
     if active is not None:
         resolutions, resolving, occurrence = active
-        if resolving is capability:
+        if resolving is capability:  # pragma: no branch  # Only the active capability records a partial resolution.
             resolutions.record(capability, occurrence, resolved)
 
 
