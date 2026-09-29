@@ -1729,9 +1729,15 @@ async def test_google_model_receive_web_search_history_from_another_provider(
             [UserPromptPart],
             [
                 NativeToolCallPart,
+                NativeToolCallPart,
                 NativeToolReturnPart,
-                TextPart,
-                TextPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -1761,7 +1767,7 @@ async def test_google_model_receive_web_search_history_from_another_provider(
         ]
     )
 
-    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    google_model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     google_agent = Agent(model=google_model)
     result = await google_agent.run('What day is tomorrow?', message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
@@ -1769,9 +1775,15 @@ async def test_google_model_receive_web_search_history_from_another_provider(
             [UserPromptPart],
             [
                 NativeToolCallPart,
+                NativeToolCallPart,
                 NativeToolReturnPart,
-                TextPart,
-                TextPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -4795,6 +4807,41 @@ _USAGE_RETENTION_CASES = [
         ),
     ),
     _UsageRetentionCase(
+        id='empty_metadata_on_later_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo').model_copy(
+                update={'usage_metadata': GenerateContentResponseUsageMetadata()}
+            ),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=5,
+                details={'cached_content_tokens': 16365},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
+        id='single_field_chunk_extracts_through_guard',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo').model_copy(
+                update={'usage_metadata': GenerateContentResponseUsageMetadata(thoughts_token_count=70)}
+            ),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_reasoning_tokens=70,
+                output_tokens=70,
+                details={'cached_content_tokens': 16365, 'thoughts_tokens': 70},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
         id='details_only_fields_dropped_by_later_chunk',
         make_chunks=lambda: [
             _usage_chunk(cached=16365, thoughts=100, candidates=5, text='hel'),
@@ -4816,7 +4863,7 @@ _USAGE_RETENTION_CASES = [
 async def test_gemini_streamed_response_usage_retained_across_chunks(case: _UsageRetentionCase):
     """Gemini streams usage as cumulative snapshots, but a later chunk can drop a field an earlier one
     carried (#5205): a gateway/proxy omits `cached_content_token_count`, a Vertex-direct stream omits
-    `usage_metadata` entirely, or a `details`-only field like `thoughts_tokens` disappears. The
+    `usage_metadata` or sends it empty, or a `details`-only field like `thoughts_tokens` disappears. The
     accumulated usage must survive instead of resetting to zero.
 
     These are deterministic unit tests rather than VCR tests because the direct Gemini APIs (GLA and
@@ -5789,6 +5836,30 @@ async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model
     assert exc_info.value.body == error_response
     assert isinstance(exc_info.value.__cause__, errors.ClientError)
     assert len(requests) == 1
+
+
+async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: None):
+    """An API error from `count_tokens` is mapped like one from the request, not raised as the SDK's own error."""
+    error_response = {'error': {'code': 429, 'message': 'Resource exhausted', 'status': 'RESOURCE_EXHAUSTED'}}
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(429, json=error_response, headers={'retry-after': '7'})
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(model).run(
+                'test', usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+            )
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == error_response
+    assert exc_info.value.retry_after == 7
+    assert isinstance(exc_info.value.__cause__, errors.ClientError)
 
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):

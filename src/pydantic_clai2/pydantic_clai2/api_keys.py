@@ -3,9 +3,7 @@
 import asyncio
 import json
 import re
-import sqlite3
-from collections.abc import Generator
-from contextlib import closing, contextmanager
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -17,7 +15,13 @@ from termflow.tui.menu import Menu
 from pydantic_ai.exceptions import UserError
 
 from ._rendering import markdown_style
-from .credential_store import credentials_path, delete_credentials, load_codex_credentials, save_codex_credentials
+from .credential_store import (
+    credential_lock,
+    credentials_path,
+    delete_credentials,
+    load_codex_credentials,
+    save_codex_credentials,
+)
 from .menu_worker import menu_key, run_worker
 
 
@@ -65,7 +69,9 @@ def save_key_connection(*, account: str, token: SecretStr | KeyReference, value:
     """Validate references and save atomically with respect to key renames and deletions."""
     with key_transaction():
         if isinstance(token, KeyReference) and token.name not in _load_keys():
-            raise UserError('The selected API key no longer exists. Select a saved key again.')
+            raise UserError(
+                f'The selected API key no longer exists. Select a saved key again through {_KEY_CONSUMERS[account]}.'
+            )
         save_codex_credentials(account=account, value=value)
 
 
@@ -91,17 +97,11 @@ def normalize_name(*, name: str) -> str:
     return name
 
 
-@contextmanager
-def key_transaction() -> Generator[None]:
-    """Serialize bundle access across processes; the SQLite lock file holds no secrets."""
-    path = credentials_path(account='api-keys').with_suffix('.lock')
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with closing(sqlite3.connect(path, timeout=20)) as connection, connection:
-            connection.execute('BEGIN IMMEDIATE')
-            yield
-    except sqlite3.Error:
-        raise UserError('Cannot lock API keys. Close other key editors and check the credential directory.') from None
+def key_transaction() -> AbstractContextManager[None]:
+    """Serialize bundle access across processes."""
+    return credential_lock(
+        account='api-keys', busy='Cannot lock API keys. Close other key editors and check the credential directory.'
+    )
 
 
 def load_keys() -> dict[str, SecretStr]:
@@ -151,24 +151,32 @@ def _save_keys(*, keys: dict[str, SecretStr]) -> None:
     )
 
 
+_KEY_CONSUMERS = {
+    'vllm': '/add_model',
+    'openrouter': '/add_model',
+    'google-workspace': '/google_workspace',
+    'pylon': '/pylon',
+    'ordinal': '/ordinal',
+    'notion': '/plugins configure notion',
+    'slack': '/plugins configure slack',
+}
+"""Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
+
+
 class _Credential(BaseModel):
     token: SecretStr | KeyReference = Field(default_factory=lambda: SecretStr(''))
-
-
-_KEY_ACCOUNTS = ('vllm', 'openrouter', 'pylon')
-"""Credential accounts whose `token` may name a saved key, so a rename cannot strand them."""
 
 
 def key_users(*, name: str) -> list[str]:
     """Find saved provider and plugin references without exposing their inline credentials."""
     users: list[str] = []
-    for account in _KEY_ACCOUNTS:
+    for account, command in _KEY_CONSUMERS.items():
         raw = load_codex_credentials(account=account)
         if raw is not None:
             try:
                 credential = _Credential.model_validate_json(raw)
             except ValidationError:
-                raise UserError(f'Reconfigure the invalid {account} connection first.') from None
+                raise UserError(f'Reconfigure the invalid {account} connection through {command} first.') from None
             if isinstance(credential.token, KeyReference) and credential.token.name == name:
                 users.append(account)
     return users

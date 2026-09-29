@@ -31,7 +31,7 @@ from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_rea
 from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
 
 try:
-    from openai import APIError, AsyncOpenAI, omit
+    from openai import APIConnectionError, APIError, AsyncOpenAI, omit
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
@@ -216,11 +216,13 @@ class OpenRouterProviderConfig(TypedDict, total=False):
     ignore: list[str]
     """List of provider slugs to skip for this request. [See details](https://openrouter.ai/docs/features/provider-routing#ignoring-providers)"""
 
-    quantizations: list[Literal['int4', 'int8', 'fp4', 'fp6', 'fp8', 'fp16', 'bf16', 'fp32', 'unknown']]
+    quantizations: list[
+        Literal['int4', 'int8', 'fp4', 'mxfp4', 'nvfp4', 'fp6', 'fp8', 'mxfp8', 'fp16', 'bf16', 'fp32', 'unknown']
+    ]
     """List of quantization levels to filter by (e.g. ["int4", "int8"]). [See details](https://openrouter.ai/docs/features/provider-routing#quantization)"""
 
-    sort: Literal['price', 'throughput', 'latency']
-    """Sort providers by price or throughput. (e.g. "price" or "throughput"). [See details](https://openrouter.ai/docs/features/provider-routing#provider-sorting)"""
+    sort: Literal['price', 'throughput', 'latency', 'exacto']
+    """Sort providers by price, throughput, latency, or exacto. [See details](https://openrouter.ai/docs/features/provider-routing#provider-sorting) and [Exacto](https://openrouter.ai/docs/guides/routing/model-variants/exacto)."""
 
     max_price: _OpenRouterMaxPrice
     """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""
@@ -685,12 +687,12 @@ class OpenRouterModel(OpenAIChatModel):
         return cast(OpenRouterModelProfile, self.profile)
 
     @override
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest explicit retention accepted by OpenRouter's downstream model."""
         settings = merge_model_settings(self.settings, model_settings) or {}
         if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
             return None
-        return self._max_prompt_cache_retention(
+        return self._max_cache_retention(
             settings.get('openrouter_cache_instructions')
             if self._resolved_profile.get('openrouter_supports_cache_control', False)
             else None,
@@ -1246,9 +1248,17 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                     _raise_for_no_completion(chunk_dict, self._model_name, exc)
                     raise
                 yield validated
+        except APIConnectionError:
+            # A transport failure mid-stream (read timeout, connection reset) carries no error body;
+            # `OpenAIStreamedResponse` maps it to `ModelAPIError`.
+            raise
         except APIError as e:
-            error = _OpenRouterError.model_validate(e.body)
-            raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
+            try:
+                error = _OpenRouterError.model_validate(e.body)
+            except ValidationError:
+                # An error object without an integer `code`: there's no status to report.
+                raise ModelAPIError(model_name=self._model_name, message=e.message) from e
+            raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message) from e
 
     @override
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:

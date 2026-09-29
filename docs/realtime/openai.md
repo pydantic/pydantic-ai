@@ -244,7 +244,7 @@ only happens once audio is flowing.
 
 Seeding is text-only in the same spirit: [`message_history=`](history.md#seeding-a-session) replays
 text, transcripts, and thinking text, with tool rounds rendered as readable text because the protocol
-has nowhere to put function parts (as on [Gemini Live](gemini.md)). Audio and images in seeded history
+has nowhere to put function parts. Audio and images in seeded history
 raise [`UserError`][pydantic_ai.exceptions.UserError] rather than being dropped. Live accepts up to 128
 seeded messages and 8,192 tokens in total, so seed a long conversation with its recent end. Within a
 session, Live manages its own context: once it nears the limit, it continues from a summary of the
@@ -342,7 +342,7 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 | --- | --- |
 | `openai_voice` | The Live voice, e.g. `marin` (the provider default). Immutable once the session has started |
 | `openai_live_instructions` | How the Live model speaks: pacing, style, and when to delegate |
-| `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier` |
+| `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
 | `openai_live_turn_silence_ms` | How long the model must stay quiet before the [turn boundary](#the-turn-boundary-is-inferred) is reported. Defaults to 2000 |
 | `openai_live_store` | Whether OpenAI stores the session for later retrieval. Defaults to `False` |
 | `openai_live_data_channel` | Which events a [WebRTC](#browser-webrtc) browser may send and receive over its data channel. Defaults to none, since the sideband runs the session |
@@ -394,9 +394,11 @@ Input transcription defaults to `'auto'`; set a supported transcription model ID
 
 ## Reasoning {#reasoning}
 
-GPT-Live reasons on its delegated backend: set the effort with
-`openai_live_delegation={'reasoning_effort': ...}`. The profile reports `supports_thinking=False`, so
-the shared [`thinking`](../capabilities/thinking.md) setting does not apply.
+GPT-Live reasons on its delegated backend, so the shared
+[`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting (see
+[Thinking](../capabilities/thinking.md)) sets the [backend model](#backend-model)'s reasoning effort,
+just as it would on a direct request to that model. `openai_live_delegation={'reasoning_effort': ...}`
+takes precedence when set.
 
 On gpt-realtime, the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting
 (see [Thinking](../capabilities/thinking.md)) applies to models whose profile reports
@@ -450,7 +452,6 @@ the provider-agnostic workflows.
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |
 | Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) and no way to disable it |
 | Input speech events | Unsupported | No speech start/end frames, so a "listening" indicator should read the profile rather than wait for events |
-| Thinking | Unsupported | Set the backend's effort instead; see [Reasoning](#reasoning) |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
 | Reconnection | Unsupported | Automatic [reconnection](lifecycle.md#reconnecting) is not implemented for Live, so the [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy is ignored and a dropped connection ends the session. Open a new one, seeding it with the previous session's history |
 
