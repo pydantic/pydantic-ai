@@ -193,20 +193,26 @@ def _decode_text(response: httpx2.Response) -> str:
     return response.content.decode(response.encoding or 'utf-8', errors='replace')
 
 
-def _convert_html(html: str) -> tuple[str, str]:
+def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     """Return the raw `<title>` text (empty if there is none) and the markdown conversion of the HTML."""
     soup = BeautifulSoup(html, 'html.parser')
+    converter = _MarkdownConverter(strip=['img', 'script', 'style'])
     # `markdownify` repeatedly scans each descendant's converted text as it walks back up the
     # tree. Blockquotes, definition items, and list items also indent every line at each level.
     # Estimate scans beyond 16 levels and indentation at any depth before conversion so a small,
     # deeply nested page cannot produce a huge intermediate string or hold the GIL for seconds.
     cost = 0
     text_scan_cost = 0
-    pending: list[tuple[PageElement, int, int, int, bool, bool]] = [(soup, 0, 0, 0, False, False)]
+    nodes: list[PageElement] = []
+    contentful: set[int] = set()
+    anchors: list[tuple[Tag, int, bool]] = []
+    videos: list[tuple[Tag, int, bool]] = []
+    pending: list[tuple[PageElement, int, int, int, bool, bool, bool]] = [(soup, 0, 0, 0, False, False, False)]
     while pending:
-        node, depth, indent_depth, indent_width, inline, noformat = pending.pop()
+        node, depth, indent_depth, indent_width, inline, noformat, in_pre = pending.pop()
+        nodes.append(node)
         if node.next_sibling is not None:
-            pending.append((node.next_sibling, depth, indent_depth, indent_width, inline, noformat))
+            pending.append((node.next_sibling, depth, indent_depth, indent_width, inline, noformat, in_pre))
         if isinstance(node, (Comment, Doctype)):
             continue
         if isinstance(node, Tag):
@@ -232,29 +238,73 @@ def _convert_html(html: str) -> tuple[str, str]:
                 # A first-row cell can also generate two full-width header lines.
                 work += 8 * colspan
                 cost += 8 * colspan
-            if depth > 16:
-                if node.name == 'a' and not noformat and node.contents:
-                    # An empty link does not use its URL or title.
-                    text_scan_cost += (depth - 16) * sum(len(str(node.get(name) or '')) for name in ('href', 'title'))
-                elif node.name == 'video' and not inline:
-                    src = node.get('src')
-                    if not src:
-                        source = node.find('source', attrs={'src': True})
-                        src = source.get('src') if source is not None else None
-                    text_scan_cost += (depth - 16) * (len(str(src or '')) + len(str(node.get('poster') or '')))
+            if node.name == 'a' and depth > 16:
+                anchors.append((node, depth, noformat))
+            elif node.name == 'video':
+                videos.append((node, depth, inline))
             if node.contents:
                 child_inline = inline or node.name in ('td', 'th') or _HTML_HEADING_RE.match(node.name) is not None
                 child_noformat = noformat or node.name in ('pre', 'code', 'kbd', 'samp')
-                pending.append((node.contents[0], depth, indent_depth, indent_width, child_inline, child_noformat))
+                child_in_pre = in_pre or node.name == 'pre'
+                pending.append(
+                    (node.contents[0], depth, indent_depth, indent_width, child_inline, child_noformat, child_in_pre)
+                )
             cost += max(depth - 16, 0) * work
         else:
             assert isinstance(node, NavigableString)
-            # Only lines need indentation; charging all text rejects fast single-line pages.
-            cost += (indent_depth + indent_width) * node.count('\n')
-            text_scan_cost += max(depth - 16, 0) * len(node)
+            parent_tags: set[str] = {'pre', '_noformat'} if in_pre else {'_noformat'} if noformat else set()
+            converted_text = converter.process_text(node, parent_tags)
+            if converted_text.strip():
+                contentful.add(id(node))
+            # Only converted lines need indentation; collapsed whitespace and escaped characters
+            # also change the amount of text copied through ancestors.
+            cost += (indent_depth + indent_width) * converted_text.count('\n')
+            text_scan_cost += max(depth - 16, 0) * len(converted_text)
         if cost > _MAX_HTML_CONVERSION_COST or text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
             raise ModelRetry('the document is too complex')
-    return _extract_title(html), _MarkdownConverter(strip=['img', 'script', 'style']).convert_soup(soup)
+
+    subtree_sizes: dict[int, int] = {}
+    first_sources: dict[int, str] = {}
+    video_inline = {id(node): inline for node, _, inline in videos}
+    for node in reversed(nodes):
+        if isinstance(node, Tag):
+            node_id = id(node)
+            subtree_sizes[node_id] = 1
+            if node.name == 'source' and node.has_attr('src'):
+                first_sources[node_id] = str(node.get('src') or '')
+            for child in node.contents:
+                child_id = id(child)
+                subtree_sizes[node_id] += subtree_sizes.get(child_id, 1)
+                if child_id in contentful:
+                    contentful.add(node_id)
+                if node_id not in first_sources and child_id in first_sources:
+                    first_sources[node_id] = first_sources[child_id]
+            if node.name in ('hr', 'q', 'td', 'th', 'tr') or (
+                node.name == 'video'
+                and not video_inline[node_id]
+                and (node.get('src') or node.get('poster') or first_sources.get(node_id))
+            ):
+                contentful.add(node_id)
+
+    for node, depth, noformat in anchors:
+        href = node.get('href')
+        if href and not noformat and any(id(child) in contentful for child in node.contents):
+            text_scan_cost += (depth - 16) * (len(str(href)) + len(str(node.get('title') or '')))
+            if text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
+                raise ModelRetry('the document is too complex')
+
+    for node, depth, inline in videos:
+        if not inline:
+            src = node.get('src')
+            if not src:
+                # `markdownify` searches descendants for the first source without its own URL.
+                cost += 8 * subtree_sizes[id(node)]
+                src = first_sources.get(id(node))
+            if depth > 16:
+                text_scan_cost += (depth - 16) * (len(str(src or '')) + len(str(node.get('poster') or '')))
+            if cost > _MAX_HTML_CONVERSION_COST or text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
+                raise ModelRetry('the document is too complex')
+    return _extract_title(html), converter.convert_soup(soup)
 
 
 class _MarkdownConverter(MarkdownConverter):

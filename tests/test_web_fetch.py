@@ -860,11 +860,41 @@ class TestMarkdownConverter:
         html = '<div>' * 30 + f'<{tag} {attribute}="{value}"></{tag}>' + '</div>' * 30
         assert _convert_html(html)[1] == ''
 
-    @pytest.mark.parametrize('element', ['<source src="{value}">', '<a href="{value}"></a>'])
-    def test_unused_output_attribute_is_not_overcharged(self, element: str):
-        """An orphan source or empty link does not include its URL in Markdown."""
+    @pytest.mark.parametrize(
+        ('element', 'expected'),
+        [
+            ('<source src="{value}">', ''),
+            ('<a href="{value}"></a>', ''),
+            ('<a title="{value}">text</a>', 'text'),
+            ('<a href="{value}"><!--ignored--></a>', ''),
+            ('<a href="{value}"><img alt="ignored"></a>', ''),
+        ],
+    )
+    def test_unused_output_attribute_is_not_overcharged(self, element: str, expected: str):
+        """Attributes that the converter omits do not add deep scan work."""
         html = '<div>' * 300 + element.format(value='x' * 18_000_000) + '</div>' * 300
-        assert _convert_html(html)[1] == ''
+        assert _convert_html(html)[1] == expected
+
+    def test_collapsed_whitespace_is_not_overcharged(self):
+        """A long whitespace run becomes one character before ancestor scans."""
+        html = '<div>' * 300 + 'x' + ' ' * 18_000_000 + 'x' + '</div>' * 300
+        assert _convert_html(html)[1] == 'x x'
+
+    def test_small_nested_link_converts(self):
+        """A link's URL counts towards deep scans without rejecting a small link."""
+        html = '<div>' * 30 + '<a href="/x">link</a>' + '</div>' * 30
+        assert _convert_html(html)[1] == '[link](/x)'
+
+    def test_inline_video_does_not_use_src(self):
+        """A video in a table cell keeps its text and ignores its source URL."""
+        html = (
+            '<div>' * 300
+            + '<table><tr><td><video src="'
+            + 'x' * 18_000_000
+            + '"></video></td></tr></table>'
+            + '</div>' * 300
+        )
+        assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
     @pytest.mark.parametrize('container', ['<table><tr><td>{content}</td></tr></table>', '<h2>{content}</h2>'])
     def test_inline_indentation_is_not_overcharged(self, container: str):
@@ -884,23 +914,32 @@ class TestMarkdownConverter:
         html = '<table><tr><td colspan="002">x</td></tr></table>'
         assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
+    def test_nested_video_source_search_is_bounded(self):
+        """Repeated source searches through ignored descendants must be counted before conversion."""
+        html = '<video>' * 100 + '<!---->' * 100_000 + '</video>' * 100
+        started = time.perf_counter()
+        with pytest.raises(ModelRetry, match='too complex'):
+            _convert_html(html)
+        assert time.perf_counter() - started < 3
+
     def test_anchor_in_code_does_not_use_href(self):
         """A link inside code keeps only its text, even when deeply nested."""
         html = '<div>' * 300 + '<code><a href="' + 'x' * 18_000_000 + '">link</a></code>' + '</div>' * 300
         assert _convert_html(html)[1] == '`link`'
 
     @pytest.mark.parametrize(
-        'template',
+        ('template', 'character', 'length'),
         [
-            pytest.param('{value}', id='text'),
-            pytest.param('<a href="{value}">link</a>', id='link'),
-            pytest.param('<video src="{value}"></video>', id='video'),
-            pytest.param('<video><source src="{value}"></video>', id='video-source'),
+            pytest.param('{value}', 'x', 18_000_000, id='text'),
+            pytest.param('<a href="{value}">link</a>', 'x', 18_000_000, id='link'),
+            pytest.param('<video src="{value}"></video>', 'x', 18_000_000, id='video'),
+            pytest.param('<video><source src="{value}"></video>', 'x', 18_000_000, id='video-source'),
+            pytest.param('{value}', '*', 16_000_000, id='escaped-asterisks'),
         ],
     )
-    def test_deep_text_scan_is_bounded(self, template: str):
+    def test_deep_text_scan_is_bounded(self, template: str, character: str, length: int):
         """Large output text copied through hundreds of ancestors has a separate work bound."""
-        content = template.format(value='x' * 18_000_000)
+        content = template.format(value=character * length)
         html = '<div>' * 300 + content + '</div>' * 300
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
