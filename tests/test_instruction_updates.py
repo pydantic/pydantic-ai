@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from typing import Literal
@@ -937,19 +938,12 @@ PERSISTENCE_SENTENCE = (
 )
 
 
-def wire_texts(value: object) -> list[str]:
-    """Every string in a captured request body, wherever the provider's schema puts it."""
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        return [text for item in value.values() for text in wire_texts(item)]  # pyright: ignore[reportUnknownVariableType]
-    if isinstance(value, list):
-        return [text for item in value for text in wire_texts(item)]  # pyright: ignore[reportUnknownVariableType]
-    return []
-
-
 def wire_contains(body: object, text: str) -> bool:
-    return any(text in candidate for candidate in wire_texts(body))
+    """Whether `text` appears in any string of a captured request body, wherever the provider's schema puts it.
+
+    Both sides are JSON-escaped the same way, so the check can't match across two strings.
+    """
+    return json.dumps(text)[1:-1] in json.dumps(body)
 
 
 def expected_update(case: WireCase, instruction_id: str, content: str | None) -> str:
