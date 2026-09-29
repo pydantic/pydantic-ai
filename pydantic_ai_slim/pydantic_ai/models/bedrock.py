@@ -23,7 +23,9 @@ try:
         BotoCoreError,
         ClientError,
         ConnectionError as BotocoreConnectionError,
+        ConnectTimeoutError,
         HTTPClientError,
+        ReadTimeoutError,
     )
     from botocore.model import StructureShape
 except ImportError as _import_error:
@@ -61,12 +63,21 @@ from pydantic_ai import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _model_errors,
     _utils,
     usage,
 )
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
+from pydantic_ai.exceptions import (
+    ContextWindowExceeded,
+    ModelAPIError,
+    ModelConnectionError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelTimeoutError,
+    UserError,
+)
 from pydantic_ai.messages import (
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
     is_multi_modal_content,
@@ -147,22 +158,51 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
     except ClientError as e:
         metadata = e.response.get('ResponseMetadata', {})
         status_code = metadata.get('HTTPStatusCode')
+        error = e.response.get('Error', {})
+        code, message = error.get('Code'), error.get('Message')
+        provider_error_code = code if isinstance(code, str) else None
+        category = _error_category(provider_error_code, message)
         if isinstance(status_code, int):
             suggested_model_id = None
-            error = e.response.get('Error')
-            if _utils.is_str_dict(error) and error.get('Message') == 'The provided model identifier is invalid.':
+            if message == 'The provided model identifier is invalid.':
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            raise ModelHTTPError(
+            raise _model_errors.http_error_class(category or _model_errors.http_status_category(status_code))(
                 status_code=status_code,
                 model_name=model_name,
                 body=e.response,
                 headers=metadata.get('HTTPHeaders'),
                 suggested_model_id=suggested_model_id,
+                provider_error_code=provider_error_code,
             ) from e
-        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+        # An exception event inside a `ConverseStream` response carries no status code.
+        raise (category or ModelAPIError)(
+            model_name=model_name, message=str(e), body=e.response, provider_error_code=provider_error_code
+        ) from e
     except (HTTPClientError, BotocoreConnectionError) as e:
         # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
-        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+        error_class = (
+            ModelTimeoutError if isinstance(e, (ReadTimeoutError, ConnectTimeoutError)) else ModelConnectionError
+        )
+        raise error_class(model_name=model_name, message=str(e)) from e
+
+
+_CONTEXT_WINDOW_ERROR_MESSAGES = ('input is too long', 'input tokens exceeded', 'prompt is too long')
+"""Bedrock reports a context window overflow as a `ValidationException`, identifiable only by its message."""
+
+
+def _error_category(code: str | None, message: object) -> type[ModelAPIError] | None:
+    """The error category for a Bedrock error code, which is capitalized in an HTTP error and not in a stream."""
+    match code and code.lower():
+        case 'throttlingexception':
+            return ModelRateLimitError
+        case 'serviceunavailableexception':
+            return ModelOverloadedError
+        case 'validationexception' if isinstance(message, str) and any(
+            m in message.lower() for m in _CONTEXT_WINDOW_ERROR_MESSAGES
+        ):
+            return ContextWindowExceeded
+        case _:
+            return None
 
 
 class _BotocoreRequestParams(TypedDict):

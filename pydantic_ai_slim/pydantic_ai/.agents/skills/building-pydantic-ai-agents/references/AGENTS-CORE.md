@@ -218,3 +218,5 @@ Good defaults:
 - primary expensive/strong model, cheaper fallback for resilience
 - same prompt/output contract across both models
 - per-model settings only when the user actually needs them
+
+To react to a specific kind of failure regardless of provider, catch an error category rather than inspecting status codes or provider exceptions: `ModelRateLimitError` (with `retry_after`), `ModelOverloadedError`, `ModelConnectionError` (and its `ModelTimeoutError`), or `ContextWindowExceeded`. All are `ModelAPIError`s, so `FallbackModel` falls back on them by default; one that came with an HTTP status is also a `ModelHTTPError`. Provider details are on `provider_error_code`, `provider_error_type`, and `body`.

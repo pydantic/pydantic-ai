@@ -9,15 +9,20 @@ from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry, ToolFailed
+from pydantic_ai._model_errors import http_error_class
 from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
     CallDeferred,
     ConcurrencyLimitExceeded,
     ContentFilterError,
+    ContextWindowExceeded,
     IncompleteToolCall,
     ModelAPIError,
     ModelHTTPError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    ModelTimeoutError,
     ToolFailedError,
     ToolRetryError,
     UnexpectedModelBehavior,
@@ -57,6 +62,8 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         lambda: UsageLimitExceeded('test'),
         lambda: ModelAPIError('model', 'test message'),
         lambda: ModelHTTPError(500, 'model'),
+        lambda: ModelRateLimitError('model', 'test message'),
+        lambda: http_error_class(ModelRateLimitError)(429, 'model'),
         lambda: IncompleteToolCall('test'),
         lambda: ToolRetryError(RetryPromptPart(content='test', tool_name='test')),
     ],
@@ -71,6 +78,8 @@ def test_tool_failed_pydantic_schema_accepts_instance() -> None:
         'UsageLimitExceeded',
         'ModelAPIError',
         'ModelHTTPError',
+        'ModelRateLimitError',
+        'ModelHTTPError-ModelRateLimitError',
         'IncompleteToolCall',
         'ToolRetryError',
     ],
@@ -143,6 +152,33 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'suggested_model_id': 'openai:gpt-5',
             },
         ),
+        (
+            lambda: ModelOverloadedError(
+                'claude-sonnet-4-5',
+                'Overloaded',
+                body={'type': 'error', 'error': {'type': 'overloaded_error'}},
+                provider_error_type='overloaded_error',
+            ),
+            {
+                'model_name': 'claude-sonnet-4-5',
+                'message': 'Overloaded',
+                'body': {'type': 'error', 'error': {'type': 'overloaded_error'}},
+                'provider_error_code': None,
+                'provider_error_type': 'overloaded_error',
+            },
+        ),
+        (lambda: ModelTimeoutError('gpt-4', 'Request timed out.'), {'message': 'Request timed out.'}),
+        (
+            lambda: http_error_class(ContextWindowExceeded)(
+                400, 'gpt-4', {'code': 'context_length_exceeded'}, provider_error_code='context_length_exceeded'
+            ),
+            {
+                'status_code': 400,
+                'model_name': 'gpt-4',
+                'body': {'code': 'context_length_exceeded'},
+                'provider_error_code': 'context_length_exceeded',
+            },
+        ),
         (lambda: IncompleteToolCall('incomplete'), {'message': 'incomplete', 'body': None}),
     ],
     ids=[
@@ -164,6 +200,9 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
         'ModelHTTPError-with-body',
         'ModelHTTPError-with-headers',
         'ModelHTTPError-with-model-suggestion',
+        'ModelOverloadedError',
+        'ModelTimeoutError',
+        'ModelHTTPError-ContextWindowExceeded',
         'IncompleteToolCall',
     ],
 )

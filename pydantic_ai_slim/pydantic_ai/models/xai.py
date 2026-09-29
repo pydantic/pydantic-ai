@@ -11,10 +11,17 @@ from typing import Any, Literal, cast
 
 from typing_extensions import assert_never
 
-from .. import ModelHTTPError, _utils
+from .. import _model_errors, _utils
 from .._run_context import RunContext
 from ..capabilities.x_search import XSearch as XSearch  # re-export for backward compat
-from ..exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
+from ..exceptions import (
+    ContextWindowExceeded,
+    ModelAPIError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    UnexpectedModelBehavior,
+    UserError,
+)
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -110,11 +117,30 @@ def _map_api_errors(
     try:
         yield
     except grpc.RpcError as e:
-        status_code = status_map.get(e.code())
+        grpc_status = e.code()
+        status_code = status_map.get(grpc_status)
         details = e.details() or str(e)
+        category = _GRPC_STATUS_CATEGORIES.get(grpc_status)
+        if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower():
+            category = ContextWindowExceeded
         if status_code is not None:
-            raise ModelHTTPError(status_code=status_code, model_name=model_name, body=details) from e
-        raise ModelAPIError(model_name=model_name, message=details) from e
+            raise _model_errors.http_error_class(category)(
+                status_code=status_code, model_name=model_name, body=details, provider_error_code=grpc_status.name
+            ) from e
+        raise (category or ModelAPIError)(
+            model_name=model_name, message=details, body=details, provider_error_code=grpc_status.name
+        ) from e
+
+
+_GRPC_STATUS_CATEGORIES: dict[grpc.StatusCode, type[ModelAPIError]] = {
+    grpc.StatusCode.RESOURCE_EXHAUSTED: ModelRateLimitError,
+    grpc.StatusCode.UNAVAILABLE: ModelOverloadedError,
+}
+"""Error categories for gRPC status codes.
+
+`DEADLINE_EXCEEDED` is left out: it can mean the client's own deadline or the server's, so it isn't classified as a
+timeout.
+"""
 
 
 XaiModelName = str | ChatModel | Literal['grok-4.5', 'grok-4.5-latest', 'grok-4.6', 'grok-build-0.1']

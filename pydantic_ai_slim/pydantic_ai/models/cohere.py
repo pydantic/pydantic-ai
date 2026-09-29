@@ -7,9 +7,12 @@ from typing import Literal, cast
 
 from typing_extensions import assert_never
 
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import (
+    ContextWindowExceeded,
+    ModelAPIError,
+)
 
-from .. import ModelHTTPError, usage
+from .. import _model_errors, usage
 from .._utils import (
     generate_tool_call_id as _generate_tool_call_id,
     guard_tool_call_id as _guard_tool_call_id,
@@ -212,7 +215,13 @@ class CohereModel(Model[AsyncClientV2]):
             )
         except ApiError as e:
             if (status_code := e.status_code) and status_code >= 400:
-                raise ModelHTTPError(
+                category = _model_errors.http_status_category(status_code)
+                message = e.body.get('message') if _is_str_dict(e.body) else None
+                # Cohere reports a context window overflow as a 400 identifiable only by its message, like
+                # `too many tokens: size limit exceeded by N tokens`.
+                if status_code == 400 and isinstance(message, str) and message.lower().startswith('too many tokens'):
+                    category = ContextWindowExceeded
+                raise _model_errors.http_error_class(category)(
                     status_code=status_code, model_name=self.model_name, body=e.body, headers=e.headers
                 ) from e
             raise ModelAPIError(model_name=self.model_name, message=str(e)) from e

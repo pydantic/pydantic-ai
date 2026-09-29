@@ -8,8 +8,13 @@ from typing import Annotated, Any, Literal, TypeAlias, cast
 from pydantic import BaseModel, Discriminator, ValidationError, field_validator
 from typing_extensions import TypedDict, override
 
-from .. import usage
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from .. import _model_errors, usage
+from ..exceptions import (
+    ContextWindowExceeded,
+    ModelAPIError,
+    ModelHTTPError,
+    UserError,
+)
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -347,6 +352,19 @@ class _OpenRouterError(BaseModel):
 
     code: int
     message: str
+
+
+def _map_openrouter_error(error: _OpenRouterError, model_name: str) -> ModelHTTPError:
+    """Map an error OpenRouter sent inside a 200 response or stream.
+
+    Its `code` is reported as the status code, as it always has been, although the HTTP status was 200.
+    """
+    category = _model_errors.http_status_category(error.code)
+    if error.code == 400 and 'maximum context length' in error.message.lower():
+        category = ContextWindowExceeded
+    return _model_errors.http_error_class(category)(
+        status_code=error.code, model_name=model_name, body=error.message, provider_error_code=str(error.code)
+    )
 
 
 class _OpenRouterFileAnnotation(BaseModel, frozen=True):
@@ -1041,11 +1059,7 @@ class OpenRouterModel(OpenAIChatModel):
             except ValidationError:
                 pass
             else:
-                raise ModelHTTPError(
-                    status_code=error_response.error.code,
-                    model_name=error_response.model or self.model_name,
-                    body=error_response.error.message,
-                )
+                raise _map_openrouter_error(error_response.error, error_response.model or self.model_name)
 
             # `ModelAPIError` is `FallbackModel`'s default `fallback_on`, so raising it here lets the
             # transient reach fallback on this non-streamed path.
@@ -1061,7 +1075,7 @@ class OpenRouterModel(OpenAIChatModel):
                 validated.created = response_dict.get('created') or 0
 
         if error := validated.error:
-            raise ModelHTTPError(status_code=error.code, model_name=validated.model, body=error.message)
+            raise _map_openrouter_error(error, validated.model)
 
         return validated
 
@@ -1248,7 +1262,7 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                 yield validated
         except APIError as e:
             error = _OpenRouterError.model_validate(e.body)
-            raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
+            raise _map_openrouter_error(error, self._model_name)
 
     @override
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:

@@ -8,7 +8,7 @@ from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -85,7 +85,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
     except HfHubHTTPError as e:
-        raise ModelHTTPError(
+        raise _model_errors.http_error_class(_model_errors.http_status_category(e.response.status_code))(
             status_code=e.response.status_code,
             model_name=model_name,
             body=e.response.content,

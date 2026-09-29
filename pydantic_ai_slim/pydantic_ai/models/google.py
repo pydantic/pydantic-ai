@@ -13,9 +13,15 @@ from uuid import uuid4
 
 from typing_extensions import assert_never
 
-from .. import UnexpectedModelBehavior, _utils, usage
+from .. import UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._run_context import RunContext
-from ..exceptions import ModelAPIError, ModelHTTPError, UserError
+from ..exceptions import (
+    ContextWindowExceeded,
+    ModelAPIError,
+    ModelOverloadedError,
+    ModelRateLimitError,
+    UserError,
+)
 from ..messages import (
     BinaryContent,
     CachePoint,
@@ -413,14 +419,40 @@ def _map_api_error(e: errors.APIError, model_name: str, model_id_namespace: str 
                 and message.startswith(f'models/{model_name} is not found ')
             ):
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-        return ModelHTTPError(
+        status = e.status if isinstance(e.status, str) else None
+        category = _error_category(status, e.message)
+        return _model_errors.http_error_class(category or _model_errors.http_status_category(status_code))(
             status_code=status_code,
             model_name=model_name,
             body=cast(Any, e.details),  # pyright: ignore[reportUnknownMemberType]
             headers=headers,
             suggested_model_id=suggested_model_id,
+            provider_error_code=status,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
+
+
+_CONTEXT_WINDOW_ERROR_MESSAGES = ('input token count', 'number of tokens allowed')
+"""Gemini reports a context window overflow as `INVALID_ARGUMENT`, identifiable only by its message.
+
+The full message is `The input token count (N) exceeds the maximum number of tokens allowed (M)`; the file-upload
+variant drops the leading clause.
+"""
+
+
+def _error_category(status: str | None, message: object) -> type[ModelAPIError] | None:
+    """The error category for a Google API error status, like `RESOURCE_EXHAUSTED`."""
+    match status:
+        case 'RESOURCE_EXHAUSTED':
+            return ModelRateLimitError
+        case 'UNAVAILABLE':
+            return ModelOverloadedError
+        case 'INVALID_ARGUMENT' if isinstance(message, str) and any(
+            m in message.lower() for m in _CONTEXT_WINDOW_ERROR_MESSAGES
+        ):
+            return ContextWindowExceeded
+        case _:
+            return None
 
 
 def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> dict[str, str]:

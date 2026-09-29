@@ -10,7 +10,7 @@ import pydantic_core
 from pydantic import JsonValue
 from typing_extensions import assert_never
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils
+from .. import UnexpectedModelBehavior, _model_errors, _utils
 from .._run_context import RunContext
 from .._utils import (
     format_inlined_text_file as _format_inlined_text_file,
@@ -19,7 +19,10 @@ from .._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ..exceptions import ModelAPIError
+from ..exceptions import (
+    ContextWindowExceeded,
+    ModelAPIError,
+)
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -123,8 +126,22 @@ def _map_api_errors(model_name: str) -> Generator[None]:
         yield
     except SDKError as e:
         if (status_code := e.status_code) >= 400:
-            raise ModelHTTPError(
-                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.headers)
+            try:
+                error = pydantic_core.from_json(e.body)
+            except ValueError:
+                error = None
+            code = error.get('code') if _utils.is_str_dict(error) else None
+            error_type = error.get('type') if _utils.is_str_dict(error) else None
+            # Mistral sends its numeric error codes as strings, e.g. `'3051'` for a context window overflow.
+            code = str(code) if isinstance(code, str | int) else None
+            category = ContextWindowExceeded if code == '3051' else _model_errors.http_status_category(status_code)
+            raise _model_errors.http_error_class(category)(
+                status_code=status_code,
+                model_name=model_name,
+                body=e.body,
+                headers=dict(e.headers),
+                provider_error_code=code,
+                provider_error_type=error_type if isinstance(error_type, str) else None,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
 

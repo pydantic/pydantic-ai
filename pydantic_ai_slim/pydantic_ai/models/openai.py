@@ -25,7 +25,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import Never, Protocol, Self, TypedDict, assert_never
 
-from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _model_errors, _utils, usage
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -40,7 +40,13 @@ from .._utils import (
     number_to_datetime,
 )
 from ..capabilities.abstract import AbstractCapability
-from ..exceptions import SuspendedResponseExpired, UserError
+from ..exceptions import (
+    ContextWindowExceeded,
+    ModelConnectionError,
+    ModelTimeoutError,
+    SuspendedResponseExpired,
+    UserError,
+)
 from ..messages import (
     STANDING_PROMPT_PLANTED_KEY,
     AudioUrl,
@@ -135,6 +141,7 @@ try:
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
+        APITimeoutError,
         AsyncAzureOpenAI,
         AsyncOpenAI,
         AsyncStream,
@@ -226,21 +233,44 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
     try:
         yield
     except APIStatusError as e:
-        if (status_code := e.status_code) >= 400:
-            body: object | None = e.body
-            suggested_model_id = None
-            if _utils.is_str_dict(body) and body.get('code') == 'model_not_found':
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            raise ModelHTTPError(
-                status_code=status_code,
-                model_name=model_name,
-                body=body,
-                headers=dict(e.response.headers),
-                suggested_model_id=suggested_model_id,
-            ) from e
+        if e.status_code >= 400:
+            raise _map_status_error(e, model_name, model_id_namespace) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        raise _map_connection_error(e, model_name) from e
+
+
+def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str = 'openai') -> ModelHTTPError:
+    body: object | None = e.body
+    suggested_model_id = None
+    if e.code == 'model_not_found':
+        suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    return _model_errors.http_error_class(_error_category(e))(
+        status_code=e.status_code,
+        model_name=model_name,
+        body=body,
+        headers=dict(e.response.headers),
+        suggested_model_id=suggested_model_id,
+        provider_error_code=e.code,
+        provider_error_type=e.type,
+    )
+
+
+def _error_category(e: APIStatusError) -> type[ModelAPIError] | None:
+    if e.code == 'context_length_exceeded':
+        return ContextWindowExceeded
+    if e.status_code == 400 and 'maximum context length' in e.message.lower():
+        # OpenAI-compatible APIs without the error code, like OpenRouter and vLLM, only say so in the message.
+        return ContextWindowExceeded
+    if e.code == 'insufficient_quota':
+        # Exhausted quota is also a 429, but waiting won't help.
+        return None
+    return _model_errors.http_status_category(e.status_code)
+
+
+def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnectionError:
+    error_class = ModelTimeoutError if isinstance(e, APITimeoutError) else ModelConnectionError
+    return error_class(model_name=model_name, message=e.message)
 
 
 @contextmanager
@@ -2222,16 +2252,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         except APIStatusError as e:  # pragma: lax no cover
             if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                 return model_response
-            if (status_code := e.status_code) >= 400:
-                raise ModelHTTPError(
-                    status_code=status_code,
-                    model_name=self.model_name,
-                    body=e.body,
-                    headers=dict(e.response.headers),
-                ) from e
+            if e.status_code >= 400:
+                raise _map_status_error(e, self.model_name) from e
             raise
         except APIConnectionError as e:  # pragma: lax no cover
-            raise ModelAPIError(model_name=self.model_name, message=e.message) from e
+            raise _map_connection_error(e, self.model_name) from e
 
     async def request(
         self,
