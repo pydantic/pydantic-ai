@@ -243,8 +243,9 @@ previous login.
 
 Saved login takes precedence over `GITHUB_COPILOT_API_KEY`,
 `GITHUB_COPILOT_API_TOKEN`, and `COPILOT_GITHUB_TOKEN`, checked in that order when
-no login is saved. CLAI does not read `GH_TOKEN`, `GITHUB_TOKEN`, or another
-application's token files. This is shell-owned authentication, not a plugin API.
+no login is saved. Copilot login does not read `GH_TOKEN`, `GITHUB_TOKEN`, the
+`GITHUB_TOKEN` key in `/keys`, or another application's token files; that key
+belongs to the separate [`github` plugin](#github-tools-from-githubs-hosted-mcp-server). This is shell-owned authentication, not a plugin API.
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
 Bare `/login` continues to sign in to Codex.
 
@@ -387,7 +388,7 @@ order plugin instructions, renderers, and status segments are consulted in.
 declared. It does not list every public harness capability for Space-enable:
 hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
-CLAI plugins written for them.
+CLAI plugins written for them, such as the [`pylon` plugin](#pylon-support-issues-and-accounts-in-pylon).
 
 To run any other capability, declare it on purpose under an id of your choice,
 with JSON constructor settings if it takes them:
@@ -508,6 +509,142 @@ The request and its response are also emitted as `AskUserRequestedEvent` and
 show a "waiting for you" state) registers `@host.on(EventClass)` or
 `@host.render(EventClass)` without being the answerer.
 
+### `github`: tools from GitHub's hosted MCP server
+
+The `github` built-in (`pydantic_clai2.github`) gives the model harness
+[`GitHub`](../pydantic_ai_harness/pydantic_ai_harness/github/README.md): the tools of GitHub's hosted
+MCP server, acting as the account behind a token. It starts disabled.
+`/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
+settings menu. To change the settings later, run `/plugins configure github` or
+press `C` on it in `/plugins`.
+You never need to reinstall it.
+
+The menu is the shared field editor that `/set` uses: type to filter, Enter to
+edit a row, `R` to reset one, Esc or **Save & close** to close. Each change is
+saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
+new settings.
+
+| Row | Default | Does |
+|---|---|---|
+| Sign-in | GitHub CLI (browser) | where the token comes from: the GitHub CLI's browser sign-in, or a token saved in `/keys` (pick one from a searchable list, or type a new one into a masked field) |
+| GitHub host | github.com | github.com, or GitHub Enterprise Cloud with data residency; the latter asks for `octocorp.ghe.com` or the full MCP URL and connects to `https://copilot-api.octocorp.ghe.com/mcp` |
+| Tools | read-only | read-only, or read and write |
+| Tool groups | server defaults | `all`, a preset, or your own comma-separated groups such as `repos,issues,actions` |
+| Server instructions | forwarded | whether the GitHub server's own instructions reach the agent |
+
+GitHub Enterprise Server has no hosted MCP server, so it is not offered. The
+token's own permissions still limit what any of these settings can reach.
+
+#### Signing in through the browser
+
+GitHub's hosted MCP server does not support dynamic client registration, so an
+MCP client can only use OAuth with an OAuth App registered to that client. CLAI
+doesn't register one. Instead it uses the GitHub CLI (`gh`), which has its own.
+Choosing **GitHub CLI (browser)** under Sign-in runs
+`gh auth login --hostname HOST --web --clipboard`. The menu shows the one-time
+code (`gh` also copies it to your clipboard) and opens
+`https://github.com/login/device` in your browser. Once you approve the code,
+the screen closes by itself. Enter opens the page again, and Esc stops `gh` and
+leaves the setting unchanged. If `gh` already has a login for the host, choosing
+it just switches the plugin over. `HOST` is `github.com`, or the ghe.com host for
+GitHub Enterprise Cloud.
+
+`gh` keeps the token in your OS keyring. On every run the plugin calls
+`gh auth token --hostname HOST`, so `gh auth login`, `gh auth switch`, or
+`gh auth logout` in a shell take effect from the next turn. `GH_TOKEN`,
+`GITHUB_TOKEN`, and their enterprise variants are removed from the environment
+`gh` sees. Without that, `gh` would hand back the variable's token instead of
+your login, and it refuses to sign in while one is set. If `gh` is not installed,
+the menu says so; install it from <https://cli.github.com> or use `/keys`.
+
+#### Using a token saved in `/keys`
+
+Choosing **Token saved in /keys** stores the token in the named API key store
+that `/keys` manages, not in plugin settings, which are plaintext SQLite. A new
+token typed in the menu is saved in `/keys` under the key's name. If a key of
+that name already exists, the menu asks before replacing it, because other
+plugins and connections may share it. `GITHUB_TOKEN` is a label in `/keys`, not
+an environment variable. Any plugin that names the same key shares it.
+
+Either way, the plugin's settings hold only which source to use and a key's name,
+such as `{"login": "key", "token": {"name": "GITHUB_TOKEN"}}`. A declaration that
+tries to hold a token is rejected.
+
+The token is looked up on every run. If none is available when the plugin loads
+(no `gh` login for the host, or the named key is missing), the plugin still
+loads, prints a warning, and keeps its settings menu available. Until you sign
+in or save a key, each run fails with an error saying how to fix it, so the agent
+never runs as the wrong account. `/keys` does not stop you renaming or deleting a
+key that a plugin uses. Neither sign-in uses your `/login github-copilot` login,
+and Copilot does not read the `GITHUB_TOKEN` key. The plugin emits no telemetry
+of its own; tool calls appear in core's spans.
+
+### `pylon`: support issues and accounts in Pylon
+
+`pylon` (`pydantic_clai2.pylon`) gives the agent harness
+[`Pylon`](../../docs/harness/pylon.md): Pylon's hosted MCP tools for
+searching, reading, creating, and updating support issues, looking up and
+updating accounts, and looking up contacts. It starts disabled;
+`/plugins enable pylon` turns it on. The agent acts as the Pylon user who signed
+in, so only Member and Admin users with Pylon's `MCP Access` role can use it.
+
+#### Configuring Pylon
+
+Turning the plugin on opens its settings menu, like any plugin with a
+[`@host.configure`](#offer-a-settings-menu-hostconfigure) menu. `C` in
+`/plugins`, `/plugins configure pylon`, and `/pylon` reopen it at any time to
+change anything, including the key. Type to filter the rows. Enter edits a row,
+`R` restores its default, and **Save & close** or Esc leaves the menu. Each
+change is saved to the plugin's settings as soon as you make it and applies from
+the next run, with no reinstall.
+
+| Row | Default | Does |
+|---|---|---|
+| Sign-in (`auth`) | Named key from /keys (`"key"`) | `"key"` connects with a `/keys` entry. `"browser"` signs in through the browser |
+| Key (/keys) | not chosen | shown only for `"key"`. Enter opens the saved-key picker, and `R` forgets the choice. Stored as a name, not in settings |
+| Read-only tools (`read_only`) | `false` | keep only the tools Pylon's server labels read-only |
+| Server instructions (`include_instructions`) | `true` | pass Pylon's own server instructions to the agent |
+
+`/pylon status` prints the current setup without opening the menu, and
+`/pylon key` goes straight to the key picker. A declaration can also carry the
+settings as JSON, since none of them are secret:
+
+```text
+/plugins add pylon pydantic_clai2.pylon '{"read_only": true}'
+```
+
+Pylon's endpoint (`https://mcp.usepylon.com`) is fixed and there is no
+workspace or organization field. The token decides which Pylon organization
+and user the agent acts as.
+
+#### Keys: `/keys` holds the secret, Pylon holds its name
+
+The token lives in [`/keys`](#saved-api-keys), not in plugin settings, which are
+plaintext SQLite. The Key row uses the shared saved-key picker, which is
+searchable, and Esc cancels it. Choose an existing key, or choose **Enter a
+different API key** to type a masked token. CLAI saves that token in `/keys` as
+`PYLON_ACCESS_TOKEN`, the name harness `Pylon` documents. If that name already
+exists, CLAI asks before replacing it, since other connections may use it. The
+name is only a label: CLAI does not read an exported `PYLON_ACCESS_TOKEN`.
+
+Only the key's name is saved, in the credential store beside the vLLM and
+OpenRouter connections. Each run looks up the key's current value, so replacing
+it in `/keys` takes effect on the next run. A key Pylon uses cannot be renamed
+in `/keys`. Deleting it makes Pylon runs fail with an error naming the key until
+you restore it or choose another. Until a key is chosen, runs get no Pylon
+tools. This applies outside a terminal and after cancelling the menu.
+
+Several connections and plugins can share one named key by pointing at the same
+name. For example, a GitHub plugin and Copilot tooling can both reference
+`GITHUB_TOKEN`, so replacing it once updates both.
+
+Pylon only accepts OAuth access tokens, not its REST API keys. With the
+**Browser sign-in** option, CLAI signs in for you: the first run that uses Pylon
+opens the browser, as `/mcp` servers with OAuth do, and waits up to five minutes
+for you to finish. Those tokens stay in the keyring (account `mcp-plugin_pylon`,
+or a private `0600` file when there is no keyring). They are refreshed as
+needed and never touch `/keys` or plugin settings.
+
 ## Managing plugins
 
 `/plugins` on its own opens a full-screen menu, the same kind Code Puppy uses
@@ -559,6 +696,7 @@ CLAI does the same thing:
 | `/plugins enable NAME` / `disable NAME` | load or unload, remembered across restarts; enabling (like `add`) opens the plugin's settings menu if it has one |
 | `/plugins configure NAME` | open a loaded plugin's settings menu (in a CLAI session only) |
 | `/plugins reload NAME` | re-import the file and load it again (for editing a plugin while CLAI runs) |
+| `/plugins configure NAME` | open a loaded plugin's settings menu, if it registered one with `host.configure`; `enable` and `add` open it too |
 | `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
 
 `/reload` takes no arguments. It uses `importlib.reload`, preserves the conversation,
@@ -912,6 +1050,40 @@ CLAI ignores unknown names in its own saved settings and preserves their values 
 other versions or branches. This does not relax validation of plugin declarations
 or `host.settings(Model)`.
 
+### Keep secrets in `/keys`: `KeyReference`, `SavedKey`, `host.save_settings`
+
+Plugin settings are stored in plaintext SQLite, so a token, API key, or client
+secret must never be one of them. Keep the secret in the named API key store that
+`/keys` manages, and put only its name in your settings. Use the conventional
+uppercase variable name as the label, such as `GITHUB_TOKEN` or `SLACK_BOT_TOKEN`,
+so plugins that need the same credential share one key; replacing it in `/keys`
+reaches all of them. The label does not export or read an environment variable.
+
+```python
+from pydantic import BaseModel, ConfigDict, Field
+
+from pydantic_clai2.api_keys import KeyReference, SavedKey
+
+
+class MySettings(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    token: KeyReference = Field(default_factory=lambda: KeyReference(name='MY_SERVICE_TOKEN'))
+
+
+def activate(host):
+    settings = host.settings(MySettings)
+    host.add(MyService(auth=SavedKey(name=settings.token.name, setup='Add MY_SERVICE_TOKEN in /keys.')))
+```
+
+`SavedKey` is a capability `auth` function. It looks the key up on every run and
+raises with `setup` when the key is missing, so a deleted key fails closed rather
+than falling back to something else. To let the user choose a key, call `prompt_api_key(prompt=..., label=...)`: it
+returns a `KeyReference` to a saved key, a masked new value for you to
+`save_key(name=..., value=...)`, or `None` when cancelled. Then call
+`host.save_settings(settings)` with the new reference. It saves your plugin's
+declaration as `plugins add` would, and `host.settings(Model)` returns the new
+values from then on.
+
 ### Offer a settings menu: `@host.configure`
 
 Register an async function that shows a settings menu and returns a line to
@@ -936,6 +1108,9 @@ async def configure() -> str:
     messages = await run_worker(lambda: run_flow(FieldMenu(NotifySource(host))))
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
+
+The built-in `github` and [`pylon`](#configuring-pylon) plugins are complete
+examples; `pylon` also steps out of the menu worker to run the async key picker.
 
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
@@ -1056,8 +1231,9 @@ numbers, and underscores, starting with a letter or underscore. Saving an existi
 name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
 the secret on the command line.
 
-When saved keys exist, vLLM's token prompt and OpenRouter's **Enter API key** flow
-show a searchable list of names. Choose one, enter a different key privately, or
+When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
+and plugins such as [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
+searchable list of names. Choose one, enter a different key privately, or
 choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
 login flows are unchanged. Select keys only for endpoints you trust.
 
@@ -1068,7 +1244,7 @@ Key values never appear in the picker or confirmation. Names are labels, not
 exported environment variables. Selecting a saved key stores a reference, not a copy. Discovery and each new
 turn resolve its current value. Replacing a key updates connections that reference
 it. Deleting it makes those connections fail until you restore the same name or
-reconfigure them. Keys referenced by saved connections cannot be renamed. A cross-process lock
+reconfigure them. Keys referenced by saved connections, including Pylon's, cannot be renamed. A cross-process lock
 serializes key changes and connection saves so concurrent CLAI sessions do not
 overwrite each other's key edits. The lock file contains no credentials.
 

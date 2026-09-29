@@ -16,6 +16,7 @@ Application Default Credentials.
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import time
 import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
@@ -109,6 +110,7 @@ from ._utils import (
     reconnect_with_backoff,
     require_pcm_audio,
     resolve_advertised_tools,
+    seed_pcm_audio,
     seed_speech_content,
     seed_user_content,
 )
@@ -488,18 +490,21 @@ async def _seed_turns(
     work whose answer text is already retained.
 
     Thinking signatures and `provider_details` are provider-session-bound and are not replayed.
-    `SystemPromptPart`s are routed through `system_instruction`, and `CachePoint`s are ignored. Gemini
-    does not accept audio in seeded turns, so speech requires a transcript. Other unrepresentable
-    content raises [`UserError`][pydantic_ai.exceptions.UserError].
+    `SystemPromptPart`s are routed through `system_instruction`, and `CachePoint`s are ignored. User
+    speech is seeded as its transcript, or as its retained 16 kHz audio on a model whose profile sets
+    `supports_seeding_audio`; on other models (Gemini 2.5 rejects audio in seeded turns) speech
+    requires a transcript. Other unrepresentable content raises [`UserError`][pydantic_ai.exceptions.UserError].
     """
     turns: list[genai_types.Content | genai_types.ContentDict] = []
     supports_images = profile.get('supports_seeding_images', False)
+    supports_audio = profile.get('supports_seeding_audio', False)
     for message in messages:
         if isinstance(message, ModelRequest):
             parts = await _seed_request_parts(
                 message.parts,
                 provider_name=provider_name,
                 supports_images=supports_images,
+                supports_audio=supports_audio,
             )
             role = 'user'
         else:
@@ -515,6 +520,7 @@ async def _seed_request_parts(
     *,
     provider_name: str,
     supports_images: bool,
+    supports_audio: bool,
 ) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
@@ -529,11 +535,19 @@ async def _seed_request_parts(
                 )
             )
         elif isinstance(part, SpeechPart):
-            # Gemini has no client-content channel for raw audio, so seeding never replays retained
-            # audio regardless of profile flags — the typed result is always a transcript string.
-            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=False)
-            if content:
-                parts.append(genai_types.Part(text=content))
+            content = seed_speech_content(part=part, provider_name=provider_name, supports_audio=supports_audio)
+            if isinstance(content, str):
+                if content:
+                    parts.append(genai_types.Part(text=content))
+            else:
+                # Seeded audio has to be at the live input rate: 24 kHz audio closes the session with
+                # `1008 Operation is not implemented, or supported, or enabled` (verified live).
+                pcm = seed_pcm_audio(audio=content, provider_name=provider_name, sample_rate=INPUT_SAMPLE_RATE)
+                parts.append(
+                    genai_types.Part(
+                        inline_data=genai_types.Blob(data=pcm, mime_type=f'audio/pcm;rate={INPUT_SAMPLE_RATE}')
+                    )
+                )
         elif isinstance(part, ToolReturnPart):
             output, user_content = part.model_response_str_and_user_content()
             parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} returned: {output}]'))
@@ -1166,6 +1180,7 @@ class GoogleRealtimeModel(RealtimeModel):
         # explicit opt-out alongside a policy would silently reconnect into a model that remembers
         # nothing, so it fails loudly instead.
         reconnect = settings.get('reconnect')
+        handshake_timeout = settings.get('handshake_timeout', 30.0)
         if reconnect is not None and settings.get('google_enable_session_resumption') is False:
             raise UserError(
                 'A `reconnect` policy requires Gemini session resumption, but '
@@ -1205,7 +1220,17 @@ class GoogleRealtimeModel(RealtimeModel):
                     # A gateway route needs nothing extra here: the relay routes the SDK's native
                     # Vertex Bidi path, and the gateway bearer auth reaches the handshake via a
                     # static header set on the client at build time (see `_set_google_ws_gateway_auth`).
-                    session = await opening.__aenter__()
+                    # The SDK waits for `setup_complete` without a deadline of its own, so a server that
+                    # accepts the socket and never answers the setup would hang the dial forever.
+                    # `asyncio.wait_for` rather than an anyio scope: its cancellation is edge-triggered,
+                    # so the SDK's `async with ws_connect(...)` still gets to close the socket it opened,
+                    # where a level-triggered scope would cancel that close too and leak the socket.
+                    try:
+                        session = await asyncio.wait_for(opening.__aenter__(), timeout=handshake_timeout)
+                    except asyncio.TimeoutError as e:
+                        # On Python 3.10, `asyncio.TimeoutError` isn't the built-in `TimeoutError` that
+                        # the initial dial and a reconnect's retry both handle.
+                        raise TimeoutError(f'no setup_complete within {handshake_timeout} seconds') from e
             cm = opening
             return session
 
@@ -1242,10 +1267,16 @@ class GoogleRealtimeModel(RealtimeModel):
                 # Any other raw `websockets` handshake failure the SDK didn't wrap as an `APIError`; no HTTP
                 # status, so surface it as a `RealtimeError` rather than letting it escape untyped.
                 raise RealtimeError(model_name=self.model, message=f'WebSocket error during connect: {e}') from e
+            except TimeoutError as e:
+                # `handshake_timeout` ran out before the session was set up, or the socket's own
+                # opening timeout did: a `RealtimeError`, like an OpenAI-protocol handshake timeout.
+                raise RealtimeError(
+                    model_name=self.model, message=f'Timed out opening the Gemini Live session: {e}'
+                ) from e
             except OSError as e:
-                # The connection never came up: DNS failure, refused, reset, or the dial timing out
-                # (`TimeoutError` is an `OSError`). No HTTP status exists, so this is a `RealtimeError`
-                # too, rather than a bare built-in from what looks like an ordinary model call.
+                # The connection never came up: DNS failure, refused, or reset. No HTTP status exists,
+                # so this is a `RealtimeError` too, rather than a bare built-in from what looks like an
+                # ordinary model call.
                 raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
             # Seed prior conversation once, after the initial connect, as inactive context turns (no
             # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
@@ -1398,8 +1429,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         Accepts `BinaryAudio` (raw PCM16, 16kHz, mono), a `str` text turn, `TextContext` (text sent
         with `turn_complete=False`, so it waits for the next turn), `BinaryImage` (a live video
         frame), and `ToolResult`. The manual turn-taking verbs are not supported (Gemini uses
-        automatic VAD), and a `ToolResult`'s `respond` is ignored: Gemini answers a tool-call frame by
-        itself once every call in it has a result.
+        automatic VAD).
         """
         input_index = self._inputs_received
         self._inputs_received += 1
