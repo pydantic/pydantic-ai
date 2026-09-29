@@ -1132,9 +1132,9 @@ def test_gemini_tool_call_abandoned_by_a_drop_ends_the_wait() -> None:
     run_clean(GeminiSimulation(), scenario)
 
 
-@pytest.mark.parametrize('dialect', ['openai', 'azure', 'xai'])
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
 def test_baseline_openai_tool_result_with_media(dialect: str) -> None:
-    """A tool result with an image: the image follows the output as a user message."""
+    """A tool result with an image: the image follows the output as a user message (xAI takes no images)."""
 
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
