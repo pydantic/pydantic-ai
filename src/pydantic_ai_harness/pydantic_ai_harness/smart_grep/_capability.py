@@ -1,4 +1,4 @@
-"""The `SmartGrep` capability: semantic code search judged by a pluggable model."""
+"""The `SmartGrep` capability: plain-English code search judged by a pluggable model."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ just to locate the implementation.
 
 Use the returned excerpts and line ranges to decide which files need a targeted read. Do not
 automatically read every match or repeat searches when the excerpts already answer the question.
-Read the relevant code before editing; semantic search is discovery, not a substitute for
+Read the relevant code before editing; `smart_grep` is discovery, not a substitute for
 understanding it.
 
 Use regular text search for exact symbols, regexes, and exhaustive references, and read a known file
@@ -37,7 +37,7 @@ instead."""
 
 @dataclass
 class SmartGrep(AbstractCapability[AgentDepsT]):
-    """Semantic code search: find code by what it does, described in plain English.
+    """Plain-English code search: find code by what it does, described in plain English.
 
     Adds a `smart_grep` tool. A search lists the files under a directory in the
     run's workspace with `rg`, cuts them into syntax-aware snippets (functions,

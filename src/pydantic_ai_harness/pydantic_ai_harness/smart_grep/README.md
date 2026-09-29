@@ -1,6 +1,6 @@
 # Smart Grep
 
-Semantic code search: the agent describes the behavior it is looking for in plain English and gets back ranked
+Plain-English code search: the agent describes the behavior it is looking for in plain English and gets back ranked
 source excerpts with file and line ranges, judged by any Pydantic AI model, with TypeSafe's Jev decision model
 as the recommended judge.
 

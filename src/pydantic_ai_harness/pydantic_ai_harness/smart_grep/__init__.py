@@ -1,4 +1,4 @@
-"""Semantic code search: find code by what it does, judged by any Pydantic AI model."""
+"""Plain-English code search: find code by what it does, judged by any Pydantic AI model."""
 
 from pydantic_ai_harness.smart_grep._capability import SmartGrep
 from pydantic_ai_harness.smart_grep._judge import Relevance

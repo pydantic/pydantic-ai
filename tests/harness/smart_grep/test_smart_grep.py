@@ -38,7 +38,7 @@ from pydantic_ai_harness.smart_grep import SmartGrepResult, SmartGrepToolset, _c
 from pydantic_ai_harness.smart_grep._chunks import Chunk, Discovery, LineTooLong, discover, source_chunks, windows
 from pydantic_ai_harness.smart_grep._judge import TYPESAFE_MODEL, judge, resolve_judge_model
 from pydantic_ai_harness.smart_grep._retrieve import rank, terms
-from pydantic_ai_harness.smart_grep._search import semantic_search
+from pydantic_ai_harness.smart_grep._search import search_code
 
 from ..conftest import agent_run_names
 
@@ -129,8 +129,8 @@ async def _search(
 ) -> SmartGrepResult:
     workspace = _workspace(root)
     if candidates is None:  # the tool's own default
-        return await semantic_search(workspace, model, query, '.', limit=limit, threshold=0.5, concurrency=8)
-    return await semantic_search(
+        return await search_code(workspace, model, query, '.', limit=limit, threshold=0.5, concurrency=8)
+    return await search_code(
         workspace, model, query, '.', limit=limit, candidates=candidates, threshold=0.5, concurrency=8
     )
 
@@ -353,7 +353,7 @@ def test_judge_model_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize('model', [FakeJev('expired'), language_judge('expired')], ids=['decision', 'language'])
-async def test_semantic_search_ranks_labels_and_reports_coverage(tmp_path: Path, model: Model) -> None:
+async def test_search_code_ranks_labels_and_reports_coverage(tmp_path: Path, model: Model) -> None:
     out = await _search(_repo(tmp_path), model)
     assert {m.file_path for m in out.matches} == {'auth.py', 'tests/test_auth.py'}
     test_match = next(m for m in out.matches if m.file_path == 'tests/test_auth.py')
@@ -362,7 +362,7 @@ async def test_semantic_search_ranks_labels_and_reports_coverage(tmp_path: Path,
     assert out.warnings == []
 
 
-async def test_semantic_search_no_match_limit_and_shortlist(tmp_path: Path) -> None:
+async def test_search_code_no_match_limit_and_shortlist(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     none = await _search(repo, FakeJev('zzz'))
     assert none.matches == [] and 'does not prove absence' in none.warnings[0]
@@ -398,7 +398,7 @@ async def test_candidate_budget_default_and_bounds(tmp_path: Path, requested: in
 
 
 @pytest.mark.parametrize('query', ['   ', 'x' * 2001])
-async def test_semantic_search_rejects_bad_query(tmp_path: Path, query: str) -> None:
+async def test_search_code_rejects_bad_query(tmp_path: Path, query: str) -> None:
     with pytest.raises(ModelRetry, match='1-2000'):
         await _search(tmp_path, FakeJev('x'), query)
 

@@ -1,4 +1,4 @@
-"""The `smart_grep` tool: semantic code search over the run's workspace."""
+"""The `smart_grep` tool: plain-English code search over the run's workspace."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
 from pydantic_ai_harness._workspace import raise_tool_failure, require_workspace, supports_commands
 from pydantic_ai_harness.smart_grep._judge import JudgeModel, resolve_judge_model
-from pydantic_ai_harness.smart_grep._search import DEFAULT_CANDIDATES, SmartGrepResult, semantic_search
+from pydantic_ai_harness.smart_grep._search import DEFAULT_CANDIDATES, SmartGrepResult, search_code
 
 TOOL_NAME = 'smart_grep'
 
@@ -51,7 +51,7 @@ class SmartGrepToolset(FunctionToolset[AgentDepsT]):
         limit: int = 5,
         candidates: int = DEFAULT_CANDIDATES,
     ) -> SmartGrepResult:
-        """Find code by what it DOES, described in plain English (semantic search).
+        """Find code by what it DOES, described in plain English.
 
         Use for behaviour-based discovery when you don't know the symbol names,
         e.g. "where do we reject expired sessions?" or "retry a failed network
@@ -74,7 +74,7 @@ class SmartGrepToolset(FunctionToolset[AgentDepsT]):
         """
         model = resolve_judge_model(self._model, ctx.model)
         try:
-            return await semantic_search(
+            return await search_code(
                 ctx.workspace,
                 model,
                 query,

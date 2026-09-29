@@ -170,7 +170,7 @@ descendants), `read_only=False` (`True` registers only read tools), `content_has
 
 ## SmartGrep
 
-Semantic code search (`.smart_grep`, `[smart-grep]` for tree-sitter chunking beyond Python). One tool,
+Plain-English code search (`.smart_grep`, `[smart-grep]` for tree-sitter chunking beyond Python). One tool,
 `smart_grep(query, directory='.', glob=None, limit=5, candidates=128)`, returns a `SmartGrepResult`
 (`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with `rg --files` in the workspace
 (needs `rg` on the workspace `PATH`; hidden on a workspace that cannot run commands), shortlisted with BM25,

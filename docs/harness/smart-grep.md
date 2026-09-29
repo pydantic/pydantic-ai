@@ -1,11 +1,11 @@
 ---
 title: Smart Grep
-description: "Give a Pydantic AI agent semantic code search: describe behavior in plain English and get ranked source excerpts, judged by any model, with TypeSafe's Jev as the recommended judge."
+description: "Give a Pydantic AI agent code search by behavior: describe it in plain English and get ranked source excerpts, judged by any model, with TypeSafe's Jev as the recommended judge."
 ---
 
 # Smart Grep
 
-`SmartGrep` gives an agent semantic code search: the model describes the behavior it is looking for in plain
+`SmartGrep` gives an agent code search by behavior: the model describes the behavior it is looking for in plain
 English ("where do we reject expired sessions?") and gets back ranked source excerpts with file and line
 ranges, without first having to guess the symbol names a text search needs. Relevance is decided by a judge
 model you choose: any Pydantic AI model works, and TypeSafe's Jev decision model is the recommended one.

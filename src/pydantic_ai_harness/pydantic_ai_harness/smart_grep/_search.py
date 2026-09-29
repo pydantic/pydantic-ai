@@ -1,4 +1,4 @@
-"""Semantic search pipeline: discover -> shortlist -> judge -> rank -> excerpt."""
+"""The search pipeline: discover -> shortlist -> judge -> rank -> excerpt."""
 
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ def _to_match(item: _Scored, passing: list[_Scored], query: str) -> SmartGrepMat
     )
 
 
-async def semantic_search(
+async def search_code(
     workspace: Workspace,
     model: JudgeModel,
     query: str,
