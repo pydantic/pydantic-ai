@@ -261,6 +261,64 @@ def test_voice_live_maps_session_settings() -> None:
     assert 'reasoning_effort' not in config(thinking='high')
 
 
+def test_voice_live_cascade_semantic_vad_uses_azure_semantic_vad() -> None:
+    """Cascade models reject OpenAI's semantic VAD, so it's sent as Voice Live's own `azure_semantic_vad`."""
+    provider = AzureProvider(
+        azure_endpoint='https://resource.services.ai.azure.com',
+        api_version='2026-04-10',
+        api_key='azure-key',
+    )
+    model = AzureRealtimeModel('gpt-5', provider=provider)
+    settings = AzureRealtimeModelSettings(
+        openai_turn_detection=SemanticVAD(type='semantic_vad', eagerness='high', interrupt_response=False)
+    )
+    config = model._session_config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+    assert config['turn_detection'] == {
+        'type': 'azure_semantic_vad',
+        'create_response': True,
+        'interrupt_response': False,
+    }
+    # Server VAD and disabled detection pass through unchanged.
+    config = model._session_config('', None, model_settings=AzureRealtimeModelSettings(turn_detection=False))  # pyright: ignore[reportPrivateUsage]
+    assert config['turn_detection'] is None
+
+
+@pytest.mark.parametrize(
+    'model_name,thinking,temperature_sent',
+    [
+        # Can't turn reasoning off, so the temperature is always dropped.
+        ('gpt-5', None, False),
+        ('gpt-5', False, False),
+        # Can turn reasoning off, and doesn't reason by default: kept unless reasoning is asked for.
+        ('gpt-5.2', None, True),
+        ('gpt-5.2', False, True),
+        ('gpt-5.2', 'low', False),
+        # Doesn't reason at all.
+        ('gpt-4.1', 'high', True),
+    ],
+)
+def test_voice_live_temperature_dropped_while_reasoning(
+    model_name: str, thinking: ThinkingLevel | None, temperature_sent: bool
+) -> None:
+    """Like a standard OpenAI run, a temperature is dropped with a warning while the model reasons."""
+    provider = AzureProvider(
+        azure_endpoint='https://resource.services.ai.azure.com',
+        api_version='2026-04-10',
+        api_key='azure-key',
+    )
+    model = AzureRealtimeModel(model_name, provider=provider)
+    settings = AzureRealtimeModelSettings(azure_voice_live_temperature=0.5)
+    if thinking is not None:
+        settings['thinking'] = thinking
+    if temperature_sent:
+        config = model._session_config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+        assert config['temperature'] == 0.5
+    else:
+        with pytest.warns(UserWarning, match='`azure_voice_live_temperature` is not supported while'):
+            config = model._session_config('', None, model_settings=settings)  # pyright: ignore[reportPrivateUsage]
+        assert 'temperature' not in config
+
+
 @pytest.mark.parametrize(
     'model_name,thinking,expected',
     [

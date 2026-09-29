@@ -4,10 +4,10 @@ interactions:
   direction: received
   at: 0.0
   data:
-    event_id: event_6vzkHuZMSFB4G6VNhL9CJv
+    event_id: event_3hItPQl49OMfwpkqwcKehP
     type: session.created
     session:
-      id: sess_cnnbf8q9ek6PQKfnVQep6
+      id: sess_7Y9Hj0b1boukRVdatbNU4j
       model: gpt-5
       modalities:
       - audio
@@ -67,7 +67,7 @@ interactions:
       tool_choice: auto
       temperature: 1.0
       max_response_output_tokens: inf
-      expires_at: 1790647773
+      expires_at: 1790649155
       object: realtime.session
       input_audio_sampling_rate: 24000
       animation: null
@@ -92,7 +92,7 @@ interactions:
       output_audio_format: pcm16
       input_audio_sampling_rate: 24000
       turn_detection:
-        type: server_vad
+        type: azure_semantic_vad
         create_response: true
         interrupt_response: true
       input_audio_transcription:
@@ -100,12 +100,12 @@ interactions:
       reasoning_effort: high
 - kind: message
   direction: received
-  at: 0.07
+  at: 0.076
   data:
-    event_id: event_4tpbVFJGwrjSyETivyobH0
+    event_id: event_74SJWOqeAM4Fc3napjcwrr
     type: session.updated
     session:
-      id: sess_cnnbf8q9ek6PQKfnVQep6
+      id: sess_7Y9Hj0b1boukRVdatbNU4j
       model: gpt-5
       modalities:
       - text
@@ -133,21 +133,29 @@ interactions:
         phrase_list: null
       input_audio_noise_reduction: null
       turn_detection:
-        type: server_vad
+        type: azure_semantic_vad
         threshold: null
         prefix_padding_ms: null
         silence_duration_ms: null
         create_response: true
         interrupt_response: true
         idle_timeout_ms: null
+        profile: classic
+        neg_threshold: null
         speech_duration_ms: null
+        window_size: null
+        distinct_ci_phones: null
+        require_vowel: null
+        require_vowel_assistant_speaking: null
+        remove_filler_words: false
+        languages: null
         auto_truncate: false
         appended_text_after_truncation: null
       tools: []
       tool_choice: auto
       temperature: 1.0
       max_response_output_tokens: inf
-      expires_at: 1790647773
+      expires_at: 1790649155
       object: realtime.session
       input_audio_sampling_rate: 24000
       animation: null
@@ -161,7 +169,7 @@ interactions:
       handoff: null
 - kind: message
   direction: sent
-  at: 0.071
+  at: 0.076
   data:
     type: conversation.item.create
     event_id: pydantic_ai.content.0
@@ -174,19 +182,19 @@ interactions:
           the ball. How much is the ball?
 - kind: message
   direction: sent
-  at: 0.071
+  at: 0.076
   data:
     type: response.create
     event_id: pydantic_ai.response.0
 - kind: message
   direction: received
-  at: 0.136
+  at: 0.148
   data:
-    event_id: event_3nUAZenaXfmyYN9UKFAquB
+    event_id: event_xXRWkHkoaqui6fqsR6RtC
     type: conversation.item.created
     previous_item_id: ''
     item:
-      id: item_3dnVbLECDI1ycBj8woXfxT
+      id: item_2vKzgMaebGulLKMZpuHSF4
       object: realtime.item
       type: message
       status: completed
@@ -197,13 +205,13 @@ interactions:
           the ball. How much is the ball?
 - kind: message
   direction: received
-  at: 0.136
+  at: 0.15
   data:
-    event_id: event_7MqIuDlv3LvxJM66Co2swI
+    event_id: event_7WBajwiUoYGBDZZY4960ax
     type: response.created
     response:
       object: realtime.response
-      id: resp_4bi9xLicGpo8mOhaXmG2U1
+      id: resp_2VO0N69Dj4q8bOxca6BPYD
       status: in_progress
       status_details: null
       output: []
@@ -229,14 +237,14 @@ interactions:
       metadata: null
 - kind: message
   direction: received
-  at: 2.918
+  at: 5.397
   data:
-    event_id: event_pQrlqZQj0gAXyHMeUalwJ
+    event_id: event_1EXUhLVEBHEtDzUR4tSVmH
     type: response.output_item.added
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
     output_index: 0
     item:
-      id: msg_357ljiV9kUmBBKIqz0oiq1
+      id: msg_5tj0UlPmklArgrLSmb7O1V
       object: realtime.item
       type: message
       status: incomplete
@@ -244,13 +252,13 @@ interactions:
       content: []
 - kind: message
   direction: received
-  at: 2.918
+  at: 5.397
   data:
-    event_id: event_4dHG9aINJS96hihCfNZHYx
+    event_id: event_1udbmO1tZWIwNJY06vI5YM
     type: conversation.item.created
     previous_item_id: ''
     item:
-      id: msg_357ljiV9kUmBBKIqz0oiq1
+      id: msg_5tj0UlPmklArgrLSmb7O1V
       object: realtime.item
       type: message
       status: incomplete
@@ -258,12 +266,12 @@ interactions:
       content: []
 - kind: message
   direction: received
-  at: 2.918
+  at: 5.397
   data:
-    event_id: event_4IkWORcSzWnqqu3WivqFjP
+    event_id: event_1yI9F3qPfiwDiy0cn7Wr2y
     type: response.content_part.added
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    item_id: msg_5tj0UlPmklArgrLSmb7O1V
     output_index: 0
     content_index: 0
     part:
@@ -271,157 +279,146 @@ interactions:
       text: ''
 - kind: message
   direction: received
-  at: 2.918
+  at: 5.397
   data:
-    event_id: event_4BfOUAlDdlCEugFTG6RTbs
+    event_id: event_3byHBePD9jzdgmZXY3v6bC
     type: response.text.delta
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    item_id: msg_5tj0UlPmklArgrLSmb7O1V
     output_index: 0
     content_index: 0
     delta: The
 - kind: message
   direction: received
-  at: 2.918
+  at: 5.397
   data:
-    event_id: event_38j6zmP6FJwax1CarYtM5Q
+    event_id: event_6cjDiukgjffu0kMLQAEeWC
     type: response.text.delta
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    item_id: msg_5tj0UlPmklArgrLSmb7O1V
     output_index: 0
     content_index: 0
     delta: ' ball'
 - kind: message
   direction: received
-  at: 2.918
+  at: 5.407
   data:
-    event_id: event_7BmmClzRw1R5JtfzJZNrBQ
+    event_id: event_3CGkpXPvLSHA4Mz2d3JNQi
     type: response.text.delta
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    item_id: msg_5tj0UlPmklArgrLSmb7O1V
     output_index: 0
     content_index: 0
     delta: ' costs'
 - kind: message
   direction: received
-  at: 2.936
+  at: 5.421
   data:
-    event_id: event_5MXGJzYNhT698ink0lfl82
+    event_id: event_4kdflM7YYWWmDxpGwheU55
     type: response.text.delta
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    item_id: msg_5tj0UlPmklArgrLSmb7O1V
     output_index: 0
     content_index: 0
-    delta: ' $'
+    delta: ' '
 - kind: message
   direction: received
-  at: 2.936
+  at: 5.431
   data:
-    event_id: event_4V94kLIlDNpfZ23yjwsnOC
+    event_id: event_W9TSORic0PptmFsnNJ6Pm
     type: response.text.delta
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    item_id: msg_5tj0UlPmklArgrLSmb7O1V
     output_index: 0
     content_index: 0
-    delta: '0'
+    delta: '5'
 - kind: message
   direction: received
-  at: 2.942
+  at: 5.445
   data:
-    event_id: event_3nkd2m2fFIH4BOIBN0SShf
+    event_id: event_3roXo8WETG61nAiUU4ANIQ
     type: response.text.delta
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    item_id: msg_5tj0UlPmklArgrLSmb7O1V
     output_index: 0
     content_index: 0
-    delta: .
+    delta: ' cents'
 - kind: message
   direction: received
-  at: 2.955
+  at: 5.457
   data:
-    event_id: event_6upSEDm8eMYnQHYFbbwpwN
+    event_id: event_2Uyk7r2nz5nnYkSLlT7krj
     type: response.text.delta
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
-    output_index: 0
-    content_index: 0
-    delta: '05'
-- kind: message
-  direction: received
-  at: 2.98
-  data:
-    event_id: event_72BLWodb634S0ruGl64RnT
-    type: response.text.delta
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    item_id: msg_5tj0UlPmklArgrLSmb7O1V
     output_index: 0
     content_index: 0
     delta: .
 - kind: message
   direction: received
-  at: 2.983
+  at: 5.484
   data:
-    event_id: event_4nFtkLQkbbNyNNdbKZ8FI7
+    event_id: event_6q5eJMZCJYJRFRO1ndWBSp
     type: response.text.done
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    item_id: msg_5tj0UlPmklArgrLSmb7O1V
     output_index: 0
     content_index: 0
-    text: The ball costs $0.05.
+    text: The ball costs 5 cents.
 - kind: message
   direction: received
-  at: 2.983
+  at: 5.484
   data:
-    event_id: event_2ijq4D5N5OnDWLB8fDUkxN
+    event_id: event_5YVp6yRhJZGwwj0rinlJtt
     type: response.content_part.done
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
-    item_id: msg_357ljiV9kUmBBKIqz0oiq1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
+    item_id: msg_5tj0UlPmklArgrLSmb7O1V
     output_index: 0
     content_index: 0
     part:
       type: text
-      text: The ball costs $0.05.
+      text: The ball costs 5 cents.
 - kind: message
   direction: received
-  at: 2.983
+  at: 5.484
   data:
-    event_id: event_5ndKieHJujMLgqrrPwZ59
+    event_id: event_1nQj78s8FyE7m6yZfDdb7B
     type: response.output_item.done
-    response_id: resp_4bi9xLicGpo8mOhaXmG2U1
+    response_id: resp_2VO0N69Dj4q8bOxca6BPYD
     output_index: 0
     item:
-      id: msg_357ljiV9kUmBBKIqz0oiq1
+      id: msg_5tj0UlPmklArgrLSmb7O1V
       object: realtime.item
       type: message
       status: completed
       role: assistant
       content:
       - type: text
-        text: The ball costs $0.05.
+        text: The ball costs 5 cents.
 - kind: message
   direction: received
-  at: 3.146
+  at: 5.644
   data:
-    event_id: event_2v8UIQxgbaK7dlPDT1Aas6
+    event_id: event_7luaEwtEZprKq0seflg0dq
     type: response.done
     response:
       object: realtime.response
-      id: resp_4bi9xLicGpo8mOhaXmG2U1
+      id: resp_2VO0N69Dj4q8bOxca6BPYD
       status: completed
       status_details: null
       output:
-      - id: msg_357ljiV9kUmBBKIqz0oiq1
+      - id: msg_5tj0UlPmklArgrLSmb7O1V
         object: realtime.item
         type: message
         status: completed
         role: assistant
         content:
         - type: text
-          text: The ball costs $0.05.
+          text: The ball costs 5 cents.
       usage:
-        total_tokens: 193
+        total_tokens: 384
         input_tokens: 48
-        output_tokens: 145
+        output_tokens: 336
         input_token_details:
           cached_tokens: 0
           cache_write_tokens: 0
@@ -433,9 +430,9 @@ interactions:
             audio_tokens: 0
             image_tokens: 0
         output_token_details:
-          text_tokens: 145
+          text_tokens: 336
           audio_tokens: 0
-          reasoning_tokens: 128
+          reasoning_tokens: 320
       conversation_id: ''
       modalities:
       - text

@@ -193,24 +193,11 @@ Voice Live defaults input transcription to `whisper-1` when the deployment name 
 `gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
 `input_transcription_model` explicitly when that is not the intended deployment.
 
-Besides `openai_voice`, Voice Live applies `openai_turn_detection` and `openai_input_noise_reduction`,
-and maps `thinking` and a Voice-Live-only temperature:
-
-- [`thinking`](overview.md#shared-settings) becomes Voice Live's `reasoning_effort` on models whose
-  profile reports [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking],
-  such as the reasoning cascade models like `gpt-5`, which take it from the chat model's profile.
-  Non-reasoning models like `gpt-4.1` leave it out, since Voice Live would accept it and then fail
-  every response. The profile is inferred from the deployment name, so a reasoning model deployed
-  under another name needs `supports_thinking=True` in its [`profile=`](#which-models-use-which-api)
-  override.
-- Semantic VAD (`openai_turn_detection` or `azure_voice_live_turn_detection`) works only with the
-  native-audio `gpt-realtime*` models. The cascade models reject it with
-  `OpenAI Semantic VAD is not supported in cascaded pipeline`, which fails the session as it starts.
-- [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
-  sets the sampling temperature, from 0 to 2. The reasoning cascade models accept only the default
-  of 1: any other value fails each response.
-
-Voice Live silently ignores `openai_output_speed`, `openai_truncation`, and `parallel_tool_calls`.
+Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_reduction` as on GA,
+adapting them to the model: for example, semantic VAD on a cascade model uses Voice Live's own
+semantic VAD. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
+sets the sampling temperature. Voice Live ignores `openai_output_speed`, `openai_truncation`, and
+`parallel_tool_calls`.
 
 ### Which models use which API
 

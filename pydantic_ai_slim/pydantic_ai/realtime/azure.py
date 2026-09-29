@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import warnings
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from ..exceptions import UserError
 from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP, openai_model_profile
 from ..providers import Provider, infer_provider
 from ..providers.azure import AzureProvider
+from ..settings import ThinkingLevel
 from ..tools import ToolDefinition
 from ._openai_protocol import (
     SemanticVAD,
@@ -216,17 +218,54 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     azure_voice_live_turn_detection: ServerVAD | SemanticVAD
     """Voice Live server or semantic VAD config; only applies when `azure_voice_live=True`.
 
-    When present, it overrides `openai_turn_detection` and `turn_detection` on Voice Live. Semantic VAD
-    works only with the native-audio `gpt-realtime*` models: the cascade models (e.g. `gpt-5`) reject it
-    with `OpenAI Semantic VAD is not supported in cascaded pipeline`.
+    When present, it overrides `openai_turn_detection` and `turn_detection` on Voice Live. OpenAI's
+    semantic VAD runs natively only on the `gpt-realtime*` models; for any other model it's sent as
+    Voice Live's own `azure_semantic_vad`, which has no `eagerness` setting.
     """
     azure_voice_live_temperature: float
     """Sampling temperature for a Voice Live session, from 0 to 2; only applies when the session uses Voice Live.
 
-    The GA realtime API has no temperature setting. The reasoning cascade models (e.g. `gpt-5`) accept
-    only the default of 1: Voice Live takes another value when the session starts, and each response
-    then fails.
+    The GA realtime API has no temperature setting. As with a standard OpenAI run, it's dropped with a
+    warning while a reasoning model like `gpt-5` is reasoning, since those models then accept only the
+    default.
     """
+
+
+def _voice_live_turn_detection(settings: AzureRealtimeModelSettings, *, native_audio: bool) -> dict[str, Any] | None:
+    """The Voice Live `turn_detection` payload, or `None` to disable VAD."""
+    if 'azure_voice_live_turn_detection' in settings:
+        turn_detection: ServerVAD | SemanticVAD | None = settings['azure_voice_live_turn_detection']
+    elif 'openai_turn_detection' in settings:
+        turn_detection = settings['openai_turn_detection']
+    elif 'turn_detection' in settings:
+        turn_detection = resolve_base_turn_detection(settings['turn_detection'])
+    else:
+        turn_detection = ServerVAD(type='server_vad')
+    if turn_detection is not None and turn_detection['type'] == 'semantic_vad' and not native_audio:
+        # The cascade models reject OpenAI's semantic VAD, so use Voice Live's own model-based one,
+        # which every model accepts; it has no `eagerness`.
+        return {
+            'type': 'azure_semantic_vad',
+            'create_response': turn_detection.get('create_response', True),
+            'interrupt_response': turn_detection.get('interrupt_response', True),
+        }
+    return turn_detection_config(turn_detection)
+
+
+def _cascade_model_is_reasoning(model_name: str, thinking: ThinkingLevel | None) -> bool:
+    """Whether a Voice Live cascade chat model will reason, which rules out a non-default temperature.
+
+    Mirrors the standard OpenAI adapter, which drops sampling parameters while reasoning is active:
+    Voice Live accepts the temperature when the session starts, then fails every response.
+    """
+    profile = openai_model_profile(model_name)
+    if not profile.get('openai_supports_reasoning', False):
+        return False
+    if not profile.get('openai_supports_reasoning_effort_none', False):
+        return True
+    if thinking is not None:
+        return thinking is not False
+    return profile.get('thinking_enabled_by_default', False)
 
 
 class _VoiceLiveSession(BaseModel):
@@ -497,15 +536,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         if not self._resolve_voice_live(settings):
             return super()._session_config(instructions, tools, model_settings=settings)
 
-        if 'azure_voice_live_turn_detection' in settings:
-            turn_detection: ServerVAD | SemanticVAD | None = settings['azure_voice_live_turn_detection']
-        elif 'openai_turn_detection' in settings:
-            turn_detection = settings['openai_turn_detection']
-        elif 'turn_detection' in settings:
-            turn_detection = resolve_base_turn_detection(settings['turn_detection'])
-        else:
-            turn_detection = ServerVAD(type='server_vad')
-        auto_transcription_model = 'whisper-1' if self.model.startswith('gpt-realtime') else 'azure-speech'
+        native_audio = self.model.startswith('gpt-realtime')
+        auto_transcription_model = 'whisper-1' if native_audio else 'azure-speech'
         transcription_model = resolve_transcription_model(
             settings.get('input_transcription_model', 'auto'), default=auto_transcription_model
         )
@@ -515,7 +547,7 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             'input_audio_format': 'pcm16',
             'output_audio_format': 'pcm16',
             'input_audio_sampling_rate': self.profile.get('audio_input_sample_rate', 24000),
-            'turn_detection': turn_detection_config(turn_detection),
+            'turn_detection': _voice_live_turn_detection(settings, native_audio=native_audio),
         }
         if transcription_model is not None:
             config['input_audio_transcription'] = {'model': transcription_model}
@@ -537,9 +569,18 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
             config['max_response_output_tokens'] = max_tokens
         if tool_choice is not None:
             config['tool_choice'] = tool_choice_config(tool_choice)
+        thinking = settings.get('thinking')
         if (temperature := settings.get('azure_voice_live_temperature')) is not None:
-            config['temperature'] = temperature
-        if (thinking := settings.get('thinking')) is not None and self.profile.get('supports_thinking', False):
+            if _cascade_model_is_reasoning(self.model, thinking):
+                warnings.warn(
+                    f'`azure_voice_live_temperature` is not supported while {self.model!r} is reasoning, '
+                    'so it will be ignored. Set `thinking=False` to use it on a model that can turn '
+                    'reasoning off.',
+                    UserWarning,
+                )
+            else:
+                config['temperature'] = temperature
+        if thinking is not None and self.profile.get('supports_thinking', False):
             # Voice Live takes the effort flat, as `reasoning_effort`, rather than GA's `reasoning.effort`.
             # Unlike the Chat Completions API, it accepts `'none'` for `gpt-5` too (verified live).
             config['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
