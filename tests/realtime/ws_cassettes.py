@@ -677,7 +677,7 @@ def _patched_idle_audio(provider: ProviderName, replay: ReplayWebSocket | None) 
     from pydantic_ai.realtime import openai_live as rt_openai_live
 
     connection = rt_openai_live.OpenAILiveConnection
-    start_idle_audio = connection.start_idle_audio
+    start_idle_audio = connection._start_idle_audio  # pyright: ignore[reportPrivateUsage]
 
     def start_pumping(self: rt_openai_live.OpenAILiveConnection) -> None:
         replay.pumps_audio = True
@@ -687,7 +687,7 @@ def _patched_idle_audio(provider: ProviderName, replay: ReplayWebSocket | None) 
         await replay.wait_for_pumped_audio_turn()
 
     with (
-        mock.patch.object(connection, 'start_idle_audio', start_pumping),
+        mock.patch.object(connection, '_start_idle_audio', start_pumping),
         mock.patch.object(connection, '_wait_for_idle_frame', wait_for_recorded_frame),
     ):
         yield

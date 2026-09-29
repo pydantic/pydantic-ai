@@ -8,6 +8,7 @@ translation rules that only show up under conditions a recorded call doesn't rel
 
 from __future__ import annotations as _annotations
 
+import asyncio
 import base64
 import json
 from contextlib import contextmanager
@@ -2032,7 +2033,7 @@ def test_idle_frames_follow_a_quiet_gap_at_a_microphones_pace(monkeypatch: pytes
     clock = [10.0]
     monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
     connection = _connection()
-    connection._last_input_audio = 10.0  # pyright: ignore[reportPrivateUsage]
+    connection._input_audio_end = 10.0  # pyright: ignore[reportPrivateUsage]
 
     assert connection._idle_frame_due() == pytest.approx(10.3)  # pyright: ignore[reportPrivateUsage]
     connection._next_idle_frame = 10.3 + 0.1  # pyright: ignore[reportPrivateUsage]
@@ -2048,17 +2049,50 @@ async def test_application_audio_pushes_the_next_idle_frame_back(monkeypatch: py
 
     await connection.send(BinaryAudio(data=b'\x01\x00' * 10, media_type='audio/pcm'))
 
-    assert connection._idle_frame_due() == pytest.approx(5.3)  # pyright: ignore[reportPrivateUsage]
+    # The quiet gap starts where the application's audio ends on Live's timeline: 10 samples after now.
+    assert connection._idle_frame_due() == pytest.approx(5.3 + 10 / 24000)  # pyright: ignore[reportPrivateUsage]
     # Due already, so the wait returns at once and books the next frame a microphone frame later.
-    clock[0] = 5.3
+    clock[0] = 5.3 + 10 / 24000
     await connection._wait_for_idle_frame()  # pyright: ignore[reportPrivateUsage]
-    assert connection._idle_frame_due() == pytest.approx(5.4)  # pyright: ignore[reportPrivateUsage]
+    assert connection._idle_frame_due() == pytest.approx(5.4 + 10 / 24000)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_audio_sent_in_a_burst_holds_the_pump_back_until_it_has_played(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A long chunk, or a whole clip sent at once, plays on Live's timeline for as long as it lasts.
+
+    Timing the gap from the send would splice silence into the middle of the user's speech.
+    """
+    clock = [5.0]
+    monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
+    connection = _AudioSink()
+
+    # Two 400 ms chunks sent back to back: 800 ms of speech, ending at 5.8.
+    for _ in range(2):
+        await connection.send(BinaryAudio(data=bytes(9600 * 2), media_type='audio/pcm'))
+    assert connection._idle_frame_due() == pytest.approx(5.8 + 0.3)  # pyright: ignore[reportPrivateUsage]
+    # A chunk sent after the previous audio has played starts from now, not from where that audio ended.
+    clock[0] = 7.0
+    await connection.send(BinaryAudio(data=bytes(4800), media_type='audio/pcm'))
+    assert connection._idle_frame_due() == pytest.approx(7.1 + 0.3)  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_failed_idle_pump_ends_the_session_loudly() -> None:
+    """A pump that died of anything but the socket going away would leave text deferred forever, so it raises."""
+    connection = _connection(idle_audio=True)
+
+    async def broken() -> None:
+        raise RuntimeError('pump broke')
+
+    connection._idle_audio_task = asyncio.create_task(broken())  # pyright: ignore[reportPrivateUsage]
+    await asyncio.sleep(0)
+    with pytest.raises(RuntimeError, match='pump broke'):
+        connection._raise_if_idle_audio_failed()  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_the_idle_pump_streams_silence_until_closed() -> None:
     """Without application audio the pump streams 100 ms frames of silence, and closing the connection stops it."""
     connection = _AudioSink()
-    connection.start_idle_audio()
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
     task = connection._idle_audio_task  # pyright: ignore[reportPrivateUsage]
     assert task is not None
 
@@ -2079,7 +2113,7 @@ async def test_the_idle_pump_stops_when_the_socket_does() -> None:
             raise websockets.ConnectionClosedError(None, None)
 
     connection = _Closed(object())  # pyright: ignore[reportArgumentType]
-    connection.start_idle_audio()
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
     task = connection._idle_audio_task  # pyright: ignore[reportPrivateUsage]
     assert task is not None
 
@@ -2101,8 +2135,16 @@ async def test_idle_audio_starts_only_when_asked_for(model: OpenAILiveModel) -> 
             model_settings=OpenAILiveModelSettings(openai_live_idle_audio=True),
             model_request_parameters=ModelRequestParameters(),
         ) as connection:
+            # The pump starts with the connection's reading, as a session's does straight after connecting.
+            events = connection.__aiter__()
+            first = asyncio.ensure_future(events.__anext__())
+            await asyncio.sleep(0)
             task = connection._idle_audio_task  # pyright: ignore[reportPrivateUsage]
             assert task is not None and not task.done()
+            # Starting again is a no-op rather than a second pump.
+            connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+            assert connection._idle_audio_task is task  # pyright: ignore[reportPrivateUsage]
+            first.cancel()
     assert task.done()
 
 
@@ -2118,7 +2160,7 @@ async def test_audio_sent_as_the_pump_wakes_holds_its_frame_back() -> None:
             await connection.send(BinaryAudio(data=b'\x01\x00' * 10, media_type='audio/pcm'))
 
     connection._wait_for_idle_frame = wait_for_idle_frame  # pyright: ignore[reportPrivateUsage]
-    connection.start_idle_audio()
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         await connection.silence_sent.wait()
     await connection.aclose()

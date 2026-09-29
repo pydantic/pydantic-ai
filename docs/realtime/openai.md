@@ -436,7 +436,7 @@ the provider-agnostic workflows.
 | Feature | Support | Notes |
 | --- | --- | --- |
 | Audio format | Limited parameter support | Mono PCM16 at 24 kHz by default, input and output; 16 kHz by setting both `audio_input_sample_rate` and `audio_output_sample_rate` to `16000` through [`profile=`](overview.md#provider-support). The API also offers 8 kHz G.711, which Pydantic AI does not expose |
-| Text input | Limited parameter support | [Context, not a user turn](#text-is-context-not-a-user-turn): capped at 500 tokens, delivered only while audio flows, and possibly spoken even with `respond=False` |
+| Text input | Limited parameter support | [Context, not a user turn](#text-is-context-not-a-user-turn): capped at 500 tokens, delivered only while audio flows (see `openai_live_idle_audio`), and possibly spoken even with `respond=False` |
 | Text output | Unsupported | Live always speaks; read the answer from the transcript on the [`SpeechPart`][pydantic_ai.messages.SpeechPart] |
 | Image input | Limited parameter support | [For the backend, with `respond=True`](#images-go-to-the-backend) |
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |

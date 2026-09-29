@@ -458,8 +458,10 @@ class OpenAILiveConnection(RealtimeConnection):
         audio_rate: int = 24000,
         provider_name: str = 'openai',
         provider_url: str = '',
+        idle_audio: bool = False,
     ) -> None:
         self._ws = ws
+        self._idle_audio = idle_audio
         self._model_name = model_name
         self._backend_model = backend_model
         self._provider_name = provider_name
@@ -487,9 +489,10 @@ class OpenAILiveConnection(RealtimeConnection):
         # continuations go out from the receive loop, which is where that terminal is seen.
         self._continuations_due: list[_Delegation] = []
         self._reported_seconds = 0.0
-        # The idle-audio pump, and when the application last sent audio, on the pump's clock.
+        # The idle-audio pump, and where the application's audio ends on the pump's clock: audio sent in a
+        # burst plays on Live's timeline for as long as it lasts, however quickly it was sent.
         self._idle_audio_task: asyncio.Task[None] | None = None
-        self._last_input_audio = 0.0
+        self._input_audio_end = 0.0
         self._next_idle_frame = 0.0
         # Counts the application's audio sends. Held with the lock around every audio send, it is how the
         # pump tells that the application spoke between its wait ending and its frame going out.
@@ -555,16 +558,20 @@ class OpenAILiveConnection(RealtimeConnection):
             return
         async with self._audio_send_lock:
             self._input_audio_sends += 1
-            self._last_input_audio = _pump_clock()
+            self._input_audio_end = (
+                max(_pump_clock(), self._input_audio_end) + len(content.data) / self._audio_bytes_per_ms / 1000
+            )
             await self._send_event({'type': 'session.input_audio.append', 'audio': _b64(content.data)})
 
-    def start_idle_audio(self) -> None:
+    def _start_idle_audio(self) -> None:
         """Stream silence whenever the application sends no audio, until the connection closes.
 
         Live's timeline only advances while audio arrives, so without this, text sent to a session whose
         microphone isn't streaming waits for audio that never comes.
         """
-        self._last_input_audio = _pump_clock()
+        if self._idle_audio_task is not None:
+            return
+        self._input_audio_end = _pump_clock()
         self._idle_audio_task = asyncio.create_task(self._pump_idle_audio(), name='openai-live-idle-audio')
 
     async def _pump_idle_audio(self) -> None:
@@ -592,7 +599,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._next_idle_frame = max(self._idle_frame_due(), _pump_clock()) + _IDLE_AUDIO_FRAME
 
     def _idle_frame_due(self) -> float:
-        return max(self._next_idle_frame, self._last_input_audio + _IDLE_AUDIO_GAP)
+        return max(self._next_idle_frame, self._input_audio_end + _IDLE_AUDIO_GAP)
 
     async def _send_tool_result(self, result: ToolResult) -> None:
         """Return a tool result to the delegated Responses backend and let it continue."""
@@ -661,6 +668,8 @@ class OpenAILiveConnection(RealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         # One read is always in flight: the next one starts before this frame is handled, so nothing
         # arrives while the consumer is busy and no frame is dropped between iterations.
+        if self._idle_audio:
+            self._start_idle_audio()
         pending = self._start_read()
         while True:
             # Never cancel the pending `recv()`: a cancelled read can drop the frame it already holds,
@@ -691,6 +700,16 @@ class OpenAILiveConnection(RealtimeConnection):
             # keeps frames arriving, so a wait that returns is no evidence that anyone spoke.
             for event in self._expire_quiet_turn():
                 yield event
+            self._raise_if_idle_audio_failed()
+
+    def _raise_if_idle_audio_failed(self) -> None:
+        """Re-raise what stopped the idle-audio pump, rather than let the session go quietly deaf to text.
+
+        A transport error isn't one: the pump stops on it by design, and the read loop reports the close.
+        """
+        task = self._idle_audio_task
+        if task is not None and task.done() and not task.cancelled() and (error := task.exception()) is not None:
+            raise error
 
     def _start_read(self) -> asyncio.Task[str | bytes]:
         """Begin the next read, remembering it so it can be cancelled on the way out."""
@@ -1400,9 +1419,8 @@ class OpenAILiveModel(RealtimeModel):
                 turn_silence_ms=settings.get('openai_live_turn_silence_ms', DEFAULT_TURN_SILENCE_MS),
                 provider_name=self.system,
                 provider_url=self._provider.base_url,
+                idle_audio=settings.get('openai_live_idle_audio', False),
             )
-            if settings.get('openai_live_idle_audio'):
-                connection.start_idle_audio()
             yield connection
         finally:
             if connection is not None:
