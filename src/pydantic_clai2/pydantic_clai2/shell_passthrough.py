@@ -38,10 +38,13 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
 
     async def execute() -> None:
         nonlocal exit_code
-        process = await asyncio.create_subprocess_shell(command)
+        # A child can signal us before asyncio returns its process handle. Keep spawning shielded so we can reap it.
+        spawn_task = asyncio.create_task(asyncio.create_subprocess_shell(command))
         try:
+            process = await asyncio.shield(spawn_task)
             exit_code = await process.wait()
         except asyncio.CancelledError:
+            process = await spawn_task
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(process.wait(), _INTERRUPT_GRACE)
             with contextlib.suppress(ProcessLookupError):
