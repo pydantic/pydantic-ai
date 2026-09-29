@@ -509,9 +509,12 @@ class SessionCore:
         response.message = message
 
     def _open_response(self, response_id: str | None) -> _Response | None:
-        """The open response content names: every OpenAI-protocol content frame names its response."""
-        response = self._responses.get(response_id) if response_id is not None else None
-        return response if response is not None and response.status is None else None
+        """The open response content names; content naming none (Azure Voice Live's text) goes to the only one open."""
+        if response_id is not None:
+            response = self._responses.get(response_id)
+            return response if response is not None and response.status is None else None
+        open_responses = [response for response in self._responses.values() if response.status is None]
+        return open_responses[0] if len(open_responses) == 1 else None
 
     def _speaking_response(self) -> _Response | None:
         open_responses = [response for response in self._responses.values() if response.status is None]

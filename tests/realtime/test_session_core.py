@@ -8,6 +8,7 @@ that follows a tool round through to its answer.
 
 from __future__ import annotations as _annotations
 
+from decimal import Decimal
 from typing import Any
 
 from inline_snapshot import snapshot
@@ -118,7 +119,7 @@ def ended(response_id: str, status: Any = 'completed', **kwargs: Any) -> Respons
     return ResponseEnded(response_id=response_id, status=status, **kwargs)
 
 
-def said(response_id: str, text: str, item_id: str | None = None, **kwargs: Any) -> OutputTranscript:
+def said(response_id: str | None, text: str, item_id: str | None = None, **kwargs: Any) -> OutputTranscript:
     return OutputTranscript(text, response_id=response_id, item_id=item_id, **kwargs)
 
 
@@ -357,3 +358,53 @@ def test_closing_settles_what_is_still_open() -> None:
 def test_seeded_history_leads() -> None:
     seeded = text_request('Earlier.')
     assert core(seeded=[seeded]).all_messages() == [seeded]
+
+
+def test_content_naming_no_response_goes_to_the_only_one_open() -> None:
+    session_core = feed(
+        core(),
+        said(None, 'Nobody.'),
+        started('r1'),
+        OutputTranscript('Mine.', output_text=True),
+        started('r2'),
+        OutputTranscript('Ambiguous.', output_text=True),
+        ended('r1'),
+        ended('r2'),
+    )
+    assert summary(session_core.all_messages()) == snapshot(['r1 [text:Mine.] complete stop', 'r2 [] complete stop'])
+
+
+def test_more_orderings() -> None:
+    """A part learning its item late, a provider-priced response, a transcript before the commit, and more."""
+    session_core = feed(
+        core(retain_input_audio=True),
+        started('r1'),
+        said('r1', 'First'),
+        said('r1', ' part', 'item_1'),
+        SessionUsage(RequestUsage(input_tokens=1, cost=Decimal('0.5')), provider_response_id='r1'),
+        ended('r1'),
+        AudioSent(data=b'\x00\x00'),
+        UserTurnStarted(turn_id='u1'),
+        RealtimeInputSpeechEndEvent(item_id='u1'),
+        AudioSent(data=b'\x01\x00'),
+        RealtimeInputSpeechEndEvent(item_id='u1'),
+        InputTranscript('Said before the commit.', item_id='u1', is_final=True),
+        UserTurnEnded(turn_id='u1'),
+        InputWithdrawn(input_ids=(7,)),
+    )
+    assert summary(session_core.all_messages()) == snapshot(
+        ['r1 [assistant:First part] complete stop', '{user:Said before the commit.+audio}']
+    )
+    (response, _) = session_core.all_messages()
+    assert isinstance(response, ModelResponse)
+    assert (response.usage.cost, session_core.usage.cost) == snapshot((Decimal('0.5'), Decimal('0.5')))
+
+
+def test_a_call_that_settles_without_a_result_owes_nothing() -> None:
+    session_core = feed(
+        core(), started('r1'), ToolCall('call_1', tool_name='boom', args='{}', response_id='r1'), ended('r1')
+    )
+    wait = session_core.wait_tokens()
+    failure = ModelRequest(parts=[ToolReturnPart(tool_name='boom', content='failed', tool_call_id='call_1')])
+    feed(session_core, ToolReturned(tool_call_id='call_1', request=failure))
+    assert session_core.still_owed(wait) == snapshot(frozenset())

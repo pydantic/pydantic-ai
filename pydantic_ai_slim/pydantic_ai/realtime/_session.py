@@ -1071,7 +1071,7 @@ class RealtimeSession:
             self._finalize_lost_state()
             if self._core is not None:
                 self._core.apply(Closed())
-                self._compare_shadow()
+                self._compare_shadow(self._core)
             self._teardown = asyncio.create_task(self._finish_teardown())
         elif asyncio.current_task() in self._background_tasks:
             # A tool closing the session is cancelled by the teardown, at the wait below of its own
@@ -3881,10 +3881,8 @@ class RealtimeSession:
                 if not isinstance(event, LIFECYCLE_EVENT_TYPES):
                     yield event
 
-    def _compare_shadow(self) -> None:
+    def _compare_shadow(self, core: SessionCore) -> None:
         """Record where the shadow core's history or usage disagrees with this session's."""
-        if (core := self._core) is None:
-            return
         legacy, shadow = _comparable(self.all_messages()), _comparable(core.all_messages())
         if legacy != shadow:
             diff = difflib.unified_diff(

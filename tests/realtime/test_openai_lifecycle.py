@@ -635,3 +635,103 @@ def test_response_request_metadata() -> None:
     assert response_metadata_answers({'pydantic_ai_inputs': '1-2'}) == (1, 2)
     assert response_metadata_answers({'pydantic_ai_inputs': 'mine'}) is None
     assert response_metadata_answers(None) is None
+
+
+async def test_an_idle_timeout_nudge_is_no_user_turn() -> None:
+    """With `idle_timeout_ms`, the server commits an empty audio item to nudge the model: nobody spoke."""
+    stream = Stream(
+        {
+            'type': 'input_audio_buffer.timeout_triggered',
+            'item_id': 'item_idle',
+            'audio_start_ms': 0,
+            'audio_end_ms': 0,
+        },
+        {'type': 'input_audio_buffer.committed', 'item_id': 'item_idle', 'previous_item_id': None},
+        user_message_added('input_audio'),
+        created('resp_1'),
+        done('resp_1'),
+    )
+    assert await stream.rest() == snapshot(
+        [
+            ResponseStarted(response_id='resp_1'),
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_1', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+            'RealtimeSessionErrorEvent',
+        ]
+    )
+
+
+async def test_speech_starts_that_never_stopped_merge_into_the_next() -> None:
+    """Semantic VAD can report a burst of speech starts and commit only the last one."""
+    stream = Stream(
+        {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_a'},
+        {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_b'},
+        {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_b'},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'item_b', 'previous_item_id': None},
+    )
+    assert await stream.rest() == snapshot(
+        [
+            'RealtimeInputSpeechStartEvent',
+            UserTurnStarted(turn_id='item_a'),
+            'RealtimeInputSpeechStartEvent',
+            UserTurnDiscarded(turn_id='item_a'),
+            UserTurnStarted(turn_id='item_b'),
+            'RealtimeInputSpeechEndEvent',
+            UserTurnEnded(turn_id='item_b'),
+            'RealtimeSessionErrorEvent',
+        ]
+    )
+
+
+async def test_xai_places_a_spoken_turn_when_it_adds_its_item() -> None:
+    """xAI adds the turn's item at speech start and can reply before the commit; a clear leaves it in place."""
+    stream = Stream(
+        {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1'},
+        {**user_message_added('input_audio'), 'item': {**user_message_added('input_audio')['item'], 'id': 'item_u1'}},
+        created('resp_1'),
+        {'type': 'input_audio_buffer.cleared'},
+        {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1'},
+        {'type': 'input_audio_buffer.speech_stopped', 'item_id': ''},
+        done('resp_1'),
+    )
+    assert await stream.rest() == snapshot(
+        [
+            'RealtimeInputSpeechStartEvent',
+            UserTurnStarted(turn_id='item_u1'),
+            UserTurnEnded(turn_id='item_u1'),
+            ResponseStarted(response_id='resp_1', user_turn_id='item_u1'),
+            UserTurnDiscarded(turn_id='item_u1'),
+            'RealtimeInputSpeechEndEvent',
+            'RealtimeInputSpeechEndEvent',
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_1', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+            'RealtimeSessionErrorEvent',
+        ]
+    )
+
+
+async def test_a_request_refused_for_a_response_the_provider_started_is_answered_by_it() -> None:
+    """The refusal arrives before the server-VAD response's `response.created`, which answers the input."""
+    refused = refusal('pydantic_ai.response.0')
+    refused['error']['code'] = 'conversation_already_has_active_response'
+    stream = Stream(refused, created('resp_vad'), done('resp_vad'))
+    await stream.connection.send('Hello?')
+    assert await stream.rest() == snapshot(
+        [
+            'InputRejected',
+            'RealtimeSessionErrorEvent',
+            ResponseStarted(response_id='resp_vad', answers=(0,), basis='inferred'),
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_vad',
+                status='completed',
+                finish_reason='stop',
+                provider_details={'status': 'completed'},
+            ),
+            'RealtimeSessionErrorEvent',
+        ]
+    )

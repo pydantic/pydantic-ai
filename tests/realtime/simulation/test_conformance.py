@@ -143,3 +143,4 @@ def test_lifecycle_contract_rules() -> None:
         UserTurnDiscarded(turn_id='item_u1'),
     ) == snapshot(['lifecycle.turn_end_without_start'])
     assert feed_lifecycle(turn, turn) == snapshot(['lifecycle.turn_started_twice', 'lifecycle.turn_unended_at_close'])
+    assert feed_lifecycle(UserTurnEnded(turn_id='item_u2')) == snapshot(['lifecycle.turn_end_without_start'])

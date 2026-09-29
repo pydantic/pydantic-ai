@@ -857,7 +857,8 @@ class ShadowChecker(Checker):
             pending = [finding for finding in findings if finding in SHADOW_PENDING]
             if self.strict or not pending:
                 raise violation
-            self.known_hits.append((pending[0], f'shadow.{code}'))
+            # Only reached by randomized exploration: the pinned scenarios reproduce their finding first.
+            self.known_hits.append((pending[0], f'shadow.{code}'))  # pragma: lax no cover
 
     def waiter_started(self, waiter: Waiter) -> None:
         from ._simulation import Waiter

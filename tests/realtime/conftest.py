@@ -14,6 +14,7 @@ import pytest
 from cassetter import RawRequest, RawResponse
 
 from pydantic_ai.realtime import _session as realtime_session  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.realtime._core import SessionCore
 
 from .. import cassette_hooks
 from ..conftest import sanitize_filename, try_import
@@ -177,8 +178,8 @@ def _shadow_core(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
     divergences: list[str] = []
     compare = realtime_session.RealtimeSession._compare_shadow  # pyright: ignore[reportPrivateUsage]
 
-    def recorded(session: realtime_session.RealtimeSession) -> None:
-        compare(session)
+    def recorded(session: realtime_session.RealtimeSession, core: SessionCore) -> None:
+        compare(session, core)
         divergences.extend(session._shadow_divergences)  # pyright: ignore[reportPrivateUsage]
 
     monkeypatch.setattr(realtime_session.RealtimeSession, '_compare_shadow', recorded)

@@ -432,6 +432,22 @@ def test_known_request_whose_refusal_is_lost_keeps_its_reservation() -> None:
     reproduce('SIM-21', OpenAISimulation(), scenario)
 
 
+@known('SIM-23')
+def test_known_close_cuts_off_a_terminal_mid_frame() -> None:
+    """The reply's `response.done` sends the deferred request, and the close lands while that send is in flight."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak(deliver=False)
+        sim.create_response()
+        sim.finish(ticks=0)
+        sim.close()
+        sim.settle()
+
+    # Seeded, since each send draws a latency, which is what holds the deferred request's send open.
+    reproduce('SIM-23', OpenAISimulation(seed=5, options=SessionOptions(latency=True)), scenario)
+
+
 @known('SIM-22')
 def test_known_terminal_read_as_the_connection_drops_loses_its_usage() -> None:
     """The cancelled reply's `response.done` is read right before the drop (found by exploration on the refactor)."""
