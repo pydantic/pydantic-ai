@@ -1027,8 +1027,9 @@ class TestSpeculationEdgeCases:
 
     async def test_eviction_abandons_a_tool_that_swallows_cancellation(self, monkeypatch: pytest.MonkeyPatch):
         """A launched tool that refuses to cancel cannot hold the `run_code` result hostage."""
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._speculation.CANCEL_TIMEOUT_SECONDS', 0.05)
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._speculation.CANCEL_TIMEOUT_SECONDS', 0.25)
         stubborn_started = asyncio.Event()
+        cancellation_seen = asyncio.Event()
 
         # The run moves on before the swallowed cancellation unwinds, so the tail is unreachable.
         async def search(query: str) -> str:  # pragma: lax no cover
@@ -1038,7 +1039,8 @@ class TestSpeculationEdgeCases:
                 try:
                     await asyncio.sleep(3600)
                 except asyncio.CancelledError:
-                    await asyncio.sleep(0.2)
+                    cancellation_seen.set()
+                    await asyncio.sleep(1.2)
                     raise
 
         code = 'if False:\n    a = await search(query="never")\nb = 1\nb'
@@ -1059,9 +1061,11 @@ class TestSpeculationEdgeCases:
             )
             await asyncio.wait_for(stubborn_started.wait(), timeout=5)
 
-            result = await asyncio.wait_for(
-                toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'c1'), run_code), timeout=5
+            run_code_task = asyncio.create_task(
+                toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'c1'), run_code)
             )
+            await asyncio.wait_for(cancellation_seen.wait(), timeout=5)
+            result = await asyncio.wait_for(run_code_task, timeout=0.75)
 
         assert isinstance(result, ToolReturn)
         assert run_capability.speculation_stats.evicted == 1
