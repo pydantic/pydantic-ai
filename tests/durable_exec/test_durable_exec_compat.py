@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
@@ -57,11 +58,16 @@ from pydantic_ai.durable_exec._toolset import (
     validate_tool_args,
     wrap_tool_call_result,
 )
+from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID
+from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+
+from ..workspace_fakes import FakeWorkspace
 
 
 def test_public_engine_builder_exports() -> None:
@@ -115,12 +121,20 @@ JOURNAL_OPERATION_NAMES = {
     'compat__capability__compat.operation',
 }
 
+# Bound only for an agent with a construction-time workspace supplier; the sets above stay as they are without one.
+JOURNAL_WORKSPACE_NAMES = {'compat__capability__workspace.call'}
+PREFECT_WORKSPACE_NAMES = {'Capability: workspace.call'}
+TEMPORAL_WORKSPACE_NAMES = {'agent__compat__capability__workspace__call'}
+
 PREFECT_OPERATION_NAMES = {
     'Model Request: test',
     'Model Request (Streaming): test',
     'Cancel Suspended Response: test',
     'Compact Messages: test',
     'Handle Stream Event',
+    'Get MCP Tools: mcp',
+    'Get MCP Instructions: mcp',
+    'Discover Tools: dynamic',
     'Call Tool: function_tool',
     'Validate Tool Args: function_tool',
     'Call MCP Tool: mcp_tool',
@@ -185,6 +199,13 @@ def _operation_ids() -> list[DurableOperationId]:
         ToolsetValidateToolArgumentsId('dynamic', toolset_id='dynamic'),
         CapabilityOperationId('compat', operation='operation'),
     ]
+
+
+class CompatWorkspaceSupplier(AbstractCapability[Any]):
+    id = 'compat_workspace'
+
+    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+        return FakeWorkspace('compat', ref=ref)
 
 
 def _operation_label(operation_id: DurableOperationId) -> str | None:
@@ -292,23 +313,35 @@ def test_default_journal_operation_name_matrix() -> None:
         for operation_id in _operation_ids()
     }
     assert names == JOURNAL_OPERATION_NAMES
+    assert {namer.operation_name(WORKSPACE_OPERATION_ID)} == JOURNAL_WORKSPACE_NAMES
+
+
+async def test_journal_workspace_operation_binds_only_with_a_supplier() -> None:
+    plain = JournalDurability()
+    await Agent(TestModel(), name='compat', capabilities=[CompatCapability(), plain]).run('go')
+    assert not [name for name in plain.recorded_names if 'workspace' in name]
+
+    durability = JournalDurability()
+    agent = Agent(TestModel(), name='compat', capabilities=[CompatWorkspaceSupplier(), durability])
+    result = await agent.run('go')
+    await result.workspace.write_text('a.txt', 'a')
+    assert [name for name in durability.recorded_names if 'workspace' in name] == [
+        'compat__capability__workspace.call',
+        'compat__capability__workspace.call',
+    ]
 
 
 def test_prefect_operation_name_matrix() -> None:
     pytest.importorskip('prefect')
     from pydantic_ai.durable_exec.prefect._operation_names import PrefectOperationNamer
 
-    operation_ids = [
-        operation_id
-        for operation_id in _operation_ids()
-        if not isinstance(operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
-    ]
     namer = PrefectOperationNamer()
     names = {
         namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
-        for operation_id in operation_ids
+        for operation_id in _operation_ids()
     }
     assert names == PREFECT_OPERATION_NAMES
+    assert {namer.operation_name(WORKSPACE_OPERATION_ID)} == PREFECT_WORKSPACE_NAMES
 
 
 def test_prefect_operation_name_assembly_completeness() -> None:
@@ -330,15 +363,10 @@ def test_prefect_operation_name_assembly_completeness() -> None:
         DurableMCPToolset,
         DurableDynamicToolset,
     }
-    operation_ids = [
-        operation_id
-        for operation_id in _operation_ids()
-        if not isinstance(operation_id, (ToolsetGetToolsId, ToolsetGetInstructionsId))
-    ]
     namer = PrefectOperationNamer()
     assembled_names = {
         namer.invocation_name(operation_id, label=_operation_label(operation_id)).operation_name
-        for operation_id in operation_ids
+        for operation_id in _operation_ids()
     }
     assert assembled_names == PREFECT_OPERATION_NAMES
 
@@ -364,6 +392,18 @@ def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:
     assert backend is not None
     registered_names = {cast(Any, registration).dbos_function_name for registration in backend.registrations()}
     assert registered_names == DBOS_OPERATION_NAMES
+
+    with_workspace = Agent(
+        TestModel(),
+        name='compat',
+        capabilities=[CompatWorkspaceSupplier(), DBOSDurability()],
+    )
+    workspace_durability = DBOSDurability.from_agent(with_workspace)
+    assert workspace_durability is not None
+    workspace_backend = workspace_durability._operation_backend  # pyright: ignore[reportPrivateUsage]
+    assert workspace_backend is not None
+    workspace_names = {cast(Any, registration).dbos_function_name for registration in workspace_backend.registrations()}
+    assert workspace_names - DBOS_OPERATION_NAMES == JOURNAL_WORKSPACE_NAMES
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
@@ -406,6 +446,19 @@ def test_temporal_activity_name_matrix_and_assembly_completeness() -> None:
         for item in durability.temporal_activities
     }
     assert names == TEMPORAL_ACTIVITY_NAMES
+
+    with_workspace = Agent(
+        TestModel(),
+        name='compat',
+        capabilities=[CompatWorkspaceSupplier(), TemporalDurability()],
+    )
+    workspace_durability = TemporalDurability.from_agent(with_workspace)
+    assert workspace_durability is not None
+    workspace_names = {
+        ActivityDefinition.must_from_callable(item).name  # pyright: ignore[reportUnknownMemberType]
+        for item in workspace_durability.temporal_activities
+    }
+    assert workspace_names - TEMPORAL_ACTIVITY_NAMES == TEMPORAL_WORKSPACE_NAMES
 
 
 @pytest.mark.parametrize(
@@ -459,6 +512,7 @@ def test_call_tool_result_json_payload_goldens(value: CallToolResult, expected: 
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -473,6 +527,7 @@ def test_call_tool_result_json_payload_goldens(value: CallToolResult, expected: 
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'workspace_ref': None,
                 'state': 'complete',
             },
         ),
@@ -529,6 +584,7 @@ def test_capability_operation_result_payload_golden() -> None:
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {'cached': 4},
             'cost': None,
             'requests': 1,
@@ -567,6 +623,41 @@ def test_model_request_context_projection_payload_golden() -> None:
         },
         'model_id': 'restricted',
         'streaming': False,
+    }
+
+
+@dataclass(kw_only=True)
+class GoldenProgressEvent(CustomEvent, name='golden_progress'):
+    percent: int
+
+
+@dataclass(kw_only=True)
+class GoldenCheckpointEvent(CapabilityEvent, namespace='golden', name='checkpoint'):
+    label: str
+
+
+def test_event_payload_goldens() -> None:
+    """Pin the wire shape of both event families, tag included.
+
+    An event's tag is derived from its class name unless an explicit `name=` overrides it, and it
+    rides Temporal activity history, Prefect cache keys, and the buffered event stream in
+    `GraphAgentState`. Renaming a class would silently change the tag, so the tags below are a
+    compatibility surface rather than an implementation detail.
+    """
+    assert JSON_CODEC.dump(AgentStreamEvent, GoldenProgressEvent(percent=50)) == {
+        'name': 'golden_progress',
+        'tool_call_id': None,
+        'tool_name': None,
+        'event_kind': 'custom',
+        'percent': 50,
+    }
+    assert JSON_CODEC.dump(AgentStreamEvent, GoldenCheckpointEvent(label='start', capability_id='golden')) == {
+        'kind': 'golden.checkpoint',
+        'capability_id': 'golden',
+        'tool_call_id': None,
+        'tool_name': None,
+        'event_kind': 'capability',
+        'label': 'start',
     }
 
 

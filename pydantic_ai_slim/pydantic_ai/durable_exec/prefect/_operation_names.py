@@ -36,11 +36,12 @@ class PrefectOperationNamer(DurableOperationNamer):
                 return f'Compact Messages: {model_name}'
             case EventStreamHandlerId():
                 return 'Handle Stream Event'
-            case ToolsetGetToolsId() | ToolsetGetInstructionsId():
-                raise RuntimeError(
-                    'Prefect runs discovery in flow code and never names a durable unit for it. '
-                    'Reaching this branch is a bug in the durability integration; please report it.'
-                )
+            case ToolsetGetToolsId(toolset_kind='mcp', toolset_id=toolset_id):
+                return f'Get MCP Tools: {toolset_id}'
+            case ToolsetGetToolsId(toolset_id=toolset_id):
+                return f'Discover Tools: {toolset_id}'
+            case ToolsetGetInstructionsId(toolset_id=toolset_id):
+                return f'Get MCP Instructions: {toolset_id}'
             case ToolsetValidateToolArgumentsId():
                 return 'Validate Tool Args'
             case ToolsetCallToolId(toolset_kind='mcp'):

@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import os
 import warnings
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TypeAlias, overload
 
 from pydantic_ai import ModelProfile
@@ -41,6 +42,7 @@ _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
+    'claude-sonnet-5-5',
 )
 """Models that honor a `{'role': 'system'}` entry inside the Messages API's `messages` array.
 
@@ -52,6 +54,10 @@ restriction the top-level prompt set, it refuses every time where Opus 5 complie
 a plain formatting instruction the `<system>`-tagged fallback actually lands more often than the
 entry does. So Sonnet 5 is deliberately absent, and a 200 is not evidence for adding a model here.
 
+`claude-sonnet-5-5` is published as supported and stays in although, asked to lift a restriction the
+top-level prompt set, it refuses every time. It refuses the `<system>`-tagged fallback every time too,
+so the entry costs nothing measurable and keeps the instruction's operator authority.
+
 `claude-mythos-5` is published as supported but isn't reachable with our credentials.
 """
 
@@ -60,6 +66,7 @@ _TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES = (
     'claude-mythos-5',
     'claude-opus-4-8',
     'claude-opus-5',
+    'claude-sonnet-5-5',
 )
 """Models that accept `tool_addition` / `tool_removal` blocks on a `{'role': 'system'}` entry.
 
@@ -114,6 +121,12 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(tool_addition_mode='by_reference')
             if model_name.startswith(_TOOL_AVAILABILITY_DELTA_MODEL_PREFIXES)
             else AnthropicModelProfile(),
+            AnthropicModelProfile(
+                # Anthropic-managed caches have a 5-minute minimum TTL refreshed on use across the direct,
+                # Bedrock, and Vertex SDK paths. Paid 1-hour cache points are handled by `prompt_cache_outlook`.
+                # https://platform.claude.com/docs/en/docs/build-with-claude/prompt-caching#cache-lifetime
+                default_cache_retention=timedelta(minutes=5)
+            ),
         )
 
     @overload

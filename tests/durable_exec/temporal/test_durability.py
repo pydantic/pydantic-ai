@@ -5,7 +5,7 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
@@ -13,6 +13,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -23,12 +24,14 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FunctionToolset,
+    ImageGenerator,
     ModelMessage,
     ModelRequest,
     ModelResponse,
     MultiModalContent,
     PartDeltaEvent,
     PartStartEvent,
+    PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
     RunContext,
@@ -50,6 +53,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     Capability,
     DynamicCapability,
+    ImageGeneration,
     Instrumentation,
     NativeTool,
     ProcessEventStream,
@@ -66,6 +70,12 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UserError,
+)
+from pydantic_ai.images import (
+    ImageGenerationInput,
+    ImageGenerationResult,
+    ImageGenerationSettings,
+    TestImageGenerationModel,
 )
 from pydantic_ai.messages import UploadedFile
 from pydantic_ai.models import (
@@ -85,6 +95,7 @@ from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceBackend, WorkspaceRef, WrapperWorkspace
 from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
@@ -95,12 +106,13 @@ try:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
-    from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
@@ -115,7 +127,8 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
 
 
-# On 3.14 pytest skips at collection before importing this module, so the branch is unmeasured there.
+# The 3.14 durable-exec CI leg takes this skip; every other leg falls through. `lax` rather than
+# plain because which of the two arms a run measures depends on its Python version.
 if sys.version_info >= (3, 14):  # pragma: lax no cover
     pytest.skip(
         'temporalio sandbox is incompatible with Python 3.14: '
@@ -157,6 +170,8 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsInt, IsList, IsStr
+    from ...workspace_fakes import FakeWorkspace
+    from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -165,6 +180,8 @@ with workflow.unsafe.imports_passed_through():
         Answer,
         BasicSpan,
         Deps,
+        DurableCheckpointEvent,
+        DurableUnserializableEvent,
         DynamicToolsetDeps,
         Response,
         StreamDurableAgentWorkflow,
@@ -198,7 +215,6 @@ with workflow.unsafe.imports_passed_through():
 warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal-durability'),
     pytest.mark.filterwarnings(
@@ -374,6 +390,62 @@ async def test_durability_agent_with_tools_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == 'The country is: France'
+
+
+# --- `RunContext.in_durable_context` ---
+
+
+def _in_durable_context_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'activity: {part.content}')])
+    return ModelResponse(parts=[ToolCallPart(tool_name='tool_in_durable_context', args='{}')])
+
+
+async def tool_in_durable_context(ctx: RunContext[None]) -> bool:
+    return ctx.in_durable_context
+
+
+class _ReportInDurableContext(AbstractCapability[Any]):
+    async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        return replace(result, output=f'workflow: {ctx.in_durable_context}, {result.output}')
+
+
+_in_durable_context_agent = Agent(
+    FunctionModel(_in_durable_context_model_fn),
+    name='durability_in_durable_context',
+    toolsets=[FunctionToolset(tools=[tool_in_durable_context], id='in_durable_context')],
+    capabilities=[_ReportInDurableContext(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class InDurableContextWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _in_durable_context_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_run_context_in_durable_context(client: Client):
+    """`ctx.in_durable_context` is `True` in workflow code only, not in activities or outside a workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[InDurableContextWorkflow],
+        plugins=[AgentPlugin(_in_durable_context_agent)],
+    ):
+        output = await client.execute_workflow(
+            InDurableContextWorkflow.run,
+            args=['Hello'],
+            id=InDurableContextWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'workflow: True, activity: False'
+
+    result = await _in_durable_context_agent.run('Hello')
+    assert result.output == 'workflow: False, activity: False'
 
 
 # --- Durability outside workflow (transparent passthrough) ---
@@ -631,6 +703,10 @@ def test_durability_activity_config_not_mutated():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -674,6 +750,10 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -689,6 +769,10 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -712,6 +796,10 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -1510,6 +1598,71 @@ async def test_durability_resolves_supported_and_rejected_tool_activity_opt_outs
         )
 
 
+async def test_durability_tool_opt_out_without_mcp_extra(monkeypatch: pytest.MonkeyPatch):
+    """A plain tool opting out of activities must not import `pydantic_ai.mcp`.
+
+    Regression test for #8249: the opt-out branch used an unguarded `from pydantic_ai.mcp import
+    MCPToolset`, which raised `ImportError` for every tool with `metadata={'temporal': False}` -- even
+    non-MCP function tools -- when the optional `mcp` extra was not installed. Simulate that install by
+    making `pydantic_ai.mcp` unimportable.
+    """
+
+    async def async_tool() -> str: ...  # pragma: no branch
+
+    toolset = FunctionToolset[None](id='opt_out_without_mcp')
+    toolset.add_function(async_tool, metadata={'temporal': False})
+    agent = Agent(
+        TestModel(),
+        name='opt_out_without_mcp',
+        deps_type=type(None),
+        toolsets=[toolset],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tools = await toolset.get_tools(ctx)
+
+    monkeypatch.setitem(sys.modules, 'pydantic_ai.mcp', None)
+    assert (
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('function', toolset_id='opt_out_without_mcp'), tools['async_tool'], 'async_tool'
+        )
+        is False
+    )
+
+
+async def test_durability_mcp_opt_out_identified_by_operation_kind():
+    """An MCP tool's opt-out is rejected via the operation kind, not `tool.toolset` identity.
+
+    `PrefixedToolset` rewrites `ToolsetTool.toolset` to the wrapper, so an `isinstance(tool.toolset,
+    MCPToolset)` check cannot identify an MCP tool once wrapped; the durable operation's `toolset_kind`
+    can, and it also avoids importing the optional `mcp` package in this path (#8249).
+    """
+
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='mcp_wrapped')
+    prefixed = PrefixedToolset[Any](mcp_toolset, prefix='wrapped')
+    prefixed_tool = ToolsetTool(
+        toolset=prefixed,
+        tool_def=ToolDefinition(name='wrapped_mcp_tool', metadata={'temporal': False}),
+        max_retries=1,
+        args_validator=TOOL_SCHEMA_VALIDATOR,
+    )
+    agent = Agent(
+        TestModel(),
+        name='mcp_wrapped',
+        deps_type=type(None),
+        toolsets=[prefixed],
+        capabilities=[TemporalDurability()],
+    )
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    with pytest.raises(UserError, match='MCP tools require the use of IO'):
+        durability._resolve_temporal_tool_config(  # pyright: ignore[reportPrivateUsage]
+            ToolsetCallToolId('mcp', toolset_id='mcp_wrapped'), prefixed_tool, 'wrapped_mcp_tool'
+        )
+
+
 async def test_durability_mcp_instructions_use_operation_activity_summary(monkeypatch: pytest.MonkeyPatch):
     """The common MCP instructions operation retains Temporal's legacy activity summary."""
     mcp_toolset = MCPToolset(
@@ -1560,6 +1713,128 @@ async def test_durability_process_event_stream_fires_workflow_side(client: Clien
         assert not any(model_events_in_activity)
 
     assert text_chunks == ['ed ', 'response']
+
+
+# --- Capability events emitted workflow-side reach the handler activity ---
+
+
+@dataclass
+class _EmittingCapability(AbstractCapability[Any]):
+    """Emits a capability event from a hook, which runs in workflow code."""
+
+    event_factory: Any = None
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        await ctx.emit(self.event_factory())
+        return request_context
+
+
+_emitted_handler_events: list[tuple[str, str, bool]] = []
+
+
+async def _capability_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        # `isinstance` against the class this module imported, which is the point: the sandbox
+        # re-executes application modules, and the payload still validates into the host's class.
+        if isinstance(event, DurableCheckpointEvent):
+            _emitted_handler_events.append((type(event).__name__, event.label, activity.in_activity()))
+
+
+_capability_event_agent = Agent(
+    TestModel(custom_output_text='done'),
+    name='durability_capability_event_agent',
+    capabilities=[
+        _EmittingCapability(id='emitter', event_factory=lambda: DurableCheckpointEvent(label='one')),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_capability_event_handler),
+    ],
+)
+
+
+@workflow.defn
+class CapabilityEventWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _capability_event_agent.run(prompt)).output
+
+
+async def test_durability_capability_event_reaches_event_stream_handler_activity(client: Client) -> None:
+    """A capability event emitted workflow-side reaches the handler activity as a typed event.
+
+    This is the one emission path Temporal supports today: hooks run in workflow code, so the event
+    reaches the run's event stream and is dispatched to the durability handler in its own activity,
+    where it has to survive the payload round trip rather than degrading to `UnknownCapabilityEvent`.
+
+    Class identity survives too. The sandbox re-executes application modules, so the workflow side
+    holds its own copy of the event class, but `set_replay_isolation_guard` keeps the host's class
+    registered and the family schema canonicalizes the copy on the way out. The handler's own
+    `isinstance` check is what asserts it.
+    """
+    _emitted_handler_events.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CapabilityEventWorkflow],
+        plugins=[AgentPlugin(_capability_event_agent)],
+    ):
+        assert (
+            await client.execute_workflow(
+                CapabilityEventWorkflow.run,
+                args=['Hello'],
+                id=CapabilityEventWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+            == 'done'
+        )
+
+    assert _emitted_handler_events == [('DurableCheckpointEvent', 'one', True)]
+
+
+class _Unserializable:
+    pass
+
+
+_unserializable_event_agent = Agent(
+    TestModel(custom_output_text='done'),
+    name='durability_unserializable_event_agent',
+    capabilities=[
+        _EmittingCapability(id='emitter', event_factory=lambda: DurableUnserializableEvent(blob=_Unserializable())),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_capability_event_handler),
+    ],
+)
+
+
+@workflow.defn
+class UnserializableEventWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _unserializable_event_agent.run(prompt)).output
+
+
+async def test_durability_unserializable_event_payload_names_events(client: Client) -> None:
+    """An event payload that can't be serialized reports the surfaces that ride activity payloads."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnserializableEventWorkflow],
+        plugins=[AgentPlugin(_unserializable_event_agent)],
+    ):
+        with workflow_raises(
+            UserError,
+            f'A value passed to a Temporal activity failed to be serialized '
+            f'(Unable to serialize unknown type: {_Unserializable!r}). '
+            "Temporal requires all values that are passed to activities to be serializable using Pydantic's "
+            '`TypeAdapter`. Besides `deps`, this includes `model_settings`, the `RunContext` `metadata` and '
+            '`tool_call_metadata`, tool `metadata`, and the payload fields of any emitted `CustomEvent` or '
+            '`CapabilityEvent`, which ride the event stream handler activity.',
+        ):
+            await client.execute_workflow(
+                UnserializableEventWorkflow.run,
+                args=['Hello'],
+                id=UnserializableEventWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
 
 
 # ==========================================
@@ -2160,7 +2435,11 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2026-05-08T21:37:16Z'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'service_tier': 'default',
+                        'timestamp': '2026-05-08T21:37:16Z',
+                    },
                     provider_response_id='chatcmpl-DdNAiT49qrYrZOaeeAd39RynAa1g7',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -2203,7 +2482,11 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'tool_calls', 'timestamp': '2026-05-08T21:37:17Z'},
+                    provider_details={
+                        'finish_reason': 'tool_calls',
+                        'service_tier': 'default',
+                        'timestamp': '2026-05-08T21:37:17Z',
+                    },
                     provider_response_id='chatcmpl-DdNAjt5pJt1nYbeCdbHGbo4ntTKy8',
                     finish_reason='tool_call',
                     run_id=IsStr(),
@@ -2240,7 +2523,11 @@ async def test_durability_agent_with_model_retry(allow_model_requests: None, cli
                     timestamp=IsDatetime(),
                     provider_name='openai',
                     provider_url='https://api.openai.com/v1/',
-                    provider_details={'finish_reason': 'stop', 'timestamp': '2026-05-08T21:37:18Z'},
+                    provider_details={
+                        'finish_reason': 'stop',
+                        'service_tier': 'default',
+                        'timestamp': '2026-05-08T21:37:18Z',
+                    },
                     provider_response_id='chatcmpl-DdNAkzvAFU1knSut20EiutyMs7PZy',
                     finish_reason='stop',
                     run_id=IsStr(),
@@ -2564,17 +2851,7 @@ async def test_durability_mcptoolset_in_workflow(allow_model_requests: None, cli
 
 # --- @agent.toolset returning a FunctionToolset ---
 
-_durability_dynamic_toolset_agent = Agent(
-    TestModel(),
-    name='durability_dynamic_toolset_agent',
-    deps_type=DynamicToolsetDeps,
-    capabilities=[
-        TemporalDurability[DynamicToolsetDeps](deps_type=DynamicToolsetDeps, activity_config=BASE_ACTIVITY_CONFIG)
-    ],
-)
 
-
-@_durability_dynamic_toolset_agent.toolset(id='durability_my_dynamic_tools')
 def _durability_my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> FunctionToolset[DynamicToolsetDeps]:
     toolset = FunctionToolset[DynamicToolsetDeps](id='durability_dynamic_weather')
 
@@ -2585,6 +2862,17 @@ def _durability_my_dynamic_toolset(ctx: RunContext[DynamicToolsetDeps]) -> Funct
         return f'Weather in {location} for {user}: sunny.'
 
     return toolset
+
+
+_durability_dynamic_toolset_agent = Agent(
+    TestModel(),
+    name='durability_dynamic_toolset_agent',
+    deps_type=DynamicToolsetDeps,
+    toolsets=[DynamicToolset(_durability_my_dynamic_toolset, id='durability_my_dynamic_tools')],
+    capabilities=[
+        TemporalDurability[DynamicToolsetDeps](deps_type=DynamicToolsetDeps, activity_config=BASE_ACTIVITY_CONFIG)
+    ],
+)
 
 
 @workflow.defn
@@ -2751,6 +3039,90 @@ async def test_durability_dynamic_capability_transparent_outside_workflow():
     result = await agent.run('Call the tool')
     assert result.output == '{"dynamic_tool":"inline result"}'
     assert in_activity_flags == [False]
+
+
+# --- ImageGeneration through a durable run ---
+
+
+class _DurabilityImageGenerationModel(TestImageGenerationModel):
+    """Fails the activity unless the direct generator ran inside one."""
+
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        images: Sequence[ImageGenerationInput] | None = None,
+        settings: ImageGenerationSettings | None = None,
+    ) -> ImageGenerationResult:
+        assert activity.in_activity()
+        return await super().generate(prompt, images=images, settings=settings)
+
+
+def _durability_image_generation_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(parts=[ToolCallPart('generate_image', {'prompt': 'A tiny test image'})])
+    image = next(
+        part.content
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert isinstance(image, BinaryImage), image
+    return ModelResponse(parts=[TextPart(f'{image.media_type} {len(image.data)}')])
+
+
+_durability_image_generation_agent = Agent(
+    FunctionModel(_durability_image_generation_fn),
+    name='durability_image_generation_agent',
+    capabilities=[
+        ImageGeneration(
+            native=False,
+            local=ImageGenerator(_DurabilityImageGenerationModel()),
+            id='images',
+        ),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class TemporalImageGenerationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _durability_image_generation_agent.run('Generate an image')).output
+
+
+async def test_durability_image_generation_capability_runs_in_activity(client: Client):
+    """An `ImageGeneration` capability generates inside an activity, and the bytes cross back.
+
+    The pieces are pinned separately elsewhere — a `BinaryImage` as an activity result payload, the
+    capability toolset resolving activity-side — but not the combination this exercises: an agent
+    carrying `ImageGeneration(id=...)` registering its `generate_image` toolset with the worker and
+    running it in a durable workflow, with the generated image returned as the tool-result payload.
+
+    The tool return is only observable inside `_durability_image_generation_fn`, which is where the
+    `BinaryImage` check lives; the workflow hands back the agent's `str` output, so the projection is
+    how that observation gets out. `67` is the length of the fixed 1x1 PNG `TestImageGenerationModel`
+    returns, so the pair pins that a 67-byte `image/png` crossed the activity boundary intact.
+
+    A generator that ran in workflow code instead trips the `activity.in_activity()` assert above,
+    where an `AssertionError` is a workflow-*task* failure that Temporal retries forever — hence the
+    short `execution_timeout`, so that regression fails the test instead of hanging it.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalImageGenerationWorkflow],
+        plugins=[AgentPlugin(_durability_image_generation_agent)],
+    ):
+        output = await client.execute_workflow(
+            TemporalImageGenerationWorkflow.run,
+            id='test_temporal_image_generation',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == snapshot('image/png 67')
 
 
 # --- ToolReturn metadata round-trip ---
@@ -3250,11 +3622,7 @@ async def test_durability_runtime_function_toolset_opt_out(allow_model_requests:
         with workflow_raises(
             UserError,
             snapshot(
-                "FunctionToolset 'runtime' cannot be passed to `run(toolsets=...)` at runtime with Temporal, because "
-                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
-                'execution when the agent is constructed. Pass them to the agent constructor instead. '
-                'Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that '
-                "don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset 'runtime' cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -3288,11 +3656,7 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
         with workflow_raises(
             UserError,
             snapshot(
-                'FunctionToolset cannot be passed to `run(toolsets=...)` at runtime with Temporal, because '
-                'toolsets that execute their own tools or resolve dynamically must be registered for durable '
-                'execution when the agent is constructed. Pass them to the agent constructor instead. '
-                'Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that '
-                "don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+                "FunctionToolset cannot be added at runtime with Temporal, because toolsets that execute their own tools or resolve dynamically must be registered for durable execution when the agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
             ),
         ):
             await client.execute_workflow(
@@ -3301,6 +3665,148 @@ async def test_durability_rejects_runtime_executing_toolsets_in_workflow(allow_m
                 id=DurabilityRuntimeFunctionToolsetWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
+
+
+@workflow.defn
+class DurabilityOverriddenExecutingToolsetWorkflow:
+    @workflow.run
+    async def run(self, kind: str) -> None:
+        toolsets = {
+            'function': FunctionToolset(id='override_fn'),
+            'mcp': MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']), id='override_mcp'),
+            'dynamic': DynamicToolset(lambda _: FunctionToolset(), id='override_dynamic'),
+        }
+        with simple_durable_agent.override(toolsets=[toolsets[kind]]):
+            await simple_durable_agent.run('Hello')
+
+
+@pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])
+async def test_durability_rejects_overridden_executing_toolsets_in_workflow(client: Client, kind: str):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityOverriddenExecutingToolsetWorkflow],
+        plugins=[AgentPlugin(simple_durable_agent)],
+    ):
+        labels = {'function': 'FunctionToolset', 'mcp': 'MCPToolset', 'dynamic': 'DynamicToolset'}
+        message = (
+            f"{labels[kind]} 'override_{'fn' if kind == 'function' else kind}' cannot be added at runtime with "
+            'Temporal, because toolsets that execute their own tools or resolve dynamically must be registered '
+            'for durable execution when the agent is constructed. Pass them to the agent constructor instead -- '
+            'not to `run(toolsets=...)` or `override(toolsets=...)`, and not via a post-construction '
+            '`@agent.toolset`. Non-executing toolsets like `ExternalToolset` can be passed at runtime. Async '
+            "tools that don't need durable wrapping can opt out with metadata={'temporal': False} to be "
+            'allowed at runtime.'
+        )
+        with workflow_raises(UserError, message):
+            await client.execute_workflow(
+                DurabilityOverriddenExecutingToolsetWorkflow.run,
+                args=[kind],
+                id=f'{DurabilityOverriddenExecutingToolsetWorkflow.__name__}-{kind}',
+                task_queue=TASK_QUEUE,
+            )
+
+
+def _registered_collision_tool() -> str:
+    return 'registered'  # pragma: no cover
+
+
+_id_collision_agent = Agent(
+    _durability_fn_model,
+    name='durability_id_collision_agent',
+    toolsets=[FunctionToolset([_registered_collision_tool], id='shared')],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_colliding_external_toolset = ExternalToolset(tool_defs=[ToolDefinition(name='external')], id='shared')
+
+
+@workflow.defn
+class DurabilityCollidingRuntimeToolsetIdWorkflow:
+    @workflow.run
+    async def run(self, override: bool) -> None:
+        if override:
+            with _id_collision_agent.override(toolsets=[_colliding_external_toolset]):
+                await _id_collision_agent.run('Hello')
+        else:
+            await _id_collision_agent.run('Hello', toolsets=[_colliding_external_toolset])
+
+
+@pytest.mark.parametrize('override', [False, True])
+async def test_durability_rejects_runtime_toolset_reusing_registered_id(client: Client, override: bool):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityCollidingRuntimeToolsetIdWorkflow],
+        plugins=[AgentPlugin(_id_collision_agent)],
+    ):
+        message = (
+            "A toolset added at run time has the same `id` 'shared' as one the agent was constructed with. "
+            "Toolset `id`s must be unique: the `id` identifies which registered toolset's activity a tool call "
+            'is dispatched to inside the workflow, so this run would have called the construction-time '
+            "toolset's tools instead. Give the toolset a different `id`."
+        )
+        with workflow_raises(UserError, message):
+            await client.execute_workflow(
+                DurabilityCollidingRuntimeToolsetIdWorkflow.run,
+                args=[override],
+                id=f'{DurabilityCollidingRuntimeToolsetIdWorkflow.__name__}-{override}',
+                task_queue=TASK_QUEUE,
+            )
+
+
+_late_decorator_agent = Agent(
+    _durability_fn_model,
+    name='durability_late_decorator_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class DurabilityLateDecoratorToolsetWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        @_late_decorator_agent.toolset(id='late_decorator')
+        def late_toolset(ctx: RunContext[object]) -> FunctionToolset[object]:
+            return FunctionToolset[object]()  # pragma: no cover
+
+        result = await _late_decorator_agent.run(prompt)
+        return result.output  # pragma: no cover
+
+
+async def test_durability_rejects_decorator_toolset_in_workflow(client: Client):
+    """A `@agent.toolset` registered after the capability bound is rejected inside a workflow.
+
+    The decorator lands in `agent.toolsets` only, so the runtime-toolset guard must subtract the
+    agent's *construction* toolsets to catch it: reading the wrong list would wave the
+    never-registered toolset through, and its tool calls would run undurably in workflow code.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurabilityLateDecoratorToolsetWorkflow],
+        plugins=[AgentPlugin(_late_decorator_agent)],
+    ):
+        message = (
+            "DynamicToolset 'late_decorator' cannot be added at runtime with Temporal, because toolsets that "
+            'execute their own tools or resolve dynamically must be registered for durable execution when the '
+            'agent is constructed. Pass them to the agent constructor instead -- not to `run(toolsets=...)` or '
+            '`override(toolsets=...)`, and not via a post-construction `@agent.toolset`. Non-executing '
+            "toolsets like `ExternalToolset` can be passed at runtime. Async tools that don't need durable "
+            "wrapping can opt out with metadata={'temporal': False} to be allowed at runtime."
+        )
+        with workflow_raises(UserError, message):
+            await client.execute_workflow(
+                DurabilityLateDecoratorToolsetWorkflow.run,
+                args=['Hello'],
+                id=DurabilityLateDecoratorToolsetWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+
+
+async def test_durability_allows_overridden_toolsets_outside_workflow(allow_model_requests: None):
+    with simple_durable_agent.override(toolsets=[FunctionToolset(id='override_outside')]):
+        result = await simple_durable_agent.run('Hello outside')
+    assert result.output == 'Echo: Hello outside'
 
 
 async def test_durability_allows_runtime_toolsets_outside_workflow(allow_model_requests: None):
@@ -4242,3 +4748,195 @@ async def test_durability_prepare_renamed_tool_runs_in_activity(client: Client):
     assert output == snapshot('the registered function ran')
     # The model only ever saw the renamed tool, in both steps.
     assert _renamed_tool_names == snapshot([['exposed_tool'], ['exposed_tool']])
+
+
+_workspace_probe_backends: list[FakeWorkspace] = []
+
+
+@dataclass
+class WorkspaceProbeDeps:
+    prefix: str
+
+
+class WorkspaceProbePolicy(WrapperWorkspace):
+    def __init__(self, wrapped: Workspace, deps: WorkspaceProbeDeps):
+        super().__init__(wrapped)
+        self.deps = deps
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert activity.in_activity()
+        result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
+        assert self.ref is not None
+        return replace(result, stdout=f'policy:{self.deps.prefix}:{self.ref.id}:{result.stdout}')
+
+
+class WorkspaceProbeCapability(AbstractCapability[WorkspaceProbeDeps]):
+    def get_workspace(self, ctx: RunContext[WorkspaceProbeDeps], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+        assert ref is not None and ref.provider == 'probe'
+        return WorkspaceProbePolicy(Workspace(FakeWorkspace(ref.id, ref=ref)), ctx.deps)
+
+
+class WorkspaceProbeContext(TemporalRunContext[WorkspaceProbeDeps]):
+    @classmethod
+    def deserialize_run_context(cls, ctx: dict[str, Any], deps: WorkspaceProbeDeps) -> WorkspaceProbeContext:
+        data = dict(ctx)
+        raw_ref: Any = data.pop('workspace_ref')
+        assert isinstance(raw_ref, dict), f'expected JSON object, got {type(raw_ref)}'
+        ref = TypeAdapter(WorkspaceRef).validate_python(raw_ref)
+        backend = FakeWorkspace(ref.id, ref=ref)
+        _workspace_probe_backends.append(backend)
+        workspace = WorkspaceProbePolicy(Workspace(backend), deps)
+        return cls(**{**data, 'workspace': workspace}, deps=deps)
+
+
+_workspace_probe_agent = Agent(
+    TestModel(call_tools=['probe_workspace']),
+    name='workspace_probe_agent',
+    deps_type=WorkspaceProbeDeps,
+    capabilities=[
+        Instrumentation(),
+        WorkspaceProbeCapability(),
+        TemporalDurability(run_context_type=WorkspaceProbeContext, activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+decide_durable_agent = Agent(
+    ShipItDecisionModel(),
+    output_type=ShipIt,
+    name='durability_decide_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+decide_durable_agent_without_content = Agent(
+    ShipItDecisionModel(),
+    output_type=ShipIt,
+    name='durability_decide_agent_without_content',
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        Instrumentation(settings=InstrumentationSettings(include_content=False)),
+    ],
+)
+
+
+@_workspace_probe_agent.tool
+async def probe_workspace(ctx: RunContext[WorkspaceProbeDeps]) -> str:
+    assert isinstance(ctx, WorkspaceProbeContext)
+    first = await ctx.workspace.run(['first'])
+    second = await ctx.workspace.run(['second'])
+    return f'{first.stdout}|{second.stdout}'
+
+
+@workflow.defn
+class WorkspaceProbeWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _workspace_probe_agent.run(
+            'Use the probe_workspace tool.',
+            deps=WorkspaceProbeDeps(prefix='worker'),
+            workspace=WorkspaceRef(provider='probe', id='existing-123'),
+        )
+        assert result.workspace.ref == WorkspaceRef(provider='probe', id='existing-123')
+        return result.output
+
+
+async def test_temporal_workspace_restores_ref_and_replays_without_side_effects(client: Client):
+    """A real sandboxed worker restores a typed workspace ref in an activity and replay skips it."""
+    _workspace_probe_backends.clear()
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkspaceProbeWorkflow],
+        plugins=[AgentPlugin(_workspace_probe_agent)],
+    ):
+        handle = await client.start_workflow(
+            WorkspaceProbeWorkflow.run,
+            id=f'{WorkspaceProbeWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    before_replay = [
+        (backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends
+    ]
+    backend_count = len(_workspace_probe_backends)
+    replay = await Replayer(workflows=[WorkspaceProbeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    after_replay = [
+        (backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends
+    ]
+
+    assert replay.replay_failure is None
+    expected = 'policy:worker:existing-123:connected|policy:worker:existing-123:connected'
+    assert TypeAdapter(dict[str, str]).validate_json(output) == {'probe_workspace': expected}
+    # The `ensure` activity attaches once at run start, the tool activity once more; nothing creates.
+    assert sum(backend.attach_calls for backend in _workspace_probe_backends) == 2
+    assert sum(backend.create_calls for backend in _workspace_probe_backends) == 0
+    assert len(_workspace_probe_backends) == backend_count
+    assert [command for backend in _workspace_probe_backends for command in backend.commands] == [['first'], ['second']]
+    assert before_replay == after_replay
+
+
+@workflow.defn
+class DecideDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, mode: str) -> ShipIt:
+        if mode == 'per_run_without_content':
+            # The agent itself records content; this one run asks not to.
+            result = await decide_durable_agent.run(
+                prompt, capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))]
+            )
+        else:
+            agent = decide_durable_agent if mode == 'with_content' else decide_durable_agent_without_content
+            result = await agent.run(prompt)
+        return result.output
+
+
+@pytest.mark.parametrize('mode', ['with_content', 'agent_without_content', 'per_run_without_content'])
+async def test_durability_decide_span_in_activity(
+    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire, mode: str
+):
+    """A decision model's `decide` span lands inside the model activity, under the workflow's `chat` span.
+
+    The context variable the `chat` span sets its policy in does not cross into the activity, so the unit rebuilds
+    it from the agent's own instrumentation: the one `Agent.instrument_all()` set up (by `LogfirePlugin`), or an
+    `Instrumentation` capability on the agent, which the run lets win and so does the activity. An `Instrumentation`
+    passed to one run is out of the activity's sight, so its content policy is carried in with the run context.
+    """
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[DecideDurableAgentWorkflow],
+        plugins=[AgentPlugin(decide_durable_agent), AgentPlugin(decide_durable_agent_without_content)],
+    ):
+        output = await client_with_logfire.execute_workflow(
+            DecideDurableAgentWorkflow.run,
+            args=['The migration is reviewed and the tests pass.', mode],
+            id=f'{DecideDurableAgentWorkflow.__name__}_{mode}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == ShipIt(ship=True)
+
+    lineage, attributes = decide_span_lineage(capfire.exporter.exported_spans_as_dict())
+    include_content = mode == 'with_content'
+    agent_name = (
+        'durability_decide_agent_without_content' if mode == 'agent_without_content' else 'durability_decide_agent'
+    )
+    assert lineage[:4] == [
+        f'RunActivity:agent__{agent_name}__model_request',
+        f'StartActivity:agent__{agent_name}__model_request',
+        'chat ship-it',
+        f'invoke_agent {agent_name}',
+    ]
+    assert ('pydantic_ai.decision.state' in attributes) is include_content
+    # Without content an answer keeps its numbers, which a yes/no's answer is all of.
+    assert attributes['pydantic_ai.decision.answers'] == '{"ship":{"type":"noul","noul":0.9}}'
+    assert ('instructions' in attributes['pydantic_ai.decision.questions']) is include_content

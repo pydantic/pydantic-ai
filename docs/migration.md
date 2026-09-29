@@ -1,3 +1,7 @@
+---
+description: "Migrate Pydantic AI V1 code to V2: a lookup table of renamed and removed APIs, packaging changes and default behavior changes, alongside the full Upgrade Guide."
+---
+
 # V1 → V2 Migration Map
 
 A lookup index for upgrading from Pydantic AI V1 to V2: find the V1 name you have in your code, read off the V2 name to replace it with.
