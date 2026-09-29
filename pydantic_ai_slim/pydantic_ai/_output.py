@@ -1252,7 +1252,11 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 e.title,
                 [
                     {
-                        'type': PydanticCustomError(error['type'], '{message}', {'message': error['msg']}),
+                        'type': PydanticCustomError(
+                            error['type'],  # pyright: ignore[reportArgumentType]
+                            '{message}',
+                            {'message': error['msg']},
+                        ),
                         'loc': ('result', 'data', *error['loc']),
                         'input': error['input'],
                     }
