@@ -923,6 +923,29 @@ async def test_resolved_capability_ordering_failure_runs_cleanup() -> None:
     assert observed == ['setup', 'cleanup']
 
 
+async def test_cleanup_does_not_repeat_failing_resolved_ordering() -> None:
+    observed: list[str] = []
+
+    class BrokenOrdering(AbstractCapability[object]):
+        def get_ordering(self) -> CapabilityOrdering:
+            observed.append('ordering')
+            raise RuntimeError('ordering failed')
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            observed.append('cleanup')
+            raise error
+
+    class CreatesOrdering(AbstractCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            observed.append('setup')
+            return BrokenOrdering()
+
+    with pytest.raises(RuntimeError, match='ordering failed'):
+        await Agent(TestModel(), capabilities=[CreatesOrdering(), AbstractCapability()]).run('go')
+
+    assert observed == ['setup', 'ordering', 'cleanup']
+
+
 async def test_toolset_construction_failure_after_for_run_runs_cleanup() -> None:
     observed: list[str] = []
 

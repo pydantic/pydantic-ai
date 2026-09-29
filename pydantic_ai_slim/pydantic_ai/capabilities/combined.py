@@ -17,7 +17,7 @@ from pydantic_ai._instructions import (
     validate_instruction_id_segment,
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
-from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
@@ -59,7 +59,7 @@ _reconstructing_setup_cleanup: ContextVar[bool] = ContextVar('_reconstructing_se
 
 @contextmanager
 def reconstructing_setup_cleanup() -> Generator[None, None, None]:
-    """Keep resolved instances available for cleanup even when their ordering is invalid."""
+    """Keep resolved instances available for cleanup without reevaluating their ordering."""
     token: Token[bool] = _reconstructing_setup_cleanup.set(True)
     try:
         yield
@@ -185,12 +185,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             else:
                 flat.append(cap)
         self.capabilities = flat
-        if any(leaf.get_ordering() is not None for leaf in collect_leaves(self)):
-            try:
-                self.capabilities = sort_capabilities(list(self.capabilities))
-            except UserError:
-                if not _reconstructing_setup_cleanup.get():
-                    raise
+        if not _reconstructing_setup_cleanup.get() and any(
+            leaf.get_ordering() is not None for leaf in collect_leaves(self)
+        ):
+            self.capabilities = sort_capabilities(list(self.capabilities))
 
     def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
         for cap in self.capabilities:
