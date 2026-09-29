@@ -11,8 +11,9 @@ import threading
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from datetime import datetime
+from functools import partial
 from pathlib import Path
-from typing import Literal, ParamSpec, Protocol, TypeVar, runtime_checkable
+from typing import Literal, Protocol, TypeVar, runtime_checkable
 from uuid import uuid4
 
 import anyio.to_thread
@@ -20,8 +21,9 @@ from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai_harness._sqlite import (
+    SqliteConnection,
     SqliteScriptConnection,
-    _is_database_error,
+    is_database_error,
 )
 from pydantic_ai_harness.media import (
     DiskMediaStore,
@@ -41,7 +43,6 @@ from pydantic_ai_harness.step_persistence._types import (
 )
 
 _logger = logging.getLogger(__name__)
-_P = ParamSpec('_P')
 _T = TypeVar('_T')
 
 
@@ -943,6 +944,11 @@ CREATE TABLE IF NOT EXISTS tool_effects (
 """
 
 
+class _ConnectionMediaStore(SqliteMediaStore):
+    def ensure_schema(self, connection: SqliteConnection) -> None:
+        self._ensure_schema(connection)
+
+
 class SqliteStepStore:
     """SQLite-backed store. Single file holds runs, events, snapshots, tool effects + media.
 
@@ -1019,25 +1025,25 @@ class SqliteStepStore:
         self._connection = connection
         self._schema_ready = False
         self._thread_lock = threading.RLock()
-        self._connection_media_store: SqliteMediaStore | None = None
+        self._connection_media_store: _ConnectionMediaStore | None = None
         resolved: MediaStore | None
         if media_store == 'auto':
             if self._database is not None:
                 resolved = SqliteMediaStore(database=self._database)
             else:
                 assert connection is not None
-                resolved = SqliteMediaStore(connection=connection, _thread_lock=self._thread_lock)
+                resolved = _ConnectionMediaStore(connection=connection, _thread_lock=self._thread_lock)
                 self._connection_media_store = resolved
         else:
             resolved = media_store
         self._media_store: MediaStore | None = resolved
         self._media_threshold_bytes = media_threshold_bytes
 
-    def _run_locked(self, operation: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
+    def _run_locked(self, operation: Callable[[], _T]) -> _T:
         if self._connection is None:
-            return operation(*args, **kwargs)
+            return operation()
         with self._thread_lock:
-            return operation(*args, **kwargs)
+            return operation()
 
     def _open(self) -> SqliteScriptConnection:
         if self._connection is not None:
@@ -1060,7 +1066,7 @@ class SqliteStepStore:
         if self._connection_media_store is not None:
             # Prepare the implicit media table during the same required-idle phase. Otherwise the
             # first externalized snapshot could try to create it inside a later caller transaction.
-            self._connection_media_store._ensure_schema(conn)
+            self._connection_media_store.ensure_schema(conn)
         conn.executescript(_SQLITE_SCHEMA)
         # Databases created before the `state` column existed: `CREATE TABLE
         # IF NOT EXISTS` keeps their old shape, so add the column here. The
@@ -1079,18 +1085,18 @@ class SqliteStepStore:
         try:
             conn.execute("ALTER TABLE snapshots ADD COLUMN state TEXT NOT NULL DEFAULT 'complete'")
         except Exception as exc:
-            if not _is_database_error(conn, exc) or 'state' not in self._snapshot_columns(conn):
+            if not is_database_error(conn, exc) or 'state' not in self._snapshot_columns(conn):
                 raise
         for table in ('events', 'snapshots'):
             try:
                 conn.execute(f'ALTER TABLE {table} ADD COLUMN idempotency_key TEXT')
             except Exception as exc:
-                if not _is_database_error(conn, exc) or 'idempotency_key' not in self._table_columns(conn, table):
+                if not is_database_error(conn, exc) or 'idempotency_key' not in self._table_columns(conn, table):
                     raise  # pragma: no cover
         try:
             conn.execute('ALTER TABLE runs ADD COLUMN registration_id TEXT')
         except Exception as exc:
-            if not _is_database_error(conn, exc) or 'registration_id' not in self._table_columns(conn, 'runs'):
+            if not is_database_error(conn, exc) or 'registration_id' not in self._table_columns(conn, 'runs'):
                 raise  # pragma: no cover
         conn.execute(
             'CREATE UNIQUE INDEX IF NOT EXISTS idx_events_idempotency '
@@ -1121,14 +1127,14 @@ class SqliteStepStore:
 
     @staticmethod
     def _snapshot_columns(conn: SqliteScriptConnection) -> set[str]:
-        return {row[1] for row in conn.execute('PRAGMA table_info(snapshots)')}
+        return {str(row[1]) for row in conn.execute('PRAGMA table_info(snapshots)')}
 
     @staticmethod
     def _table_columns(conn: SqliteScriptConnection, table: str) -> set[str]:
-        return {row[1] for row in conn.execute(f'PRAGMA table_info({table})')}
+        return {str(row[1]) for row in conn.execute(f'PRAGMA table_info({table})')}
 
     async def register_run(self, record: RunRecord) -> None:
-        await anyio.to_thread.run_sync(self._run_locked, self._sync_register_run, record)
+        await anyio.to_thread.run_sync(self._run_locked, partial(self._sync_register_run, record))
 
     def _sync_register_run(self, record: RunRecord) -> None:
         conn = self._open()
@@ -1152,7 +1158,7 @@ class SqliteStepStore:
             self._maybe_close(conn)
 
     async def get_run(self, *, run_id: str) -> RunRecord | None:
-        return await anyio.to_thread.run_sync(self._run_locked, self._sync_get_run, run_id)
+        return await anyio.to_thread.run_sync(self._run_locked, partial(self._sync_get_run, run_id))
 
     def _sync_get_run(self, run_id: str) -> RunRecord | None:
         conn = self._open()
@@ -1175,7 +1181,9 @@ class SqliteStepStore:
         parent_run_id: str | None = None,
         conversation_id: str | None = None,
     ) -> list[RunRecord]:
-        return await anyio.to_thread.run_sync(self._run_locked, self._sync_list_runs, parent_run_id, conversation_id)
+        return await anyio.to_thread.run_sync(
+            self._run_locked, partial(self._sync_list_runs, parent_run_id, conversation_id)
+        )
 
     def _sync_list_runs(
         self,
@@ -1206,7 +1214,7 @@ class SqliteStepStore:
         return [_run_from_row(row) for row in rows]
 
     async def append_event(self, event: StepEvent) -> None:
-        await anyio.to_thread.run_sync(self._run_locked, self._sync_append_event, event)
+        await anyio.to_thread.run_sync(self._run_locked, partial(self._sync_append_event, event))
 
     def _sync_append_event(self, event: StepEvent) -> None:
         conn = self._open()
@@ -1237,7 +1245,7 @@ class SqliteStepStore:
             self._maybe_close(conn)
 
     async def list_events(self, *, run_id: str) -> list[StepEvent]:
-        return await anyio.to_thread.run_sync(self._run_locked, self._sync_list_events, run_id)
+        return await anyio.to_thread.run_sync(self._run_locked, partial(self._sync_list_events, run_id))
 
     def _sync_list_events(self, run_id: str) -> list[StepEvent]:
         conn = self._open()
@@ -1261,7 +1269,7 @@ class SqliteStepStore:
                 media_store=self._media_store,
                 threshold_bytes=self._media_threshold_bytes,
             )
-        await anyio.to_thread.run_sync(self._run_locked, self._sync_save_snapshot, snapshot, messages_json)
+        await anyio.to_thread.run_sync(self._run_locked, partial(self._sync_save_snapshot, snapshot, messages_json))
 
     def _sync_save_snapshot(self, snapshot: ContinuableSnapshot, messages_json: object) -> None:
         conn = self._open()
@@ -1315,7 +1323,7 @@ class SqliteStepStore:
 
     async def latest_snapshot(self, *, run_id: str, include_interrupted: bool = False) -> ContinuableSnapshot | None:
         row = await anyio.to_thread.run_sync(
-            self._run_locked, self._sync_load_latest_snapshot, run_id, include_interrupted
+            self._run_locked, partial(self._sync_load_latest_snapshot, run_id, include_interrupted)
         )
         if row is None:
             return None
@@ -1378,7 +1386,7 @@ class SqliteStepStore:
         capability consumes it through its narrower `SnapshotStore` protocol.
         """
         rows = await anyio.to_thread.run_sync(
-            self._run_locked, self._sync_load_snapshot_rows, run_id, include_interrupted
+            self._run_locked, partial(self._sync_load_snapshot_rows, run_id, include_interrupted)
         )
         snapshots: list[ContinuableSnapshot] = []
         for row in rows:
@@ -1428,7 +1436,7 @@ class SqliteStepStore:
         return rows
 
     async def record_tool_effect(self, record: ToolEffectRecord) -> None:
-        await anyio.to_thread.run_sync(self._run_locked, self._sync_record_tool_effect, record)
+        await anyio.to_thread.run_sync(self._run_locked, partial(self._sync_record_tool_effect, record))
 
     def _sync_record_tool_effect(self, record: ToolEffectRecord) -> None:
         conn = self._open()
@@ -1457,7 +1465,9 @@ class SqliteStepStore:
             self._maybe_close(conn)
 
     async def get_tool_effect(self, *, run_id: str, tool_call_id: str) -> ToolEffectRecord | None:
-        return await anyio.to_thread.run_sync(self._run_locked, self._sync_get_tool_effect, run_id, tool_call_id)
+        return await anyio.to_thread.run_sync(
+            self._run_locked, partial(self._sync_get_tool_effect, run_id, tool_call_id)
+        )
 
     def _sync_get_tool_effect(self, run_id: str, tool_call_id: str) -> ToolEffectRecord | None:
         conn = self._open()
@@ -1476,7 +1486,9 @@ class SqliteStepStore:
         return _tool_effect_from_row(row)
 
     async def list_unresolved_tool_effects(self, *, run_id: str) -> list[ToolEffectRecord]:
-        return await anyio.to_thread.run_sync(self._run_locked, self._sync_list_unresolved_tool_effects, run_id)
+        return await anyio.to_thread.run_sync(
+            self._run_locked, partial(self._sync_list_unresolved_tool_effects, run_id)
+        )
 
     def _sync_list_unresolved_tool_effects(self, run_id: str) -> list[ToolEffectRecord]:
         conn = self._open()

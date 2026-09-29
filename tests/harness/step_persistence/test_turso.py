@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Generator, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,7 +43,7 @@ class _ConnectionSubclassWithoutLocalErrors(sqlite3.Connection):
     """Model a driver wrapper whose DB-API errors live on its base class module."""
 
     @property
-    def DatabaseError(self) -> type[Exception]:
+    def DatabaseError(self) -> type[sqlite3.DatabaseError]:
         raise AttributeError
 
 
@@ -53,20 +53,21 @@ class _OverlapDetectingConnection:
     def __init__(self, connection: turso.Connection) -> None:
         self._connection = connection
         self._guard = threading.Lock()
-        self._active = False
+        self._active_calls = 0
+        self.max_concurrent_calls = 0
+        self.rollback = connection.rollback
 
     @contextmanager
-    def _exclusive_call(self) -> Iterator[None]:
+    def _exclusive_call(self) -> Generator[None]:
         with self._guard:
-            if self._active:
-                raise AssertionError('concurrent connection use')
-            self._active = True
+            self._active_calls += 1
+            self.max_concurrent_calls = max(self.max_concurrent_calls, self._active_calls)
         try:
             time.sleep(0.01)
             yield
         finally:
             with self._guard:
-                self._active = False
+                self._active_calls -= 1
 
     def execute(self, sql: str, parameters: _Parameters = (), /) -> turso.Cursor:
         with self._exclusive_call():
@@ -80,16 +81,8 @@ class _OverlapDetectingConnection:
         with self._exclusive_call():
             self._connection.commit()
 
-    def rollback(self) -> None:
-        with self._exclusive_call():
-            self._connection.rollback()
-
     def close(self) -> None:
         self._connection.close()
-
-    @property
-    def DatabaseError(self) -> type[Exception]:
-        return getattr(self._connection, 'DatabaseError')
 
     @property
     def in_transaction(self) -> bool:
@@ -215,6 +208,11 @@ async def test_legacy_database_without_state_column_migrates(tmp_path: Path) -> 
     assert migrated.step_index == 3
     connection.close()
 
+    reopened_connection = turso.connect(str(db), isolation_level=None)
+    reopened_store = SqliteStepStore(connection=reopened_connection, media_store=None)
+    assert await reopened_store.latest_snapshot(run_id='r1') == migrated
+    reopened_connection.close()
+
 
 async def test_media_round_trips_after_reopen(tmp_path: Path) -> None:
     database = tmp_path / 'media.db'
@@ -303,6 +301,7 @@ async def test_concurrent_step_and_implicit_media_access_is_serialized(tmp_path:
 
     assert len(await store.list_events(run_id='r1')) == 4
     assert len(await store.list_snapshots(run_id='r1')) == 4
+    assert connection.max_concurrent_calls == 1
     connection.close()
 
 

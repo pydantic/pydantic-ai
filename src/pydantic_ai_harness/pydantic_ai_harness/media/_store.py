@@ -15,18 +15,20 @@ import sqlite3
 import threading
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from types import MappingProxyType
-from typing import ParamSpec, Protocol, TypeGuard, TypeVar, runtime_checkable
+from typing import Protocol, TypeGuard, TypeVar, runtime_checkable
 
 import anyio.to_thread
+from pydantic import TypeAdapter
 
 from pydantic_ai_harness._sqlite import SqliteConnection
 
 _URI_SCHEME = 'media+sha256://'
 _HEX_RE = re.compile(r'^[0-9a-f]{64}$')
-_P = ParamSpec('_P')
 _T = TypeVar('_T')
+_BYTES_ADAPTER = TypeAdapter(bytes)
 
 # Sentinel: empty, shareable, immutable. Used as the default `context` on every
 # `MediaStore` method. Pulled into a module constant so a default-bound empty
@@ -364,11 +366,11 @@ class SqliteMediaStore:
         self._public_url_resolver = public_url
         self._thread_lock = _thread_lock or threading.RLock()
 
-    def _run_locked(self, operation: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
+    def _run_locked(self, operation: Callable[[], _T]) -> _T:
         if self._connection is None:
-            return operation(*args, **kwargs)
+            return operation()
         with self._thread_lock:
-            return operation(*args, **kwargs)
+            return operation()
 
     def _ensure_schema(self, conn: SqliteConnection) -> None:
         if self._schema_ready:
@@ -400,7 +402,7 @@ class SqliteMediaStore:
             conn.close()
 
     async def put(self, data: bytes, *, context: MediaContext = _EMPTY_CONTEXT) -> str:
-        return await anyio.to_thread.run_sync(self._run_locked, self._sync_put, data, context)
+        return await anyio.to_thread.run_sync(self._run_locked, partial(self._sync_put, data, context))
 
     def _sync_put(self, data: bytes, context: MediaContext) -> str:
         uri = media_uri_for(data)
@@ -420,7 +422,7 @@ class SqliteMediaStore:
 
     async def get(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bytes:
         digest = parse_media_uri(uri)
-        return await anyio.to_thread.run_sync(self._run_locked, self._sync_get, digest)
+        return await anyio.to_thread.run_sync(self._run_locked, partial(self._sync_get, digest))
 
     def _sync_get(self, digest: str) -> bytes:
         conn = self._open()
@@ -431,11 +433,11 @@ class SqliteMediaStore:
             self._maybe_close(conn)
         if row is None:
             raise FileNotFoundError(f'media not found: {digest}')
-        return bytes(row[0])
+        return _BYTES_ADAPTER.validate_python(row[0])
 
     async def exists(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> bool:
         digest = parse_media_uri(uri)
-        return await anyio.to_thread.run_sync(self._run_locked, self._sync_exists, digest)
+        return await anyio.to_thread.run_sync(self._run_locked, partial(self._sync_exists, digest))
 
     def _sync_exists(self, digest: str) -> bool:
         conn = self._open()
@@ -451,7 +453,7 @@ class SqliteMediaStore:
 
     async def get_metadata(self, uri: str, *, context: MediaContext = _EMPTY_CONTEXT) -> Mapping[str, str]:
         digest = parse_media_uri(uri)
-        return await anyio.to_thread.run_sync(self._run_locked, self._sync_get_metadata, digest)
+        return await anyio.to_thread.run_sync(self._run_locked, partial(self._sync_get_metadata, digest))
 
     def _sync_get_metadata(self, digest: str) -> Mapping[str, str]:
         conn = self._open()
@@ -462,4 +464,4 @@ class SqliteMediaStore:
             self._maybe_close(conn)
         if row is None:
             raise FileNotFoundError(f'media not found: {digest}')
-        return _coerce_metadata_mapping(json.loads(row[0]))
+        return _coerce_metadata_mapping(json.loads(str(row[0])))

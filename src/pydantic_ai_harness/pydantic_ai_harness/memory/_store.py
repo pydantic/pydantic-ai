@@ -22,6 +22,7 @@ from typing import Literal, Protocol, TypeVar, runtime_checkable
 
 import anyio
 import anyio.to_thread
+from pydantic import TypeAdapter
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceError, WorkspaceUnavailableError
@@ -41,6 +42,7 @@ _RENAME_TIMEOUT = 30.0
 _MAX_RECEIPTS = 1024
 _SQLITE_SETUP_LOCK = threading.RLock()
 _T = TypeVar('_T')
+_SQLITE_INT_ADAPTER = TypeAdapter(int)
 logger = logging.getLogger(__name__)
 
 
@@ -918,7 +920,7 @@ class SqliteMemoryStore:
             'UPDATE memory_metadata SET generation = generation + 1 WHERE id = 1 RETURNING generation'
         ).fetchone()
         assert row is not None
-        return int(row[0])
+        return _SQLITE_INT_ADAPTER.validate_python(row[0])
 
     async def read(self, path: str, *, max_chars: int) -> MemoryFile | None:
         validate_store_path(path)
@@ -937,7 +939,7 @@ class SqliteMemoryStore:
                 content=str(row[0]),
                 version=str(row[1]),
                 operation_id=str(row[2]) if row[2] is not None else None,
-                truncated=int(row[3]) > max_chars,
+                truncated=_SQLITE_INT_ADAPTER.validate_python(row[3]) > max_chars,
             )
 
         return await anyio.to_thread.run_sync(self._run, op)
@@ -1079,7 +1081,7 @@ class SqliteMemoryStore:
                 'WHERE substr(path, 1, length(?)) = ? ORDER BY path LIMIT ?',
                 (max_file_chars, prefix, prefix, max_files + 1),
             ).fetchall()
-            return [(str(row[0]), str(row[1]), int(row[2])) for row in rows]
+            return [(str(row[0]), str(row[1]), _SQLITE_INT_ADAPTER.validate_python(row[2])) for row in rows]
 
         rows = await anyio.to_thread.run_sync(self._run, op)
         result = lexical_search(

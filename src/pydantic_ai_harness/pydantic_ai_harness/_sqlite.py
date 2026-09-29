@@ -52,13 +52,13 @@ class SqliteScriptConnection(SqliteConnection, Protocol):
     def executescript(self, sql_script: str, /) -> SqliteCursor: ...  # pragma: no cover
 
 
-def _is_database_error(connection: SqliteConnection, error: Exception) -> bool:
+def is_database_error(connection: SqliteConnection, error: Exception) -> bool:
     """Whether *error* belongs to the connection driver's DB-API database hierarchy."""
     database_error = getattr(connection, 'DatabaseError', None)
     if isinstance(database_error, type) and issubclass(database_error, Exception) and isinstance(error, database_error):
         return True
-    for connection_type in type(connection).__mro__:
-        module = sys.modules.get(connection_type.__module__)
+    for object_type in (*type(connection).__mro__, *type(error).__mro__):
+        module = sys.modules.get(object_type.__module__)
         database_error = getattr(module, 'DatabaseError', None)
         if (
             isinstance(database_error, type)
