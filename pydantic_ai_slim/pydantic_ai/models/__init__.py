@@ -860,6 +860,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 Framework callers pass it.
         """
         messages = _convert_speech_parts(messages, include_audio=self.profile.get('supports_audio_input', False))
+        # Counted before any delta renders into a `SystemPromptPart`: the standing prompt is what the
+        # history was authored with, and an announcement opening the first request is not part of it.
+        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+        standing_prompt_count = _standing_system_prompt_count(first_request) if first_request else 0
 
         supports_tool_addition = self.tool_addition_mode is not None
         messages = self._translate_legacy_tool_reveals(messages, model_request_parameters)
@@ -916,7 +920,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         messages = synthesize_local_tool_search_messages(messages, target_provider_name=target_provider_name)
 
         if not self.profile.get('supports_inline_system_prompts', False):
-            messages = _wrap_non_leading_system_prompts(messages)
+            messages = _wrap_non_leading_system_prompts(messages, standing_prompt_count=standing_prompt_count)
 
         return messages
 
@@ -2341,12 +2345,14 @@ def _standing_prompt_request(prefix: list[ModelMessage], *, include_system_parts
     return [ModelRequest(parts=list(opening), instructions=instructions)]
 
 
-def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[ModelMessage]:
+def _wrap_non_leading_system_prompts(messages: list[ModelMessage], *, standing_prompt_count: int) -> list[ModelMessage]:
     """Wrap mid-conversation `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s.
 
     The run's standing system prompt is left alone; the provider's `_map_messages` hoists it. Which
-    parts those are is `_standing_system_prompt_count`'s
-    question, and it is not simply "everything in the first request".
+    parts those are is `_standing_system_prompt_count`'s question, and it is not simply "everything
+    in the first request". The caller counts them on the history as authored and passes
+    `standing_prompt_count`, because rendering a `ToolAvailabilityDeltaPart` can put an announcement
+    in front of the first request, where counting again would take it for the standing prompt.
 
     Returns the original list when nothing changed so the identity check in `_make_request` can skip the
     redundant `_clean_message_history` pass.
@@ -2361,7 +2367,7 @@ def _wrap_non_leading_system_prompts(messages: list[ModelMessage]) -> list[Model
     new_messages: list[ModelMessage] = list(messages[:first_request_idx])
     changed = False
     for offset, msg in enumerate(messages[first_request_idx:]):
-        start = _standing_system_prompt_count(msg) if offset == 0 and isinstance(msg, ModelRequest) else 0
+        start = standing_prompt_count if offset == 0 else 0
         if isinstance(msg, ModelRequest) and any(isinstance(p, SystemPromptPart) for p in msg.parts[start:]):
             new_parts = [
                 UserPromptPart(content=f'<system>{part.content}</system>', timestamp=part.timestamp)
@@ -2577,9 +2583,6 @@ def _announce_tool_availability_delta_messages(
     runs after this — degrades it to `<system>`-tagged user text. Either way it's append-only, so the
     cached prefix ahead of it survives.
     """
-    # If truncation promotes a never-sent delta request to first position, its announcement may
-    # hoist with the standing prompt. All parts still precede the same assistant response, and the
-    # rendering is deterministic; no finer positional fidelity is required within one request.
     transformed: list[ModelMessage] = []
     changed = False
     is_first_kept_request = True
@@ -2613,12 +2616,12 @@ def _announce_tool_availability_delta_messages(
             # so the announcements sort to the back. One exception: system prompts opening the
             # history's first request are the agent's standing prompt, which the adapters lift into
             # the provider's dedicated system field based on exactly this position, so they stay at
-            # the front.
-            request = replace(message, parts=replacement_parts)
-            keep = _standing_system_prompt_count(request) if is_first_kept_request else 0
+            # the front. They're counted on the authored parts: an announcement is never part of the
+            # standing prompt, even when its delta opened the request.
+            keep = _standing_system_prompt_count(message) if is_first_kept_request else 0
             head, tail = replacement_parts[:keep], replacement_parts[keep:]
             tail.sort(key=_tool_results_first_sort_key)
-            transformed.append(replace(request, parts=[*head, *tail]))
+            transformed.append(replace(message, parts=[*head, *tail]))
             is_first_kept_request = False
 
     return transformed if changed else messages
