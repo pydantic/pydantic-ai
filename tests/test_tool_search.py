@@ -54,7 +54,6 @@ from pydantic_ai.messages import (
     NativeToolSearchReturnPart,
     PartStartEvent,
     RetryPromptPart,
-    SystemPromptPart,
     TextPart,
     ToolAvailabilityDeltaPart,
     ToolPartKind,
@@ -7798,7 +7797,8 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
 
     The part is replaced where it stands, so the message count doesn't change — which is the point:
     the fabricated `search_tools` call this replaced had to be spliced in as a separate
-    `ModelResponse` ahead of the rebuilt request.
+    `ModelResponse` ahead of the rebuilt request. `TestModel` takes no mid-conversation system
+    message, so the announcement arrives `<system>`-wrapped; it is never the standing prompt (#7899).
     """
     model = TestModel()
     tool = ToolDefinition(name='new_tool', parameters_json_schema={'type': 'object'}, defer_loading=True)
@@ -7811,8 +7811,8 @@ def test_tool_availability_delta_falls_back_to_a_system_instruction():
     request = prepared[0]
     assert isinstance(request, ModelRequest)
     [part] = request.parts
-    assert isinstance(part, SystemPromptPart)
-    assert part.content == snapshot('The following tool(s) are now available: `new_tool`')
+    assert isinstance(part, UserPromptPart)
+    assert part.content == snapshot('<system>The following tool(s) are now available: `new_tool`</system>')
 
 
 def test_tool_availability_delta_does_not_announce_unknown_tool():
