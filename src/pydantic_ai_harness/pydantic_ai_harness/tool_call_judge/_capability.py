@@ -238,12 +238,12 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
             ) from error
         if self.conversation_window < 1:
             raise UserError('ToolCallJudge.conversation_window must be at least 1 token.')
-        self._judge = Agent[None, _JudgeAnswer](  # pyright: ignore[reportCallIssue]
+        self._judge = Agent[None, _JudgeAnswer](
             self.model,
             name='tool_call_judge',
             deps_type=type(None),
             instructions=_JUDGE_INSTRUCTIONS.format(question=self.question),
-            output_type=Literal['yes', 'no', 'unsure'],  # pyright: ignore[reportArgumentType]
+            output_type=Literal['yes', 'no', 'unsure'],
         )
 
     def get_ordering(self) -> CapabilityOrdering:
