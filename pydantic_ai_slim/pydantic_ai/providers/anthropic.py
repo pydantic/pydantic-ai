@@ -104,9 +104,10 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
         bedrock_provider, base_model_name = split_bedrock_model_id(model_name)
         if bedrock_provider == 'anthropic':
             model_name = base_model_name
+        profile = anthropic_model_profile(model_name)
         return merge_profile(
             AnthropicModelProfile(json_schema_transformer=AnthropicJsonSchemaTransformer),
-            anthropic_model_profile(model_name),
+            profile,
             # Accepting a `{'role': 'system'}` entry is a fact about the Messages API, not about the
             # model family, so it's set here rather than in `anthropic_model_profile()`, which is
             # shared with the Bedrock Converse API and the OpenAI-compatible gateways that route the
