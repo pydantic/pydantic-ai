@@ -158,10 +158,10 @@ class TokenStore:
 
 
 def oauth(name: str, server: RemoteServer) -> OAuth | None:
-    """The server's sign-in handler when its configuration asks for OAuth."""
-    return browser_sign_in(TokenStore(name)) if server.auth else None
-
-
-def browser_sign_in(tokens: TokenStore) -> OAuth:
     """A sign-in handler with keyring-backed tokens; FastMCP refreshes them or opens the browser on connect."""
-    return OAuth(client_name='CLAI', callback_host='127.0.0.1', token_storage=tokens)
+    return sign_in(name) if server.auth else None
+
+
+def sign_in(name: str) -> OAuth:
+    """Browser sign-in whose tokens are kept in the `mcp-NAME` credential."""
+    return OAuth(client_name='CLAI', callback_host='127.0.0.1', token_storage=TokenStore(name))

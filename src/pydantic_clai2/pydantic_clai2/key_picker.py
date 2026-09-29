@@ -11,7 +11,6 @@ import concurrent.futures
 import threading
 from dataclasses import dataclass, field
 
-from pydantic import SecretStr
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from ._rendering import markdown_style
@@ -47,10 +46,10 @@ class MaskedPrompt:
 
 @dataclass(frozen=True)
 class NewKey:
-    """A value to save under the key's name, replacing `replacing` (`None` when the name was free)."""
+    """A value to save under the key's name; `replace` is whether the user agreed to replace a saved one."""
 
     value: str = field(repr=False)
-    replacing: SecretStr | None = field(repr=False)
+    replace: bool
 
 
 async def ask_key(*, name: str, label: str, runners: Runners) -> KeyReference | NewKey | None:
@@ -61,10 +60,10 @@ async def ask_key(*, name: str, label: str, runners: Runners) -> KeyReference | 
     value = choice.strip()
     if not value:
         return None
-    replacing = (await asyncio.to_thread(load_keys)).get(name)
-    if replacing is not None and not await run_worker(lambda: _confirm_replace(name, runners)):
+    exists = name in await asyncio.to_thread(load_keys)
+    if exists and not await run_worker(lambda: _confirm_replace(name, runners)):
         return None
-    return NewKey(value, replacing)
+    return NewKey(value, replace=exists)
 
 
 def pick_key(loop: asyncio.AbstractEventLoop, *, name: str, label: str, runners: Runners) -> KeyReference | None:
@@ -97,8 +96,8 @@ def pick_key(loop: asyncio.AbstractEventLoop, *, name: str, label: str, runners:
 def _save(name: str, decision: KeyReference | NewKey | None) -> KeyReference | None:
     if not isinstance(decision, NewKey):
         return decision
-    # `expected` makes the save refuse if another session wrote `name` since the user decided.
-    save_key(name=name, value=decision.value, expected=decision.replacing)
+    # Without the user's agreement to replace, the save refuses a key another session created since they looked.
+    save_key(name=name, value=decision.value, replace=decision.replace)
     return KeyReference(name=name)
 
 

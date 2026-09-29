@@ -106,6 +106,8 @@ class ExamplesConfig(BaseExamplesConfig):
 
     def ruff_config(self) -> tuple[str, ...]:
         config = super().ruff_config()
+        config = tuple(arg for arg in config if not arg.startswith('--config='))
+        config = (*config, '--config', str(Path(__file__).parent.parent / 'pyproject.toml'))
         if self.known_first_party:  # pragma: no branch
             config = (*config, '--config', f'lint.isort.known-first-party = {self.known_first_party}')
         if self.known_local_folder:

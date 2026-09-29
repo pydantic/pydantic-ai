@@ -24,7 +24,7 @@ from .commands import Command
 from .credential_store import delete_credentials, load_codex_credentials
 from .field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from .key_picker import pick_key
-from .mcp import OAUTH_TIMEOUT, TokenStore, browser_sign_in, http_client
+from .mcp import OAUTH_TIMEOUT, TokenStore, http_client, sign_in
 from .menu_worker import run_worker
 from .plugins import DepsT, PluginHost, SessionStart
 
@@ -88,9 +88,7 @@ def activate(host: PluginHost[DepsT]) -> None:
             raise UserError(f'No Notion key is selected. {SETUP}')
         # Harness `auth='oauth'` keeps tokens in memory behind a 5-second handshake; this keeps them in the
         # keyring and allows the browser round trip, like an OAuth server added through `/mcp`.
-        transport = StreamableHttpTransport(
-            NOTION_MCP_URL, auth=browser_sign_in(TOKENS), httpx_client_factory=http_client
-        )
+        transport = StreamableHttpTransport(NOTION_MCP_URL, auth=sign_in(TOKENS.name), httpx_client_factory=http_client)
         return Notion[DepsT](
             client=Client(transport, init_timeout=OAUTH_TIMEOUT),
             read_only=settings.read_only,

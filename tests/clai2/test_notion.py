@@ -2,7 +2,6 @@
 
 import inspect
 import io
-from dataclasses import replace
 from pathlib import Path
 
 import anyio
@@ -10,10 +9,10 @@ import pytest
 from fastmcp import Client
 from fastmcp.client.auth import OAuth
 from fastmcp.client.transports import StreamableHttpTransport
-from pydantic import JsonValue
+from pydantic import JsonValue, SecretStr
 from rich.console import Console
 from termflow.tui import MenuItem
-from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai import Agent, RunContext
@@ -21,7 +20,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.notion import Notion
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys, notion
+from pydantic_clai2 import DEFAULT_PLUGINS, api_keys, key_picker, notion
 from pydantic_clai2.api_keys import KeyReference
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
@@ -187,20 +186,21 @@ async def test_entering_a_new_value_asks_before_replacing_a_shared_key(
     assert api_keys.load_keys()['NOTION_API_KEY'].get_secret_value() == value
 
 
-async def test_a_key_another_session_replaces_during_confirmation_is_not_overwritten(
+async def test_a_key_another_session_saves_meanwhile_is_not_overwritten(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    api_keys.save_key(name='NOTION_API_KEY', value='ntn-old')
     shell = Shell(tmp_path)
     await shell.loader.enable('notion')
-    shown = script(monkeypatch, lists=[pick('key')], texts=[typed('ntn-mine')], keys=('down', 'enter'))
+    script(monkeypatch, lists=[pick('key')], texts=[typed('ntn-mine')])
+    real_load_keys = api_keys.load_keys
 
-    def other_session_writes_then_confirm(menu: Menu) -> MenuResult:
+    def load_keys_then_another_session_saves() -> dict[str, SecretStr]:
+        keys = real_load_keys()
         api_keys.save_key(name='NOTION_API_KEY', value='ntn-theirs')
-        return pick(True)
+        return keys
 
-    monkeypatch.setattr(notion, 'RUNNERS', replace(shown.runners, run_choice=other_session_writes_then_confirm))
-    with pytest.raises(ValueError, match='changed in another CLAI session'):
+    monkeypatch.setattr(key_picker, 'load_keys', load_keys_then_another_session_saves)
+    with pytest.raises(api_keys.KeyExistsError, match='NOTION_API_KEY is already saved'):
         await shell.loader.configure('notion')
     assert api_keys.load_keys()['NOTION_API_KEY'].get_secret_value() == 'ntn-theirs'
     assert load_codex_credentials(account='notion') is None
