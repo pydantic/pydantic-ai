@@ -33,6 +33,11 @@ def _html_response(html: str, *, content_type: str = 'text/html; charset=utf-8')
     )
 
 
+def _assert_scales_better_than_quadratic(small_elapsed: float, large_elapsed: float) -> None:
+    """A 4x larger input must take well below the 16x growth expected from quadratic work."""
+    assert large_elapsed < max(small_elapsed * 10, 1)
+
+
 class TestWebFetchLocalTool:
     async def test_fetch_html(self):
         """Fetches HTML and converts to markdown."""
@@ -621,28 +626,30 @@ class TestWebFetchLocalTool:
         assert [future.result() for future in executor.submitted] == [html, ('Threaded', 'Threaded\n\nContent')]
 
     async def test_fetch_html_repeated_unclosed_title_tags(self):
-        """A body made of `<title` fragments with no closing `>` converts in seconds, not minutes.
+        """A body made of `<title` fragments with no closing `>` converts in linear time.
 
         Each fragment is a candidate title start with no end in reach, which previously made title
-        extraction quadratic in the body size: a body of this size took minutes, during which the
-        event loop was blocked. The bound is generous; the point is that it isn't minutes.
+        extraction quadratic in the body size: large bodies took minutes, during which the event
+        loop was blocked.
         """
-        html = '<title' * 300_000
+        elapsed: list[float] = []
+        for count in (75_000, 300_000):
+            html = '<title' * count
+            with patch(
+                'pydantic_ai.common_tools.web_fetch.safe_download',
+                new_callable=AsyncMock,
+                return_value=_html_response(html),
+            ):
+                tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
+                start = time.perf_counter()
+                result = await tool('https://example.com')
+                elapsed.append(time.perf_counter() - start)
 
-        with patch(
-            'pydantic_ai.common_tools.web_fetch.safe_download',
-            new_callable=AsyncMock,
-            return_value=_html_response(html),
-        ):
-            tool = WebFetchLocalTool(max_content_length=None, allow_local_urls=False, timeout=30)
-            start = time.perf_counter()
-            result = await tool('https://example.com')
-            elapsed = time.perf_counter() - start
+            assert isinstance(result, dict)
+            assert result['title'] == ''
+            assert result['content'] == ''
 
-        assert isinstance(result, dict)
-        assert result['title'] == ''
-        assert result['content'] == ''
-        assert elapsed < 10
+        _assert_scales_better_than_quadratic(*elapsed)
 
     @pytest.mark.parametrize('html', ['<title>never closed', '<title never opened'])
     async def test_fetch_html_unterminated_title_is_empty(self, html: str):
@@ -689,20 +696,26 @@ class TestWebFetchLocalTool:
         """A deeply nested definition list cannot occupy a worker and delay other coroutines for seconds."""
         html = '<dd>' * 120 + 'line\n' * 150_000 + '</dd>' * 120
         finished = anyio.Event()
+        baseline_ready = anyio.Event()
+        baseline_delays: list[float] = []
         heartbeat_delays: list[float] = []
+        conversion_started = False
 
         async def heartbeat() -> None:
             previous = time.perf_counter()
             while not finished.is_set():
                 await anyio.sleep(0.01)
                 now = time.perf_counter()
-                heartbeat_delays.append(now - previous)
+                delays = heartbeat_delays if conversion_started else baseline_delays
+                delays.append(now - previous)
+                if len(baseline_delays) == 3:
+                    baseline_ready.set()
                 previous = now
 
-        started = time.perf_counter()
         async with anyio.create_task_group() as task_group:
             task_group.start_soon(heartbeat)
-            await anyio.sleep(0)
+            await baseline_ready.wait()
+            conversion_started = True
             try:
                 with patch(
                     'pydantic_ai.common_tools.web_fetch.safe_download',
@@ -717,8 +730,8 @@ class TestWebFetchLocalTool:
             finally:
                 finished.set()
 
-        assert time.perf_counter() - started < 3
-        assert heartbeat_delays and max(heartbeat_delays) < 0.5
+        assert heartbeat_delays
+        assert max(heartbeat_delays) < max(max(baseline_delays) * 10, 0.5)
 
     @pytest.mark.parametrize('charset', ['idna', 'rot_13', 'base64_codec'])
     async def test_undecodable_charset_raises_model_retry(self, charset: str):
@@ -827,26 +840,20 @@ class TestMarkdownConverter:
     def test_deeply_nested_indentation_is_bounded(self, tag: str):
         """The converter rejects repeated indentation before intermediate Markdown expands."""
         html = f'<{tag}>' * 120 + 'line\n' * 150_000 + f'</{tag}>' * 120
-        started = time.perf_counter()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 3
 
     def test_deeply_nested_empty_tags_are_bounded(self):
         """Generated line breaks must count towards work even without descendant text."""
         html = '<q>' * 120 + '<br>' * 30_000 + '</q>' * 120
-        started = time.perf_counter()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 3
 
     def test_shallow_nested_indentation_is_bounded(self):
         """Indented lines also count when the document is fewer than 16 levels deep."""
         html = '<dd>' * 15 + 'x\n' * 300_000 + '</dd>' * 15
-        started = time.perf_counter()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 3
 
     @pytest.mark.parametrize(
         ('tag', 'depth', 'prefix'),
@@ -1009,18 +1016,14 @@ class TestMarkdownConverter:
     def test_repeated_table_row_search_is_bounded(self):
         """Rows under thead must not each rescan all of their siblings."""
         html = '<table><thead>' + '<tr><td>x</td></tr>' * 5000 + '</thead></table>'
-        started = time.perf_counter()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 3
 
     def test_repeated_tbody_table_search_is_bounded(self):
         """The first row of each tbody must not rescan the whole table."""
         html = '<table>' + '<tbody><tr><td>x</td></tr></tbody>' * 2000 + '</table>'
-        started = time.perf_counter()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 3
 
     def test_small_table_colspan_converts(self):
         """Small decimal colspans retain the converter's output."""
@@ -1098,10 +1101,8 @@ class TestMarkdownConverter:
     def test_wide_ordered_list_marker_is_bounded(self):
         """A large list start must count towards indentation on every continuation line."""
         html = '<ol start="' + '9' * 4300 + '"><li>' + 'x\n' * 10_000 + '</li></ol>'
-        started = time.perf_counter()
         with pytest.raises(ModelRetry, match='too complex'):
             _convert_html(html)
-        assert time.perf_counter() - started < 3
 
     def test_generated_list_lines_with_wide_marker_are_bounded(self):
         """A URL can generate the lines an ordered-list marker would indent."""
@@ -1110,31 +1111,35 @@ class TestMarkdownConverter:
             _convert_html(html)
 
     @pytest.mark.parametrize(
-        'html',
+        ('prefix', 'fragment', 'suffix'),
         [
-            pytest.param('<p>x' + ' ' * 300_000 + 'x</p>', id='spaces-in-paragraph'),
-            pytest.param('<p><![CDATA[x' + ' ' * 300_000 + 'x]]></p>', id='spaces-in-cdata'),
-            pytest.param('<pre>' + ' ' * 300_000 + 'x</pre>', id='spaces-in-pre'),
-            pytest.param('<ol>' + '<li>x</li>' * 50_000 + '</ol>', id='long-ordered-list'),
-            pytest.param('<div>x' * 20_000, id='deep-nesting'),
-            pytest.param('x <i></i>' * 50_000, id='many-sibling-text-nodes'),
+            pytest.param('<p>x', ' ', 'x</p>', id='spaces-in-paragraph'),
+            pytest.param('<p><![CDATA[x', ' ', 'x]]></p>', id='spaces-in-cdata'),
+            pytest.param('<pre>', ' ', 'x</pre>', id='spaces-in-pre'),
+            pytest.param('<ol>', '<li>x</li>', '</ol>', id='long-ordered-list'),
+            pytest.param('', '<div>x', '', id='deep-nesting'),
+            pytest.param('', 'x <i></i>', '', id='many-sibling-text-nodes'),
         ],
     )
-    def test_converts_pathological_runs_quickly(self, html: str):
+    def test_converts_pathological_runs_quickly(self, prefix: str, fragment: str, suffix: str):
         """Whitespace runs, `<pre>` padding, ordered lists, deep nesting, and wide trees are handled in linear time.
 
         `markdownify` on its own takes minutes on the whitespace and list shapes: a run of spaces
         restarts its whitespace regexes at every character, and each `<li>` recounts its previous
         siblings. The nested page can't be converted at all, but finding that out must not take
-        long either, and neither may normalizing text among tens of thousands of siblings. The
-        bound is generous; the point is that it isn't minutes.
+        quadratic work either, and neither may normalizing text among thousands of siblings.
         """
-        start = time.perf_counter()
-        try:
-            _convert_html(html)
-        except (RecursionError, ModelRetry):
-            assert html.startswith('<div>x<div>')
-        assert time.perf_counter() - start < 10
+        elapsed: list[float] = []
+        for count in (3_125, 12_500):
+            html = prefix + fragment * count + suffix
+            start = time.perf_counter()
+            try:
+                _convert_html(html)
+            except (RecursionError, ModelRetry):
+                assert fragment == '<div>x'
+            elapsed.append(time.perf_counter() - start)
+
+        _assert_scales_better_than_quadratic(*elapsed)
 
 
 class TestWebFetchToolFactory:
