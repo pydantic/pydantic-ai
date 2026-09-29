@@ -52,6 +52,8 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 
 [project.scripts]
 clai2 = "pydantic_clai2.__main__:main"
+# Matches the distribution name so `uvx pydantic-clai2` works without `--from`.
+pydantic-clai2 = "pydantic_clai2.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["pydantic_clai2"]

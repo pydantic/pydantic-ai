@@ -14,6 +14,7 @@ precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
 | General coding agent: investigate, edit, test, delegate | `Coder()` + a workspace |
 | Narrower agent: file tools and/or commands with policy (allowlists, patterns, read-only) | `FileSystem()` and/or `Shell()` + a workspace |
 | Untrusted model or repo, or no access to this machine | Swap `LocalWorkspace` for `ModalSandbox()` / `E2BSandbox()` / `SpritesSandbox()`; tool capabilities stay the same |
+| Work on another machine you can `ssh` to | `SSHWorkspace('user@host', working_dir=...)`; wrap it in `BubblewrapSandbox(...)` to sandbox its commands on that host |
 | Only your own tools use `ctx.workspace` | A workspace capability alone |
 
 Workspace capabilities (`LocalWorkspace` and the sandboxes) register **no tools**. `allowed_commands`,
@@ -301,6 +302,46 @@ async def end_conversation(conv: Conversation) -> None:  # or on a TTL sweep
   its output (`start_command` already does).
 - `ModalSandbox` warns `ModalSandboxNoToolsWarning` when the run has no `Shell`/`FileSystem` tools;
   pass `warn_if_no_tools=False` if only your own tools use it.
+
+## Remote hosts and bubblewrap
+
+### SSHWorkspace
+
+`SSHWorkspace(destination, *, working_dir=None, read_only=False, env=None, ssh_args=())` (backend
+`SSHWorkspaceBackend`) runs commands and file operations on a remote host through your `ssh` client,
+so keys, ports and jump hosts come from `~/.ssh/config` and `ssh-agent`. No extra, no SDK.
+
+- Key auth only: `ssh` runs with `BatchMode=yes`, so a password or passphrase prompt fails at once.
+- No isolation: commands have the remote user's full authority. The host needs a POSIX `sh`.
+- `working_dir` defaults to the login directory and must exist. `env` adds to the remote login
+  environment; nothing from your machine is passed through.
+- The ref is `WorkspaceRef(provider='ssh', id='user@host:/dir')`; the capability accepts only its own,
+  and `SSHWorkspace(...).backend(ref)` attaches without connecting. Nothing to destroy.
+- Every operation is a connection: turn on `ControlMaster auto` + `ControlPersist` for speed.
+- A background child holding stdout/stderr open keeps `run()` waiting (sshd waits for the output):
+  redirect it, as in `server > server.log 2>&1 &`.
+
+### BubblewrapSandbox
+
+`BubblewrapSandbox(wrapped_capability, *, network=False, bwrap_args=())` runs the wrapped workspace
+capability's commands in a Linux `bwrap` sandbox on that workspace's host:
+`BubblewrapSandbox(SSHWorkspace('dev@box', working_dir='/srv/app'))` or
+`BubblewrapSandbox(LocalWorkspace('.'))`. The host needs `bwrap` and user namespaces.
+
+- Read-only host, writable working dir, private `/tmp`, empty `/run` (no daemon sockets), required user
+  namespace, no capabilities. `bwrap_args` come after the defaults (`['--bind', p, p]`, `['--tmpfs', p]`).
+- `network=False` (default): no network, plus a Codex-style seccomp filter: no socket connect/bind/listen
+  (host Unix sockets and the sandbox's own loopback included), no Unix datagram sockets, no
+  `ptrace`/`io_uring`. Tests that start a local server, and Python 3.14's default `forkserver`
+  multiprocessing (use `get_context('spawn')`), need `network=True`: host network and ports, no filter.
+- File methods (and the `FileSystem`/`Coder` file tools) run in the sandbox as shell commands, so a
+  swapped-in symlink can't lead a write outside the working dir.
+- The host PID namespace is shared, so `Shell` background jobs survive the call (and the run), and
+  sandboxed commands can see and signal the host user's processes.
+- Not a hostile-agent boundary: commands read everything the host user can (hide `~/.ssh` with
+  `--tmpfs`), and files they write (Git hooks, `Makefile`) run unsandboxed if you run them later.
+- The ref and `backend` are the wrapped workspace's. `BubblewrapWorkspace` is the wrapper for building
+  a `workspace=` directly: `BubblewrapWorkspace(Workspace(SSHWorkspaceBackend('dev@box')))`.
 
 ## Durable execution
 

@@ -89,7 +89,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   anywhere else; the agent from `create_agent()` has no coding tools of its
   own. `coder` is declared with `repo_context: false` because `repo_context`
   binds harness `RepoContext` itself; keep it that way or `AGENTS.md` reaches
-  the model twice.
+  the model twice. When a built-in takes the id of a row the former harness
+  catalog offered, add that old row to `_RETIRED_BUILTINS` in `plugin_loader.py`, so a
+  user's saved toggle of it maps to the built-in instead of outranking it.
 - **Project declarations rank just above built-ins and start off.**
   `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
   takes them as `project=`, every one `enabled=False`, because a repository
@@ -130,7 +132,13 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
   tests drive it headless, no terminal), and a thin async runner that owns the
   screen and calls `menu.run` in a thread.
 - Every key mutates immediately and `replace_items` redraws. No pending-changes
-  state, no save/cancel pair.
+  state, no save/cancel pair. Settings menus still end with a **Save & close**
+  row (`save_and_close_item()`, recognized by `picked(result)`) that only
+  leaves; `FieldMenu`, `/keys`, and `/plugins` add it for you.
+- Turning a plugin on opens its `@host.configure` menu. A widget cannot open
+  from inside another menu's key handler, so `PluginMenu` closes with a
+  `Configure` result and `open_plugins_menu` runs the settings menu, then
+  reopens the list.
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
 - Esc and Ctrl-C close cleanly. They are not errors.
@@ -185,6 +193,7 @@ bundled palettes use Termflow defaults.
 | File | Holds |
 |---|---|
 | `_cli.py` | argument parsing, startup, `--agent` |
+| `agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `_app.py` | the prompt loop and built-in `/commands` |
 | `_session.py` | conversation state, revision-checked saves, restore-only resume, per-run plugins |
 | `sessions.py` | resume command and background namer ownership; built-in step capture |

@@ -3,6 +3,7 @@
 import io
 import sqlite3
 import sys
+import warnings
 from contextlib import closing
 from pathlib import Path
 
@@ -10,6 +11,7 @@ import pytest
 
 import pydantic_clai2
 import pydantic_clai2.__main__
+import pydantic_clai2._cli
 from pydantic_clai2.commands import config_completions
 from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.splash import Splash
@@ -51,3 +53,22 @@ def test_splash_broken_stream_and_replaced_output(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(sys, 'stderr', io.StringIO())
     with pytest.raises(OSError):
         splash.stop()
+
+
+@pytest.mark.parametrize(('warnoptions', 'shown'), [([], []), (['default'], ['for developers'])])
+def test_entry_point_quiets_user_warnings_unless_requested(
+    monkeypatch: pytest.MonkeyPatch, warnoptions: list[str], shown: list[str]
+) -> None:
+    def run(*, splash: Splash | None = None) -> None:
+        warnings.warn('for developers', UserWarning)
+
+    monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')
+    monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
+    monkeypatch.setattr(sys, 'warnoptions', warnoptions)
+    monkeypatch.setattr(pydantic_clai2._cli, 'run', run)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        filters = list(warnings.filters)
+        pydantic_clai2.__main__.main()
+        assert warnings.filters == filters
+    assert [str(warning.message) for warning in caught] == shown
