@@ -242,7 +242,7 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier, usedforsecurity=False).hexdigest()[:6]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
 
@@ -271,7 +271,7 @@ class FileUrl(ABC):
     - `MistralModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
-    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
+    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None)] = field(
         compare=False, default=None
     )
 
@@ -316,62 +316,20 @@ class FileUrl(ABC):
         except ValueError:
             return None
 
-    @pydantic.model_serializer(mode='wrap')
-    def _serialize(
-        self, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.SerializationInfo
-    ) -> dict[str, Any]:
-        """Write `media_type` without letting a URL it cannot be inferred from fail the dump.
+    @pydantic.field_serializer('_media_type')
+    def _serialize_media_type(self, _media_type: str | None) -> str | None:
+        """Dump the media type `media_type` would return, or `None` where it can't be inferred.
 
-        `media_type` used to be a `computed_field`, which pydantic evaluates on every dump, so a URL
-        with no usable extension raised where the value was never needed: a run that had completed could
-        no longer be persisted or sent to a frontend ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
-        It is written here instead, as `null` when it cannot be inferred.
+        The dump records the resolved media type rather than only the one given, so a history reloads
+        with the media type it ran with. It used to be read off `media_type` itself, which raises for a
+        URL with no usable extension, so a run that had completed could no longer be persisted or sent
+        to a frontend ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
 
-        The key is written literally rather than aliased off the private `_media_type` field, because a
-        serialization alias only applies when dumping `by_alias`, and `model_dump(by_alias=False)` would
-        then hand users a `_media_type` key naming a private field they never set. Writing it by hand does
-        mean applying the arguments the dump was asked for — `exclude_none`, `include`, `exclude` — that
-        pydantic would have applied to a field of its own.
+        This is the `_media_type` field's own serializer, so the key it is written under is the field's
+        `media_type` alias, which `serialize_by_alias` makes the default. A dump that explicitly asks for
+        `by_alias=False` gets the field's name, `_media_type`, and so do `include` and `exclude`.
         """
-        data = handler(self)
-        media_type = self._media_type_or_none()
-        include, exclude = info.include, info.exclude
-        if (
-            (media_type is None and info.exclude_none)
-            or (include is not None and 'media_type' not in include)
-            or (exclude is not None and 'media_type' in exclude)
-        ):
-            return data
-        # `identifier` is a computed field and so sorts last; keep `media_type` ahead of it, where it has
-        # always been written, so a history dumped before this change compares equal to one dumped after.
-        identifier = data.pop('identifier', None)
-        data['media_type'] = media_type
-        if identifier is not None:
-            data['identifier'] = identifier
-        return data
-
-    @classmethod
-    def __get_pydantic_json_schema__(
-        cls, core_schema: pydantic_core.CoreSchema, handler: pydantic.GetJsonSchemaHandler
-    ) -> pydantic.json_schema.JsonSchemaValue:
-        """Describe the fields `_serialize` writes, rather than the bare object it returns.
-
-        Pydantic reads a model serializer's return type as the serialization schema, so without this the
-        type would advertise nothing but an open object to whatever generates a contract from it — a
-        tool's return schema and [`Agent.output_json_schema()`][pydantic_ai.agent.AbstractAgent.output_json_schema]
-        among them. Render the schema as if the serializer weren't there, and name the `media_type` it
-        writes, which the private field holding it is excluded from the dump — and so from the schema —
-        to leave to it.
-        """
-        # `CoreSchema` is a union of `TypedDict`s, which can't express "this schema minus a key", so the
-        # copy the serializer is dropped from is handed back to the handler as the schema it still is.
-        without_serializer = {k: v for k, v in core_schema.items() if k != 'serialization'}
-        schema = handler.resolve_ref_schema(handler(cast('pydantic_core.CoreSchema', without_serializer)))
-        properties: dict[str, Any] = schema.setdefault('properties', {})
-        if 'media_type' not in properties:  # The validation schema already has it, under the field's alias.
-            properties['media_type'] = {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Media Type'}
-            schema.setdefault('required', []).append('media_type')
-        return schema
+        return self._media_type_or_none()
 
     @pydantic.computed_field
     @property
@@ -404,7 +362,7 @@ class FileUrl(ABC):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
 class VideoUrl(FileUrl):
     """A URL to a video."""
 
@@ -470,7 +428,7 @@ class VideoUrl(FileUrl):
         return _video_format_lookup[self.media_type]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
 class AudioUrl(FileUrl):
     """A URL to an audio file."""
 
@@ -517,7 +475,7 @@ class AudioUrl(FileUrl):
         return _audio_format_lookup[self.media_type]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
 class ImageUrl(FileUrl):
     """A URL to an image."""
 
@@ -563,7 +521,7 @@ class ImageUrl(FileUrl):
         return _image_format_lookup[self.media_type]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
 class DocumentUrl(FileUrl):
     """The URL of the document."""
 
@@ -1335,19 +1293,20 @@ class _RequireUrlMediaType:
     from a mapping a tool happened to build. For the four [`FileUrl`][pydantic_ai.messages.FileUrl]
     kinds, `media_type` draws that line, because those are the items whose media type the URL alone
     cannot always supply: `FileUrl.media_type` infers one from the URL when it was given none, and a
-    URL with no usable extension raises `Could not infer media type` — on the *dump*, not on the load
-    that built the object, so a history that had loaded cleanly could no longer be saved
-    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). An item reconstructed here
-    brings its own media type and never reaches that inference, and a URL mapping without one was
-    never dumped by us: it stays a plain `Mapping` and reaches the caller with the keys its tool put
-    in it.
+    URL with no usable extension raises `Could not infer media type` wherever that media type is read
+    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). A dump writes `null` for
+    such a URL rather than reading it ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)),
+    so a URL mapping without a media type string either wasn't dumped by us or names no media type an
+    item could be rebuilt with: it stays a plain `Mapping` and reaches the caller with the keys its
+    tool put in it. An item reconstructed here brings its own media type and never reaches that
+    inference.
 
     Nothing is required of the other two kinds, which cannot fail that way and so keep rehydrating
     from the fields they declare: `media_type` is a required field on `BinaryContent`, and
     `UploadedFile.media_type` falls back to `application/octet-stream` instead of raising.
 
     The requirement is a *non-empty* string. `FileUrl` infers whenever `_media_type` is falsy, so `''`
-    would reconstruct an item that raises on dump after all, and no dump of ours writes one.
+    would reconstruct an item with no media type after all, and no dump of ours writes one.
 
     The check is chained onto each URL choice of the tagged union rather than written as a validator,
     because any Python callable on this union is called once per node of the decoded payload — the cost
