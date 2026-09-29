@@ -49,13 +49,13 @@ def dbos_teardown() -> Iterator[None]:
 
     # `dbos` 3 dropped `function_type_map`, leaving `workflow_info_map` the only map keyed by workflow name:
     # https://github.com/dbos-inc/dbos-transact-py/pull/850
-    registry = vars(_get_or_create_dbos_registry())
-    maps = {name: dict(registry[name]) for name in ('workflow_info_map', 'function_type_map') if name in registry}
+    attrs = vars(_get_or_create_dbos_registry())
+    maps = {name: dict(attrs[name]) for name in ('workflow_info_map', 'function_type_map') if name in attrs}
     yield
     dbos.DBOS.destroy()
     # Drop only the example's workflows: their source was `exec`d, so a later `DBOS.launch()` could not hash
     # it, while modules that register agents at import time still need theirs.
-    registry.update(maps)
+    attrs.update(maps)
 
 
 def test_dbos_example(workspace: Path, dbos_teardown: None) -> None:
