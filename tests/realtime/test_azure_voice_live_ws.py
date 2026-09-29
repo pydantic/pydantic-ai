@@ -615,6 +615,8 @@ async def test_image_input(
     assert [event for event in events if isinstance(event, RealtimeSessionErrorEvent)] == []
     [image_item] = sent_frames_containing(cassette, 'input_image')
     assert [part['type'] for part in image_item['item']['content']] == ['input_image']
+    # The field Voice Live 2026-07-15 renamed from `url`.
+    assert image_item['item']['content'][0]['image_url'].startswith('data:image/jpeg;base64,')
     response = session.all_messages()[-1]
     assert isinstance(response, ModelResponse)
     part = response.parts[0]

@@ -644,8 +644,8 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         if (max_tokens := settings.get('max_tokens')) is not None:
             config['max_response_output_tokens'] = max_tokens
         if settings.get('parallel_tool_calls') is False:
-            # Only `False` is sent: it's the server default everywhere else, and the `gpt-realtime` models
-            # that can't call tools in parallel reject an explicit `True`.
+            # Voice Live defaults to parallel calls, and `gpt-realtime`/`-mini`/`-1.5` reject an explicit
+            # `True`, so only `False` is sent.
             config['parallel_tool_calls'] = False
         if tool_choice is not None:
             config['tool_choice'] = tool_choice_config(tool_choice)
