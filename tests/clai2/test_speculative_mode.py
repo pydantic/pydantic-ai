@@ -511,8 +511,12 @@ class TestSandboxCallDisplay:
             'RetryPromptPart',
         ]
         headers = [line for line in output.getvalue().splitlines() if line.startswith('\u25cf')]
-        assert headers == [
+        # Eager execution can announce `run_code` before its `code` argument has finished streaming.
+        assert headers[0] in (
+            '\u25cf run_code',
             '\u25cf run_code code="text = await read_file(path=\\"a.py\\")\\\u2026',
+        )
+        assert headers[1:] == [
             "\u25cf read_file 'a.py' offset=0 limit=2000 lines",
             "\u25cf read_file 'b.py' offset=0 limit=2000 lines",
             "\u25cf read_file 'missing.py' offset=0 limit=2000 lines",
