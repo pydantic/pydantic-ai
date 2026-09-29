@@ -146,8 +146,9 @@ class OpenAIServer:
         self._client_items: dict[int, str] = {}
         self._client_images: dict[int, bool] = {}
         self._conversation_id = 'conv_simulated'
-        # The finished conversation's items (messages, function calls and their outputs), which an xAI resumption
-        # replays.
+        # What an xAI resumption replays of the conversation, in order. Assistant messages are recorded
+        # (`test_xai_ws/test_session_resumption_after_drop`, which replays no user message); function calls
+        # and their outputs are inferred: no recording has a tool round before a resumption.
         self._finished_items: list[dict[str, Any]] = []
         # Azure OpenAI speaks the GA event names too (every `test_azure_ws` cassette does); only Voice Live, which
         # has a connection class of its own that isn't simulated, still uses the beta names.
@@ -363,10 +364,6 @@ class OpenAIServer:
             self._refuse(session, _error('string_above_max_length', 'Invalid content: refused.', event_id), [key])
             return
         self.truth.add_input(key, kind, client_index=client_index)
-        if kind == 'text':
-            self._finished_items.append(
-                {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': key}]}
-            )
         assert client_index is not None
         self._client_items[client_index] = key
         self._client_images[client_index] = kind == 'image'
@@ -515,15 +512,6 @@ class OpenAIServer:
         }
         if self.dialect == 'xai':
             done['usage'] = usage
-        if status == 'completed':
-            for item in active.output:
-                if item['type'] == 'function_call':
-                    self._finished_items.append({key: item[key] for key in ('type', 'call_id', 'name', 'arguments')})
-                else:
-                    text = item['content'][0]['transcript']
-                    self._finished_items.append(
-                        {'type': 'message', 'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}
-                    )
         self._end_truth(truth, status)
         session.active = None
         session.ended_responses.append(done)
@@ -542,6 +530,10 @@ class OpenAIServer:
         if active.message_item is None:
             return
         item = next(item for item in active.output if item['id'] == active.message_item)
+        transcript = item['content'][0]['transcript']
+        self._finished_items.append(
+            {'type': 'message', 'role': 'assistant', 'content': [{'type': 'text', 'text': transcript}]}
+        )
         self._emit(
             session,
             {
@@ -550,7 +542,7 @@ class OpenAIServer:
                 'item_id': active.message_item,
                 'output_index': active.output.index(item),
                 'content_index': 0,
-                'transcript': item['content'][0]['transcript'],
+                'transcript': transcript,
             },
         )
         active.message_item = None
@@ -634,6 +626,7 @@ class OpenAIServer:
             'arguments': '{}',
         }
         active.output.append(item)
+        self._finished_items.append({key: item[key] for key in ('type', 'call_id', 'name', 'arguments')})
         self._emit(
             session,
             {

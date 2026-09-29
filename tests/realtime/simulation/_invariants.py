@@ -101,6 +101,14 @@ call, or iteration) the tool failure that ended the session."""
 _SEND_FAILED = 'Realtime connection failed while sending'
 
 
+def _misattributed(recorded: tuple[int, int], billed: tuple[int, int], *, closing: bool) -> bool:
+    # Once the app hangs up, a terminal read but not yet handled is dropped with the session: a response may then
+    # be recorded with less than it was billed (as `usage.total` allows), but never more.
+    if closing:
+        return any(count > limit for count, limit in zip(recorded, billed))
+    return recorded != billed
+
+
 def _expected_error(error: BaseException) -> bool:
     # A tool that keeps asking for retries ends the session as it ends a standard run.
     return isinstance(error, _EXPECTED_CLIENT_ERRORS) or (
@@ -643,8 +651,11 @@ class Checker:
                 for message in messages
                 if isinstance(message, ModelResponse)
                 and message.provider_response_id in truth.usage_read
-                and (message.usage.input_tokens, message.usage.output_tokens)
-                != truth.usage_read[message.provider_response_id]
+                and _misattributed(
+                    (message.usage.input_tokens, message.usage.output_tokens),
+                    truth.usage_read[message.provider_response_id],
+                    closing=sim.close_requested is not None,
+                )
             ],
         )
         # A model that reports its requests with usage (GPT-Live's delegated backend) counts those instead.

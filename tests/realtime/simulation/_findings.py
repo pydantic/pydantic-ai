@@ -272,7 +272,12 @@ def _spoken_before_reply(sim: Simulation, violation: InvariantViolation) -> bool
     if (started := sim.truth.speech_started.get(input_.key)) is not None and started <= response.seq_end:
         return True  # Server VAD heard the user start before the response ended.
     return any(
-        operation.name == 'send_audio' and (response.content_read is None or operation.issued < response.content_read)
+        operation.name == 'send_audio'
+        and (
+            response.content_read is None
+            or operation.issued < response.content_read
+            or operation.issued < response.seq_end
+        )
         for operation in sim.operations
     )
 
@@ -744,6 +749,21 @@ TERMINAL_DISCARDED_WITH_THE_CONNECTION = Finding(
     matches=_terminal_read_as_the_connection_dropped,
 )
 
+
+def _barged_in_without_a_vad_reply(sim: Simulation) -> bool:
+    """Server VAD, set not to answer, cut off a response while a request was deferred behind it."""
+    options = getattr(sim, 'openai', None)
+    return (
+        options is not None
+        and options.turn_detection == 'server_vad'
+        and options.vad_interrupts
+        and not options.vad_responds
+        and getattr(sim, 'deferred_requests', 0) > 0
+        and any(response.status == 'cancelled' for response in sim.truth.responses.values())
+        and bool(sim.truth.speech_started)
+    )
+
+
 BARGE_IN_WITHOUT_A_VAD_REPLY = Finding(
     id='SIM-23',
     title=(
@@ -754,9 +774,7 @@ BARGE_IN_WITHOUT_A_VAD_REPLY = Finding(
     evidence='simulated',
     codes=frozenset({'wait.hang'}),
     providers=frozenset({'openai', 'azure'}),
-    matches=lambda sim, violation: (
-        getattr(sim, 'deferred_requests', 0) > 0 and not getattr(getattr(sim, 'openai', None), 'vad_responds', True)
-    ),
+    matches=lambda sim, violation: _barged_in_without_a_vad_reply(sim),
 )
 
 NON_AUDIO_SEND_DURING_RECONNECT = Finding(

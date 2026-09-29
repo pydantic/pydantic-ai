@@ -460,6 +460,22 @@ def test_known_barge_in_drops_a_request_vad_will_not_answer() -> None:
     reproduce('SIM-23', OpenAISimulation(openai=OpenAIOptions(vad_responds=False, transcription=False)), scenario)
 
 
+@known('SIM-11')
+def test_known_turn_spoken_while_a_cancelled_reply_ends_filed_before_it() -> None:
+    """The user starts talking after the app cancelled a reply, before the provider has ended it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_image(respond=True)
+        sim.interrupt(mode='cancel')
+        sim.speak()
+        sim.send_audio()
+        sim.settle()
+        sim.commit_audio()
+        sim.settle()
+
+    reproduce('SIM-11', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='azure')), scenario)
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
@@ -1178,7 +1194,7 @@ def test_baseline_xai_resumption_replays_a_tool_round() -> None:
             for frame in sim.server.network.sockets[-1].received
             if frame['type'] == 'conversation.item.added'
         ]
-        assert replayed == ['message', 'message', 'function_call', 'function_call_output', 'message']
+        assert replayed == ['message', 'function_call', 'function_call_output', 'message']
         sim.send_text()
         sim.speak()
         sim.finish()
@@ -1206,4 +1222,27 @@ def test_baseline_server_vad_without_interrupting_or_responding() -> None:
 
     run_clean(
         OpenAISimulation(openai=OpenAIOptions(vad_interrupts=False, vad_responds=False, transcription=False)), scenario
+    )
+
+
+def test_scenario_terminal_dropped_by_hanging_up_is_not_misattributed() -> None:
+    """A `response.done` read as the app hangs up is dropped with the session: its usage may go uncounted."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_image(respond=True)
+        sim.clear_audio()
+        sim.create_response()
+        sim.call_tool(deliver=False)
+        sim.settle()
+        sim.clear_audio()
+        sim.finish(ticks=0)
+        sim.close()
+
+    run_tolerant(
+        OpenAISimulation(
+            seed=20,
+            options=SessionOptions(request_limit=2, latency=True),
+            openai=OpenAIOptions(turn_detection='manual', transcription=False),
+        ),
+        scenario,
     )

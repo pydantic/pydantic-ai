@@ -224,14 +224,20 @@ class OpenAISimulation(Simulation):
 
 
 def _options(dialect: Dialect) -> st.SearchStrategy[OpenAIOptions]:
-    return st.builds(
+    # The VAD flags only matter under server VAD, and xAI ignores them.
+    vad_flag = st.just(True) if dialect == 'xai' else st.booleans()
+    manual = st.builds(
+        OpenAIOptions, turn_detection=st.just('manual'), transcription=st.booleans(), dialect=st.just(dialect)
+    )
+    server_vad = st.builds(
         OpenAIOptions,
-        turn_detection=st.sampled_from(['server_vad', 'manual']),
+        turn_detection=st.just('server_vad'),
         transcription=st.booleans(),
         dialect=st.just(dialect),
-        vad_interrupts=st.booleans(),
-        vad_responds=st.booleans(),
+        vad_interrupts=vad_flag,
+        vad_responds=vad_flag,
     )
+    return manual | server_vad
 
 
 class OpenAIMachine(ManualTurnMachine):  # pragma: lax no cover (driven only by randomized exploration)

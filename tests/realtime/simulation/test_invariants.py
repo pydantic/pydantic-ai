@@ -30,17 +30,16 @@ def test_unexpected_error_is_reported_whichever_order_operations_finish() -> Non
 
 def test_ambiguous_send_only_excuses_its_own_duplicate() -> None:
     """The client may resend what an ambiguous send delivered, but nothing else may arrive twice."""
-    with OpenAISimulation(strict=True) as sim:
+    with OpenAISimulation(strict=False) as sim:
+        sim.fail_next_send(fault='ambiguous')
         sim.send_text()
         sim.settle()
         sim.send_text()
         sim.settle()
         truth = sim.truth
-        t1 = truth.input('t1')
-        assert t1 is not None
-        truth.inputs.append(replace(t1))
-        truth.ambiguous_inputs.add('t2')
-        with pytest.raises(InvariantViolation, match=r"\[wire\.duplicate\] the server received 't1' 2 times"):
+        assert truth.ambiguous_inputs == {'t1'}
+        t2 = truth.input('t2')
+        assert t2 is not None
+        truth.inputs.append(replace(t2))
+        with pytest.raises(InvariantViolation, match=r"\[wire\.duplicate\] the server received 't2' 2 times"):
             sim.checker.check_at_rest()
-        truth.ambiguous_inputs.add('t1')
-        sim.checker.check_at_rest()
