@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import pickle
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic import BaseModel, Field, WithJsonSchema, field_validator
 
-from pydantic_ai import Agent, BoolCriteria, RunContext, Tool, ToolOutput
+from pydantic_ai import Agent, BoolCriteria, ModelRetry, RunContext, Tool, ToolOutput
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -18,6 +19,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    SystemPromptPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -42,6 +44,7 @@ from pydantic_ai.models.decision import (
     UnsureRoute,
 )
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -106,7 +109,6 @@ class Triage(BaseModel):
     action: Literal['approve', 'review'] = Field(description='What should happen next?')
 
 
-@pytest.mark.anyio
 async def test_decision_model_extension_point(allow_model_requests: None):
     model = InMemoryDecisionModel()
     result = await Agent(model, output_type=Triage).run('The customer cannot sign in.')
@@ -149,7 +151,6 @@ class Release(BaseModel):
     )
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_decide_span(allow_model_requests: None, capfire: CaptureLogfire):
     """The `decide` span belongs to the base class, so any decision model gets one, with the protocol's shapes.
@@ -245,7 +246,6 @@ class DeepLegendDecisionModel(InMemoryDecisionModel):
         return response
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 @pytest.mark.parametrize('instrumentation', ['uninstrumented', 'content', 'no-content', 'not-recording'])
 async def test_a_decide_span_never_changes_the_outcome(allow_model_requests: None, instrumentation: str):
@@ -278,7 +278,6 @@ async def test_a_decide_span_never_changes_the_outcome(allow_model_requests: Non
     assert result.output == SeverityReview(severity=2)
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_a_decide_span_leaves_out_answers_it_cant_serialize(allow_model_requests: None, capfire: CaptureLogfire):
     """With content, the answers are recorded as received, so a legend that can't be serialized leaves them all out."""
@@ -307,7 +306,6 @@ class StringsForNumbersDecisionModel(InMemoryDecisionModel):
         return response
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_a_decide_span_keeps_only_numbers_where_numbers_belong_without_content(
     allow_model_requests: None, capfire: CaptureLogfire
@@ -351,7 +349,6 @@ class OffTheMenuDecisionModel(InMemoryDecisionModel):
         return response
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 @pytest.mark.parametrize('choice', ['Triage', 'SECRET_FROM_BACKEND'])
 async def test_a_decide_span_keeps_only_offered_route_labels_without_content(
@@ -393,7 +390,6 @@ async def test_a_decide_span_keeps_only_offered_route_labels_without_content(
     )
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_decide_span_leaves_out_what_is_not_an_answer(allow_model_requests: None, capfire: CaptureLogfire):
     """Instrumentation doesn't change how the run rejects a malformed answer, and the span records the error."""
@@ -421,7 +417,6 @@ class MistypedDecisionModel(InMemoryDecisionModel):
         return response
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_decide_span_without_content_keeps_only_an_unknown_type(
     allow_model_requests: None, capfire: CaptureLogfire
@@ -485,7 +480,6 @@ def _span_tree(capfire: CaptureLogfire) -> list[dict[str, Any]]:
     return [node(span) for span in spans if not span['parent']]
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_decide_span_records_an_unsure_route_handed_to_a_fallback(
     allow_model_requests: None, capfire: CaptureLogfire
@@ -584,7 +578,6 @@ async def test_decide_span_records_an_unsure_route_handed_to_a_fallback(
     )
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_decide_span_records_an_unsure_route_without_a_fallback(
     allow_model_requests: None, capfire: CaptureLogfire
@@ -678,7 +671,6 @@ class TaggedReviewDecisionModel(InMemoryDecisionModel):
         return response
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_decide_span_groups_the_routes_asked_up_front(allow_model_requests: None, capfire: CaptureLogfire):
     """Every route asked beside the route question is listed with its question keys, and only the pick's are read.
@@ -721,7 +713,6 @@ async def test_decide_span_groups_the_routes_asked_up_front(allow_model_requests
     )
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_decide_span_per_question_confidence_without_content(allow_model_requests: None, capfire: CaptureLogfire):
     """Confidence is keyed like the questions, so each option of a list gets its own, not the field's least sure.
@@ -778,7 +769,6 @@ async def test_decide_span_per_question_confidence_without_content(allow_model_r
     )
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
 async def test_no_decide_span_without_instrumentation(allow_model_requests: None, capfire: CaptureLogfire):
     """Outside an instrumented request there is no `chat` span to hang a `decide` span from, so none is made."""
@@ -788,7 +778,6 @@ async def test_no_decide_span_without_instrumentation(allow_model_requests: None
     assert capfire.exporter.exported_spans_as_dict() == []
 
 
-@pytest.mark.anyio
 async def test_thinking_goes_into_the_history(allow_model_requests: None):
     """A model's thinking is sent with the rest of its response, in the order it was produced.
 
@@ -825,7 +814,6 @@ async def test_thinking_goes_into_the_history(allow_model_requests: None):
     )
 
 
-@pytest.mark.anyio
 async def test_judging_what_a_model_thought(allow_model_requests: None):
     """A judge given another run's messages sees that run's thinking, which can be the very thing judged."""
     model = InMemoryDecisionModel()
@@ -852,7 +840,6 @@ async def test_judging_what_a_model_thought(allow_model_requests: None):
     )
 
 
-@pytest.mark.anyio
 async def test_no_choice_limit(allow_model_requests: None):
     model = InMemoryDecisionModel()
     tools = [
@@ -888,7 +875,6 @@ class ElevenLevelReview(BaseModel):
     score: Rubric
 
 
-@pytest.mark.anyio
 async def test_no_score_limit(allow_model_requests: None):
     model = InMemoryDecisionModel()
     result = await Agent(model, output_type=ElevenLevelReview).run('Score this.')
@@ -907,7 +893,6 @@ class OptionalElevenLevelReview(BaseModel):
     score: Rubric | None
 
 
-@pytest.mark.anyio
 async def test_levels_over_score_limit_are_a_pick_one(allow_model_requests: None):
     model = TenLevelDecisionModel()
     result = await Agent(model, output_type=ElevenLevelReview).run('Score this.')
@@ -918,7 +903,6 @@ async def test_levels_over_score_limit_are_a_pick_one(allow_model_requests: None
     assert question.criteria == {str(level): f'Level {level}' for level in range(11)}
 
 
-@pytest.mark.anyio
 async def test_levels_over_score_limit_can_be_optional(allow_model_requests: None):
     model = TenLevelDecisionModel()
     result = await Agent(model, output_type=OptionalElevenLevelReview).run('Score this.')
@@ -929,7 +913,6 @@ async def test_levels_over_score_limit_can_be_optional(allow_model_requests: Non
     assert len(question.criteria) == 12
 
 
-@pytest.mark.anyio
 async def test_rubric_without_score_limit_cannot_be_optional(allow_model_requests: None):
     with pytest.raises(UserError, match="Output field 'score' is a rubric, and a rubric cannot be optional"):
         await Agent(InMemoryDecisionModel(), output_type=OptionalElevenLevelReview).run('Score this.')
@@ -939,7 +922,6 @@ class MappingResult(BaseModel):
     flags: dict[Literal['a', 'b'], bool] = Field(description='Which flags apply?')
 
 
-@pytest.mark.anyio
 async def test_mapping_output(allow_model_requests: None):
     result = await Agent(InMemoryDecisionModel(), output_type=MappingResult).run('Both apply.')
     assert result.output == MappingResult(flags={'a': True, 'b': True})
@@ -973,7 +955,6 @@ class OneMappingOptionResult(BaseModel):
     values: dict[Literal['a'], bool] = Field(description='Which apply?')
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     'output_type',
     [
@@ -991,7 +972,6 @@ async def test_unsupported_decision_shapes(allow_model_requests: None, output_ty
         await Agent(InMemoryDecisionModel(), output_type=output_type).run('Anything.')
 
 
-@pytest.mark.anyio
 async def test_mapping_needs_two_options(allow_model_requests: None):
     output_tool = ToolDefinition(
         name='final_result',
@@ -1018,7 +998,6 @@ async def test_mapping_needs_two_options(allow_model_requests: None):
         )
 
 
-@pytest.mark.anyio
 async def test_text_output_is_refused(allow_model_requests: None):
     """A decision model cannot write text, so a `str` branch is refused rather than silently never taken."""
     model = InMemoryDecisionModel()
@@ -1077,7 +1056,6 @@ def route_question(model: InMemoryDecisionModel) -> ChoiceQuestion:
     return question
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     'output_type,labels',
     [
@@ -1105,7 +1083,6 @@ async def test_route_labels(allow_model_requests: None, output_type: Any, labels
     assert list(route_question(model).criteria) == labels
 
 
-@pytest.mark.anyio
 async def test_the_fill_calls_the_route_what_the_route_question_did(allow_model_requests: None):
     """One route, one name: the fill's `chosen` is the label the route question offered and the model answered."""
     model = InMemoryDecisionModel()
@@ -1157,7 +1134,6 @@ async def test_the_fill_calls_the_route_what_the_route_question_did(allow_model_
     )
 
 
-@pytest.mark.anyio
 async def test_a_route_label_collision_renames_the_output_route(allow_model_requests: None):
     """A tool keeps its name; an output route that would share it gets ` (output)`, and is still read back right."""
     output_tools = [
@@ -1206,7 +1182,6 @@ class Routed(BaseModel):
     route: bool = Field(description='Does it name a delivery route?')
 
 
-@pytest.mark.anyio
 async def test_the_route_question_stays_clear_of_a_field_named_route(allow_model_requests: None):
     """A field asked beside the route question is keyed under its route's label, so `route` is never a field's."""
     model = InMemoryDecisionModel()
@@ -1247,7 +1222,6 @@ def issue_refund() -> str:
     return 'Refunded.'  # pragma: no cover
 
 
-@pytest.mark.anyio
 async def test_the_likeliest_route_is_taken_however_unsure(allow_model_requests: None):
     """With no `decision_route_threshold`, the pick is taken at any probability: here a tool at 0.46."""
     model = RoutingDecisionModel({'Triage': 0.44, 'look_up_order': 0.46, 'issue_refund': 0.1})
@@ -1270,7 +1244,6 @@ async def test_the_likeliest_route_is_taken_however_unsure(allow_model_requests:
     )
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     'output_type,route,picked',
     [
@@ -1308,7 +1281,6 @@ async def test_a_pick_below_the_route_threshold_is_unsure(
     assert len(model.requests) == 1
 
 
-@pytest.mark.anyio
 async def test_an_unsure_route_says_what_to_do_about_it(allow_model_requests: None):
     model = RoutingDecisionModel({'Triage': 0.3, 'look_up_order': 0.7})
     agent = Agent(
@@ -1326,7 +1298,6 @@ async def test_an_unsure_route_says_what_to_do_about_it(allow_model_requests: No
     )
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('threshold', [0.7, 0.5])
 async def test_a_pick_at_or_above_the_route_threshold_is_taken(allow_model_requests: None, threshold: float):
     model = RoutingDecisionModel({'Triage': 0.3, 'look_up_order': 0.7})
@@ -1343,7 +1314,6 @@ async def test_a_pick_at_or_above_the_route_threshold_is_taken(allow_model_reque
     assert [part.tool_name for part in first.parts if isinstance(part, ToolCallPart)] == ['look_up_order']
 
 
-@pytest.mark.anyio
 async def test_a_fallback_model_takes_the_unsure_step(allow_model_requests: None):
     """`UnsureRoute` is a `ModelAPIError`, so the default `FallbackModel` hands the whole step to the next model."""
     decision_model = RoutingDecisionModel({'Triage': 0.55, 'look_up_order': 0.45})
@@ -1370,7 +1340,6 @@ def set_urgency(urgent: bool) -> str:
     return f'urgent={urgent}'  # pragma: no cover
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     'tool',
     [pytest.param(approve, id='with nothing to fill'), pytest.param(set_urgency, id='with arguments to fill')],
@@ -1404,7 +1373,6 @@ async def test_the_last_route_left_is_not_held_to_the_route_threshold(allow_mode
     }
 
 
-@pytest.mark.anyio
 async def test_a_single_output_type_is_not_held_to_the_route_threshold(allow_model_requests: None):
     """With nothing else on offer there is no route question, so no pick to be unsure of."""
     model = InMemoryDecisionModel()
@@ -1433,7 +1401,6 @@ class Reprioritise(str, Enum):
     later = 'later'
 
 
-@pytest.mark.anyio
 async def test_a_union_member_enum_is_described_by_its_docstring(allow_model_requests: None):
     """An `Enum` is wrapped as a `$ref` to its definition, and its docstring is there rather than on the route."""
     model = InMemoryDecisionModel()
@@ -1448,7 +1415,6 @@ def look_up(**kwargs: Any) -> str:
     return 'found'  # pragma: no cover
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     'schema',
     [
@@ -1475,7 +1441,6 @@ async def test_a_boolean_schema_is_an_unsupported_argument(allow_model_requests:
         await Agent(model, output_type=Triage, tools=[tool]).run('Where is my order?')
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('schema', [True, False, {'$ref': '#/$defs/Anything'}, {'$ref': '#/$defs/Nothing'}])
 async def test_a_boolean_schema_is_an_unsupported_output_field(allow_model_requests: None, schema: Any):
     output_tool = ToolDefinition(
@@ -1497,7 +1462,6 @@ async def test_a_boolean_schema_is_an_unsupported_output_field(allow_model_reque
         )
 
 
-@pytest.mark.anyio
 async def test_the_route_question_carries_the_agent_instructions(allow_model_requests: None):
     model = InMemoryDecisionModel()
     await Agent(model, output_type=Triage, tools=[refund], instructions='Handle support tickets.').run('Charged twice.')
@@ -1526,7 +1490,6 @@ class Transfer(BaseModel):
     target: Party
 
 
-@pytest.mark.anyio
 async def test_a_nested_field_carries_what_it_sits_in(allow_model_requests: None):
     """Flattening a model drops what its fields and models say about themselves, which is what tells leaves apart.
 
@@ -1577,7 +1540,6 @@ class Colours(BaseModel):
     plain: Bank
 
 
-@pytest.mark.anyio
 async def test_an_enum_docstring_the_field_hides_is_context_however_the_enum_is_reached(allow_model_requests: None):
     """An optional `Enum` and a `list` of one hide the docstring behind their own description the same way.
 
@@ -1617,7 +1579,6 @@ class Cancel(BaseModel):
     day: Literal['monday', 'tuesday'] = Field(description='Which day?')
 
 
-@pytest.mark.anyio
 async def test_every_route_is_asked_up_front_under_its_premise(allow_model_requests: None):
     """Each fillable route's fields ride beside the route question, keyed and premised by the route's label.
 
@@ -1666,7 +1627,6 @@ async def test_every_route_is_asked_up_front_under_its_premise(allow_model_reque
     )
 
 
-@pytest.mark.anyio
 async def test_a_request_too_large_to_ask_every_route_in_picks_then_fills(allow_model_requests: None):
     """Past the size cutoff, a route is picked first and filled in a second request, as a union always used to be.
 
@@ -1696,7 +1656,6 @@ class Wide(BaseModel):
     d: bool = Field(description='Is it about the account, logging in, passwords, or two-factor authentication at all?')
 
 
-@pytest.mark.anyio
 async def test_other_routes_questions_costing_more_than_a_second_request_are_not_asked_up_front(
     allow_model_requests: None,
 ):
@@ -1724,7 +1683,6 @@ async def test_other_routes_questions_costing_more_than_a_second_request_are_not
     assert list(model.requests[0].questions) == snapshot(['Wide.a', 'Wide.b', 'Wide.c', 'Wide.d', 'route'])
 
 
-@pytest.mark.anyio
 async def test_a_label_with_a_dot_in_it_keeps_its_questions_apart(allow_model_requests: None):
     """A question's key is for reading its answer back: `a.b` + `c` and `a` + `b.c` would both be `a.b.c`.
 
@@ -1764,7 +1722,6 @@ async def test_a_label_with_a_dot_in_it_keeps_its_questions_apart(allow_model_re
     assert response.parts == [ToolCallPart('a.b', {'c': True}, tool_call_id=IsStr())]
 
 
-@pytest.mark.anyio
 async def test_after_a_tool_returns_the_turn_is_told_apart_from_the_text(allow_model_requests: None):
     """The latest prompt stays the text under judgement, and the calls made for it since go under `done`.
 
@@ -1789,7 +1746,6 @@ async def test_after_a_tool_returns_the_turn_is_told_apart_from_the_text(allow_m
     )
 
 
-@pytest.mark.anyio
 async def test_a_message_history_that_ends_mid_turn_is_split_at_its_latest_prompt(allow_model_requests: None):
     """A `message_history` passed in can end partway through a turn, and the split still loses and repeats nothing.
 
@@ -1837,7 +1793,6 @@ Please refund it.\
     assert list(route_question(model).criteria) == ['Triage', 'look_up_order']
 
 
-@pytest.mark.anyio
 async def test_a_turn_with_no_earlier_history_has_no_history_entry(allow_model_requests: None):
     """The split only names what is there: the first turn's calls leave nothing before the prompt."""
     model = RoutingDecisionModel({'Triage': 0.3, 'look_up_order': 0.6, 'issue_refund': 0.1})
@@ -1853,7 +1808,6 @@ async def test_a_turn_with_no_earlier_history_has_no_history_entry(allow_model_r
     )
 
 
-@pytest.mark.anyio
 async def test_a_tool_result_with_no_prompt_before_it_is_all_history(allow_model_requests: None):
     """Resuming a call made elsewhere can leave nothing but the call and its result: no prompt to split the turn at."""
     model = InMemoryDecisionModel()
@@ -1872,13 +1826,235 @@ async def test_a_tool_result_with_no_prompt_before_it_is_all_history(allow_model
     )
 
 
+class HandsOffFirstDecisionModel(InMemoryDecisionModel):
+    """Fails its first request, so a `FallbackModel` hands that step to the model behind it."""
+
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+        if not self.requests:
+            self.requests.append(request)
+            raise ModelAPIError(self.model_name, 'The backend is busy.')
+        return await super().decide(request, model_settings)
+
+
+def an_output_validator_retry() -> tuple[InMemoryDecisionModel, Agent[None, Any]]:
+    model = InMemoryDecisionModel()
+    agent = Agent(model, output_type=Triage)
+
+    @agent.output_validator
+    def be_sure(output: Triage) -> Triage:
+        if len(model.requests) == 1:
+            raise ModelRetry('Be sure.')
+        return output
+
+    return model, agent
+
+
+def an_output_field_that_fails_validation() -> tuple[InMemoryDecisionModel, Agent[None, Any]]:
+    checked = 0
+
+    class Checked(BaseModel):
+        """Triage a support ticket."""
+
+        urgent: bool = Field(description='Does this need an immediate response?')
+
+        @field_validator('urgent')
+        @classmethod
+        def check_once(cls, urgent: bool) -> bool:
+            nonlocal checked
+            checked += 1
+            if checked == 1:
+                raise ValueError('Check again.')
+            return urgent
+
+    model = InMemoryDecisionModel()
+    return model, Agent(model, output_type=Checked)
+
+
+def a_tool_retry() -> tuple[InMemoryDecisionModel, Agent[None, Any]]:
+    def look_up_charges() -> str:
+        """Look up the customer's charges."""
+        if len(model.requests) == 1:
+            raise ModelRetry('The billing system is busy.')
+        return 'Charged once.'
+
+    model = RoutingDecisionModel({'Triage': 0.1, 'look_up_charges': 0.9})
+    return model, Agent(model, output_type=Triage, tools=[look_up_charges])
+
+
+def a_language_model_step_retried() -> tuple[InMemoryDecisionModel, Agent[None, Any]]:
+    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Sorry about that, refunding now.')])
+
+    model = HandsOffFirstDecisionModel()
+    return model, Agent(FallbackModel(model, FunctionModel(reply)), output_type=Triage)
+
+
+@pytest.mark.parametrize(
+    'setup,expected',
+    [
+        pytest.param(
+            an_output_validator_retry,
+            snapshot(
+                {
+                    'text': 'I was charged twice this month.',
+                    'done': [
+                        {'tool_call': {'name': 'final_result', 'args': {'urgent': True, 'action': 'review'}}},
+                        {
+                            'retry': """\
+Be sure.
+
+Fix the errors and try again.\
+"""
+                        },
+                    ],
+                }
+            ),
+            id='output-validator',
+        ),
+        pytest.param(
+            an_output_field_that_fails_validation,
+            snapshot(
+                {
+                    'text': 'I was charged twice this month.',
+                    'done': [
+                        {'tool_call': {'name': 'final_result', 'args': {'urgent': True}}},
+                        {
+                            'retry': """\
+1 validation error:
+```json
+[
+  {
+    "type": "value_error",
+    "loc": [
+      "urgent"
+    ],
+    "msg": "Value error, Check again.",
+    "input": true
+  }
+]
+```
+
+Fix the errors and try again.\
+"""
+                        },
+                    ],
+                }
+            ),
+            id='output-field-validation',
+        ),
+        pytest.param(
+            a_tool_retry,
+            snapshot(
+                {
+                    'text': 'I was charged twice this month.',
+                    'done': [
+                        {'tool_call': {'name': 'look_up_charges', 'args': {}}},
+                        {
+                            'retry': """\
+The billing system is busy.
+
+Fix the errors and try again.\
+"""
+                        },
+                    ],
+                }
+            ),
+            id='tool',
+        ),
+        pytest.param(
+            a_language_model_step_retried,
+            snapshot(
+                {
+                    'text': 'I was charged twice this month.',
+                    'done': [
+                        {'assistant': 'Sorry about that, refunding now.'},
+                        {
+                            'retry': """\
+1 validation error:
+```json
+[
+  {
+    "type": "json_invalid",
+    "loc": [],
+    "msg": "Invalid JSON: expected value at line 1 column 1"
+  }
+]
+```
+
+Fix the errors and try again.\
+"""
+                        },
+                    ],
+                }
+            ),
+            id='fallback-language-model',
+        ),
+    ],
+)
+async def test_a_retry_keeps_the_prompt_as_the_text(
+    allow_model_requests: None,
+    setup: Callable[[], tuple[InMemoryDecisionModel, Agent[None, Any]]],
+    expected: Any,
+):
+    """A retry is a step taken for the prompt: the prompt stays the text, and the retry goes in `done`."""
+    model, agent = setup()
+    await agent.run('I was charged twice this month.')
+    assert model.requests[1].state == expected
+
+
+async def test_a_replayed_history_with_a_retry_since_its_prompt_is_split(allow_model_requests: None):
+    """A `message_history` whose latest turn holds a retry is split at its prompt, as one holding a tool result is."""
+    model = InMemoryDecisionModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Delete everything.')]),
+        ModelResponse(parts=[TextPart('Deleting.')]),
+        ModelRequest(parts=[RetryPromptPart('Answer with a tool call.')]),
+    ]
+    await Agent(model, output_type=Triage).run(message_history=history)
+    assert model.requests[0].state == snapshot(
+        {
+            'text': 'Delete everything.',
+            'done': [
+                {'assistant': 'Deleting.'},
+                {
+                    'retry': """\
+Validation feedback:
+Answer with a tool call.
+
+Fix the errors and try again.\
+"""
+                },
+            ],
+        }
+    )
+
+
+async def test_a_system_prompt_is_a_system_entry_on_any_backend(allow_model_requests: None):
+    """A system prompt partway through the conversation is judged as one, not folded into the text to judge."""
+    model = InMemoryDecisionModel()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart('Where is order 1?')]),
+        ModelResponse(parts=[TextPart('It shipped yesterday.')]),
+        ModelRequest(parts=[SystemPromptPart('Be terse from now on.')]),
+    ]
+    await Agent(model, output_type=Triage).run(message_history=history)
+    assert model.requests[0].state == snapshot(
+        {
+            'history': [
+                {'user': 'Where is order 1?'},
+                {'assistant': 'It shipped yesterday.'},
+                {'system': 'Be terse from now on.'},
+            ]
+        }
+    )
+
+
 class Short(BaseModel):
     """Note the ticket."""
 
     urgent: bool = Field(description='Is it urgent?')
 
 
-@pytest.mark.anyio
 async def test_a_route_with_nothing_to_ask_could_be_the_one_taken(allow_model_requests: None):
     """If the pick can land on a route with no questions, every question asked up front may be thrown away.
 
@@ -2248,7 +2424,6 @@ CELLS = [
 ]
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('cell', [pytest.param(cell, id=cell.id) for cell in CELLS])
 async def test_the_route_matrix(allow_model_requests: None, cell: Cell):
     """What each combination of routes asks, and what each pick does.
@@ -2277,7 +2452,6 @@ async def test_the_route_matrix(allow_model_requests: None, cell: Cell):
     assert ([list(request.questions) for request in model.requests], outcome) == cell.expected
 
 
-@pytest.mark.anyio
 async def test_an_output_type_the_model_cannot_fill_is_left_to_the_model_behind_it(allow_model_requests: None):
     """Beside a tool, an output type the model cannot fill is a route, where alone it would be refused.
 
@@ -2302,7 +2476,6 @@ async def test_an_output_type_the_model_cannot_fill_is_left_to_the_model_behind_
     ] == snapshot([('in-memory-decisions', ['look_up_order']), ('test', ['final_result'])])
 
 
-@pytest.mark.anyio
 async def test_unfillable_output_types_left_after_the_tools_return_are_still_asked_about(allow_model_requests: None):
     """Once the tool has returned, every route left hands off, but with several of them the model is still asked
     which: the answer names the route the hand-off reports, and there is no one route to name without it."""
@@ -2320,7 +2493,6 @@ class UnavailableDecisionModel(InMemoryDecisionModel):
         raise ModelAPIError(self.model_name, 'The backend is down.')
 
 
-@pytest.mark.anyio
 async def test_a_fallback_on_decision_hand_offs_takes_only_those(allow_model_requests: None):
     """`fallback_on=DecisionHandOff` hands the language model the steps the decision model hands off, and nothing
     else: an error from the decision model's backend fails the run rather than quietly costing a language model call."""

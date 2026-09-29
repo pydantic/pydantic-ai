@@ -1,8 +1,8 @@
 """Tests for xAI model integration.
 
 The xAI SDK uses gRPC for all calls (including executing built-in tools like `code_execution`,
-`web_search`, and `mcp_server` server-side). Since VCR doesn't support gRPC, we cannot
-record/replay these interactions like we do with HTTP APIs.
+`web_search`, and `mcp_server` server-side), so these calls don't go through the HTTP cassettes
+the other model tests use.
 
 Instead, we use two strategies:
 - A **custom recorder** for xAI SDK interactions where possible (gRPC-aware recording/replay)
@@ -115,7 +115,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1087,7 +1086,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     """Test that tool_choice falls back to 'auto' when 'required' is not supported."""
     # Create a profile that doesn't support tool_choice='required'
-    profile = GrokModelProfile(grok_supports_tool_choice_required=False)
+    profile = GrokModelProfile(supports_forced_tool_choice=False)
 
     response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
     mock_client = MockXai.create_mock([response])

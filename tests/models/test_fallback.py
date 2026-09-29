@@ -90,9 +90,6 @@ with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
 
-pytestmark = pytest.mark.anyio
-
-
 def success_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart('success')])
 

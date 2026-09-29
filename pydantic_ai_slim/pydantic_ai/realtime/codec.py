@@ -105,11 +105,17 @@ class TruncateOutput:
 
     After a barge-in the user only heard part of the model's audio. Truncating tells the provider how
     much was actually played, so its stored transcript matches and the conversation context stays
-    consistent. The provider resolves which output item to truncate from its own state.
+    consistent. The provider resolves which output item to truncate from its own state unless
+    `item_id` names one.
     """
 
     audio_end_ms: int
-    """Milliseconds of the current output audio that were actually played before the interruption."""
+    """Milliseconds of the output audio that were actually played before the interruption."""
+
+    _: KW_ONLY
+    item_id: str | None = None
+    """The output item to truncate, when it isn't the provider's current one — a reply the listener was
+    still hearing after a newer one was generated. `None` truncates the current output item."""
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -158,6 +164,12 @@ class AudioDelta:
     _: KW_ONLY
     item_id: str | None = None
     """Provider item ID for the spoken output this chunk belongs to, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -177,6 +189,12 @@ class OutputTranscript:
     an audio transcript becomes a [`SpeechPart`][pydantic_ai.messages.SpeechPart]."""
     item_id: str | None = None
     """Provider item ID for the spoken output, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -229,6 +247,12 @@ class ToolCall:
     uses this signal to keep all calls and their usage on the same `ModelResponse`."""
     item_id: str | None = None
     """Provider conversation-item ID for this call, when available."""
+    response_id: str | None = None
+    """Provider ID of the response this belongs to, when available.
+
+    Lets the session name a reply that never gets the terminal that would otherwise carry its ID, such
+    as one cut off by a dropped connection or by closing the session.
+    """
 
     __repr__ = _utils.dataclasses_no_defaults_repr
 
@@ -300,6 +324,10 @@ class SessionUsage:
     finish_reason: FinishReason | None = None
     """Normalized completion reason for the response this usage belongs to, when available."""
 
+    provider_details: dict[str, Any] | None = None
+    """Provider-specific details about how this usage was incurred, merged into the response's
+    `ModelResponse.provider_details`. Only applies to response-scoped usage."""
+
     response_scoped: bool = True
     """Whether this usage belongs to a specific model response.
 
@@ -307,6 +335,15 @@ class SessionUsage:
     `ModelResponse.usage`. `False` is run-level only, e.g. input audio transcription usage,
     which is billed on a separate model/meter and is accumulated into the run's `RunUsage`
     but attributed to no `ModelResponse`.
+    """
+
+    context_window_used: float | None = None
+    """The fraction of the model's context window in use, when the provider reports it.
+
+    A snapshot rather than an amount to accumulate: the session keeps the latest reported value and
+    exposes it as [`RealtimeSession.context_window_used`][pydantic_ai.realtime.RealtimeSession.context_window_used].
+    It can go down after the provider compacts or truncates the conversation. `None`, the default,
+    means this report says nothing about the context window.
     """
 
     event_kind: Literal['session_usage'] = 'session_usage'
@@ -356,7 +393,10 @@ class InputRejected:
     Yielded just ahead of the [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]
     that explains the refusal, and only when the provider's error identifies the frame it refused (the
     OpenAI protocol echoes the client `event_id`). A connection that can't tell which input an error was
-    about yields the error alone. The session uses it to take back what it assumed the input did: a
+    about yields the error alone. A reconnect whose new session no longer has an input (Gemini resumes
+    from a handle that can predate a typed turn) yields it too, ahead of the
+    [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent]. The session
+    uses it to take back what it assumed the input did: a
     refused request for a response releases the reply
     [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] would otherwise wait for
     forever, and refused content is removed from history.
@@ -492,6 +532,37 @@ class RealtimeConnection(ABC):
         truncation when this is `True`. Defaults to `False`, which keeps the client-side cancel.
         """
         return False
+
+    @property
+    def _can_reconnect(self) -> bool:
+        """Whether this connection will still re-dial if its link drops.
+
+        Private while send retries across a reconnect are being redesigned. `False` without a reconnect
+        policy, once its `max_reconnects` budget is spent, and once a reconnect has failed for good.
+        While it is `True`, a [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] drops an audio
+        chunk that hits the dropped link instead of raising, so a microphone task survives the reconnect.
+        """
+        return False
+
+    @property
+    def _answers_tool_calls_per_response(self) -> bool:
+        """Whether one reply answers all the tool results of a model response, rather than one per result.
+
+        For the session's reply accounting only. The built-in connections make it so (Gemini Live answers
+        a tool-call frame once; the OpenAI-protocol connection asks for one response per calling
+        response), and the session then counts one reply per tool-calling response. Defaults to `False`,
+        which counts one per result, as a connection that asks for a response after each one needs.
+        """
+        return False
+
+    def _take_merged_response_requests(self) -> int:
+        """How many requests for a response sent since the last call were answered by another one's response.
+
+        For the session's reply accounting only: a connection that holds a request made during an
+        active response, and answers any further ones with the same response, reports them here so
+        the session stops waiting for a response of their own.
+        """
+        return 0
 
     @property
     def reconnect_restores_in_flight_state(self) -> bool:

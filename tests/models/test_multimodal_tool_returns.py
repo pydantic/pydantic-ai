@@ -86,7 +86,6 @@ with try_import() as huggingface_available:
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 

@@ -28,9 +28,13 @@ messages = result.all_messages()
 assert isinstance(result.output, DeferredToolRequests)
 results = DeferredToolResults()
 for call in result.output.approvals:
-    results.approvals[call.tool_call_id] = ToolDenied('Deleting files is not allowed')
+    # Your decision logic (ask a human, check a policy); here an exact-match allowlist
+    allowed = call.args_as_dict()['path'] in {'tmp/cache.txt'}
+    # True approves; ToolDenied(message) denies and tells the model why
+    results.approvals[call.tool_call_id] = allowed or ToolDenied('That file may not be deleted')
 
-result = agent.run_sync('Continue', message_history=messages, deferred_tool_results=results)
+# Resume from the history plus the decisions; no new prompt is needed
+result = agent.run_sync(message_history=messages, deferred_tool_results=results)
 print(result.output)
 ```
 
@@ -39,7 +43,7 @@ Two key rules:
 - `DeferredToolRequests` must be in the output type
 - for conditional approval, raise `ApprovalRequired(...)` instead of marking the whole tool `requires_approval=True` — from the tool function, or from its `args_validator=` so invalid arguments are rejected before a human is asked (see below)
 
-Deferred batches also surface in the event stream: `DeferredToolRequestsEvent` carries the `DeferredToolRequests` once per batch, before any `HandleDeferredToolCalls` handler runs; `DeferredToolResultsEvent` carries the `DeferredToolResults` when a handler resolves requests inline (not when results are provided to a new run via `deferred_tool_results`).
+Deferred batches also surface in the event stream: `DeferredToolRequestsEvent` carries the `DeferredToolRequests` once per batch, before any `HandleDeferredToolCalls` handler runs; `DeferredToolResultsEvent` carries the `DeferredToolResults` when a handler resolves requests inline (not when results are provided to a new run via `deferred_tool_results`). A realtime session emits both the same way, with each deferred call as its own batch.
 
 ## Make an Agent Resilient with Retries
 

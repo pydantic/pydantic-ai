@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Any, cast
 
 import pytest
+from cassetter import Cassette
 from httpx import Timeout
 from httpx2 import (
     AsyncClient as HTTPX2AsyncClient,
@@ -25,7 +26,6 @@ from httpx2 import (
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -89,7 +89,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
-from ..cassette_utils import single_request_body
+from ..cassette_utils import request_json, single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 from ..parts_from_messages import part_types_from_messages
 
@@ -139,7 +139,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1053,6 +1052,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -3305,9 +3305,9 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
         usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
     )
 
-    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]
+    assert len(count_requests) == 1
+    assert request_json(count_requests[0])['tools'] == snapshot([{'googleSearch': {}}])
     assert result.output == snapshot('The capital of France is Paris.')
 
 
@@ -4083,8 +4083,8 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
 
     result = await agent.run('Look up the city I live in, then search the web for its weather today.')
 
-    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    request_bodies = [json.loads(request.body) for request in generate_requests]  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]
+    request_bodies = [request_json(request) for request in generate_requests]
     # On the Gemini Developer API these requests carry `toolConfig.includeServerSideToolInvocations`;
     # on Vertex the field is skipped, so it is absent from every request Vertex actually accepted.
     assert [body.get('toolConfig', {}) for body in request_bodies] == snapshot(

@@ -53,7 +53,7 @@ from pydantic_ai.usage import RunUsage
 
 from ..conftest import IsDatetime, IsSameStr, IsStr, try_import
 from .conftest import REAL_SDP_OFFER
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import CassetteMessage, RealtimeCassette
 from .ws_helpers import collapse_event_types, sent_frames_containing
 
 with try_import() as imports_successful:
@@ -73,7 +73,6 @@ _WAV_HEADER_BYTES = 44
 """Retained speech audio is a WAV file; subtract its header to compare against the PCM that was sent."""
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='openai / websockets not installed'),
 ]
 
@@ -856,6 +855,13 @@ async def test_tool_call_round(openai_ws_cassette: tuple[Provider[Any], Realtime
     assert isinstance(tool_response, ModelResponse)
     assert tool_response.parts == [ToolCallPart(tool_name='get_weather', args=IsStr(), tool_call_id=IsStr())]
     assert (tool_response.usage.input_tokens, tool_response.usage.output_tokens) == (63, 22)
+    # Recorded from the function-call-only `response.done`'s usage, it carries the same provider fields
+    # as every other response rather than dropping the `status` its suppressed `ResponseDone` held.
+    assert (tool_response.provider_details, tool_response.provider_response_id, tool_response.finish_reason) == (
+        {'status': 'completed'},
+        IsStr(),
+        'tool_call',
+    )
     tool_return = messages[2]
     assert isinstance(tool_return, ModelRequest)
     assert tool_return.parts == [
@@ -919,6 +925,7 @@ async def test_tool_can_close_session(openai_ws_cassette: tuple[Provider[Any], R
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                provider_response_id='resp_EKSmUJpNeUEiyalwKu31r',
                 run_id=run_id,
                 conversation_id=conversation_id,
                 state='interrupted',
@@ -986,6 +993,7 @@ async def test_tool_error_ends_transcript_only_session(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
+                provider_response_id='resp_EKSoZDrBYT3y3OzgBEMya',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
                 state='interrupted',
@@ -1085,6 +1093,7 @@ def test_profile_allow_seeding() -> None:
     profile = OpenAIRealtimeModel('gpt-realtime').profile
     assert profile == RealtimeModelProfile(
         supports_image_input=True,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=True,
@@ -1094,10 +1103,14 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=True,
         supports_seeding_audio=True,
         supports_thinking=False,  # GA `gpt-realtime` is not a reasoning model
-        supports_async_tool_calls=True,  # the realtime models keep talking through a tool call
+        async_tool_call_mode='always',  # the realtime models keep talking through a tool call
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_tool_return_schema=False,  # no native surface; opted-in schemas go into descriptions
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
+        synthesizes_turn_boundary=False,
+        responses_are_requests=True,
+        response_usage_covers_context=True,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         context_window=None,
@@ -1395,3 +1408,54 @@ async def test_handle_barge_in_over_live_speech(
     assert [response.state for response in responses] == snapshot(['interrupted', 'complete'])
     speech = next(part for part in responses[0].parts if isinstance(part, SpeechPart))
     assert speech.interrupted_at_ms == 0
+
+
+async def test_interrupt_after_the_reply_finished_generating(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Generation outruns playback, so the user usually barges in after the reply's `response.done`.
+
+    The reply is still being heard, so the barge-in must still truncate its item, and the provider must
+    accept that for a finished response, so the model doesn't believe it was heard in full. History is
+    append-only: the recorded reply keeps its full text and `complete` state, and the next reply is
+    unaffected. The playback position is 0 so it replays deterministically.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime', provider=provider)
+    agent = Agent(instructions='Reply in one short sentence.')
+
+    async with agent.realtime(model).session() as session:
+        _stream = session.stream_audio()  # the single playback view the position is attributed to
+        events = aiter(session)
+        with anyio.fail_after(60):
+            await session.send('Say hello.')
+            while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
+                pass
+            # The reply has finished generating but none of it has been played.
+            assert await session.interrupt(played_bytes=0) is True
+            await session.send('Say goodbye.')
+            while not isinstance(await anext(events), RealtimeTurnCompleteEvent):
+                pass
+
+    truncates = sent_frames_containing(cassette, 'conversation.item.truncate')
+    assert [frame['audio_end_ms'] for frame in truncates] == [0]
+    # No response was active, so there was nothing to cancel.
+    assert sent_frames_containing(cassette, 'response.cancel') == []
+    received = [
+        message.data['type']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.direction == 'received'
+    ]
+    assert 'conversation.item.truncated' in received
+    assert 'error' not in received
+
+    responses = [message for message in session.all_messages() if isinstance(message, ModelResponse)]
+    assert [response.state for response in responses] == snapshot(['complete', 'complete'])
+    assert responses[0].provider_response_id is not None
+    # The truncation named the first reply's output item.
+    first_item = next(
+        message.data['item']['id']
+        for message in cassette.interactions
+        if isinstance(message, CassetteMessage) and message.data.get('type') == 'response.output_item.added'
+    )
+    assert truncates[0]['item_id'] == first_item

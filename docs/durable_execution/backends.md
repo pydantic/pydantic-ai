@@ -13,7 +13,7 @@ The complete implementations for [Temporal][pydantic_ai.durable_exec.temporal.Te
 [DBOS][pydantic_ai.durable_exec.dbos.DBOSDurability], and
 [Prefect][pydantic_ai.durable_exec.prefect.PrefectDurability] are useful references. The external
 [Restate](https://github.com/restatedev/sdk-python/tree/main/python/restate/ext/pydantic),
-[AWS Lambda](https://github.com/pydantic/pydantic-ai-harness/tree/main/pydantic_ai_harness/aws_lambda),
+[AWS Lambda](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda),
 and Absurd
 integrations show the same public builder with JSON journals.
 
