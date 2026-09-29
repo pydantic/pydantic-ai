@@ -1114,7 +1114,7 @@ class XaiStreamedResponse(StreamedResponse):
             seen_tool_call_ids: set[str] = set()
             seen_tool_return_ids: set[str] = set()
             last_tool_return_content: dict[str, dict[str, Any] | str | None] = {}
-            # Track previous tool call args to compute deltas (like we do for reasoning content).
+            # Track previous tool call args to compute deltas from the accumulated response.
             prev_tool_call_args: dict[str, str] = {}
             # xAI exposes x_search results as top-level `response.citations` that only arrive with the
             # final chunk. Track the emitted x_search return parts so we can backfill their content
@@ -1163,7 +1163,7 @@ class XaiStreamedResponse(StreamedResponse):
                         else:
                             # Client-side tools: emit args as deltas so UI adapters receive PartDeltaEvents
                             # (not repeated PartStartEvents). Use accumulated args from response.tool_calls
-                            # and compute the delta like we do for reasoning content.
+                            # and compute the delta.
                             accumulated = next((tc for tc in response.tool_calls if tc.id == tool_call.id), None)
                             accumulated_args = (
                                 accumulated.function.arguments
