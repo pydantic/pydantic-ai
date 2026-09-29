@@ -5,7 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Generic, Literal, Protocol, TypeVar, get_args, overload
 
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console, RenderableType
 from typing_extensions import Never, TypeVar as DefaultTypeVar
 
@@ -59,6 +59,7 @@ from .status import Status, StatusSegment
 DepsT = DefaultTypeVar('DepsT', default=None)
 EventT = TypeVar('EventT', bound=AgentStreamEvent)
 ModelT = TypeVar('ModelT', bound=BaseModel)
+_SAVED_SETTINGS = TypeAdapter(dict[str, JsonValue])
 
 SessionEndReason = Literal['exit', 'eof', 'error']
 TurnOutcome = Literal['completed', 'failed', 'cancelled']
@@ -224,6 +225,7 @@ class PluginHost(Generic[DepsT]):
         full_screen: FullScreen = bare_screen,
         conversation: Conversation | None = None,
         status: Status | None = None,
+        save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
@@ -243,6 +245,8 @@ class PluginHost(Generic[DepsT]):
         self.status = status if status is not None else Status()
         self.commands = Commands()
         self._settings = settings
+        self._persist = save_settings
+        self._configurer: Callable[[], Awaitable[str]] | None = None
         self._hooks: Hooks[DepsT] = Hooks()
         self._hooks_used = False
         self._capabilities: list[AgentCapability[DepsT]] = []
@@ -287,6 +291,40 @@ class PluginHost(Generic[DepsT]):
     def settings(self, model: type[ModelT], /) -> ModelT:
         """Validate the JSON given to `plugins add` against the plugin's own model."""
         return model.model_validate(self._settings)
+
+    def save_settings(self, settings: BaseModel, /) -> None:
+        """Remember new settings for this plugin, as `plugins add` would; they are stored in plaintext.
+
+        Never save a secret: keep it in `/keys` and save a `KeyReference` naming it. A host built
+        outside the loader keeps the change for this load only. Raises `ValueError`, saving nothing,
+        when the dump is not a JSON object that validates back into the model, as `host.settings`
+        will need on the next load.
+        """
+        try:
+            saved = _SAVED_SETTINGS.validate_python(settings.model_dump(mode='json', by_alias=True))
+            type(settings).model_validate(saved)
+        except ValidationError as exc:
+            raise ValueError(
+                f'{type(settings).__name__} cannot be saved as plugin settings: they must dump to a JSON'
+                ' object that validates back into the model.'
+            ) from exc
+        self._settings = saved
+        self._persist(saved)
+
+    @property
+    def configurer(self) -> Callable[[], Awaitable[str]] | None:
+        """The settings menu registered with `configure`, if any."""
+        return self._configurer
+
+    def configure(self, func: Callable[[], Awaitable[str]], /) -> Callable[[], Awaitable[str]]:
+        """Offer a settings menu, opened by `/plugins configure NAME`, `C` in `/plugins`, and on enable or add.
+
+        Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
+        change with `save_settings` as the user makes it and return a line to show. When the settings
+        changed, the loader loads the plugin again afterwards, so `activate` builds from them.
+        """
+        self._configurer = func
+        return func
 
     def add(self, capability: AgentCapability[DepsT], /) -> None:
         """Give the agent tools, instructions, or a capability chosen per run."""

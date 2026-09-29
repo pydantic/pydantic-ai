@@ -82,6 +82,7 @@ if TYPE_CHECKING:
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 _PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload')
+_PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 
 
 DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
@@ -97,6 +98,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='logfire', factory='pydantic_clai2.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
+    PluginSettings(id='github', factory='pydantic_clai2.github', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 
@@ -123,12 +125,15 @@ async def chat(
     builtin_plugins: Sequence[PluginSettings] = (),
     project: ProjectSettings | None = None,
     resume: str | None = None,
+    load_plugins: bool = True,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
     Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
     Failed and cancelled turns retain their captured history. Resume never replays tools.
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
+    `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
+    session only; saved plugin preferences are untouched.
     """
     console = console or Console()
     transcript = TranscriptBuffer()
@@ -153,6 +158,7 @@ async def chat(
             builtin_plugins=builtin_plugins,
             project=project,
             transcript=transcript,
+            load_plugins=load_plugins,
         )
     fresh = False
     warming: Thread | None = None
@@ -203,6 +209,7 @@ async def chat(
                         message_history=shell.session.messages,
                         summary=shell.session.summary,
                         transcript=shell.transcript,
+                        load_plugins=load_plugins,
                     )
                 )
             except Exception as exc:
@@ -267,6 +274,7 @@ def create_shell(
     summary: ConversationSummary | None = None,
     transcript: TranscriptBuffer | None = None,
     headless: bool = False,
+    load_plugins: bool = True,
 ) -> '_Shell[DepsT, OutputT]':
     """Build shared session services, without attaching terminal input in headless mode."""
     settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
@@ -410,6 +418,7 @@ def create_shell(
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,
         status=status,
+        enabled=load_plugins,
     )
     spinners = Spinners(selected=lambda: context.settings.spinner, registered=loader.spinners)
     commands.register(
@@ -425,7 +434,9 @@ def create_shell(
         Command(
             name='plugins',
             description='Manage plugins; no arguments opens the menu',
-            handler=lambda args: loader.command(args) if args else open_plugins_menu(loader),
+            handler=lambda args: (
+                _PLUGINS_OFF if not loader.enabled else loader.command(args) if args else open_plugins_menu(loader)
+            ),
             complete=lambda args: _PLUGIN_ACTIONS if len(args) <= 1 else (entry.name for entry in loader.entries()),
         )
     )
@@ -843,6 +854,7 @@ async def _run_prompt(
         show_tool_output=settings.tool_output,
         shell_lines=settings.shell_lines,
         grep_lines=settings.grep_lines,
+        tool_arg_chars=settings.tool_arg_chars,
         renderers=renderers,
     )
     status.streamed_chars = 0

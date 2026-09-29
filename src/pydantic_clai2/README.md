@@ -37,7 +37,7 @@ and commands start there. Commands get CLAI's environment minus LLM provider API
 keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools.
 
 Tool calls show a single-line summary followed by a blank line by default.
-Tool names are pink; their arguments and bullet markers are muted grey. Shell output, exit details and
+Tool and argument names are pink; argument values and bullet markers are muted grey. Shell output, exit details and
 log paths, grep results, and file diffs stay out of the terminal; the model still
 receives full tool results. Long summaries are clipped to the terminal width.
 Use `/set display.tool_output true` to show detailed output again, or
@@ -53,6 +53,10 @@ log in, or run a prompt. Once the prompt is ready, a background thread imports
 them, so the first prompt usually finds them loaded; if it arrives sooner, it waits
 for the rest of those imports. Enabled plugins still load before the first prompt;
 their initialization contributes to startup time.
+An enabled plugin whose module is not installed, such as a built-in saved by another
+CLAI version, is skipped without a message; `/plugins list` shows why. Library
+`UserWarning`s are hidden so they do not break up the display; pass `-W default` to
+Python or set `PYTHONWARNINGS=default` to see them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
@@ -263,6 +267,26 @@ pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
+## Your own agent
+
+```bash
+clai2 --agent pydantic_ai.main:my_cool_agent
+clai2 -a my_agents:reviewer -p "Review the staged diff"
+```
+
+`--agent MODULE:ATTR` (short form `-a`) chats with an existing Pydantic AI `Agent`
+instance instead of CLAI's default agent. CLAI appends the launch directory to
+`sys.path`, after installed packages, so a module next to where you start CLAI
+resolves without installing it. `ATTR` must
+name an instance, not a class; the agent runs with `deps=None`. For that session
+only, no plugins load: no built-ins (including the stock coder tools), no saved or
+drop-in user plugins, and no project plugins, and `/plugins` reports that they are
+off. Nothing saved changes, so plain `clai2` loads plugins as before. The agent
+keeps its own model unless `-m` or `CLAI_MODEL` selects another. `-p`, `--resume`,
+and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
+To pass deps or plugins, write a launcher that calls `chat` (see
+`customization.md`).
+
 ## Headless mode
 
 ```bash
@@ -383,7 +407,8 @@ Use a separate OS account or isolated environment for untrusted repositories.
 
 The requested default does not guarantee model availability for a subscription.
 Custom agents supplied to `chat` retain their model unless settings explicitly
-select an override. `/login` is async, and plugin command handlers may also return
+select an override. `clai2 --agent MODULE:ATTR` keeps the agent's model over saved
+and project models; only `-m` or `CLAI_MODEL` replaces it. `/login` is async, and plugin command handlers may also return
 an awaitable string.
 
 ## GitHub Copilot subscriptions
@@ -659,7 +684,7 @@ repository.
 ```
 
 The keys are the field names from `/config show` (`model`, `request_limit`,
-`thinking`, `splash`, `shell_lines`, `grep_lines`, `smooth_seconds`) and are
+`thinking`, `splash`, `shell_lines`, `grep_lines`, `tool_arg_chars`, `smooth_seconds`) and are
 validated the same way as `/set`. A bad value stops startup with the file name
 and the problem; a key CLAI does not know is reported once at startup and
 ignored, so a newer file still works with an older CLAI. Precedence, lowest
@@ -717,6 +742,11 @@ shows `(editing)` meanwhile. Clearing the draft and pressing Enter removes the
 message from the queue. If the run takes the message before you press Enter,
 the edit is queued as a new follow-up. With nothing queued, Up/down only walk
 history.
+While you walk history, Up/down stay on history even when a recalled slash
+command shows completion suggestions. Press Tab to pick a suggestion; Up/down
+then move through the suggestions. Editing the recalled text ends the walk, so
+suggestions for a prefix you type take Up/down as before. Esc closes the
+suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
 To steer instead, first queue the message with Enter, then press Alt+Enter
 (Option+Enter). This sends the oldest queued follow-up to the active run at its
@@ -1127,8 +1157,10 @@ repeated CLAI heading. Intermediate text is flushed when a tool-call part begins
 before the tool's arguments finish streaming. Incomplete lines within a text part
 still wait for a newline or part boundary, as in Code Puppy's Markdown path.
 
-Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Long names
-are truncated to one terminal row. Completion activity remains in the footer
+Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
+without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and
+muted compact-JSON values. Each value shows at most 40 characters by default; `/set display.tool_arg_chars 80`
+changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
 
 Markdown link labels are clickable in terminals that support OSC 8 hyperlinks.

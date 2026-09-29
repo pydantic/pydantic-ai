@@ -38,7 +38,7 @@ from pydantic_ai import (
 from . import theme
 from .grep_output import GrepOutput
 from .sandbox_calls import SandboxCallOrder
-from .tool_output import ToolOutput, print_tool_header, terminal_text
+from .tool_output import ToolOutput, print_tool_header, terminal_text, tool_arguments_text
 
 
 def markdown_style() -> RenderStyle:
@@ -100,12 +100,14 @@ class StreamRenderer:
         show_tool_output: bool = False,
         shell_lines: int = 20,
         grep_lines: int = 20,
+        tool_arg_chars: int = 40,
         renderers: Sequence[Callable[[AgentStreamEvent], RenderableType | None]] = (),
     ) -> None:
         self.console = console
         self._renderers = tuple(renderers)
         self._sandbox_calls = SandboxCallOrder()
         self.show_tool_output = show_tool_output
+        self.tool_arg_chars = tool_arg_chars
         self._tool_output = ToolOutput(console, shell_lines=shell_lines, show_output=show_tool_output)
         self._grep_output = GrepOutput(console, lines=grep_lines, show_output=show_tool_output)
         self.smooth_seconds = smooth_seconds
@@ -182,7 +184,8 @@ class StreamRenderer:
             return
         if isinstance(event, FunctionToolCallEvent) and not self._tool_output.render_call(event):
             name = ''.join(char if char.isprintable() else ' ' for char in event.part.tool_name)
-            print_tool_header(self.console, name=name)
+            arguments = tool_arguments_text(event.part.args_as_dict(), max_chars=self.tool_arg_chars)
+            print_tool_header(self.console, name=name, argument=arguments)
 
     async def _render_with_plugins(self, event: AgentStreamEvent) -> bool:
         for renderer in self._renderers:
