@@ -45,16 +45,8 @@ print(result.output)
 
 This example needs the OpenAI provider group:
 
-uv:
-
 ```bash
-uv add pydantic-ai-harness 'pydantic-ai-slim[openai]'
-```
-
-pip:
-
-```bash
-pip install pydantic-ai-harness 'pydantic-ai-slim[openai]'
+pip/uv-add pydantic-ai-harness 'pydantic-ai-slim[openai]'
 ```
 
 The router creates an internal agent named `model_router`. Its output has one `choice` field, whose options are the choice keys, and each option carries its description in the output schema. Language models answer through structured output, while typed models such as TypeSafe's decision models pick one option with the description of each in hand, without generating text.

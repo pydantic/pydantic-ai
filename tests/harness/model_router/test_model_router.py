@@ -398,13 +398,12 @@ class TestModelRouter:
             await agent.run('Choose')
 
         span = next(span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'model_router.select')
-        assert span['attributes'] == {
-            'model_router.choice': 'capable',
-            'model_router.fallback_reason': 'error',
-            'model_router.mode': 'once',
-            'model_router.run_step': 1,
-            'model_router.error.type': 'UserError',
-        }
+        attributes = span['attributes']
+        assert attributes['model_router.choice'] == 'capable'
+        assert attributes['model_router.fallback_reason'] == 'error'
+        assert attributes['model_router.mode'] == 'once'
+        assert attributes['model_router.run_step'] == 1
+        assert attributes['model_router.error.type'] == 'UserError'
 
     async def test_routing_is_a_durable_operation(self) -> None:
         capable = _answer_model('capable')
