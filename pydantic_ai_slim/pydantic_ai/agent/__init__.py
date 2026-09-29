@@ -3228,6 +3228,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        # Checked again now that `for_run` has resolved them: a `DynamicCapability` only becomes
+        # the capability its factory returns here, so a second engine returned from one was not
+        # there to count before binding. It was never bound either, since `for_run` is all it gets.
+        _reject_second_of_a_kind(resolved_layers)
         base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
             ctx,
             [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],

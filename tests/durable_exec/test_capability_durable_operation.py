@@ -307,6 +307,16 @@ async def test_a_durable_engine_for_a_run_is_refused_beside_the_agents_own() -> 
     assert bound == ['recording'], 'the run-level engine never bound'
 
 
+async def test_a_durable_engine_returned_by_a_capability_factory_is_refused() -> None:
+    """A factory's capability only exists once `for_run` resolves it, after the pre-bind check."""
+    bound: list[str] = []
+    agent = Agent(TestModel(), name='factory_engine', capabilities=[_BindLoggingDurability(bound)])
+    other = _OtherEngineDurability(bound)
+    with pytest.raises(UserError, match=_SECOND_ENGINE):
+        await agent.run('hi', capabilities=[lambda ctx: other])
+    assert other.calls == [], 'the factory engine never took over dispatch'
+
+
 async def test_one_durable_engine_listed_twice_is_refused() -> None:
     engine = _BindLoggingDurability([])
     agent = Agent(TestModel(), name='one_engine_twice')
