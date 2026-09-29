@@ -18,6 +18,7 @@ from opentelemetry.trace import StatusCode
 from pytest_mock import MockerFixture
 
 import pydantic_ai.models
+from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.embeddings import (
     Embedder,
     EmbeddingResult,
@@ -1406,6 +1407,9 @@ class TestBedrock:
                 await model.embed(['a', 'b', 'c'], input_type='document')
         assert exc_info.value.status_code == 429
         assert isinstance(exc_info.value.__cause__, ClientError)
+        group = exc_info.value.__context__
+        assert isinstance(group, BaseExceptionGroup)
+        assert exc_info.value in group.exceptions
 
     @pytest.mark.parametrize('error_type', ['read-timeout', 'endpoint-connection'])
     async def test_transport_error(self, bedrock_provider: BedrockProvider, error_type: str):

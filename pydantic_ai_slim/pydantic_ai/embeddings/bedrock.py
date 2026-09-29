@@ -634,10 +634,9 @@ class BedrockEmbeddingModel(EmbeddingModel):
         except BaseExceptionGroup as eg:
             # Requests already sent to a thread can't be cancelled, so a throttle or validation error that fails every
             # request surfaces several times. Raise the first model error, so callers see the same `ModelHTTPError` or
-            # `ModelAPIError` whatever the number of inputs.
+            # `ModelAPIError` whatever the number of inputs; the full group stays reachable as its `__context__`.
             first = eg.exceptions[0]
             if isinstance(first, ModelAPIError):
-                first.__suppress_context__ = True
                 raise first
             raise  # pragma: no cover
 
