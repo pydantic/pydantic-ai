@@ -429,7 +429,8 @@ def _otel_message_role(part: ModelRequestPart, version: int) -> _otel_messages.R
     agent's author wrote. Earlier versions keep every cause on `user`, so a consumer written against
     them keeps reading the role it was built for — and for a `'validation_error'` that is already the
     role the wire uses. Only `pydantic_ai.all_messages` moves at all: a request span records the
-    history after `prepare_messages` has already translated the part.
+    history after `prepare_messages` has already translated the part, except on a decision model,
+    which is handed the part itself.
 
     `ToolAvailabilityDeltaPart` gets `system` as the least-bad fit in a closed vocabulary, not as a
     mirror of the wire. `Role` is `system | user | assistant | tool` and none of those means "the set

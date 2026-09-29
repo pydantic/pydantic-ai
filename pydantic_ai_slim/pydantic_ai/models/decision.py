@@ -1941,8 +1941,8 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
     A tool whose result is already in the turn is not offered again. A decision model judges the text in front of it
     and has no notion of having made a call: with a call and its result in view, the text still calls for the tool, so
     left on offer it is picked again until the usage limit, even with the result set apart under `done`. That goes for
-    a call made by a model behind this one too, since this model would propose it again on the same text. A call that
-    produced no result, because the tool asked for a retry, leaves the tool on offer. The turn is everything since the
+    a call made by a model behind this one too, since this model would propose it again on the same text. A call whose
+    result asked for a retry (`outcome='retried'`) leaves the tool on offer. The turn is everything since the
     last user prompt, which is the nearest thing to a run boundary the history has: a result from an earlier turn does
     not withhold the tool, but a judged history that ends in another agent's call to a tool of the same name does.
     """

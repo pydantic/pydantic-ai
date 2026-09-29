@@ -1118,7 +1118,7 @@ async def test_retry_feedback_reaches_the_provider(
     profile flag are pinned, because a rendering that stopped honoring it would still be a rendering.
 
     The turns below are read off the request as it went out, through `request_capture`: the cassette
-    matches on method and path alone, so a run that stopped rendering the feedback would still replay it.
+    matches on method and URI alone, so a run that stopped rendering the feedback would still replay it.
     """
     model: Model
     if provider == 'openai':
