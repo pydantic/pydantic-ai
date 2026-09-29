@@ -18,8 +18,13 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
+from pydantic_clai2.interrupts import Interrupts
 from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.shell_passthrough import _taskkill_path, shell_command  # pyright: ignore[reportPrivateUsage]
+from pydantic_clai2.shell_passthrough import (
+    _taskkill_path,  # pyright: ignore[reportPrivateUsage]
+    run_shell_command,
+    shell_command,
+)
 from tests.clai2.test_app_edges import inputs
 
 
@@ -60,7 +65,7 @@ async def shell_session(
     await chat(
         Agent(TestModel(custom_output_text='agent reply'), deps_type=type(None), capabilities=[CountRequests()]),
         deps=None,
-        console=Console(file=output, width=120),
+        console=Console(file=output, force_terminal=False, width=120),
         store=SettingsStore(tmp_path / 'config.db'),
     )
     assert len(requests) == agent_turns
@@ -87,6 +92,49 @@ class TestShellPassthrough:
     async def test_reports_exit_code(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         text = await shell_session(tmp_path, monkeypatch, ['!exit 3', '/exit'])
         assert 'Exit code 3 (' in text
+
+    async def test_ctrl_c_during_process_spawn(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        spawn_started = asyncio.Event()
+        release_spawn = asyncio.Event()
+        wait_calls = 0
+        cleanup_calls: list[str] = []
+
+        class Process:
+            async def wait(self) -> int:
+                nonlocal wait_calls
+                wait_calls += 1
+                return 0
+
+        async def delayed_spawn(command: str, *, start_new_session: bool) -> Process:
+            assert command == 'sleep forever'
+            assert start_new_session is True
+            spawn_started.set()
+            await release_spawn.wait()
+            return Process()
+
+        def interrupt(_process: Process) -> None:
+            cleanup_calls.append('interrupt')
+
+        async def kill_process_tree(_process: Process) -> None:
+            cleanup_calls.append('kill')
+
+        monkeypatch.setattr('pydantic_clai2.shell_passthrough.asyncio.create_subprocess_shell', delayed_spawn)
+        monkeypatch.setattr('pydantic_clai2.shell_passthrough._interrupt', interrupt)
+        monkeypatch.setattr('pydantic_clai2.shell_passthrough._kill_process_tree', kill_process_tree)
+        output = io.StringIO()
+        interrupts = Interrupts()
+        command = asyncio.create_task(
+            run_shell_command('sleep forever', console=Console(file=output), interrupts=interrupts)
+        )
+        await spawn_started.wait()
+
+        assert interrupts.cancel()
+        asyncio.get_running_loop().call_soon(release_spawn.set)
+        await command
+
+        assert wait_calls == 2
+        assert cleanup_calls == ['interrupt', 'kill']
+        assert 'Interrupted (' in output.getvalue()
 
     async def test_ctrl_c_interrupts_command_not_clai(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # The shell signals CLAI as the terminal would on Ctrl-C, and CLAI forwards it to the command.
@@ -121,7 +169,10 @@ class TestShellPassthrough:
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_kills_shell_descendants(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Cancelling a shell command must also terminate a background child."""
-        child_code = "import os, pathlib, time; pathlib.Path('child.pid').write_text(str(os.getpid())); time.sleep(30)"
+        child_code = (
+            "import os, pathlib, time; pathlib.Path('child.pid.tmp').write_text(str(os.getpid())); "
+            "os.replace('child.pid.tmp', 'child.pid'); time.sleep(30)"
+        )
         python = shlex.quote(sys.executable)
         command = f'{python} -c {shlex.quote(child_code)} & while [ ! -f child.pid ]; do :; done; kill -INT $PPID; wait'
 
