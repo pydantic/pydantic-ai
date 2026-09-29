@@ -490,13 +490,14 @@ def _automatic_vad_from_turn_detection(turn_detection: TurnDetection) -> Automat
 
 
 async def _seed_turns(
-    messages: Sequence[ModelMessage], *, profile: RealtimeModelProfile, provider_name: str
-) -> list[genai_types.Content | genai_types.ContentDict]:
+    messages: Sequence[ModelMessage], *, profile: RealtimeModelProfile, provider_name: str, function_parts: bool
+) -> list[genai_types.Content]:
     """Map prior history to Gemini `clientContent.turns`.
 
-    Text, transcripts, inline images, and tag-wrapped thinking are replayed in part order. On a model
-    whose profile sets `google_supports_seeding_function_parts`, function calls and results are seeded
-    as native `function_call` / `function_response` parts. Other Live models reject function parts in
+    Text, transcripts, inline images, and tag-wrapped thinking are replayed in part order. With
+    `function_parts` (a model whose profile sets `google_supports_seeding_function_parts`), function
+    calls and results are seeded as native `function_call` / `function_response` parts, a failed call's
+    under the `error` key. Other Live models reject function parts in
     `clientContent.turns`, so there they are projected as structured text: `[Tool call: name(args)]`,
     `[Tool "name" returned: result]`, and `[Tool "name" error: error]`. Native-tool parts are skipped
     because they describe provider-executed work whose answer text is already retained.
@@ -506,9 +507,8 @@ async def _seed_turns(
     does not accept audio in seeded turns, so speech requires a transcript. Other unrepresentable
     content raises [`UserError`][pydantic_ai.exceptions.UserError].
     """
-    turns: list[genai_types.Content | genai_types.ContentDict] = []
+    turns: list[genai_types.Content] = []
     supports_images = profile.get('supports_seeding_images', False)
-    function_parts = cast(GoogleRealtimeModelProfile, profile).get('google_supports_seeding_function_parts', False)
     for message in messages:
         if isinstance(message, ModelRequest):
             parts = await _seed_request_parts(
@@ -554,10 +554,16 @@ async def _seed_request_parts(
         elif isinstance(part, ToolReturnPart):
             output, user_content = part.model_response_str_and_user_content()
             if function_parts:
+                # Gemini's function response has an `error` key for a failed call, as on a standard request.
+                response = (
+                    {'error': part.model_response_str(wrap_if_error=False)}
+                    if part.outcome == 'failed'
+                    else {'output': output}
+                )
                 parts.append(
                     genai_types.Part(
                         function_response=genai_types.FunctionResponse(
-                            id=part.tool_call_id, name=part.tool_name, response={'output': output}
+                            id=part.tool_call_id, name=part.tool_name, response=response
                         )
                     )
                 )
@@ -1233,13 +1239,19 @@ class GoogleRealtimeModel(RealtimeModel):
             )
         # Prior conversation is seeded once, after the initial connect. Normalized before dialing, so
         # unsupported content is a caller `UserError` rather than a session opened for nothing.
-        turns = await _seed_turns(messages, profile=self.profile, provider_name=self.system)
-        # With native function parts, the seed goes in as the session's initial history, which ends with
-        # `turn_complete` without triggering a reply. Only the first dial asks for it: a session resumed
-        # from a handle already has the history, and one that isn't wouldn't get it again, so either way
-        # a server waiting for initial history would take the next typed turn as history and not answer it.
-        history_in_client_content = bool(turns) and self._google_profile.get(
-            'google_supports_seeding_function_parts', False
+        turns = await _seed_turns(
+            messages,
+            profile=self.profile,
+            provider_name=self.system,
+            function_parts=self._google_profile.get('google_supports_seeding_function_parts', False),
+        )
+        # A seed with native function parts goes in as the session's initial history, which ends with
+        # `turn_complete` without triggering a reply; one without is sent as before. Only the first dial
+        # asks for it: a session resumed from a handle already has the history, and one that isn't
+        # wouldn't get it again, so either way a server waiting for initial history would take the next
+        # typed turn as history and not answer it.
+        history_in_client_content = any(
+            part.function_call or part.function_response for turn in turns for part in turn.parts or ()
         )
         # The live connection's context manager. A reconnect closes the previous one before opening
         # the next (so they don't accumulate), and teardown closes whatever is current.

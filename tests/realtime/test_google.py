@@ -2022,12 +2022,16 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
             parts=[
                 ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='call-1'),
                 ToolCallPart(tool_name='get_weather', args={'city': ''}, tool_call_id='call-2'),
+                ToolCallPart(tool_name='get_weather', args={'city': 'Lyon'}, tool_call_id='call-3'),
             ]
         ),
         ModelRequest(
             parts=[
                 ToolReturnPart(tool_name='get_weather', content='Hailing', tool_call_id='call-1'),
                 RetryPromptPart(tool_name='get_weather', content='City is required', tool_call_id='call-2'),
+                ToolReturnPart(
+                    tool_name='get_weather', content='Service down', tool_call_id='call-3', outcome='failed'
+                ),
             ]
         ),
         ModelResponse(parts=[TextPart(content='It is hailing.')]),
@@ -2052,6 +2056,7 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
                 [
                     {'function_call': {'id': 'call-1', 'args': {'city': 'Paris'}, 'name': 'get_weather'}},
                     {'function_call': {'id': 'call-2', 'args': {'city': ''}, 'name': 'get_weather'}},
+                    {'function_call': {'id': 'call-3', 'args': {'city': 'Lyon'}, 'name': 'get_weather'}},
                 ],
             ),
             (
@@ -2065,6 +2070,13 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
                             'response': {'error': 'City is required\n\nFix the errors and try again.'},
                         }
                     },
+                    {
+                        'function_response': {
+                            'id': 'call-3',
+                            'name': 'get_weather',
+                            'response': {'error': 'Service down'},
+                        }
+                    },
                 ],
             ),
             ('model', [{'text': 'It is hailing.'}]),
@@ -2072,6 +2084,24 @@ async def test_connect_seeds_function_parts_as_initial_history_where_supported()
     )
     # The resumed session isn't seeded again.
     assert seeded[1].client_content == []
+
+
+async def test_connect_seeds_text_only_history_as_before_where_function_parts_are_supported() -> None:
+    # Without tool calls to seed there are no function parts, so a model that takes them seeds text as
+    # inactive context, exactly as before, without `history_config`.
+    session = _RecordingSession([[_turn('hi')]])
+    captured: dict[str, Any] = {}
+    model = GoogleRealtimeModel('gemini-3.8-live', provider=GoogleProvider(client=_fake_client(session, captured)))
+    history = [
+        ModelRequest(parts=[UserPromptPart(content='My name is Alice.')]),
+        ModelResponse(parts=[TextPart(content='Nice to meet you!')]),
+    ]
+    async with _connect(model, 'x', messages=history) as conn:
+        _ = [e async for e in conn]
+
+    assert captured['config'].history_config is None
+    [seed] = session.client_content
+    assert seed['turn_complete'] is False
 
 
 async def test_connect_seeds_without_history_config_where_unsupported() -> None:
