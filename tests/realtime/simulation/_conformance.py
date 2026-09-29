@@ -38,11 +38,10 @@ from dataclasses import dataclass, field
 
 from pydantic_ai.messages import RealtimeSessionErrorEvent, RealtimeSessionReconnectEvent
 from pydantic_ai.realtime._lifecycle import (
+    LIFECYCLE_EVENT_TYPES,
     InputAdded,
-    InputLost,
     LifecycleEvent,
     ResponseEnded,
-    ResponseRequestRefused,
     ResponseStarted,
     UserTurnDiscarded,
     UserTurnEnded,
@@ -97,17 +96,7 @@ class LifecycleChecker:
         def issue(code: str, detail: str) -> None:
             found.append(ConformanceIssue(code, detail, position))
 
-        if isinstance(
-            event,
-            ResponseStarted
-            | ResponseEnded
-            | UserTurnStarted
-            | UserTurnEnded
-            | UserTurnDiscarded
-            | InputAdded
-            | InputLost
-            | ResponseRequestRefused,
-        ):
+        if isinstance(event, LIFECYCLE_EVENT_TYPES):
             self._feed_lifecycle(event, issue)
             self.issues.extend(found)
             return found

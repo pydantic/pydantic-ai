@@ -2198,6 +2198,7 @@ async def test_connection_send_text_context() -> None:
             'type': 'conversation.item.create',
             'event_id': 'pydantic_ai.content.0',
             'item': {
+                'id': 'pydantic_ai_item_0',
                 'type': 'message',
                 'role': 'user',
                 'content': [{'type': 'input_text', 'text': 'background'}],

@@ -87,6 +87,7 @@ from ._openai_protocol import (
     SemanticVAD,
     ServerVAD,
     client_event_id,
+    client_item_id,
     config_interrupts_response_on_speech,
     connect_openai_protocol,
     expect_event,
@@ -582,6 +583,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     'type': CONVERSATION_ITEM_CREATE_EVENT,
                     'event_id': client_event_id('content', (input_index,)),
                     'item': {
+                        'id': client_item_id(input_index),
                         'type': 'message',
                         'role': 'user',
                         'content': [{'type': 'input_image', 'image_url': data_uri}],
@@ -704,6 +706,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 'type': CONVERSATION_ITEM_CREATE_EVENT,
                 'event_id': client_event_id('content', (input_index,)),
                 'item': {
+                    'id': client_item_id(input_index),
                     'type': 'message',
                     'role': 'user',
                     'content': [{'type': 'input_text', 'text': text}],
@@ -753,10 +756,11 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._response_request_inputs = tuple(input_indexes)
         self._response_request_answers = tuple(answers)
         event: dict[str, Any] = {'type': RESPONSE_CREATE_EVENT}
+        metadata = response_request_metadata(answers)
         if input_indexes:
             event_id = event['event_id'] = client_event_id('response', input_indexes)
-            self._lifecycle.request_sent(event_id, self._response_request_answers)
-        if (metadata := response_request_metadata(answers)) is not None:
+            self._lifecycle.request_sent(event_id, self._response_request_answers, tagged=metadata is not None)
+        if metadata is not None:
             event['response'] = {'metadata': metadata}
         await self._send_event(event)
 
@@ -807,7 +811,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     except ValueError as e:
                         # A malformed frame (bad JSON or audio payload) shouldn't tear down the whole
                         # session; surface it as a recoverable error and keep reading.
-                        for event in self._take_pending_lifecycle():
+                        # The frame may have started a response before it failed: announce it all the same.
+                        for event in [*self._lifecycle.take_leading(), *self._take_pending_lifecycle()]:
                             yield event, False
                         yield _frame_error(e), False
                         continue
@@ -820,7 +825,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # without one, the consumer learns the conversation was cut off instead of seeing the
                 # stream quietly end.
                 if not self._observes_output_audio:
-                    self._lifecycle.closed()
+                    self._lifecycle.closed(self._unanswered_inputs())
                     for event in self._take_pending_lifecycle():
                         yield event, False
                     return
@@ -840,7 +845,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             if reconnects:
                 # Out of attempts: no reconnect is coming any more.
                 self._gave_up = True
-            self._lifecycle.closed()
+            self._lifecycle.closed(self._unanswered_inputs())
             for event in self._take_pending_lifecycle():
                 yield event, False
             # No reconnect policy, or the reconnect failed: a closed connection is fatal. Surface it as a
@@ -854,9 +859,16 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             )
             return
 
+    def _unanswered_inputs(self) -> list[InputId]:
+        """The inputs whose request for a response is still to be answered: sent, deferred, or not yet made."""
+        unanswered = [*self._deferred_response_answers]
+        if self._response_active and not self._response_started:
+            unanswered += self._response_request_answers
+        unanswered += [input_ for batch in self._tool_call_batches.values() for input_ in batch.inputs]
+        return unanswered
+
     def _take_pending_lifecycle(self) -> list[LifecycleEvent]:
-        pending, self._lifecycle.pending = self._lifecycle.pending, []
-        return pending
+        return self._lifecycle.take_pending()
 
     def _is_cancelled_straggler(self, event_type: str | None, data: dict[str, Any]) -> bool:
         """Whether this frame is a trailing delta from a response cancelled on barge-in (drop it).
@@ -916,7 +928,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             return _DecodedFrame()
         # A frame about a response that has already ended repeats or trails its terminal.
         stale = self._lifecycle.is_ended(frame_response_id(event_type, data))
-        before = self._lifecycle.before_frame(event_type, data)
+        self._lifecycle.before_frame(event_type, data)
         try:
             after = self._lifecycle.frame(event_type, data)
         except ValueError:
@@ -995,7 +1007,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 else:
                     if (asr := _map_transcription_usage(usage)) is not None:
                         events.append(SessionUsage(usage=asr, response_scoped=False))
-        return _DecodedFrame(events, before=before, after=[*after, *self._take_pending_lifecycle()], stale=stale)
+        return _DecodedFrame(
+            events, before=self._lifecycle.take_leading(), after=[*after, *self._take_pending_lifecycle()], stale=stale
+        )
 
     async def _handle_error(self, data: dict[str, Any]) -> list[InputRejected]:
         """Report the inputs an `error` frame refused, and release a refused request for a response.

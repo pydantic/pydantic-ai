@@ -94,6 +94,11 @@ def describe(event: RealtimeCodecEvent | LifecycleEvent) -> LifecycleEvent | str
     return event if isinstance(event, LIFECYCLE_EVENT_TYPES) else type(event).__name__
 
 
+async def codec(connection: OpenAIRealtimeConnection) -> list[RealtimeCodecEvent]:
+    """The codec events the connection yields to a session."""
+    return [event async for event in connection]
+
+
 class Stream:
     """A connection's lifecycle stream, read a few events at a time so the test can act in between."""
 
@@ -250,7 +255,23 @@ async def test_inputs_join_the_conversation_in_the_order_the_server_adds_them() 
     await stream.connection.send(TextContext('Now.'))
     await stream.connection.send(ToolResult('call_1', output='42', content=['See also.']))
     assert await stream.rest() == snapshot(
-        [InputAdded(input_id=0), InputAdded(input_id=1), 'RealtimeSessionErrorEvent']
+        [InputAdded(input_id=0), InputAdded(input_id=1), InputLost(input_ids=(1,)), 'RealtimeSessionErrorEvent']
+    )
+
+
+async def test_an_item_added_under_our_id_names_its_input_whatever_else_is_added() -> None:
+    """Once the server keeps our item ids, items under other ids (a browser's, refused history) are none of ours."""
+    stream = Stream(
+        {**user_message_added(), 'item': {**user_message_added()['item'], 'id': 'pydantic_ai_item_1'}},
+        user_message_added(),
+        {**user_message_added(), 'item': {**user_message_added()['item'], 'id': 'pydantic_ai_item_1'}},
+        {**user_message_added(), 'item': {**user_message_added()['item'], 'id': 'pydantic_ai_item_0'}},
+    )
+    await stream.connection.send(TextContext('First.'))
+    await stream.connection.send(TextContext('Second.'))
+    assert json.loads(stream.ws.sent[0])['item']['id'] == 'pydantic_ai_item_0'
+    assert await stream.rest() == snapshot(
+        [InputAdded(input_id=1), InputAdded(input_id=0), 'RealtimeSessionErrorEvent']
     )
 
 
@@ -391,6 +412,56 @@ async def test_a_malformed_frame_only_the_lifecycle_reads_is_ignored() -> None:
     )
 
 
+async def test_a_frame_that_fails_to_decode_still_starts_its_response() -> None:
+    stream = Stream(
+        {'type': 'response.output_audio.delta', 'response_id': 'resp_1', 'delta': 'not base64!'}, done('resp_1')
+    )
+    assert await stream.rest() == snapshot(
+        [
+            ResponseStarted(response_id='resp_1', basis='inferred'),
+            'RealtimeSessionErrorEvent',
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_1', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+            'RealtimeSessionErrorEvent',
+        ]
+    )
+
+
+async def test_metadata_that_is_not_ours_changes_nothing_on_the_codec_stream() -> None:
+    frames_ = (
+        {**created('resp_1'), 'response': {**created('resp_1')['response'], 'metadata': {'topic': 1}}},
+        {**done('resp_1'), 'response': {**done('resp_1')['response'], 'metadata': {'topic': 1}}},
+    )
+    assert [type(event).__name__ for event in await codec(Stream(*frames_).connection)] == snapshot(
+        ['ResponseDone', 'RealtimeSessionErrorEvent']
+    )
+    assert await Stream(*frames_).rest() == snapshot(
+        [
+            ResponseStarted(response_id='resp_1'),
+            'ResponseDone',
+            ResponseEnded(
+                response_id='resp_1', status='completed', finish_reason='stop', provider_details={'status': 'completed'}
+            ),
+            'RealtimeSessionErrorEvent',
+        ]
+    )
+
+
+async def test_a_request_too_large_to_name_its_inputs_is_still_taken_for_its_response() -> None:
+    """Once the server echoes metadata, a response without it is not ours, unless ours carried none."""
+    stream = Stream(created('resp_1', answers='0'), done('resp_1'))
+    await stream.connection.send(CreateResponse())
+    assert len(await stream.take(3)) == 3
+    await stream.connection._request_response((10_000,), answers=range(9_000, 10_001))  # pyright: ignore[reportPrivateUsage]
+    assert 'response' not in json.loads(stream.ws.sent[-1])
+    stream.feed(created('resp_2'), done('resp_2'))
+    started = (await stream.take(1))[0]
+    assert isinstance(started, ResponseStarted)
+    assert (started.basis, len(started.answers)) == snapshot(('inferred', 1001))
+
+
 async def test_a_barge_in_drops_the_requests_waiting_behind_the_response_it_cut_off() -> None:
     call = {'type': 'response.function_call_arguments.done', 'response_id': 'resp_1', 'name': 'lookup'}
     stream = Stream(created('resp_1', answers='0'), {**call, 'call_id': 'call_a'})
@@ -483,6 +554,7 @@ async def test_a_reconnect_settles_what_the_new_socket_will_never_answer() -> No
             ResponseEnded(response_id='resp_2', status='lost'),
             UserTurnDiscarded(turn_id='item_u1'),
             'RealtimeSessionReconnectEvent',
+            InputLost(input_ids=(3,)),
             'RealtimeSessionErrorEvent',
         ]
     )

@@ -42,6 +42,7 @@ from ._lifecycle import (
 from ._openai_protocol import (
     CONVERSATION_ITEM_ADDED_EVENT_ADAPTER,
     ProtocolResponse,
+    client_item_input,
     is_user_message_item,
     rejected_inputs,
     response_metadata_answers,
@@ -66,9 +67,10 @@ class OpenAILifecycle:
     """Turns an OpenAI-protocol connection's frames and sends into lifecycle events."""
 
     def __init__(self) -> None:
-        self.pending: list[LifecycleEvent] = []
-        """Events produced outside the frame being decoded (a reconnect, a close, a malformed terminal),
-        yielded at the next opportunity."""
+        self._leading: list[LifecycleEvent] = []
+        """Events that precede the codec events of the frame being decoded: a response it starts."""
+        self._pending: list[LifecycleEvent] = []
+        """Events that follow them, or come outside any frame (a reconnect, a close)."""
         self._open: dict[str, None] = {}
         """Responses started and not yet ended, in start order."""
         self._ended: set[str] = set()
@@ -78,8 +80,9 @@ class OpenAILifecycle:
         self._metadata_echoed = False
         """Whether the server has echoed a `response.create`'s metadata: from then on, a response without
         ours in its metadata answers nothing of ours, whatever the connection had outstanding."""
-        self._requests: dict[str, tuple[InputId, ...]] = {}
-        """Our `response.create`s neither started nor refused yet, by `event_id`: the inputs each answers."""
+        self._requests: dict[str, tuple[tuple[InputId, ...], bool]] = {}
+        """Our `response.create`s neither started nor refused yet, by `event_id`: the inputs each answers, and
+        whether it carried them as `metadata` (it can't when there are too many to fit)."""
         self._settled: set[InputId] = set()
         """Inputs already answered, refused, or lost. An inferred answer can be wrong (before the server has
         echoed any metadata, a response it started on its own looks like ours), and the response that really
@@ -88,6 +91,9 @@ class OpenAILifecycle:
         """Spoken turns started and not yet committed or discarded."""
         self._unclaimed_turn: str | None = None
         """The latest committed spoken turn no response of the provider's own has answered yet."""
+        self._ids_echoed = False
+        """Whether the server has added an item under the id we chose for it: from then on, an item with any
+        other id is none of ours, and the order items are added in no longer has to say which input they are."""
         self._messages: deque[InputId | None] = deque()
         """Our user message items awaiting their `conversation.item.added`, in the order they were sent.
         `None` is one that is no input of its own: seeded or replayed history, or a tool result's follow-up."""
@@ -107,23 +113,30 @@ class OpenAILifecycle:
     def tool_output_sent(self, call_id: str, input_id: InputId) -> None:
         self._tool_outputs[call_id] = input_id
 
-    def request_sent(self, event_id: str, answers: tuple[InputId, ...]) -> None:
-        """A `response.create` for `answers` is on its way under `event_id`."""
-        self._requests[event_id] = answers
+    def request_sent(self, event_id: str, answers: tuple[InputId, ...], *, tagged: bool) -> None:
+        """A `response.create` for `answers` is on its way under `event_id`, naming them in its metadata if `tagged`."""
+        self._requests[event_id] = (answers, tagged)
+
+    def take_leading(self) -> list[LifecycleEvent]:
+        leading, self._leading = self._leading, []
+        return leading
+
+    def take_pending(self) -> list[LifecycleEvent]:
+        pending, self._pending = self._pending, []
+        return pending
 
     # --- what the server says ---------------------------------------------------------------------
 
     def is_ended(self, response_id: str | None) -> bool:
         return response_id is not None and response_id in self._ended
 
-    def before_frame(self, event_type: str | None, data: dict[str, Any]) -> list[LifecycleEvent]:
-        """The events that precede a frame's own: the start of a response it is the first to name."""
+    def before_frame(self, event_type: str | None, data: dict[str, Any]) -> None:
+        """Start the response a frame is the first to name, ahead of the frame's own events."""
         if event_type == 'response.created':
-            return []
+            return
         response_id = frame_response_id(event_type, data)
-        if response_id is None or response_id in self._open or response_id in self._ended:
-            return []
-        return [self._start(response_id, answers=(), basis='inferred')]
+        if response_id is not None and response_id not in self._open and response_id not in self._ended:
+            self._leading.append(self._start(response_id, answers=(), basis='inferred'))
 
     def response_created(
         self,
@@ -144,9 +157,13 @@ class OpenAILifecycle:
         if answers is not None:
             self._metadata_echoed = True
             self._requests = {
-                event_id: inputs for event_id, inputs in self._requests.items() if not set(inputs) & set(answers)
+                event_id: request for event_id, request in self._requests.items() if not set(request[0]) & set(answers)
             }
-        elif outstanding is not None and not self._metadata_echoed:
+        elif outstanding is not None and not (
+            # Once the server echoes metadata, a response without ours is not the one ours asked for, unless
+            # ours carried none.
+            self._metadata_echoed and self._requests.get(outstanding[0], ((), True))[1]
+        ):
             event_id, answers = outstanding
             basis = 'inferred'
             self._requests.pop(event_id, None)
@@ -174,13 +191,13 @@ class OpenAILifecycle:
         if response_id in self._ended:
             return
         if response_id not in self._open:
-            self.pending.append(self._start(response_id, answers=(), basis='inferred'))
-        self.pending.append(self._end(response_id, status, finish_reason, provider_details))
+            self._pending.append(self._start(response_id, answers=(), basis='inferred'))
+        self._pending.append(self._end(response_id, status, finish_reason, provider_details))
 
     def response_unreadable(self, active_response_id: str | None) -> None:
         """A `response.done` too malformed to name its response: it still ended the one being generated."""
         if active_response_id is not None and active_response_id in self._open:
-            self.pending.append(self._end(active_response_id, 'lost', None, None))
+            self._pending.append(self._end(active_response_id, 'lost', None, None))
 
     def frame(self, event_type: str | None, data: dict[str, Any]) -> list[LifecycleEvent]:
         """The events a frame about user turns, conversation items, or errors makes."""
@@ -227,11 +244,21 @@ class OpenAILifecycle:
         item = CONVERSATION_ITEM_ADDED_EVENT_ADAPTER.validate_python(data).item
         if item.type == 'function_call_output' and item.call_id is not None:
             input_id = self._tool_outputs.pop(item.call_id, None)
-        elif is_user_message_item(item) and self._messages:
-            input_id = self._messages.popleft()
-        else:
-            # The model's output, a spoken turn the server committed, or an item that is no send of ours.
+        elif not is_user_message_item(item):
+            # The model's output, or a spoken turn the server committed.
             return []
+        elif (input_id := client_item_input(item.id)) is not None:
+            self._ids_echoed = True
+            if input_id not in self._messages:
+                return []
+            self._messages.remove(input_id)
+        elif self._ids_echoed or not self._messages:
+            # No item of ours: seeded or replayed history, or one a browser made on a sideband.
+            return []
+        else:
+            # A server that doesn't keep our ids (or a recording made before we chose them): the server adds
+            # items in the order it receives them.
+            input_id = self._messages.popleft()
         return [] if input_id is None else [InputAdded(input_id=input_id)]
 
     def error(self, data: dict[str, Any]) -> list[LifecycleEvent]:
@@ -241,16 +268,16 @@ class OpenAILifecycle:
             if rejected.refused == 'content' and rejected.input_index in self._messages:
                 # Refused content never joins the conversation, so no `conversation.item.added` will place it.
                 self._messages.remove(rejected.input_index)
-        if error.event_id is None or (answers := self._requests.pop(error.event_id, None)) is None:
+        if error.event_id is None or (request := self._requests.pop(error.event_id, None)) is None:
             return []
-        return [ResponseRequestRefused(input_ids=answers)] if (answers := self._settle(answers)) else []
+        return [ResponseRequestRefused(input_ids=answers)] if (answers := self._settle(request[0])) else []
 
     # --- the connection's own transitions ----------------------------------------------------------
 
     def requests_dropped(self, answers: Sequence[InputId]) -> None:
         """The connection dropped requests it was holding, so nothing will answer `answers`."""
         if unsettled := self._settle(answers):
-            self.pending.append(InputLost(input_ids=unsettled))
+            self._pending.append(InputLost(input_ids=unsettled))
 
     def socket_replaced(self) -> None:
         """A new socket is being dialed: what the old one hadn't acknowledged, it never will.
@@ -260,7 +287,7 @@ class OpenAILifecycle:
         """
         placed = [input_id for input_id in self._messages if input_id is not None]
         placed += self._tool_outputs.values()
-        self.pending.extend(InputAdded(input_id=input_id) for input_id in sorted(placed))
+        self._pending.extend(InputAdded(input_id=input_id) for input_id in sorted(placed))
         self._messages.clear()
         self._tool_outputs.clear()
 
@@ -271,20 +298,24 @@ class OpenAILifecycle:
             self._requests.clear()
             self._lose_everything_open()
 
-    def closed(self) -> None:
-        """The connection is gone for good: nothing still open will ever end on its own."""
+    def closed(self, unanswered: Sequence[InputId]) -> None:
+        """The connection is gone for good: nothing still open will ever end on its own, or be answered."""
+        self.requests_dropped(
+            [*unanswered, *(input_id for answers, _ in self._requests.values() for input_id in answers)]
+        )
+        self._requests.clear()
         self._lose_everything_open()
 
     def _lose_everything_open(self) -> None:
-        self.pending.extend(self._end(response_id, 'lost', None, None) for response_id in list(self._open))
-        self.pending.extend(self.audio_cleared())
+        self._pending.extend(self._end(response_id, 'lost', None, None) for response_id in list(self._open))
+        self._pending.extend(self.audio_cleared())
         self._current_synthetic = None
 
     # --- helpers ------------------------------------------------------------------------------------
 
     def _settle(self, input_ids: Sequence[InputId]) -> tuple[InputId, ...]:
         """Settle the inputs not settled yet, returning them."""
-        unsettled = tuple(input_id for input_id in input_ids if input_id not in self._settled)
+        unsettled = tuple(input_id for input_id in dict.fromkeys(input_ids) if input_id not in self._settled)
         self._settled.update(unsettled)
         return unsettled
 

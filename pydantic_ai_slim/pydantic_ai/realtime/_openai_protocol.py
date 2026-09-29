@@ -322,7 +322,7 @@ class ProtocolRealtimeResponse(BaseModel):
     status: Literal['completed', 'cancelled', 'failed', 'incomplete', 'in_progress'] | None = None
     status_details: RealtimeResponseStatus | str | None = None
     usage: RealtimeResponseUsage | None = None
-    metadata: dict[str, str] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class ProtocolResponseDoneEvent(BaseModel):
@@ -411,10 +411,10 @@ def response_request_metadata(answers: Sequence[int]) -> dict[str, str] | None:
     return {RESPONSE_INPUTS_METADATA_KEY: value}
 
 
-def response_metadata_answers(metadata: dict[str, str] | None) -> tuple[int, ...] | None:
+def response_metadata_answers(metadata: dict[str, Any] | None) -> tuple[int, ...] | None:
     """The inputs a response's echoed `metadata` says it answers, or `None` when it names none of ours."""
     value = (metadata or {}).get(RESPONSE_INPUTS_METADATA_KEY)
-    if value is None or not _METADATA_INPUTS_RE.fullmatch(value):
+    if not isinstance(value, str) or not _METADATA_INPUTS_RE.fullmatch(value):
         return None
     return tuple(int(index) for index in value.split('-'))
 
@@ -969,6 +969,24 @@ def _map_input_transcription_event(
 
 
 _CLIENT_EVENT_ID_RE = re.compile(r'pydantic_ai\.(content|response)\.(\d+(?:-\d+)*)')
+_CLIENT_ITEM_ID_RE = re.compile(r'pydantic_ai_item_(\d+)')
+
+
+def client_item_id(input_index: int) -> str:
+    """The id a user message item is created under, naming the input that sent it.
+
+    The server adds the item to the conversation under the id the client chose, so its
+    `conversation.item.added` says which input joined the conversation there, whatever else is added
+    around it (seeded history, a browser's items on a sideband).
+    """
+    return f'pydantic_ai_item_{input_index}'
+
+
+def client_item_input(item_id: str | None) -> int | None:
+    """The input an item was created by, when its id is one `client_item_id` chose."""
+    if item_id is None or (match := _CLIENT_ITEM_ID_RE.fullmatch(item_id)) is None:
+        return None
+    return int(match[1])
 
 
 def client_event_id(refused: Literal['content', 'response'], input_indexes: Sequence[int]) -> str:
