@@ -15610,7 +15610,8 @@ async def test_non_json_response_body_raises_model_api_error(
                 async with Agent(model).run_stream('Hello') as result:
                     await result.get_output()
             else:
-                await Agent(model).run('Hello')
+                # An explicit `max_tokens` keeps this a plain request rather than one streamed behind the scenes.
+                await Agent(model).run('Hello', model_settings={'max_tokens': 1024})
 
     assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
