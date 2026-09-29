@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import asdict, dataclass, field
@@ -62,7 +63,7 @@ with try_import() as imports_successful:
         ChatCompletionStreamOutputDelta,
         ChatCompletionStreamOutputUsage,
     )
-    from huggingface_hub.errors import HfHubHTTPError, InferenceTimeoutError
+    from huggingface_hub.errors import HfHubHTTPError
 
     from pydantic_ai.models.huggingface import HuggingFaceModel
     from pydantic_ai.providers.huggingface import HuggingFaceProvider
@@ -675,7 +676,8 @@ def _connect_error(request: httpx.Request) -> httpx.Response:
 
 
 def _timeout(request: httpx.Request) -> httpx.Response:
-    raise TimeoutError
+    # `huggingface_hub` converts `asyncio.TimeoutError` (distinct from the builtin on Python 3.10) to `InferenceTimeoutError`.
+    raise asyncio.TimeoutError
 
 
 def _stream_breaking_off(request: httpx.Request) -> httpx.Response:
@@ -687,12 +689,12 @@ def _stream_breaking_off(request: httpx.Request) -> httpx.Response:
 
 
 @pytest.mark.parametrize(
-    ('handler', 'stream', 'cause'),
+    ('handler', 'stream', 'cause_name'),
     [
-        pytest.param(_connect_error, False, httpx.ConnectError, id='connect'),
-        pytest.param(_connect_error, True, httpx.ConnectError, id='stream-connect'),
-        pytest.param(_timeout, False, InferenceTimeoutError, id='timeout'),
-        pytest.param(_stream_breaking_off, True, httpx.ReadError, id='mid-stream'),
+        pytest.param(_connect_error, False, 'ConnectError', id='connect'),
+        pytest.param(_connect_error, True, 'ConnectError', id='stream-connect'),
+        pytest.param(_timeout, False, 'InferenceTimeoutError', id='timeout'),
+        pytest.param(_stream_breaking_off, True, 'ReadError', id='mid-stream'),
     ],
 )
 async def test_model_transport_error(
@@ -700,7 +702,7 @@ async def test_model_transport_error(
     monkeypatch: pytest.MonkeyPatch,
     handler: Callable[[httpx.Request], httpx.Response],
     stream: bool,
-    cause: type[Exception],
+    cause_name: str,
 ) -> None:
     """`huggingface_hub` doesn't wrap transport failures; a cassette can't replay one, so a mock transport raises it."""
     monkeypatch.setattr(
@@ -718,7 +720,7 @@ async def test_model_transport_error(
             await agent.run('hello')
 
     assert type(exc_info.value) is ModelAPIError
-    assert isinstance(exc_info.value.__cause__, cause)
+    assert type(exc_info.value.__cause__).__name__ == cause_name
 
 
 def test_model_status_error(allow_model_requests: None) -> None:
