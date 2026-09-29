@@ -206,7 +206,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     nodes: list[PageElement] = []
     contentful: set[int] = set()
     text_metrics: dict[int, tuple[int, int]] = {}
-    direct_link_text: dict[int, str] = {}
+    direct_link_text: dict[int, tuple[str, ...]] = {}
     anchors: list[tuple[Tag, int, bool]] = []
     videos: list[tuple[Tag, int, bool]] = []
     code_tags: list[tuple[Tag, int, bool]] = []
@@ -266,7 +266,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             parent_tags: set[str] = {'pre', '_noformat'} if in_pre else {'_noformat'} if noformat else set()
             converted_text = converter.process_text(node, parent_tags)
             text_metrics[id(node)] = (len(converted_text), converted_text.count('`'))
-            direct_link_text[id(node)] = converted_text
+            direct_link_text[id(node)] = (converted_text,)
             if converted_text.strip():
                 contentful.add(id(node))
             # Only converted lines need indentation; collapsed whitespace and escaped characters
@@ -302,10 +302,17 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                     descendant_td.add(node_id)
                 if node_id not in first_sources and child_id in first_sources:
                     first_sources[node_id] = first_sources[child_id]
-            if len(node.contents) == 1 and _upstream_get_conv_fn(converter, node.name) is None:
-                child_text = direct_link_text.get(id(node.contents[0]))
-                if child_text is not None:
-                    direct_link_text[node_id] = child_text
+            if _upstream_get_conv_fn(converter, node.name) is None:
+                child_parts: list[str] = []
+                for child in node.contents:
+                    if isinstance(child, (Comment, Doctype)):
+                        continue
+                    parts = direct_link_text.get(id(child))
+                    if parts is None:
+                        break
+                    child_parts.extend(parts)
+                else:
+                    direct_link_text[node_id] = tuple(child_parts)
             text_metrics[node_id] = (text_length, backticks)
             if node.name in ('hr', 'q', 'td', 'th', 'tr') or (
                 node.name == 'video'
@@ -323,10 +330,10 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 for child in node.contents:
                     if isinstance(child, (Comment, Doctype)):
                         continue
-                    child_text = direct_link_text.get(id(child))
-                    if child_text is None:
+                    anchor_parts = direct_link_text.get(id(child))
+                    if anchor_parts is None:
                         break
-                    candidate_parts.append(child_text)
+                    candidate_parts.extend(anchor_parts)
             autolink = bool(candidate_parts) and ''.join(candidate_parts).replace(r'\_', '_') == href
             if not autolink:
                 text_scan_cost += (depth - 16) * (len(str(href)) + len(title) + title.count('"'))
