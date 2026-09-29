@@ -6547,6 +6547,41 @@ async def test_stream_cancel_guard_suppresses_httpx2_transport_error():
     assert stream.get().state == 'interrupted'
 
 
+async def test_stream_cancel_guard_reraises_transport_error_when_not_cancelled():
+    """A transport error the adapter didn't wrap still propagates when the stream wasn't cancelled."""
+
+    @dataclass
+    class _BrokenStream(models.StreamedResponse):
+        async def _get_event_iterator(self) -> AsyncIterator[Any]:
+            for event in self._parts_manager.handle_text_delta(vendor_part_id=0, content='x'):
+                yield event
+            raise httpx2.ReadError('connection reset')
+
+        async def close_stream(self) -> None:
+            pass  # pragma: no cover
+
+        @property
+        def model_name(self) -> str:
+            return 'httpx2'  # pragma: no cover
+
+        @property
+        def provider_name(self) -> str:
+            return 'httpx2'  # pragma: no cover
+
+        @property
+        def provider_url(self) -> str | None:
+            return None  # pragma: no cover
+
+        @property
+        def timestamp(self) -> _datetime:
+            return _datetime.now(tz=timezone.utc)  # pragma: no cover
+
+    stream = _BrokenStream(models.ModelRequestParameters())
+    with pytest.raises(httpx2.ReadError):
+        async for _ in stream:
+            pass
+
+
 async def test_run_stream_cancel_after_complete():
     agent = Agent(TestModel())
 
