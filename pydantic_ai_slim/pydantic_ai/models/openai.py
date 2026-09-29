@@ -5171,6 +5171,31 @@ def _map_compaction_item(
     )
 
 
+def _web_search_requests(
+    response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
+) -> int:
+    """Return the number of billed native web searches in a Responses API response.
+
+    OpenAI bills native web search per search action (see
+    <https://developers.openai.com/api/docs/guides/tools-web-search>) but doesn't report the count in `usage`.
+    Newer responses carry it as `tool_usage.web_search.num_requests`, which the SDK doesn't type yet; older ones
+    don't, so fall back to counting `search` actions. Reasoning models also emit `open_page` and `find_in_page`
+    actions, which aren't billed as searches. A streamed `in_progress` or `queued` snapshot returns 0: its
+    searches are counted again from the terminal event's response.
+    """
+    if not isinstance(response, responses.Response) or response.status in ('in_progress', 'queued'):
+        return 0
+    match (response.model_extra or {}).get('tool_usage'):
+        case {'web_search': {'num_requests': int() as num_requests}}:
+            return num_requests
+        case _:
+            return sum(
+                1
+                for item in response.output
+                if isinstance(item, responses.ResponseFunctionWebSearch) and item.action.type == 'search'
+            )
+
+
 def _map_usage(
     response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
     provider: str,
@@ -5178,18 +5203,7 @@ def _map_usage(
     model: str,
 ) -> usage.RequestUsage:
     response_usage = response.usage
-    # OpenAI bills native web search per search action (see
-    # <https://developers.openai.com/api/docs/guides/tools-web-search>) but never reports the count in `usage`,
-    # so count the `web_search_call` output items here. Reasoning models also emit `open_page` and
-    # `find_in_page` actions, which aren't searches and aren't billed as one. A streamed `in_progress` or
-    # `queued` snapshot is skipped: its searches are counted again from the terminal event's response.
-    web_search_requests = 0
-    if isinstance(response, responses.Response) and response.status not in ('in_progress', 'queued'):
-        web_search_requests = sum(
-            1
-            for item in response.output
-            if isinstance(item, responses.ResponseFunctionWebSearch) and item.action.type == 'search'
-        )
+    web_search_requests = _web_search_requests(response)
     if response_usage is None:
         if web_search_requests:
             return usage.RequestUsage(
@@ -5232,7 +5246,7 @@ def _map_usage(
         details=details,
     )
     # genai-prices prices `web_searches` straight off the usage object (its OpenAI extractors have no mapping
-    # for it since the count never appears in the wire `usage`), so lift the count we found in the output items.
+    # for it since the count never appears in the wire `usage`), so lift the count found above.
     # It isn't a declared field, so it's set the way `RequestUsage.__init__` sets extra units.
     if web_search_requests:
         setattr(request_usage, 'web_searches', web_search_requests)

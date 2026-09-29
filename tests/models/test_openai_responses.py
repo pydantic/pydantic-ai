@@ -4746,14 +4746,13 @@ async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(all
     )
 
 
-async def test_openai_responses_web_search_usage_counts_search_actions_only(
+async def test_openai_responses_web_search_usage_reported_count(
     allow_model_requests: None, openai_api_key: str, vcr: Cassette
 ):
-    """Only `search` actions are billed web searches; `open_page` and `find_in_page` actions are not.
+    """The web search count comes from OpenAI's own `tool_usage.web_search.num_requests`.
 
-    OpenAI's raw response carries its own billed count in `tool_usage.web_search.num_requests`, which the SDK
-    doesn't type and the adapter doesn't read. This recording has page actions alongside the searches, and that
-    count matches the `search` actions, not every `web_search_call` item.
+    This recording has `open_page` and `find_in_page` actions alongside the searches, and OpenAI's count matches
+    the `search` actions only, which is what the adapter counts for older responses that lack the field.
     """
     model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key=openai_api_key))
     agent = Agent(
