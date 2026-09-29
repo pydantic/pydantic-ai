@@ -242,7 +242,7 @@ Every input to the agent ends up in one of two places: the state, which is judge
 |---|---|
 | the run's prompt | the whole state when there is no history, otherwise its `text` |
 | the message history | the state's `history`, as user prompts, answers, thinking, tool calls and results, and retry prompts — see [judging a conversation](#judging-a-conversation) |
-| the tool calls and results since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
+| the tool calls, their results and retry prompts since the latest prompt | the state's `done`, with the prompt as `text` — see [judging a conversation](#judging-a-conversation) |
 | a system prompt, including the agent's own `system_prompt=` | the state's `history`, as a `system` entry — [not part of the question](#judging-a-conversation) |
 
 A question can point at a part of the state by its name, such as "Is the request in `text` already answered in `history`?", which TypeSafe [recommend](https://docs.typesafe.ai/model-jaggedness/jev-1.13#indirection) over leaving the model to work out which part is meant.
@@ -875,7 +875,7 @@ The same works for [`decision_boolean_threshold`][pydantic_ai.models.decision.De
 
 ## Judging a conversation
 
-A run's message history goes to the model as `history`: user prompts, answers, thinking, tool calls and their results, and retry prompts, from whichever model produced them. With no new prompt, the conversation is the whole state, so a decision model agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
+A run's message history goes to the model as `history`: user prompts, answers, thinking, tool calls and their results, and retry prompts, from whichever model produced them. With no new prompt, the conversation is what is judged, so a decision model agent given another agent's messages judges that run — and it is the run being judged, so there is nothing to put in the prompt:
 
 ```python
 from pydantic_ai import Agent
@@ -889,7 +889,7 @@ print(result.output)
 #> True
 ```
 
-A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Once a tool has returned since the latest prompt, the state is split at that prompt: the conversation before it is `history`, the prompt is `text`, and everything since — the calls, their results, retry prompts — is `done`, so the text being judged stays the request, whether the agent made those calls itself or they came in a `message_history` that ended partway through a turn. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a `CachePoint` is left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness's compaction](../harness/compaction.md) does.
+A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Once a tool has returned or a retry was sent since the latest prompt, the state is split at that prompt: the conversation before it is `history`, the prompt is `text`, and everything since — the calls, their results, retry prompts — is `done`, so the text being judged stays the request, whether the agent made those calls itself or they came in a `message_history`, such as another agent's finished run. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a `CachePoint` is left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness's compaction](../harness/compaction.md) does.
 
 A model's thinking goes along as a `thinking` entry, where it was in the response, so a question can be about the reasoning itself, such as whether the model considered getting around its tests. Thinking a provider returned only in encrypted form, as a [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] with a `signature` and no text, has nothing to judge and is left out.
 
@@ -1176,7 +1176,7 @@ A decision model does not write text or read files, and it only fills tool argum
 - No more options in one question than the backend's `max_choice_options`, where it sets one. A pick-one field counts its own options, and the route question counts every tool plus every output type, so on Jev 255 tools is already one too many once the output type is counted beside them.
 - The model needs something to ask. A run with no user text and no history has nothing to judge, and an `output_type` with no fields to fill — a lone argumentless output function — leaves no question to ask unless there is more than one route to pick between.
 
-A decision model does not revise an answer the way a language model does. Its previous answer and the validator's complaint both go back in the history, so they are part of what it judges, but the question is unchanged and a confident answer does not move: an output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] usually gets the same answer again, and one that keeps rejecting runs the agent out of retries.
+A decision model does not revise an answer the way a language model does. Its previous answer and the validator's complaint both go back under the state's `done`, so they are part of what it judges, but the question is unchanged and a confident answer does not move: an output validator that raises [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] usually gets the same answer again, and one that keeps rejecting runs the agent out of retries.
 
 ## Implementing a decision model
 

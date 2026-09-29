@@ -1,8 +1,8 @@
 """Tests for xAI model integration.
 
 The xAI SDK uses gRPC for all calls (including executing built-in tools like `code_execution`,
-`web_search`, and `mcp_server` server-side). Since VCR doesn't support gRPC, we cannot
-record/replay these interactions like we do with HTTP APIs.
+`web_search`, and `mcp_server` server-side), so these calls don't go through the HTTP cassettes
+the other model tests use.
 
 Instead, we use two strategies:
 - A **custom recorder** for xAI SDK interactions where possible (gRPC-aware recording/replay)

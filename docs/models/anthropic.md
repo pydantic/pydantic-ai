@@ -110,6 +110,8 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
+Anthropic requires [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which thinking counts toward. When you don't set it, Pydantic AI sends 16384, or 4096 on models older than Claude Sonnet 4.5, which reject a request whose input plus `max_tokens` exceeds the context window. Those are recognized by model name, so set `max_tokens` yourself if you reach one through a Bedrock ARN or a custom deployment name.
+
 ### Service tier
 
 Anthropic supports controlling the [service tier](https://platform.claude.com/docs/en/api/service-tiers) to manage latency and throughput.
@@ -129,7 +131,7 @@ You can use Anthropic models through cloud platforms by passing a custom client 
 
 To use Claude models via [AWS Bedrock](https://aws.amazon.com/bedrock/claude/), follow the [Anthropic documentation](https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock) on how to set up a Bedrock client and then pass it to `AnthropicProvider`. Both the newer `AsyncAnthropicBedrockMantle` client (recommended by Anthropic, using the Messages API) and the legacy `AsyncAnthropicBedrock` client (using the `InvokeModel` API with ARN-versioned model IDs) are supported:
 
-```python {test="skip" typecheck="skip - anthropic's `__all__` omits this client, so pyright reports it as not exported"}
+```python {test="skip" typecheck="skip - anthropic's __all__ omits this client, so pyright reports it as not exported"}
 from anthropic import AsyncAnthropicBedrockMantle
 
 from pydantic_ai import Agent
@@ -156,7 +158,7 @@ agent = Agent(model)
 
 To use Claude models via [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude), follow the [Anthropic documentation](https://docs.anthropic.com/en/api/claude-on-vertex-ai) on how to set up an `AsyncAnthropicVertex` client and then pass it to `AnthropicProvider`:
 
-```python {test="skip" typecheck="skip - anthropic's `__all__` omits this client, so pyright reports it as not exported"}
+```python {test="skip" typecheck="skip - anthropic's __all__ omits this client, so pyright reports it as not exported"}
 from anthropic import AsyncAnthropicVertex
 
 from pydantic_ai import Agent

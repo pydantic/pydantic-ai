@@ -69,9 +69,9 @@ The `Thinking` capability maps each effort value to the selected provider's nati
 ## OpenAI
 
 When using the [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], text output inside `<think>` tags is converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
-You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](../models/openai.md#model-profile).
+You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](../models/compatible-apis.md#model-profile).
 
-Some [OpenAI-compatible model providers](../models/openai.md#openai-compatible-models) might also support native thinking parts that are not delimited by tags. Instead, they are sent and received as separate, custom fields in the API. Typically, if you are calling the model via the `<provider>:<model>` shorthand, Pydantic AI handles it for you. Nonetheless, you can still configure the fields with [`openai_chat_thinking_field`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_thinking_field].
+Some [OpenAI-compatible model providers](../models/overview.md#openai-compatible-providers) might also support native thinking parts that are not delimited by tags. Instead, they are sent and received as separate, custom fields in the API. Typically, if you are calling the model via the `<provider>:<model>` shorthand, Pydantic AI handles it for you. Nonetheless, you can still configure the fields with [`openai_chat_thinking_field`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_thinking_field].
 
 If your provider recommends sending these custom fields back unchanged for caching or interleaved thinking, use [`openai_chat_send_back_thinking_parts`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_send_back_thinking_parts].
 
@@ -120,7 +120,7 @@ agent = Agent(model, model_settings=settings)
 ...
 ```
 
-The thinking budget counts toward [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which Anthropic requires to be greater than the budget. When you don't set `max_tokens`, Pydantic AI sends the budget plus its usual default of 4096 for the answer.
+The thinking budget counts toward [`max_tokens`][pydantic_ai.settings.ModelSettings.max_tokens], which Anthropic requires to be greater than the budget. When you don't set `max_tokens`, Pydantic AI raises its [default](../models/anthropic.md#model-settings) as needed to leave at least 4096 tokens beyond the budget.
 
 Anthropic reports how many thinking tokens it used in [`RunUsage.details`][pydantic_ai.usage.RunUsage.details] under the `thinking_tokens` key. They are billed within `output_tokens`, so they are a readable subset of the output total rather than an addition to it, and the key is omitted entirely when a response used no thinking tokens.
 
@@ -370,4 +370,4 @@ Thinking is supported by the `command-a-reasoning-08-2025` model. It does not ne
 ## Hugging Face
 
 Text output inside `<think>` tags is automatically converted to [`ThinkingPart`][pydantic_ai.messages.ThinkingPart] objects.
-You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](../models/openai.md#model-profile).
+You can customize the tags using the [`thinking_tags`][pydantic_ai.profiles.ModelProfile.thinking_tags] field on the [model profile](../models/compatible-apis.md#model-profile).
