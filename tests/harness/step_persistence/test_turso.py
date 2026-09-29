@@ -17,7 +17,11 @@ from pathlib import Path
 
 import anyio
 import pytest
-import turso
+
+from tests.conftest import try_import
+
+with try_import() as imports_successful:
+    import turso
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai_harness.media import SqliteMediaStore
@@ -28,6 +32,8 @@ from pydantic_ai_harness.step_persistence import (
     StepEvent,
     ToolEffectRecord,
 )
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pyturso is not installed')
 
 TS = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _Parameters = Sequence[object] | Mapping[str, object]

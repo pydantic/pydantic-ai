@@ -11,9 +11,15 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-import turso
+
+from tests.conftest import try_import
+
+with try_import() as imports_successful:
+    import turso
 
 from pydantic_ai_harness.memory import MemoryConflictError, MemoryOperation, SqliteMemoryStore
+
+pytestmark = pytest.mark.skipif(not imports_successful(), reason='pyturso is not installed')
 
 
 @pytest.fixture
