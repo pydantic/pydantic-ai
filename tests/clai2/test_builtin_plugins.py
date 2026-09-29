@@ -27,6 +27,7 @@ CURATED = {
     'logfire',
     'notifications',
     'mcp',
+    'updates',
     'github',
     'pylon',
 }

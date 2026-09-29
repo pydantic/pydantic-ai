@@ -98,6 +98,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='logfire', factory='pydantic_clai2.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
+    PluginSettings(id='updates', factory='pydantic_clai2.updates'),
     PluginSettings(id='github', factory='pydantic_clai2.github', enabled=False),
     PluginSettings(id='pylon', factory='pydantic_clai2.pylon', enabled=False),
 )

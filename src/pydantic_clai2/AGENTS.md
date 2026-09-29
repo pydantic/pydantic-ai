@@ -229,6 +229,7 @@ bundled palettes use Termflow defaults.
 | `speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
 | `eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
+| `updates.py` | the default-enabled `updates` plugin: one background PyPI check, shown as a status segment |
 | `theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()` |
 | `theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
 | `spinners.py` | the working-animation catalogue: builtins, plugin `host.spinner`, the user's `spinners.json`, `Spinners` |
