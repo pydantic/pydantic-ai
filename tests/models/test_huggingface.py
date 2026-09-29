@@ -664,21 +664,25 @@ def test_model_status_error(allow_model_requests: None) -> None:
 
 
 @pytest.mark.parametrize(
-    ('error', 'error_class'),
+    ('error_kind', 'error_class'),
     [
-        pytest.param(OverloadedError('Model is overloaded'), ModelOverloadedError, id='overloaded'),
-        pytest.param(GenerationError('Model is overloaded'), ModelAPIError, id='generation'),
+        pytest.param('overloaded', ModelOverloadedError, id='overloaded'),
+        pytest.param('generation', ModelAPIError, id='generation'),
     ],
 )
 @pytest.mark.parametrize('first_chunk', [True, False], ids=['first-chunk', 'mid-stream'])
 async def test_stream_error_object_raises_model_api_error(
-    allow_model_requests: None, first_chunk: bool, error: Exception, error_class: type[ModelAPIError]
+    allow_model_requests: None,
+    first_chunk: bool,
+    error_kind: Literal['overloaded', 'generation'],
+    error_class: type[ModelAPIError],
 ) -> None:
     """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces as
     `ModelAPIError`, with no status code invented for it.
 
     https://github.com/pydantic/pydantic-ai/issues/8722
     """
+    error = (OverloadedError if error_kind == 'overloaded' else GenerationError)('Model is overloaded')
     stream: list[MockStreamEvent] = [error] if first_chunk else [text_chunk('Hello'), error]
     mock_client = MockHuggingFace.create_stream_mock(stream)
     model = HuggingFaceModel('m', provider=HuggingFaceProvider(hf_client=mock_client, api_key='x'))
