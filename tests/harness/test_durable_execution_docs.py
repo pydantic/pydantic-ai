@@ -36,6 +36,8 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
+@pytest.mark.temporal
+@pytest.mark.xdist_group(name='harness-temporal')
 @skip_temporal_sandbox_on_314
 def test_temporal_example(workspace: Path) -> None:
     pytest.importorskip('temporalio')
