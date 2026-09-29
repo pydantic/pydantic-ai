@@ -11,6 +11,7 @@ from .._run_context import AgentDepsT, RunContext
 from .._utils import gather
 from ..exceptions import UserError
 from ..messages import InstructionPart
+from ._instruction_collection import flatten_instruction_contributions
 from .abstract import AbstractToolset, ToolsetTool
 
 
@@ -35,7 +36,7 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return None  # pragma: no cover
+        return None
 
     @property
     def label(self) -> str:
@@ -95,7 +96,13 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         assert isinstance(tool, _CombinedToolsetTool)
-        return await tool.source_toolset.call_tool(name, tool_args, ctx, tool.source_tool)
+        # Dispatch with the `tool_def` from the tool we were handed, not the one `source_tool` cached at
+        # `get_tools()` time: a toolset wrapping this one (like `PreparedToolset`) may have changed it since.
+        # The `toolset_id` on our outward-facing `tool_def` is ours to set, so the source toolset gets its own back.
+        source_tool_def = replace(tool.tool_def, toolset_id=tool.source_tool.tool_def.toolset_id)
+        return await tool.source_toolset.call_tool(
+            name, tool_args, ctx, replace(tool.source_tool, tool_def=source_tool_def)
+        )
 
     def apply(self, visitor: Callable[[AbstractToolset[AgentDepsT]], None]) -> None:
         for toolset in self.toolsets:
@@ -106,13 +113,13 @@ class CombinedToolset(AbstractToolset[AgentDepsT]):
     ) -> AbstractToolset[AgentDepsT]:
         return replace(self, toolsets=[toolset.visit_and_replace(visitor) for toolset in self.toolsets])
 
-    async def get_instructions(self, ctx: RunContext[AgentDepsT]) -> list[str | InstructionPart] | None:
-        results = await gather(*(ts.get_instructions(ctx) for ts in self.toolsets))
-        parts: list[str | InstructionPart] = []
-        for r in results:
-            if r is not None:
-                if isinstance(r, (str, InstructionPart)):
-                    parts.append(r)
-                else:
-                    parts.extend(r)
-        return parts or None
+    async def get_instructions(
+        self, ctx: RunContext[AgentDepsT]
+    ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
+        return flatten_instruction_contributions(await self._collect_child_instruction_contributions(ctx)) or None
+
+    def _instruction_children(self) -> Sequence[AbstractToolset[AgentDepsT]]:
+        return self.toolsets
+
+    def _authors_own_instructions(self) -> bool:
+        return type(self).get_instructions is not CombinedToolset.get_instructions

@@ -12,6 +12,20 @@ env:
   COLUMNS: 150
   UV_PYTHON: 3.12
   UV_FROZEN: "1"
+  # Ubuntu's system interpreters are older and slower than uv's optimized managed builds.
+  UV_PYTHON_PREFERENCE: only-managed
+  # Authenticate the Git fetches uv makes for Git-sourced dependencies. Anonymous HTTPS clones are
+  # capped per client IP, and runners that share an egress pool exhaust that budget as a matrix
+  # fans out, at which point GitHub answers with a credential challenge that surfaces as
+  # `could not read Username for 'https://github.com'` and fails the install before any test runs.
+  # `GIT_CONFIG_*` applies to every `uv sync` and implicit `uv run` sync without writing credentials
+  # into the checkout, so `actions/checkout`'s `persist-credentials: false` still holds.
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
+  GIT_CONFIG_VALUE_0: https://github.com/
+  # Pin the testmon coverage cache while its upstream integration is evaluated.
+  # Install it into the synced environment; uv --with rebuilds workspace packages in a temporary overlay.
+  TESTMON_PACKAGE: "git+https://github.com/Kludex/pytest-testmon@574bf98677878e42007abd2aaa232ebb77c3edd7"
 
 permissions:
   contents: read
@@ -24,8 +38,109 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  lint:
-    name: lint
+  classify:
+    name: classify changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      clai2_only: ${{ steps.classify.outputs.clai2_only }}
+      pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
+    steps:
+      - name: Classify pull request changes
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          run_all_checks() {
+            echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
+            echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            run_all_checks
+            exit 0
+          fi
+
+          if ! total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files'); then
+            echo '::warning::Could not read the PR changed-file count; running full CI.'
+            run_all_checks
+            exit 0
+          fi
+          if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
+            echo '::warning::Could not list the PR changed files; running full CI.'
+            run_all_checks
+            exit 0
+          fi
+
+          mapfile -t changed_files < "$RUNNER_TEMP/changed-files.txt"
+          if [ "$total" -eq 0 ] || [ "${#changed_files[@]}" -ne "$total" ]; then
+            echo "::warning::Expected $total changed files, received ${#changed_files[@]}; running full CI."
+            run_all_checks
+            exit 0
+          fi
+
+          is_docs_markdown() {
+            case "$1" in
+              README.md|docs/*.md|examples/*.md) ;;
+              *) return 1 ;;
+            esac
+            case "$1" in
+              AGENTS.md|CLAUDE.md|*/AGENTS.md|*/CLAUDE.md) return 1 ;;
+            esac
+          }
+
+          # Nothing outside `pydantic-clai2` imports it, so a change confined to these paths cannot
+          # break another package's suite: it runs only the `pydantic-clai2` test cells, and skips
+          # the jobs that exercise the rest of the workspace. Shared inputs (`pyproject.toml`,
+          # `uv.lock`, `tests/conftest.py`, ...) are outside them and still run everything.
+          is_clai2() {
+            case "$1" in
+              src/pydantic_clai2/*|tests/clai2/*) ;;
+              *) return 1 ;;
+            esac
+          }
+
+          is_pyright_input() {
+            # All Python/stub files conservatively cover Pyright's include and import graph;
+            # the remaining paths change its command, configuration, dependencies, or this gate.
+            case "$1" in
+              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|*/pyrightconfig*.json|Makefile|.github/workflows/ci.yml) ;;
+              *) return 1 ;;
+            esac
+          }
+
+          docs_only=true
+          clai2_only=true
+          pyright_changed=false
+          for changed_file in "${changed_files[@]}"; do
+            IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
+            if ! is_docs_markdown "$filename" || \
+              { [ -n "$previous_filename" ] && ! is_docs_markdown "$previous_filename"; }; then
+              docs_only=false
+            fi
+            if ! is_clai2 "$filename" || \
+              { [ -n "$previous_filename" ] && ! is_clai2 "$previous_filename"; }; then
+              clai2_only=false
+            fi
+            if is_pyright_input "$filename" || \
+              { [ -n "$previous_filename" ] && is_pyright_input "$previous_filename"; }; then
+              pyright_changed=true
+            fi
+          done
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
+          echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
+
+  quality:
+    name: quality checks
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
     runs-on: ubuntu-latest
     # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
     # it works today on `contents: read` alone only because this repo is public; declaring
@@ -44,17 +159,12 @@ jobs:
           enable-cache: true
           cache-suffix: lint
 
+      # `--no-extra mcp-tasks` everywhere `--all-extras` appears: the extra lives in the
+      # FastMCP 4 / MCP SDK v2 lock fork, which `tool.uv.conflicts` bars from co-installing
+      # with the FastMCP 3 dev environment (the `test-fastmcp-4` job covers that universe).
       - name: Install dependencies
-        run: uv sync --all-extras --all-packages --group lint
-
-      # pyright typechecks the gh-aw shim (.github/scripts/pydantic_ai_gh_aw_shim),
-      # which imports pydantic-ai-harness. The harness depends on pydantic-ai-slim,
-      # whose name is shadowed by the workspace member, so keeping it in the
-      # universal lock breaks the lowest-direct re-resolution. Install it into the
-      # synced venv out-of-band instead (--no-deps: pydantic-ai-slim is already
-      # present from the workspace). Keep the pin in sync with the runner's
-      # (.github/scripts/pydantic-ai-runner).
-      - run: uv pip install --no-deps "pydantic-ai-harness==0.7.0"
+        id: install
+        run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
       - name: Test GitHub agentic workflow policy
         env:
@@ -62,19 +172,67 @@ jobs:
         run: >-
           uv run pytest
           .github/scripts/test_pydantic_ai_runner.py
+          .github/scripts/test_check_api_compatibility.py
           .github/scripts/test_issue_pr_attention_monitor.py
+          .github/scripts/test_semantic_owner_router.py
+          .github/scripts/test_community_demand.py
+          .github/scripts/test_triage_telemetry.py
+          .github/scripts/test_feature_digest.py
           .github/scripts/test_agentic_workflow_guard.py
           .github/scripts/test_agent_spend_report.py
+          .github/scripts/test_docs_navigation_workflow.py
+          .github/scripts/test_protect_github_dir.py
+
+      # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
+      # answer here silently stops type errors reaching a developer's terminal.
+      # It lives outside `testpaths`, in the job that installs Pyright, because one of its
+      # tests runs Pyright for real.
+      - name: Test the incremental typecheck script
+        env:
+          UV_NO_SYNC: "1"
+        run: uv run pytest scripts/test_typecheck_changed.py
+
+      # `uv run --script` in the smoke test below silently re-locks a stale runner lock, so
+      # it can't catch one. A change to the runner's dependencies, `pydantic_ai_slim`'s
+      # included, must refresh it.
+      - name: Check the gh-aw runner's script lock is up to date
+        run: >-
+          uv lock --script .github/scripts/pydantic-ai-runner --check
+          || { echo "::error file=.github/scripts/pydantic-ai-runner.lock::Stale gh-aw runner lock; run: uv lock --script .github/scripts/pydantic-ai-runner"; exit 1; }
+
+      # The tests above import the shim inside this job's workspace venv, which is not
+      # the environment it runs in: gh-aw executes it via `uv run --script` against the
+      # runner's own locked dependency set. Run it there, with no argv, so it reaches
+      # the empty-prompt short-circuit without touching the network. This catches
+      # general shim breakage — a syntax error, a bad import, a module the runner lock
+      # doesn't carry. It is not what guards against importing an unreleased
+      # `pydantic_ai` symbol: the runner's workspace source (#6998) does that, by making
+      # the shim's library the same checkout as its code. The shim exits non-zero on
+      # that path, so the assertion is on its output, never its status: `|| true` holds
+      # whether or not the shell has `pipefail` (the default `run` shell here is
+      # `bash -e`, but `shell: bash` would add it).
+      - name: Smoke-test the gh-aw shim against the runner's own dependencies
+        run: |
+          uv run --script .github/scripts/pydantic-ai-runner 2>&1 | tee /tmp/shim-smoke.log || true
+          grep -q 'empty prompt' /tmp/shim-smoke.log
 
       # Every check except lock freshness reads the tree alone, so run them on `main`
       # too. Two independently-green PRs can still merge into a drifted `main` — the
       # classic case being one that bumps the gh-aw compiler while another adds a lock
-      # at the old version — and without this the drift first surfaces as a red `lint`
+      # at the old version — and without this the drift first surfaces as a red `quality checks`
       # on whichever contributor next opens a PR, about workflows they never touched.
+      - name: Fetch gh-aw compatibility policy
+        run: >-
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors
+          https://raw.githubusercontent.com/github/gh-aw/main/.github/aw/compat.json
+          --output /tmp/gh-aw-compat.json
+
       - name: Check agentic workflow policy
         env:
           UV_NO_SYNC: "1"
-        run: uv run python .github/scripts/agentic_workflow_guard.py check
+        run: >-
+          uv run python .github/scripts/agentic_workflow_guard.py check
+          --compatibility-file /tmp/gh-aw-compat.json
 
       # Actions runs the `*.lock.yml`, never the `*.md`, so a source edited without
       # its recompiled lock is a silent no-op. The checkout is shallow, so feed the
@@ -112,15 +270,69 @@ jobs:
           extra_args: --all-files --verbose
         env:
           SKIP: no-commit-to-branch
-          # pre-commit hooks shell out via `uv run`; without this they would
-          # re-sync the venv and drop the out-of-band harness install above.
+          # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
+          # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
 
-      - run: uv build --all-packages
-      - run: ls -lh dist/
+      # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
+      # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
+      # that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
+      # policy check does not hide type errors.
+      - name: Type-check with Pyright
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        env:
+          # The `Makefile` leaves pyright single-process by default, for laptops where a worker
+          # per core swaps. A runner has the memory, and this step is the longest in the job, so
+          # CI opts back in.
+          PYRIGHT_THREADS: auto
+          # Fail a passing pyright run that outlasts this many seconds, so a change that makes
+          # pyright itself slow fails its own PR instead of `main`. #8077 made pyright slow and
+          # nothing caught it (see #8177): pyright ran 328 to 490 s over the five `main` runs
+          # between those two. The budget was 110 (1.1x the p99 of 60 main runs, derived in
+          # https://github.com/pydantic/pydantic-ai/issues/8182#issuecomment-5575016259), but by
+          # 2026-09-23 pyright ran 66 to 111 s on the same day's main runs (runner variance alone
+          # spans about 30 s); the pyright 1.1.414 bump (#8690) and type-checking docs examples (#8646)
+          # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
+          # 150 leaves room for that variance while still failing a regression like #8077's 328 to
+          # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
+          # 156 s, so 200 keeps the same headroom.
+          PYRIGHT_TIME_BUDGET: "200"
+          UV_NO_SYNC: "1"
+        run: make typecheck-changed
 
-  # mypy and lint are a bit slower than other jobs, so we run them separately
+      # Run inside `quality checks`, which finishes several minutes before the test/coverage critical path.
+      - name: Check public API compatibility with the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UV_NO_SYNC: "1"
+        run: |
+          # Exclude the tag being built: once its GitHub release exists, `gh release view`
+          # would otherwise compare the release to itself and make this gate a no-op.
+          release_tag=$(gh release list --repo pydantic/pydantic-ai --limit 20 \
+            --exclude-drafts --exclude-pre-releases --json tagName \
+            | jq -r --arg current "$GITHUB_REF_NAME" \
+              'map(select(.tagName != $current))[0].tagName // empty')
+          if [ -z "$release_tag" ]; then
+            echo '::error::Could not find a prior stable release for the API compatibility baseline.'
+            exit 1
+          fi
+          git fetch --depth=1 origin tag "$release_tag"
+          uv run python .github/scripts/check_api_compatibility.py --against "$release_tag"
+
+      # `src/pydantic_ai_harness/gh-aw/pydantic.md` is the engine definition gh-aw consumers compile
+      # from the default branch, so nothing downstream re-checks it. `--published` refuses an
+      # `engine.version` PyPI does not serve.
+      - run: uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py --published
+
+      - run: uv build --all-packages --no-sources
+      - run: uv run python .github/scripts/check_http_dependencies.py
+      - run: ls -lh dist/
+      - run: uvx twine check --strict dist/*
+
+  # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -137,7 +349,9 @@ jobs:
 
       - run: make typecheck-mypy
 
-  docs:
+  # The unified-docs repository renders and validates published documentation.
+  # Keep this source-repository check for assets that live alongside Pydantic AI docs.
+  docs-assets:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -147,58 +361,110 @@ jobs:
       - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
         with:
           enable-cache: true
-          cache-suffix: docs
+          cache-suffix: docs-assets
 
-      - run: uv sync --group docs
-
-      - run: make docs
-
-      - run: tree -sh site
-
-      - name: Store docs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: site
-          path: site
-
-      # check all docs images are tinified, You'll need an API key from https://tinify.com/ to fix this if it fails
+      # Check all documentation images are tinified. You will need a Tinify API key to fix failures.
       - run: uvx tinicly docs --check
+
+      # Check that links between doc pages resolve, including their `#anchor` fragments. Runs
+      # `--offline` so only local files are checked: external hosts are swept weekly by
+      # link-check.yml instead, where being down doesn't block a PR.
+      - name: Check doc links and heading anchors
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2.8.0
+        with:
+          args: --no-progress --offline --include-fragments --config .github/workflows/lychee.toml './docs/**/*.md' './*.md' './examples/**/*.md'
+          fail: true
+
+  # Documentation examples are runtime-checked on one representative Python version. A
+  # version-specific miss is low-impact and easy to repair, while multiplying this job across
+  # the support matrix would recreate much of the CI cost this reduced path avoids.
+  docs-only:
+    name: docs-only checks on Python 3.13
+    needs: classify
+    if: needs.classify.outputs.docs_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: true
+      # Match the all-extras cells in the full matrix: optional SDKs make blocking-call
+      # detection noisy, while the dedicated 3.13 non-all-extras cells still cover it.
+      BLOCKBUSTER_ENABLED: false
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: docs-only
+
+      - name: Install documentation test dependencies
+        run: uv sync --all-extras --no-extra mcp-tasks --all-packages
+
+      - name: Check Markdown files
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+        with:
+          extra_args: --all-files --verbose
+        env:
+          SKIP: no-commit-to-branch,format,lint,check-cassettes
+          UV_NO_SYNC: "1"
+
+      - name: Test documentation snippets
+        run: uv run --no-sync pytest tests/test_examples.py -n logical --dist=loadgroup
 
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
-    # Use Ubicloud 4-core runners for all-extras (the slowest variant) when run by maintainers or opted in via 'ci:fast' label
-    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
-    # `github.event.pull_request` is null on push/tag runs, so those need their own clause to
-    # reach Ubicloud -- without it main and release runs silently fall back to `ubuntu-latest`.
-    runs-on: >-
-      ${{
-        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
-        && matrix.install.name == 'all-extras'
-        && (
-          github.event_name == 'push'
-          || github.event.pull_request.head.repo.full_name == github.repository
-          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
-        )
-        && 'ubicloud-premium-4'
-        || 'ubuntu-latest'
-      }}
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
+        # `latest-versions-canary.yml` runs the endpoints of this list; update it alongside.
+        # Growing this or any other test matrix grows the tracked-job count that
+        # `REPORT_ROW_LIMIT` in `.github/scripts/ci_duration.py` must stay above, or the duration
+        # report truncates. That constant's comment enumerates all four.
+        # `all-extras` is the slowest install shape -- it runs sharded in `test-all-extras` instead.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
           - name: pydantic-evals
             command: "--package pydantic-evals"
+          # The extras its suite always ran with; every other extra is covered by `all-extras`.
+          - name: pydantic-ai-harness
+            command: "--package pydantic-ai-harness --extra code-mode --extra coder --extra logfire"
+            # Its own suite: the rest of `tests/` is covered by the other cells.
+            paths: tests/harness
+          - name: pydantic-clai2
+            command: "--package pydantic-clai2"
+            paths: tests/clai2
           - name: standard
             command: ""
-          - name: all-extras
-            command: "--all-extras"
+        # A single-value dimension, so the `exclude` below can drop every cell but
+        # `pydantic-clai2` when `classify` found a change confined to it.
+        clai2_only: ["${{ needs.classify.outputs.clai2_only }}"]
+        exclude:
+          - clai2_only: "true"
+            install: { name: pydantic-ai-slim }
+          - clai2_only: "true"
+            install: { name: pydantic-evals }
+          - clai2_only: "true"
+            install: { name: pydantic-ai-harness }
+          - clai2_only: "true"
+            install: { name: standard }
     env:
       CI: true
-      COVERAGE_PROCESS_START: ./pyproject.toml
+      # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
+      # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
+      # every applicable test without duplicate coverage. A `pydantic-clai2`-only change also
+      # collects it on 3.10: `tests/clai2` has 3.10-only branches that `all-extras` covers otherwise.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.10' }}
+      BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
+      CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -214,27 +480,131 @@ jobs:
 
       - run: uv sync --only-dev
 
+      - name: cache incremental coverage
+        if: env.COLLECT_COVERAGE == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .testmon-cache
+          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.install.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.install.name }}-
+
+      # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
+      # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
+      # runners want. `psutil` is not in `uv.lock` and `UV_FROZEN` pins CI to it, so both
+      # spellings resolve to the same count today; the flag is here for when that stops
+      # being true.
+      # Everything under `tests/durable_exec` and every test marked `temporal` runs in
+      # `test-durable-exec` instead: those tests pin xdist groups around real local servers, so
+      # the chains they form would otherwise be the critical-path floor of the all-extras cells --
+      # the other install variants skip the suites at module level, for want of the engine packages.
+      # Its `lowest` leg proves the minimum `temporalio`/`dbos`/`prefect` bounds.
+      - name: run tests
+        shell: bash
+        run: |
+          extra=()
+          if [[ -n "$CLAI2_EXTRA" ]]; then
+            extra=(--extra "$CLAI2_EXTRA")
+          fi
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
+            uv run ${{ matrix.install.command }} "${extra[@]}" python -c 'pass'
+            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
+            uv_extra=(--no-sync)
+            runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
+              --output "$COVERAGE_FILE.testmon" --)
+          else
+            unset COVERAGE_PROCESS_START
+            uv_extra=()
+            runner=(pytest)
+          fi
+          uv run ${{ matrix.install.command }} "${extra[@]}" "${uv_extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+            --ignore=tests/durable_exec -m "not temporal" ${{ matrix.install.paths }}
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+
+      # The runner merges per-worker data into its cached output. Combine its output and any
+      # subprocess fragments here so the final coverage job receives one file per matrix leg.
+      - name: combine coverage files
+        if: env.COLLECT_COVERAGE == 'true'
+        shell: bash
+        run: |
+          extra=()
+          if [[ -n "$CLAI2_EXTRA" ]]; then
+            extra=(--extra "$CLAI2_EXTRA")
+          fi
+          uv run ${{ matrix.install.command }} "${extra[@]}" coverage combine
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+
+      - name: store coverage files
+        if: env.COLLECT_COVERAGE == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ matrix.python-version }}-${{ matrix.install.name }}
+          path: .coverage
+          include-hidden-files: true
+
+  # `all-extras` is the slowest install shape by a wide margin -- it alone pulls in every
+  # optional dependency -- so it gets its own job, split into shards, instead of sharing the
+  # `test` job's timeout budget with the three much lighter install shapes.
+  test-all-extras:
+    name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/2)
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        shard: [1, 2]
+    env:
+      CI: true
+      # Collect every shard on 3.14, where coverage uses the faster sys.monitoring core, plus
+      # every shard on 3.10 for version-specific branches -- both are combined across shards
+      # and install shapes in the `coverage` job. The other versions run without duplicate
+      # coverage.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.10' }}
+      # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
+      # compatible version; re-enable if a shard then stays comfortably within its timeout.
+      BLOCKBUSTER_ENABLED: false
+      # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
+      TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-suffix: all-extras
+
+      - run: mkdir .coverage
+
+      - run: uv sync --only-dev
+
+      - name: cache incremental coverage
+        if: env.COLLECT_COVERAGE == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .testmon-cache
+          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-all-extras-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-all-extras-${{ matrix.shard }}-
+
       # Cache only the immutable model used by `TestSentenceTransformers`. The old
       # shared HF cache could be populated first by a matrix job that never downloaded
       # this model, permanently turning an exact cache hit into a cold model cache.
       - name: restore sentence-transformers test model
         id: sentence-transformers-cache
-        if: matrix.python-version != '3.14' && matrix.install.name == 'all-extras'
+        if: matrix.python-version != '3.14'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
-
-      # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
-      # tests/test_temporal.py); cache it so a CDN hiccup can't fail the suite at setup (#5399).
-      - name: cache Temporal dev-server binary
-        if: matrix.install.name == 'all-extras' && matrix.python-version != '3.14'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/temporal-dev-server
-          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-${{ hashFiles('**/uv.lock') }}
-          restore-keys: |
-            temporal-cli-${{ runner.os }}-${{ runner.arch }}-locked-
 
       # Warm the HF cache out-of-band (retried, non-fatal) so the sentence-transformers
       # test model is on disk when the ST tests load it: the pinned revision is then
@@ -244,17 +614,17 @@ jobs:
       # cached snapshot must not depend on which resolution flavor warmed it — then
       # construct the model once to prove it is usable before saving. On a sustained
       # HF outage the real-model smoke tests skip; deterministic adapter tests still
-      # preserve coverage.
+      # preserve coverage. Both shards race to warm/save this key; the loser's save is a
+      # harmless no-op against the already-populated cache.
       - name: pre-download sentence-transformers test model
         id: sentence-transformers-download
         if: >-
-          matrix.install.name == 'all-extras'
-          && matrix.python-version != '3.14'
+          matrix.python-version != '3.14'
           && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: |
           for i in 1 2 3; do
-            if uv run --all-extras python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
+            if uv run --all-extras --no-extra mcp-tasks python -c "from huggingface_hub import snapshot_download; from sentence_transformers import SentenceTransformer; snapshot_download('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4'); SentenceTransformer('sentence-transformers-testing/stsb-bert-tiny-safetensors', revision='f3cb857cba53019a20df283396bcca179cf051a4')"; then
               exit 0
             fi
             echo "HF model download attempt $i failed; retrying in 15s..."
@@ -266,8 +636,7 @@ jobs:
       # A failed non-fatal download must not become an immutable exact cache hit.
       - name: save sentence-transformers test model
         if: >-
-          matrix.install.name == 'all-extras'
-          && matrix.python-version != '3.14'
+          matrix.python-version != '3.14'
           && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
           && steps.sentence-transformers-download.outcome == 'success'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -275,45 +644,203 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical`, not `-n auto`: xdist `auto` counts *physical* cores, which
-      # under-subscribes Ubicloud's hyperthreaded vCPUs (premium-4 -> 2 workers
-      # instead of 4). `logical` uses all vCPUs; ~39% faster on premium-4, no-op
-      # on ubuntu-latest (already 4). See PR benchmark.
-      - run: uv run ${{ matrix.install.command }} coverage run -m pytest --durations=100 -n logical --dist=loadgroup
+      # `-n logical` (see note on the `test` job). Split into 2 shards with `pytest-split` so
+      # this, the slowest install shape, keeps pace with the rest of the matrix. The split is
+      # by test count, not measured duration -- no `.test_durations` file is committed -- so
+      # rebalance with `--store-durations` if `ci_duration.py`'s report shows the shards
+      # drifting apart.
+      # Everything under `tests/durable_exec` and every test marked `temporal` runs in
+      # `test-durable-exec` instead: those tests pin xdist groups around real local servers, so
+      # the chains they form would otherwise be this job's critical-path floor.
+      - name: run tests
+        shell: bash
+        run: |
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
+            uv run --all-packages --all-extras --no-extra mcp-tasks python -c 'pass'
+            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
+            uv_extra=(--no-sync)
+            runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
+              --output "$COVERAGE_FILE.testmon" --)
+          else
+            unset COVERAGE_PROCESS_START
+            uv_extra=()
+            runner=(pytest)
+          fi
+          # `--all-packages` so the extras of every workspace member are installed, not just the
+          # root package's: that is where `pydantic-ai-harness`'s optional integrations get tested.
+          uv run --all-packages --all-extras --no-extra mcp-tasks "${uv_extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+            --ignore=tests/durable_exec -m "not temporal" --splits 2 --group ${{ matrix.shard }}
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        if: env.COLLECT_COVERAGE == 'true'
+        run: uv run --all-packages --all-extras --no-extra mcp-tasks coverage combine
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
       - name: store coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-${{ matrix.python-version }}-${{ matrix.install.name }}
+          name: coverage-${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+          path: .coverage
+          include-hidden-files: true
+
+  # The durable-execution suites pin their tests to xdist groups sharing a real local server --
+  # one group per core Temporal test module, one shared harness Temporal group, one for DBOS, and
+  # one for Prefect -- so inside the main matrix those groups dominate its critical path. Running
+  # them in their own job takes them off that path entirely; `--dist=loadgroup` still spreads the
+  # groups across this job's workers, and only the tests within one group run in sequence.
+  # New durable-exec tests land anywhere under `tests/durable_exec` and are picked up
+  # automatically. Harness tests that start or connect to a Temporal dev server use the
+  # registered `temporal` marker. Both sets run only in this job, which sets
+  # `BLOCKBUSTER_ENABLED: false`. A test that needs blocking detection belongs elsewhere under
+  # `tests/`, where the `test` job turns it on for the 3.13 cells (`test-all-extras` leaves it off).
+  # The `lowest` resolution leg is the only place the declared minimum bounds
+  # (`temporalio`, `dbos`, `prefect`) are proven: `test-lowest-versions` skips this directory.
+  test-durable-exec:
+    name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        resolution: [locked, lowest]
+    env:
+      CI: true
+      # Python 3.10 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
+      COLLECT_COVERAGE: >-
+        ${{
+          matrix.python-version == '3.12'
+          || ((matrix.python-version == '3.10' || matrix.python-version == '3.14') && matrix.resolution == 'locked')
+        }}
+      # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs.
+      BLOCKBUSTER_ENABLED: false
+      # Puts every Temporal worker in debug mode, which disables the workflow deadlock detector
+      # (temporalio sets the per-activation budget to `None` instead of 2s). That budget is
+      # wall-clock, so it measures runner contention as readily as a blocking call, and a
+      # descheduled workflow thread trips it as `TMPRL1101`. The cost: a genuine in-workflow
+      # blocking call now hangs to the job timeout instead of failing in 2s. Since `temporalio`
+      # 1.29, debug mode also runs every workflow activation inline on the worker's event loop
+      # instead of in the executor thread a production worker uses, so on the `locked` legs only a
+      # test that unsets this variable runs workflow code on that thread.
+      TEMPORAL_DEBUG: '1'
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-suffix: durable-exec-${{ matrix.resolution }}
+
+      - run: mkdir .coverage
+
+      - name: cache incremental coverage
+        if: env.COLLECT_COVERAGE == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .testmon-cache
+          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}-
+
+      # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
+      # tests/durable_exec/temporal/conftest.py and the harness `temporal` tests); cache it so a
+      # CDN hiccup can't fail the suite at setup (#5399).
+      # Separate key per resolution: the lowest leg may resolve a different temporalio version
+      # wanting a different binary. A stale restored dir is safe because the SDK names the
+      # binary by its own version and re-downloads on a miss.
+      - name: cache Temporal dev-server binary
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/temporal-dev-server
+          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ matrix.resolution }}-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            temporal-cli-${{ runner.os }}-${{ runner.arch }}-${{ matrix.resolution }}-
+
+      - name: install lowest resolution
+        if: matrix.resolution == 'lowest'
+        run: uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
+        env:
+          UV_FROZEN: "0"
+
+      # `--all-extras` matches the all-extras matrix cell these tests used to run in, so
+      # the module-level `try_import` skip-gating (logfire, mcp, openai, anthropic, ...)
+      # behaves identically and coverage combination stays complete. The lowest leg was
+      # synced above, so `--no-sync` there keeps its resolution.
+      - name: run tests
+        shell: bash
+        run: |
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
+            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+              python -c 'pass'
+            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
+            uv_run=(--no-sync)
+            runner=(python -m testmon.incremental_coverage)
+          else
+            unset COVERAGE_PROCESS_START
+            uv_run=(${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }})
+            runner=(pytest)
+          fi
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            uv run "${uv_run[@]}" "${runner[@]}" --cache .testmon-cache/durable --no-report \
+              --output "$COVERAGE_FILE.durable.testmon" -- --durations=20 -n logical --dist=loadgroup tests/durable_exec
+            uv run "${uv_run[@]}" "${runner[@]}" --cache .testmon-cache/harness-temporal --no-report \
+              --output "$COVERAGE_FILE.harness-temporal.testmon" -- --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
+          else
+            uv run "${uv_run[@]}" "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+            uv run "${uv_run[@]}" "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
+          fi
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        if: env.COLLECT_COVERAGE == 'true'
+        run: >-
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }}
+          coverage combine
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
+
+      - name: store coverage files
+        if: env.COLLECT_COVERAGE == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
           path: .coverage
           include-hidden-files: true
 
   test-lowest-versions:
-    name: test on ${{ matrix.python-version }} (lowest-versions)
-    # Use Ubicloud 4-core runners for maintainers or opted in via 'ci:fast' label
-    # Use 'ci:slow' label to force standard GitHub runners (e.g. during Ubicloud outages)
-    # See the note on the `test` job for why push/tag runs need their own clause.
-    runs-on: >-
-      ${{
-        !contains(github.event.pull_request.labels.*.name, 'ci:slow')
-        && (
-          github.event_name == 'push'
-          || github.event.pull_request.head.repo.full_name == github.repository
-          || contains(github.event.pull_request.labels.*.name, 'ci:fast')
-        )
-        && 'ubicloud-premium-4'
-        || 'ubuntu-latest'
-      }}
+    name: test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/2)
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        shard: [1, 2]
     env:
       CI: true
-      COVERAGE_PROCESS_START: ./pyproject.toml
+      # Python 3.14's sys.monitoring coverage core is substantially cheaper than the legacy tracer.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
+      # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
+      # repeating its stack-inspection overhead here pushes lowest-version jobs past the CI budget.
+      BLOCKBUSTER_ENABLED: false
+      # The docs examples are type-checked in the Python 3.14 all-extras jobs.
+      TYPECHECK_EXAMPLES: false
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -327,6 +854,15 @@ jobs:
 
       - run: mkdir .coverage
 
+      - name: cache incremental coverage
+        if: env.COLLECT_COVERAGE == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .testmon-cache
+          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}-
+
       - name: restore sentence-transformers test model
         id: sentence-transformers-cache
         if: matrix.python-version != '3.14'
@@ -335,19 +871,7 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: hf-${{ runner.os }}-stsb-bert-tiny-safetensors-f3cb857cba53019a20df283396bcca179cf051a4
 
-      # See the matching step in the `test` job. Separate `lowest-` key: this job may resolve a
-      # different temporalio version than the frozen lockfile, wanting a different binary. A stale
-      # restored dir is safe because the SDK names the binary by its own version and re-downloads on a miss.
-      - name: cache Temporal dev-server binary
-        if: matrix.python-version != '3.14'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/temporal-dev-server
-          key: temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-${{ hashFiles('**/uv.lock') }}
-          restore-keys: |
-            temporal-cli-${{ runner.os }}-${{ runner.arch }}-lowest-
-
-      - run: uv sync --all-extras --resolution lowest-direct
+      - run: uv sync --all-packages --all-extras --no-extra mcp-tasks --resolution lowest-direct
         env:
           UV_FROZEN: "0"
 
@@ -380,20 +904,47 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical` (see note on the `test` job): use all vCPUs on Ubicloud.
-      - run: uv run --no-sync coverage run -m pytest --durations=100 -n logical --dist=loadgroup
+      # `-n logical` (see note on the `test` job). Split into 2 shards with `pytest-split`
+      # (see the matching note in `test-all-extras` for why, and for the rebalancing caveat).
+      # The durable-execution suites and harness `temporal` tests run in `test-durable-exec`
+      # (its `lowest` leg covers this resolution), keeping their grouped xdist chains off this
+      # job's critical path.
+      - name: run tests
+        shell: bash
+        run: |
+          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
+            export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
+            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
+            runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
+              --output "$COVERAGE_FILE.testmon" --)
+          else
+            unset COVERAGE_PROCESS_START
+            runner=(pytest)
+          fi
+          uv run --no-sync "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+            --ignore=tests/durable_exec -m "not temporal" --splits 2 --group ${{ matrix.shard }}
         env:
-          COVERAGE_FILE: .coverage/.coverage.${{matrix.python-version}}-lowest-versions
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        if: env.COLLECT_COVERAGE == 'true'
+        run: uv run --no-sync coverage combine
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
 
       - name: store coverage files
+        if: env.COLLECT_COVERAGE == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: coverage-${{ matrix.python-version }}-lowest-versions
+          name: coverage-${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}
           path: .coverage
           include-hidden-files: true
 
   test-temporal-latest:
     name: test Temporal latest on Python 3.10
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -413,11 +964,13 @@ jobs:
 
       - run: >-
           uv run --no-sync pytest
-          tests/test_temporal.py::test_durability_rejects_unknown_activity_config_keys
-          tests/test_temporal.py::test_durability_coerces_activity_config_values
+          tests/durable_exec/temporal/test_durability.py::test_durability_rejects_unknown_activity_config_keys
+          tests/durable_exec/temporal/test_durability.py::test_durability_coerces_activity_config_values
 
   test-examples:
     name: test examples on ${{ matrix.python-version }}
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -437,16 +990,272 @@ jobs:
           enable-cache: true
           cache-suffix: examples
 
-      - run: uv run --all-extras python tests/import_examples.py
+      - run: uv run --all-extras --no-extra mcp-tasks python tests/import_examples.py
 
-  coverage:
+  # `browser-use` pins every one of its dependencies exactly, so the workspace lock excludes it
+  # (`exclude-dependencies` in pyproject.toml) and no other job installs it. This one installs it on
+  # top of the locked environment, getting the versions `pydantic-ai-harness[browser-use]` users get,
+  # and runs and type-checks `BrowserUse` there.
+  test-harness-browser-use:
+    name: test harness browser-use
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
-    needs: [test, test-lowest-versions]
+    timeout-minutes: 10
+    env:
+      CI: true
+      # Not yet for the harness suites: https://github.com/pydantic/pydantic-ai/issues/8821
+      BLOCKBUSTER_ENABLED: "false"
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          # needed for diff-cover
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: harness-browser-use
+
+      - run: uv sync --all-packages --all-extras --no-extra mcp-tasks --group lint
+      # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
+      - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
+      - run: uv run --no-sync pytest tests/harness/browser_use
+      - run: uv run --no-sync pyright -p tests/harness/browser_use
+        env:
+          PYRIGHT_PYTHON_IGNORE_WARNINGS: 1
+
+  test-fastmcp-4:
+    name: test FastMCP 4 compatibility
+    needs: classify
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CI: true
+      COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: fastmcp-4
+
+      - run: mkdir .coverage
+
+      # Keep the normal matrix locked to FastMCP 3 while `--with` gives these tests an isolated
+      # FastMCP 4 environment without mutating the project environment.
+      # TODO: Drop these package-specific cutoffs after 2026-08-14, when the pinned artifacts clear
+      # the workspace's seven-day cooldown. Unrelated dependencies remain subject to the cooldown.
+      # uv only opts direct requirements into prereleases, so the two beta distributions that
+      # FastMCP pins transitively must also be named as direct requirements.
+      - run: >-
+          uv run
+          --all-extras
+          --no-extra mcp-tasks
+          --all-packages
+          --with "fastmcp[tasks]==4.0.0b2"
+          --with "fastmcp-slim==4.0.0b2"
+          --with "fastmcp-tasks==4.0.0b2"
+          --exclude-newer-package "fastmcp=2026-08-08T00:00:00Z"
+          --exclude-newer-package "fastmcp-slim=2026-08-08T00:00:00Z"
+          --exclude-newer-package "fastmcp-tasks=2026-08-08T00:00:00Z"
+          --exclude-newer-package "mcp=2026-08-08T00:00:00Z"
+          --exclude-newer-package "mcp-types=2026-08-08T00:00:00Z"
+          coverage run -m pytest
+          tests/test_mcp.py
+          tests/models/test_mcp_sampling.py
+          tests/test_conftest.py
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
+
+      # See the matching step in the `test` job. Plain `uv run`: combining is
+      # environment-independent, so the FastMCP 4 `--with` overlay isn't needed.
+      - name: combine coverage files
+        run: uv run --all-extras --no-extra mcp-tasks --all-packages coverage combine
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.fastmcp-4
+
+      - name: store coverage files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-fastmcp-4
+          path: .coverage
+          include-hidden-files: true
+
+  # Live-service suites for the harness storage and AWS backends, outside `tests/` because they need
+  # a real server. Each runs when its capability, the dependencies, or this workflow change, and
+  # always on tags.
+  harness-integration-changes:
+    name: classify harness integration changes
+    if: github.event_name == 'pull_request' || github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    outputs:
+      localstack: ${{ steps.detect.outputs.localstack }}
+      mongodb: ${{ steps.detect.outputs.mongodb }}
+      redis: ${{ steps.detect.outputs.redis }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - id: detect
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          H=src/pydantic_ai_harness
+          # `Makefile` because the jobs below run its `integration-*` targets.
+          shared=(pyproject.toml uv.lock Makefile "$H/pyproject.toml" .github/workflows/ci.yml)
+          detect() {
+            local name=$1; shift
+            if git diff --quiet "$BASE_SHA" "$HEAD_SHA" -- "$@" "${shared[@]}"; then
+              echo "$name=false" >> "$GITHUB_OUTPUT"
+            else
+              status=$?
+              [ "$status" -eq 1 ] || exit "$status"
+              echo "$name=true" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          detect localstack "$H/pydantic_ai_harness/localstack" tests/harness/localstack "$H/integration_tests/localstack"
+          detect mongodb "$H/pydantic_ai_harness/step_persistence" "$H/pydantic_ai_harness/media" \
+            tests/harness/step_persistence tests/harness/media "$H/integration_tests/mongodb"
+          detect redis "$H/pydantic_ai_harness/spend" tests/harness/spend "$H/integration_tests/redis"
+
+  harness-localstack-integration:
+    name: harness LocalStack integration tests
+    needs: [harness-integration-changes]
+    # Also skipped where `LOCALSTACK_AUTH_TOKEN` is unreadable (fork and Dependabot pull requests):
+    # `LOCALSTACK_REQUIRE_AUTH_TOKEN` turns a missing token into a failure, not a skip.
+    # Disabled until the secret is set: https://github.com/pydantic/pydantic-ai/issues/8824
+    if: >-
+      ${{ false
+          && always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.localstack == 'true')
+          && (github.event_name != 'pull_request'
+              || (github.event.pull_request.head.repo.full_name == github.repository
+                  && github.actor != 'dependabot[bot]')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LOCALSTACK_REQUIRE_AUTH_TOKEN: "1"
+      LOCALSTACK_AWS_CLI: aws
+      LOCALSTACK_IMAGE: localstack/localstack
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-localstack
+
+      - uses: LocalStack/setup-localstack@7c8a0cb3405bc58be4c8f763f812aa000bc46303 # v0.3.2
+        with:
+          install-awslocal: "true"
+          skip-startup: "true"
+
+      - run: make integration-localstack
+        env:
+          # The job executes the full PR checkout, so path detection is not a security boundary.
+          LOCALSTACK_AUTH_TOKEN: ${{ secrets.LOCALSTACK_AUTH_TOKEN }} # zizmor: ignore[secrets-outside-env]
+
+  harness-mongodb-integration:
+    name: harness MongoDB integration tests
+    needs: [harness-integration-changes]
+    # No fork clause: the service below reads no secret.
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.mongodb == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      mongodb:
+        image: mongo:8
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # An unreachable server is a skip locally and must be a failure here.
+      MONGODB_REQUIRE_LIVE: "1"
+      MONGODB_TEST_URL: mongodb://127.0.0.1:27017
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-mongodb
+
+      - run: make integration-mongodb
+
+  harness-redis-integration:
+    name: harness Redis integration tests
+    needs: [harness-integration-changes]
+    if: >-
+      ${{ always()
+          && (github.ref_type == 'tag' || needs.harness-integration-changes.outputs.redis == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      REDIS_REQUIRE_LIVE: "1"
+      REDIS_TEST_URL: redis://127.0.0.1:6379
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-redis
+
+      - run: make integration-redis
+
+  # Release gate: resolve the workspace at the top of the ranges this tag declares and run the
+  # suite there, so we can't publish a version whose own dependency ranges already admit an SDK
+  # we cannot drive (the `anthropic` 1.0.0 case). Tag refs only — on every other event the job
+  # skips, which `check` allows below. It runs alongside the test matrix rather than after it,
+  # so it lands well before `coverage` and adds nothing to the critical path.
+  latest-versions-canary:
+    name: latest versions canary
+    if: startsWith(github.ref, 'refs/tags/')
+    uses: ./.github/workflows/latest-versions-canary.yml
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4]
+    # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
+    # otherwise skip this job too.
+    if: ${{ !failure() && !cancelled() && needs.classify.outputs.docs_only != 'true' }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
           persist-credentials: false
 
       - name: get coverage files
@@ -461,32 +1270,46 @@ jobs:
           enable-cache: true
           cache-suffix: dev
 
-      - run: uv sync --group dev
-      - run: uv run coverage combine
-      - run: uv run coverage report
-
-      - run: uv run strict-no-cover
+      - run: uv sync --group dev --group coverage
+      - run: uv run --no-sync coverage combine
+      # Only the `pydantic-clai2` cells ran for a change confined to it, so they can only vouch
+      # for its own tests: the rest of the workspace is covered on the full path.
+      - name: coverage report
         env:
-          COVERAGE_FILE: .coverage/.coverage
+          CLAI2_ONLY: ${{ needs.classify.outputs.clai2_only }}
+        run: |
+          if [ "$CLAI2_ONLY" = true ]; then
+            uv run --no-sync coverage report --include='tests/clai2/*'
+          else
+            uv run --no-sync coverage report
+          fi
 
-      - run: uv run coverage html --show-contexts --title "Pydantic AI coverage for ${{ github.sha }}"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: coverage-html
-          path: htmlcov
-          include-hidden-files: true
+      - run: uv run --no-sync strict-no-cover
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage
 
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
     needs:
-      - lint
+      - classify
+      - quality
       - mypy
-      - docs
+      - docs-assets
+      - docs-only
       - test
+      - test-all-extras
+      - test-durable-exec
       - test-lowest-versions
       - test-temporal-latest
       - test-examples
+      - test-fastmcp-4
+      - test-harness-browser-use
+      - harness-integration-changes
+      - harness-localstack-integration
+      - harness-mongodb-integration
+      - harness-redis-integration
+      - latest-versions-canary
       - coverage
     runs-on: ubuntu-latest
 
@@ -494,19 +1317,39 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # release/v1
         with:
+          # The canary is advisory because it tests dependency versions we do not lock; its failures
+          # signal upstream drift rather than release blockers. It runs on tag refs only, and
+          # `docs-only` runs only for Markdown-only PRs, and a PR confined to `pydantic-clai2` skips the
+          # jobs that exercise the rest of the workspace.
+          # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
+          # The harness integration jobs run only when their paths change (always on tags), and
+          # LocalStack also skips where its secret is unreadable.
+          allowed-failures: latest-versions-canary
+          allowed-skips: >-
+            ${{
+              needs.classify.outputs.docs_only == 'true'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage'
+              || needs.classify.outputs.clai2_only == 'true'
+              && 'docs-only,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              || github.ref_type == 'tag'
+              && 'docs-only,harness-integration-changes,harness-localstack-integration'
+              || 'docs-only,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+            }}
           jobs: ${{ toJSON(needs) }}
 
+  # `check` may succeed with intentionally skipped ancestors, so downstream jobs must override
+  # GitHub's default success check and inspect the result of their direct dependency.
   # Note: this should match the `deploy-docs-manual` job in manually-deploy-docs.yml
   deploy-docs:
     needs: [check]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: Generate app token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
         with:
-          app-id: ${{ vars.DOCS_APP_ID }}
+          client-id: ${{ vars.DOCS_CLIENT_ID }}
           private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: unified-docs
@@ -527,11 +1370,12 @@ jobs:
   release-build:
     name: build release artifacts
     needs: [check]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.check.result == 'success' }}
     runs-on: ubuntu-latest
 
     outputs:
       package-version: ${{ steps.inspect_package.outputs.version }}
+      harness-version: ${{ steps.inspect_package.outputs.harness-version }}
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -542,7 +1386,17 @@ jobs:
         with:
           enable-cache: false
 
-      - run: uv build --all-packages
+      - run: uv build --all-packages --no-sources
+
+      - name: Smoke-test release wheels outside the workspace
+        run: |
+          smoke_dir=$(mktemp -d)
+          uv venv "$smoke_dir"
+          uv pip install --python "$smoke_dir/bin/python" dist/*.whl
+          "$smoke_dir/bin/python" -I -c "import clai, pydantic_ai, pydantic_evals, pydantic_graph, pydantic_ai_harness, pydantic_clai2"
+          "$smoke_dir/bin/pai" --help
+          "$smoke_dir/bin/clai" --help
+          "$smoke_dir/bin/clai2" --help
 
       - name: Inspect package version
         id: inspect_package
@@ -550,6 +1404,8 @@ jobs:
           uv tool install --with uv-dynamic-versioning hatchling
           version=$(uvx hatchling version)
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          harness_version=$(cd src/pydantic_ai_harness && uvx hatchling version)
+          echo "harness-version=$harness_version" >> "$GITHUB_OUTPUT"
 
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -560,7 +1416,7 @@ jobs:
   release:
     name: publish to PyPI
     needs: [release-build]
-    if: success() && startsWith(github.ref, 'refs/tags/')
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.release-build.result == 'success' }}
     runs-on: ubuntu-latest
 
     environment:
@@ -585,40 +1441,99 @@ jobs:
         with:
           skip-existing: true
 
-  send-tweet:
-    name: Send tweet
+  gh-aw-engine-pin:
+    name: gh-aw engine / read pin
     needs: [release]
-    if: needs.release.result == 'success'
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-latest
-
+    timeout-minutes: 10
+    # `uv run --script` resolves the guard script's dependencies from PyPI without a lockfile, so it
+    # runs in its own job, on its own runner, with no write token: a step can extend `GITHUB_PATH`
+    # for the steps after it, so a separate step would not keep a dependency away from the token.
+    permissions:
+      contents: read
+    # The workflow-level `GIT_CONFIG_*` would otherwise carry the token here. Nothing here installs
+    # from git.
+    env:
+      GIT_CONFIG_COUNT: '0'
+      GIT_CONFIG_KEY_0: ''
+      GIT_CONFIG_VALUE_0: ''
+    outputs:
+      version: ${{ steps.engine.outputs.version }}
     steps:
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      # Consumers compile the definition from the default branch, which may have moved past the tag.
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          python-version: "3.12"
-      - name: Install dependencies
-        run: pip install tweepy==4.14.0
-      - name: Send tweet
-        shell: python
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          enable-cache: false
+
+      - id: engine
         run: |
-          import os
-          import tweepy
+          version=$(uv run --script src/pydantic_ai_harness/scripts/gh_aw_engine_version.py)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-          client = tweepy.Client(
-              access_token=os.getenv("TWITTER_ACCESS_TOKEN"),
-              access_token_secret=os.getenv("TWITTER_ACCESS_TOKEN_SECRET"),
-              consumer_key=os.getenv("TWITTER_CONSUMER_KEY"),
-              consumer_secret=os.getenv("TWITTER_CONSUMER_SECRET"),
-          )
-          version = os.getenv("VERSION").strip('"')
-          tweet = os.getenv("TWEET").format(version=version)
-          client.create_tweet(text=tweet)
+  # `src/pydantic_ai_harness/gh-aw/pydantic.md` pins the `pydantic-ai-harness` release a generated
+  # gh-aw workflow installs, and consumers compile the definition straight from the default branch.
+  # Shipping a bump is therefore an ordinary pull request against that file, and this job publishes
+  # nothing: it only notices that the harness release just cut is not the release the definition
+  # names, and asks for that pull request.
+  #
+  # An issue rather than a pull request, because a pull request opened with GITHUB_TOKEN triggers no
+  # workflow runs: it would arrive with none of this repository's required checks.
+  gh-aw-engine-pin-reminder:
+    name: gh-aw engine / pin reminder
+    needs: [release-build, gh-aw-engine-pin]
+    if: ${{ !cancelled() && needs.gh-aw-engine-pin.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    steps:
+      - name: Ask for a pin bump when the release moved past the definition
         env:
-          VERSION: ${{ needs.release.outputs.package-version }}
-          TWEET: |
-            Pydantic AI version {version} is out! 🎉
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PINNED: ${{ needs.gh-aw-engine-pin.outputs.version }}
+          # The harness releases as `0.<minor>.<patch>` with every tag, so the tag name is not
+          # the version the engine installs.
+          RELEASED: ${{ needs.release-build.outputs.harness-version }}
+        run: |
+          pinned="$PINNED"
+          released="$RELEASED"
+          # The harness version carries no pre-release stage, so the tag is what tells a final
+          # release apart, and a pre-release is not a pin consumers should move to.
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "${GITHUB_REF_NAME} is not a final release."
+            exit 0
+          fi
+          if [ "$pinned" = "$released" ]; then
+            echo "The gh-aw engine definition already pins ${released}."
+            exit 0
+          fi
 
-            https://github.com/pydantic/pydantic-ai/releases/tag/v{version}
-          TWITTER_CONSUMER_KEY: ${{ secrets.TWITTER_CONSUMER_KEY }}
-          TWITTER_CONSUMER_SECRET: ${{ secrets.TWITTER_CONSUMER_SECRET }}
-          TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
-          TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
+          title="Bump the gh-aw engine pin to ${released}"
+          # `--search` matches words rather than the phrase, so it narrows the
+          # listing and the exact title is compared here.
+          existing_titles=$(gh issue list --state open --search "${title} in:title" \
+            --json title --jq '.[].title')
+          if grep -qxF "${title}" <<< "$existing_titles"; then
+            echo "An open issue already asks for this: ${title}"
+            exit 0
+          fi
+
+          # A heredoc rather than an inline `--body`: the body is Markdown with
+          # blank lines and backticks, and only `$pinned` and `$released` are
+          # meant to expand.
+          cat > "${RUNNER_TEMP}/pin-reminder.md" <<EOF
+          \`src/pydantic_ai_harness/gh-aw/pydantic.md\` on the default branch still pins \`engine.version: ${pinned}\`, and pydantic-ai-harness ${released} is now released.
+
+          gh-aw compiles that file from the default branch, so a pull request bumping \`engine.version\` to ${released} is what ships the new pin: consumers pick it up on their next recompile.
+
+          Lint refuses a pin PyPI does not serve, so that pull request goes green once ${released} is on PyPI.
+          EOF
+
+          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/pin-reminder.md"

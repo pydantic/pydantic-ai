@@ -2,18 +2,20 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, TypeAlias, cast, overload
+from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
 
 import pydantic_core
+from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._http import to_httpx2_timeout
 from .._run_context import RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
 from .._utils import guard_tool_call_id as _guard_tool_call_id, is_str_dict
@@ -38,10 +40,12 @@ from ..messages import (
     NativeToolSearchCallPart,
     NativeToolSearchReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     ToolSearchReturnPart,
@@ -65,8 +69,10 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
-from ..profiles import DEFAULT_THINKING_TAGS, ModelProfileSpec, merge_profile
+from ..output import StructuredOutputMode
+from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
+    ANTHROPIC_SAMPLING_PARAMS,
     ANTHROPIC_THINKING_BUDGET_MAP,
     AnthropicCodeExecutionToolVersion,
     AnthropicEffort,
@@ -75,17 +81,24 @@ from ..profiles.anthropic import (
 )
 from ..providers import Provider, infer_provider
 from ..providers.anthropic import AsyncAnthropicClient
-from ..settings import ModelSettings, merge_model_settings
+from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
+from ..toolsets._tool_search import discovered_tool_names_in_order
 from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    ToolVisibility,
+    _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+    _suggest_known_model_id_from_provider_error,  # pyright: ignore[reportPrivateUsage]
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
     get_user_agent,
 )
-from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
+from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
+from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
@@ -97,6 +110,35 @@ _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'pause_turn': None,
     'refusal': 'content_filter',
 }
+
+
+def _revealed_deferred_tool_order(
+    messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
+) -> list[str]:
+    """Order revealed non-corpus deferred entries at the tail by their first reveal in history.
+
+    Deferred entries are outside Anthropic's cache key, so this is a determinism rule, not a cache rule.
+    """
+    tool_defs = model_request_parameters.tool_defs
+    return [
+        name
+        for name in discovered_tool_names_in_order(messages)
+        if name in tool_defs
+        and tool_defs[name].defer_loading
+        and tool_defs[name].with_native is None
+        and model_request_parameters.visibility_of(name) == 'deferred'
+    ]
+
+
+def _append_revealed_tool_params(tools: list[BetaToolUnionParam], revealed_tool_order: list[str]) -> None:
+    """Move revealed deferred definitions behind the request's stable tool segments."""
+    by_name = {tool.get('name'): tool for tool in tools}
+    revealed_names = [name for name in revealed_tool_order if name in by_name]
+    if revealed_names:
+        revealed_name_set = set(revealed_names)
+        tools[:] = [tool for tool in tools if tool.get('name') not in revealed_name_set] + [
+            by_name[name] for name in revealed_names
+        ]
 
 
 try:
@@ -121,7 +163,7 @@ try:
         BetaBashCodeExecutionToolResultBlock,
         BetaBashCodeExecutionToolResultBlockParam,
         BetaCacheControlEphemeralParam,
-        BetaCitationsConfigParam,
+        BetaCitationsConfigParamParam,
         BetaCitationsDelta,
         BetaCodeExecutionTool20250825Param,
         BetaCodeExecutionTool20260120Param,
@@ -142,6 +184,7 @@ try:
         BetaFileImageSourceParam,
         BetaImageBlockParam,
         BetaInputJSONDelta,
+        BetaInputTransformation,
         BetaJSONOutputFormatParam,
         BetaMCPToolResultBlock,
         BetaMCPToolUseBlock,
@@ -178,6 +221,7 @@ try:
         BetaTextEditorCodeExecutionToolResultBlock,
         BetaTextEditorCodeExecutionToolResultBlockParam,
         BetaThinkingBlock,
+        BetaThinkingBlockBindingParam,
         BetaThinkingBlockParam,
         BetaThinkingConfigParam,
         BetaThinkingDelta,
@@ -247,6 +291,16 @@ _FAST_MODE_UNSUPPORTED_CLIENTS = (
     AsyncAnthropicFoundry,
     AsyncAnthropicVertex,
 )
+# `_THINKING_BINDING_UNSUPPORTED_CLIENTS` is a client-class boundary, not a base-URL one: a plain
+# `AsyncAnthropic` carrying a proxy or Pydantic AI Gateway base URL keeps the flag. Anthropic documents
+# the binding beta for Amazon Bedrock and Google Cloud, and the SDK carries it through the legacy
+# Bedrock `anthropic_beta` body field and Vertex beta routes. The AWS-operated Bedrock Messages API
+# explicitly does not accept Anthropic beta headers, while Foundry has no published support for this
+# beta, so those two stay excluded until the provider contract changes or a live request verifies them.
+_THINKING_BINDING_UNSUPPORTED_CLIENTS = (
+    AsyncAnthropicBedrockMantle,
+    AsyncAnthropicFoundry,
+)
 # The legacy Bedrock InvokeModel API (`AsyncAnthropicBedrock`) doesn't support the `bm25` tool-search
 # variant — it 400s with `BM25 tool search is not supported on Bedrock. Use tool_search_tool_regex instead.`
 # — so we default to `regex` there. The other transports (Vertex, Foundry, and the Messages-API-based
@@ -275,20 +329,33 @@ _ADVISOR_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthropicVertex, Asy
 # that ignores the entry on *every* transport — which measured the model, not the transport.
 _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS = (AsyncAnthropicFoundry,)
 
-_ANTHROPIC_SAMPLING_PARAMS = ('temperature', 'top_p', 'top_k')
 _ANTHROPIC_TASK_BUDGETS_BETA = 'task-budgets-2026-03-13'
+_ANTHROPIC_THINKING_BINDING_BETA = 'thinking-binding-controls-2026-08-01'
+_ANTHROPIC_DROP_STALE_THINKING_BLOCKS: BetaThinkingBlockBindingParam = {'prefix_mismatch_behavior': 'drop_block'}
+_STALE_THINKING_BLOCK_MARKER = 'The block is bound to a different conversation'
+_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
+_ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY = 'anthropic_count_tokens_drop_stale_thinking_blocks'
 _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 
 @contextmanager
-def _map_api_errors(model_name: str) -> Generator[None]:
+def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
         if (status_code := e.status_code) >= 400:
+            body: object | None = e.body
+            suggested_model_id = None
+            if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
+                if error.get('type') == 'not_found_error' and error.get('message') == f'model: {model_name}':
+                    suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
             raise ModelHTTPError(
-                status_code=status_code, model_name=model_name, body=e.body, headers=dict(e.response.headers)
+                status_code=status_code,
+                model_name=model_name,
+                body=body,
+                headers=dict(e.response.headers),
+                suggested_model_id=suggested_model_id,
             ) from e
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
@@ -298,11 +365,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
 LatestAnthropicModelNames = ModelParam
 """Anthropic model names from the installed SDK."""
 
-# TODO(anthropic): drop these literals once the `anthropic` floor is bumped past the SDK release
-# that adds them to `ModelParam` (installed 0.109.0 still lags). See
-# https://github.com/pydantic/pydantic-ai/pull/5849 for the same
-# bridge-then-drop pattern applied to `claude-fable-5`.
-AnthropicModelName = LatestAnthropicModelNames | Literal['claude-sonnet-5', 'claude-opus-5']
+AnthropicModelName = LatestAnthropicModelNames
 """Possible Anthropic model names.
 
 The installed Anthropic SDK exposes the current literal set and still allows arbitrary string model names.
@@ -334,13 +397,36 @@ _ANTHROPIC_CODE_EXECUTION_TOOL_NAMES: tuple[_AnthropicCodeExecutionToolName, ...
 )
 _ANTHROPIC_CODE_EXECUTION_TOOL_NAME_DETAIL = 'anthropic_tool_name'
 # See https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching#what-can-be-cached
+# `tool_addition` accepted and honored verified live on `claude-opus-4-8`: a boundary on the block
+# writes and reads back the full prefix. It can end a mid-conversation `system` entry, where a
+# terminal `CachePoint`'s boundary lands on the entry's final block.
 _ANTHROPIC_CACHEABLE_PARAM_TYPES = frozenset(
-    {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document'}
+    {'text', 'tool_use', 'server_tool_use', 'image', 'tool_result', 'document', 'tool_addition'}
 )
 _ANTHROPIC_SERVER_TOOL_CALLER_DETAIL = 'anthropic_caller'
 
 AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 """Anthropic task budget payload for `output_config.task_budget`."""
+
+
+class AnthropicStaleThinkingBlockWarning(Warning):
+    """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
+
+    Claude Fable 5.1, Claude Opus 5.5, and Claude Sonnet 5.5 bind each thinking block to the
+    conversation prefix that produced it and reject a replay once that prefix changes — which a dynamic
+    [instructions][pydantic_ai.Agent.instructions] function and a
+    [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
+    check for accounts created on or after 2026-08-31; for older accounts it records the mismatch
+    and acts on it only if the request asks it to.
+
+    Pydantic AI therefore asks for nothing by default, so an older account keeps replaying its
+    reasoning untouched. Where the check is enforced, the rejected request is retried once with
+    `thinking.block_binding.prefix_mismatch_behavior='drop_block'`: the stale block is dropped, the
+    run continues, and later requests carrying that response history keep asking for the drop as
+    Anthropic requires. The drop is recorded on
+    [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] and as
+    an `anthropic.input_transformations` span event.
+    """
 
 
 class AnthropicModelSettings(ModelSettings, total=False):
@@ -436,7 +522,12 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """Container configuration for multi-turn conversations.
 
     By default, if previous messages contain a container_id (from a prior response),
-    it will be reused automatically.
+    it will be reused automatically. An id recovered that way is the only container
+    Pydantic AI may replace on its own: if a request carrying both that id and
+    `CodeExecutionTool` uploads comes back `500`, the id is dropped and the request is
+    sent once more so the upload lands in a fresh container. Nothing else is replaced —
+    not a container you set here, and not the id used to reconnect a paused turn — so a
+    request pinning a container the API will not accept raises instead.
 
     Set to `False` to force a fresh container (ignore any `container_id` from history).
     Set to a container id string (e.g. `'container_xxx'`) to explicitly reuse a container,
@@ -492,6 +583,262 @@ class AnthropicModelSettings(ModelSettings, total=False):
     """
 
 
+def _build_extra_body(
+    model_settings: AnthropicModelSettings, thinking_override: dict[str, object] | None = None
+) -> object | None:
+    """Merge the sampling settings, and a `thinking` object the SDK cannot type, into `extra_body`.
+
+    `anthropic>=1` dropped `temperature`/`top_p`/`top_k` from the `messages.create()` signature, and
+    passing one is a `TypeError`. The API still takes them, so they ride in `extra_body` — the route
+    the SDK's own migration guide names — rather than being silently dropped. Models that reject them
+    never get here: `_drop_unsupported_sampling_settings` has already removed them.
+
+    An explicit `extra_body` entry wins over the setting of the same name, preserving the precedence
+    the SDK gave it while the parameters were still named arguments.
+    """
+    fields: dict[str, Any] = {
+        setting: value for setting in ANTHROPIC_SAMPLING_PARAMS if (value := model_settings.get(setting)) is not None
+    }
+    if thinking_override is not None:
+        fields['thinking'] = thinking_override
+    extra_body = model_settings.get('extra_body')
+    if not fields:
+        return extra_body
+    if not _is_str_mapping(extra_body):
+        return fields
+    merged = {**fields, **extra_body}
+    if thinking_override is not None:
+        # The override was built from the effective wire object, including any caller-provided
+        # `extra_body['thinking']`, so it must replace that original object to add `block_binding`.
+        merged['thinking'] = thinking_override
+    return merged
+
+
+def _extra_body_thinking(model_settings: AnthropicModelSettings) -> dict[str, object] | None:
+    """The `thinking` object a caller hand-rolled in `extra_body`, if any.
+
+    `extra_body` is how a caller reaches a field the installed SDK cannot type yet, so it can carry
+    `thinking` — including a `block_binding` of their own, which must be honored rather than
+    retried over.
+    """
+    extra_body = model_settings.get('extra_body')
+    if not _is_str_mapping(extra_body):
+        return None
+    thinking = extra_body.get('thinking')
+    if not _is_str_mapping(thinking):
+        return None
+    return dict(thinking)
+
+
+def _is_str_mapping(value: object) -> TypeGuard[Mapping[str, object]]:
+    """Whether a value is a mapping whose keys are all strings."""
+    if not isinstance(value, Mapping):
+        return False
+    return all(isinstance(key, str) for key in value)  # pyright: ignore[reportUnknownVariableType]
+
+
+def _effective_thinking(
+    model_settings: AnthropicModelSettings, thinking: BetaThinkingConfigParam | Omit
+) -> dict[str, object] | Omit:
+    """Resolve the thinking object that reaches the wire after `extra_body` precedence."""
+    if (caller_thinking := _extra_body_thinking(model_settings)) is not None:
+        return caller_thinking
+    return OMIT if isinstance(thinking, Omit) else dict(thinking)
+
+
+_DEFAULT_MAX_TOKENS = 16384
+"""The `max_tokens` sent when the request doesn't set one.
+
+Anthropic requires `max_tokens`. This stays under the SDK's limit for non-streaming requests (about 21,000 tokens,
+8,192 for some Claude Opus 4 and 4.1 model ids), and fits the maximum output of every Claude model that gets it
+(Claude Sonnet 4.5 and later); older models get `_LEGACY_DEFAULT_MAX_TOKENS`.
+"""
+
+_LEGACY_DEFAULT_MAX_TOKENS = 4096
+"""The default `max_tokens` for models that reject input plus `max_tokens` beyond the context window."""
+
+_MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
+"""The room the default `max_tokens` leaves beyond an extended thinking `budget_tokens`."""
+
+
+def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
+    """The `max_tokens` to send when the request doesn't set one.
+
+    Models that reject input plus `max_tokens` beyond the context window keep a lower default, so conversations close
+    to the window still fit. Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a
+    request whose `max_tokens` isn't greater than the budget, so a large budget raises the default to leave room for
+    the answer.
+    """
+    default = (
+        _LEGACY_DEFAULT_MAX_TOKENS
+        if profile.get('anthropic_rejects_max_tokens_beyond_context_window', False)
+        else _DEFAULT_MAX_TOKENS
+    )
+    wire_thinking: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
+    budget = wire_thinking.get('budget_tokens') if wire_thinking.get('type') == 'enabled' else None
+    return max(default, (budget if isinstance(budget, int) else 0) + _MIN_TOKENS_AFTER_THINKING_BUDGET)
+
+
+def _can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
+    """Whether a request may add `drop_block` to its wire `thinking` object.
+
+    Not when the caller set a `block_binding` of their own, and not for a thinking type other than
+    `adaptive`, since Anthropic accepts `block_binding` only alongside adaptive thinking. A missing
+    type counts as adaptive, which is what `_drop_stale_thinking_blocks` fills in.
+    """
+    return isinstance(thinking, Omit) or (
+        'block_binding' not in thinking and thinking.get('type', 'adaptive') == 'adaptive'
+    )
+
+
+def _is_stale_thinking_block_error(
+    profile: ModelProfile,
+    thinking: dict[str, object] | Omit,
+    error: APIStatusError,
+) -> bool:
+    """Whether Anthropic rejected a replayed thinking block that the request can be retried without.
+
+    Scoped to models that bind and to requests that set no `block_binding` of their own, through the
+    typed `thinking` config or through `extra_body`: an explicit `'error'` is a caller asking to
+    fail, and an explicit `'drop_block'` cannot produce this error. A thinking type other than
+    `adaptive` is out too; see `_can_add_drop_block`.
+    """
+    if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
+        return False
+    if not _can_add_drop_block(thinking):
+        return False
+    body: object | None = error.body
+    return (
+        _utils.is_str_dict(body)
+        and _utils.is_str_dict(reported := body.get('error'))
+        and isinstance(message := reported.get('message'), str)
+        and _STALE_THINKING_BLOCK_MARKER in message
+    )
+
+
+def _drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str, object]:
+    """The `thinking` object for the retried request, carrying the caller's own config plus the drop.
+
+    A binding model emits thinking blocks whether or not the request configured thinking, so the
+    retry usually has no `thinking` object for the binding to ride in, and an `extra_body` one may
+    carry no `type`. Claude Sonnet 5.5 rejects a `thinking` object without a `type`, and every binding
+    model thinks adaptively when none is given, so `'adaptive'` fills the gap without changing what
+    the caller asked for. The retry sends the whole object through `extra_body`, since the SDK's
+    discriminated union has no typed home for `block_binding` on every config shape.
+    """
+    configured: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
+    return {'type': 'adaptive', **configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
+
+
+def _history_dropped_stale_thinking_blocks(
+    messages: list[ModelMessage],
+    *,
+    compaction_boundary: ModelResponse | None = None,
+    include_count_tokens_recovery: bool = False,
+) -> bool:
+    """Whether Anthropic already told us this conversation needs the drop on later requests."""
+    for message in reversed(messages):
+        if include_count_tokens_recovery and isinstance(message, ModelRequest) and message.metadata:
+            namespace: object = message.metadata.get(_PYDANTIC_AI_METADATA_KEY)
+            if (
+                _utils.is_str_dict(namespace)
+                and namespace.get(_ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY) is True
+            ):
+                return True
+        if message is compaction_boundary or not isinstance(message, ModelResponse) or not message.provider_details:
+            continue
+        transformations: object = message.provider_details.get('input_transformations')
+        if isinstance(transformations, list) and any(
+            _utils.is_str_dict(transformation)
+            and transformation.get('type') == 'thinking_dropped'
+            and transformation.get('reason') == 'prefix_binding_mismatch'
+            for transformation in cast(list[object], transformations)
+        ):
+            return True
+    return False
+
+
+def _mark_history_to_drop_stale_thinking_blocks_for_count_tokens(messages: list[ModelMessage]) -> None:
+    """Keep a successful count-token recovery active for later counts of this conversation."""
+    request = next((message for message in reversed(messages) if isinstance(message, ModelRequest)), None)
+    if request is None:  # pragma: no cover
+        return
+    request.metadata = request.metadata or {}
+    namespace: object = request.metadata.get(_PYDANTIC_AI_METADATA_KEY)
+    if not _utils.is_str_dict(namespace):
+        namespace = {}
+        request.metadata[_PYDANTIC_AI_METADATA_KEY] = namespace
+    namespace[_ANTHROPIC_COUNT_TOKENS_DROP_STALE_THINKING_BLOCKS_METADATA_KEY] = True
+
+
+def _thinking_with_stale_block_history(
+    profile: AnthropicModelProfile,
+    messages: list[ModelMessage],
+    thinking: BetaThinkingConfigParam | Omit,
+    effective_thinking: dict[str, object] | Omit,
+    betas: set[str],
+    *,
+    compaction_boundary: ModelResponse | None = None,
+    include_count_tokens_recovery: bool = False,
+) -> tuple[BetaThinkingConfigParam | Omit, set[str], dict[str, object] | None, dict[str, object] | Omit]:
+    """Resolve request parameters that keep a prior request-local drop active for this history."""
+    keep_dropping = (
+        profile.get('anthropic_binds_thinking_blocks', False)
+        and _can_add_drop_block(effective_thinking)
+        and _history_dropped_stale_thinking_blocks(
+            messages,
+            compaction_boundary=compaction_boundary,
+            include_count_tokens_recovery=include_count_tokens_recovery,
+        )
+    )
+    if not keep_dropping:
+        return thinking, betas, None, effective_thinking
+    thinking_override = _drop_stale_thinking_blocks(effective_thinking)
+    return OMIT, betas | {_ANTHROPIC_THINKING_BINDING_BETA}, thinking_override, thinking_override
+
+
+def _warn_stale_thinking_block_recovery(model_name: str) -> None:
+    warnings.warn(
+        f'{model_name!r} rejected a replayed thinking block: the conversation prefix changed '
+        'between requests, which Anthropic enforces for accounts created on or after 2026-08-31. '
+        "Pydantic AI retried with `prefix_mismatch_behavior='drop_block'`, so the run continued "
+        "without that turn's reasoning. The cause is something earlier in the request that is not "
+        'byte-stable between turns — commonly instructions carrying a per-request value such as a '
+        'timestamp, or a tool added, removed or reordered mid-conversation. That same instability '
+        'invalidates the prompt cache on every model and provider, where it raises nothing and '
+        'silently re-charges the whole conversation at uncached rates, so this rejection is the '
+        'loud version of a normally-silent cost. Making the prefix stable is the real fix; to skip '
+        'the rejected request instead, ask for the drop yourself: `model_settings='
+        "{'anthropic_thinking': {'type': 'adaptive', 'block_binding': "
+        "{'prefix_mismatch_behavior': 'drop_block'}}}`. To keep the retry and silence this warning: "
+        "`warnings.simplefilter('ignore', AnthropicStaleThinkingBlockWarning)`. See "
+        'https://pydantic.dev/docs/ai/models/anthropic/#thinking-block-binding and '
+        'https://platform.claude.com/docs/en/build-with-claude/preserved-thinking',
+        AnthropicStaleThinkingBlockWarning,
+        stacklevel=2,
+    )
+
+
+def _report_input_transformations(
+    transformations: list[BetaInputTransformation],
+) -> list[dict[str, Any]]:
+    """Report Anthropic's input transformations on the current span, and return them for `provider_details`.
+
+    A dropped thinking block is otherwise silent: the model answered without the reasoning we
+    replayed, and nothing in the response says so. `provider_details` keeps it inspectable after the
+    run; the span event surfaces it in the trace, on the model request that lost the reasoning.
+    """
+    reported = [transformation.model_dump() for transformation in transformations]
+    span = get_current_span()
+    attributes = getattr(span, 'attributes', {})
+    if span.is_recording() and attributes.get('gen_ai.operation.name') == 'chat':
+        span.add_event(
+            'anthropic.input_transformations',
+            attributes={'anthropic.input_transformations': pydantic_core.to_json(reported).decode()},
+        )
+    return reported
+
+
 def _resolve_anthropic_service_tier(
     model_settings: AnthropicModelSettings,
 ) -> Literal['auto', 'standard_only'] | Omit:
@@ -520,6 +867,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     Apart from `__init__`, all methods are private or match those of the base class.
     """
+
+    supported_tool_deferral_modes = frozenset({'standalone'})
+    supported_tool_addition_modes = frozenset({'by_reference'})
+    # The API ignores (and doesn't bill) blocks before a compaction block, so the trim only saves
+    # request size here — but it also keeps a `tool_result` whose `tool_use` was trimmed away from
+    # 400ing, since validation runs even on ignored content.
+    #
+    # Both declarations match the inherited defaults, restated because they're what makes this
+    # adapter's trim correct rather than an accident: the summary is plaintext message content, so
+    # there is no encrypted blob to require, and the standing prompt travels in the top-level
+    # `system` parameter, rebuilt from the opening `SystemPromptPart`s on every request, so the trim
+    # has to re-insert them.
+    compaction_requires_encrypted_content = False
+    compaction_retains_standing_prompt = False
 
     _model_name: AnthropicModelName = field(repr=False)
     _provider: Provider[AsyncAnthropicClient] = field(repr=False)
@@ -564,6 +925,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The model name."""
         return self._model_name
 
+    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        """Resolve the longest retention requested by active Anthropic cache settings."""
+        settings = merge_model_settings(self.settings, model_settings) or {}
+        return self._max_prompt_cache_retention(
+            settings.get('anthropic_cache'),
+            settings.get('anthropic_cache_instructions'),
+            settings.get('anthropic_cache_tool_definitions'),
+            settings.get('anthropic_cache_messages'),
+        )
+
     @property
     def system(self) -> str:
         """The model provider."""
@@ -577,13 +948,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         profile's `supported_native_tools` and `anthropic_supports_dynamic_filtering` are narrowed here
         for clients that don't support them (e.g. Bedrock, Vertex). `supports_inline_system_prompts` is
         narrowed the same way, and for the same reason: serving a `{'role': 'system'}` entry is a fact
-        about the transport as much as about the model.
+        about the transport as much as about the model. Thinking-block binding is likewise narrowed, but
+        by client class rather than by base URL: its beta and drop-block retry are verified against
+        Anthropic's Messages API, which a proxied or gateway `AsyncAnthropic` still reaches.
         """
         _profile = super().profile
-        provider = self.provider
-        if provider is None:
-            return cast(AnthropicModelProfile, _profile)
-        client = provider.client
+        client = self._provider.client
         supported_native_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
         if isinstance(client, _WEB_SEARCH_UNSUPPORTED_CLIENTS):
             supported_native_tools = supported_native_tools - {WebSearchTool}
@@ -604,9 +974,20 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 # mid-conversation parts are rewritten before the adapter ever sees them.
                 supports_inline_system_prompts=_profile.get('supports_inline_system_prompts', False)
                 and not isinstance(client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS),
+                anthropic_binds_thinking_blocks=_profile.get('anthropic_binds_thinking_blocks', False)
+                and not isinstance(client, _THINKING_BINDING_UNSUPPORTED_CLIENTS),
             ),
         )
         return cast(AnthropicModelProfile, _profile)
+
+    @property
+    def tool_addition_mode(self) -> Literal['by_reference'] | None:
+        """The effective addition mode, narrowed for transports without inline system messages."""
+        mode = super().tool_addition_mode
+        provider = self.provider
+        if provider is not None and isinstance(provider.client, _INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS):
+            return None
+        return mode if mode == 'by_reference' else None
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -680,6 +1061,22 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         async with response:
             yield await self._process_streamed_response(response, model_request_parameters, model_settings)
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        return _request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
+
+    def _default_structured_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        # Extended thinking rejects the forced tool choice Tool Output relies on.
+        if (
+            model_request_parameters.output_tools
+            and _request_thinking_type(self.profile, model_settings, model_request_parameters) == 'enabled'
+        ):
+            return 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
+        return super()._default_structured_output_mode(model_settings, model_request_parameters)
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
@@ -697,32 +1094,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
             )
 
-        thinking_enabled = False
-        if anthropic_thinking := merged.get('anthropic_thinking'):
-            thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
-        elif merged.get('thinking'):
-            thinking_enabled = True
-
-        if model_request_parameters.output_tools and thinking_enabled:
-            output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
-            model_request_parameters = model_request_parameters.with_default_output_mode(output_mode)
-            if (
-                model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
-            ):  # pragma: no branch
-                # This would result in `tool_choice=required`, which Anthropic does not support with thinking.
-                suggested_output_type = (
-                    'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
-                )
-                raise UserError(
-                    f'Anthropic does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
-                )
-
-        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
-        # strict-forcing check below also applies when native mode is reached via the profile default
-        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
-        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
+        # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
+        # otherwise only resolve it after `customize_request_parameters()` has already transformed the schema.
         model_request_parameters = model_request_parameters.with_default_output_mode(
-            self.profile.get('default_structured_output_mode', 'tool')
+            self._default_structured_output_mode(merged, model_request_parameters)
         )
 
         if model_request_parameters.output_mode == 'native':
@@ -743,19 +1119,19 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return prepared_settings, model_request_parameters
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
-        dropped = {setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
+        dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings}
         extra_body = model_settings.get('extra_body')
         if is_str_dict(extra_body):
-            dropped |= {setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in extra_body}
+            dropped |= {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in extra_body}
             model_settings['extra_body'] = {
-                key: value for key, value in extra_body.items() if key not in _ANTHROPIC_SAMPLING_PARAMS
+                key: value for key, value in extra_body.items() if key not in ANTHROPIC_SAMPLING_PARAMS
             }
 
-        for setting in _ANTHROPIC_SAMPLING_PARAMS:
+        for setting in ANTHROPIC_SAMPLING_PARAMS:
             model_settings.pop(setting, None)
 
         if dropped:
-            ordered = [setting for setting in _ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
+            ordered = [setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in dropped]
             warnings.warn(
                 f'Sampling parameters {ordered} are not supported by {self.model_name!r}. These settings will be ignored.',
                 UserWarning,
@@ -771,10 +1147,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
+        if thinking is False and self.profile.get('thinking_enabled_by_default', False):
+            # Omitting `thinking` leaves it on for these models. `Model.prepare_request` has already dropped
+            # `False` for models that can't turn thinking off.
+            return {'type': 'disabled'}
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
-        profile = self.profile
-        if profile.get('anthropic_supports_adaptive_thinking', False):
+        if self.profile.get('anthropic_supports_adaptive_thinking', False):
             return {'type': 'adaptive'}
         return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
 
@@ -810,8 +1189,17 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         This is the last step before sending the request to the API.
         Most preprocessing has happened in `prepare_request()`.
         """
+        # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
+        # entries are then appended in history order; Anthropic excludes them from its cache key.
+        revealed_tool_order = _revealed_deferred_tool_order(messages, model_request_parameters)
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, model_request_parameters)
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, model_request_parameters, model_settings)
+        _append_revealed_tool_params(tools, revealed_tool_order)
+        if tools and all(tool.get('defer_loading') is True for tool in tools):
+            raise UserError(
+                'Anthropic rejects a request whose wire tools all have `defer_loading=True`. '
+                'Make at least one tool visible, or add a tool-search surface or capability catalog.'
+            )
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, model_request_parameters, model_settings)
@@ -822,15 +1210,35 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile, messages)
+        thinking = self._translate_thinking(model_settings, model_request_parameters)
+        effective_thinking = _effective_thinking(model_settings, thinking)
+        betas, extra_headers = self._get_betas_and_extra_headers(
+            model_settings, anthropic_profile, messages, model_request_parameters, effective_thinking
+        )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        container = self._get_container(messages, model_settings)
+        container, container_from_history = self._get_container(messages, model_settings)
+        recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
+        initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
+            _thinking_with_stale_block_history(
+                anthropic_profile,
+                recovery_messages,
+                thinking,
+                effective_thinking,
+                betas,
+                compaction_boundary=compaction_boundary,
+            )
+        )
 
-        with _map_api_errors(self.model_name):
+        async def create(
+            container_param: BetaContainerParams | str | None,
+            thinking: BetaThinkingConfigParam | Omit,
+            betas: set[str],
+            thinking_override: dict[str, object] | None,
+        ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await self.client.beta.messages.create(
-                max_tokens=model_settings.get('max_tokens', 4096),
+                max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)),
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
                 model=self._model_name,
@@ -841,20 +1249,65 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas=sorted(betas) or OMIT,
                 stream=stream,
                 cache_control=auto_cache_control or OMIT,
-                thinking=self._translate_thinking(model_settings, model_request_parameters),
+                thinking=thinking,
                 stop_sequences=model_settings.get('stop_sequences', OMIT),
-                temperature=model_settings.get('temperature', OMIT),
-                top_p=model_settings.get('top_p', OMIT),
-                top_k=model_settings.get('top_k', OMIT),
-                timeout=model_settings.get('timeout', NOT_GIVEN),
+                timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 metadata=model_settings.get('anthropic_metadata', OMIT),
                 context_management=context_management or OMIT,
-                container=container or OMIT,
+                container=container_param or OMIT,
                 service_tier=_resolve_anthropic_service_tier(model_settings),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
+                extra_body=_build_extra_body(model_settings, thinking_override),
             )
+
+        retry_container = container
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            try:
+                return await create(container, initial_thinking, initial_betas, initial_thinking_override)
+            except APIStatusError as error:
+                if (
+                    error.status_code == 500
+                    and container_from_history
+                    and any(
+                        is_str_dict(block) and block['type'] == 'container_upload'
+                        for message in anthropic_messages
+                        for block in message['content']
+                    )
+                ):
+                    try:
+                        return await create(None, initial_thinking, initial_betas, initial_thinking_override)
+                    except APIStatusError as fallback_error:
+                        # Classify what the fallback hit, not the 500 that caused it, so a stale
+                        # thinking block rejected only on this attempt still reaches the retry
+                        # below. The history-resolved container is gone, so it stays dropped there.
+                        error = fallback_error
+                        retry_container = None
+                if not _is_stale_thinking_block_error(anthropic_profile, initial_effective_thinking, error):
+                    raise error
+
+            result = await create(
+                retry_container,
+                OMIT,
+                betas | {_ANTHROPIC_THINKING_BINDING_BETA},
+                _drop_stale_thinking_blocks(effective_thinking),
+            )
+            _warn_stale_thinking_block_recovery(self.model_name)
+            return result
+
+    def _stale_thinking_block_recovery_history(
+        self, messages: list[ModelMessage]
+    ) -> tuple[list[ModelMessage], ModelResponse | None]:
+        """The wire-visible history and response whose metadata describes the compacted-away request."""
+        trimmed_messages = self._trim_before_compaction(messages)
+        if trimmed_messages is messages:
+            return messages, None
+
+        # The shared trim may re-insert a standing-prompt request before the boundary response, but it
+        # removes every earlier response. `input_transformations` on the boundary response describes
+        # the request that produced the compaction block, not the next post-compaction request.
+        boundary = next(message for message in trimmed_messages if isinstance(message, ModelResponse))
+        return trimmed_messages, boundary
 
     @staticmethod
     def _add_compaction_params(
@@ -883,6 +1336,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
         anthropic_profile: AnthropicModelProfile,
         messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+        thinking: dict[str, object] | Omit,
     ) -> tuple[set[str], dict[str, str]]:
         """Prepare beta features list and extra headers for API request.
 
@@ -900,6 +1355,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if self._get_task_budget(model_settings) is not None:
             betas.add(_ANTHROPIC_TASK_BUDGETS_BETA)
 
+        # `thinking.block_binding` is a 400 (`Extra inputs are not permitted`) without its beta,
+        # so the beta follows the field rather than the profile flag — a user who sets
+        # `block_binding` through `anthropic_thinking` gets it too.
+        # Membership, not truthiness: `block_binding: {}` is a valid request meaning "every binding
+        # default", and it needs the beta exactly as much as a populated one does.
+        if not isinstance(thinking, Omit) and 'block_binding' in thinking:
+            betas.add(_ANTHROPIC_THINKING_BINDING_BETA)
+
         if model_settings.get('anthropic_speed') == 'fast' and self._client_supports_fast_speed(anthropic_profile):
             betas.add('fast-mode-2026-02-01')
 
@@ -911,6 +1374,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
         if self._messages_use_anthropic_uploaded_file(messages):
             betas.add(_ANTHROPIC_FILES_API_BETA)
+        # `prepare_messages` converts local search returns into availability deltas before this
+        # scan. Native search returns replay under the tool-search beta, so delta parts are the
+        # complete trigger set for the mid-conversation-tool-changes beta.
+        # Function tools only, to stay co-extensive with the `tool_addition` renderer: output
+        # tools are never revealed, so a (forged or replayed) delta naming one renders nothing
+        # and must not add the beta either.
+        function_tool_defs = {tool_def.name: tool_def for tool_def in model_request_parameters.function_tools}
+        if self.tool_addition_mode == 'by_reference' and any(
+            name in model_request_parameters.declared_tool_defs
+            and name in function_tool_defs
+            and model_request_parameters.visibility_of(name) != 'visible'
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+            for name in part.tools_added
+        ):
+            betas.add('mid-conversation-tool-changes-2026-07-01')
 
         return betas, extra_headers
 
@@ -962,8 +1443,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     def _get_container(
         self, messages: list[ModelMessage], model_settings: AnthropicModelSettings
-    ) -> BetaContainerParams | str | None:
-        """Resolve the `container` request parameter.
+    ) -> tuple[BetaContainerParams | str | None, bool]:
+        """Resolve the `container` request parameter, and whether we resolved it from history.
+
+        The second element is `True` only for an id recovered by the history scan below. That is the
+        one container the caller never chose, so it is the only one we may drop and re-resolve when
+        the API rejects it. A user-set `anthropic_container` and a `pause_turn` reconnect id are
+        both deliberate and stay on the wire even when they fail.
 
         The Anthropic SDK types `container` as `BetaContainerParams | str`, and the
         live API accepts both forms *except* for one specific shape: a dict carrying
@@ -980,23 +1466,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         if (container := model_settings.get('anthropic_container')) is not None:
             if container is False:
-                return None
+                return None, False
             if isinstance(container, dict) and set(container) == {'id'} and (cid := container.get('id')):
-                return cid
-            return container
+                return cid, False
+            return container, False
         # On pause_turn continuation, pass just the container ID string to reconnect.
         # Re-passing BetaContainerParams triggers a prefill rejection on some models
         # (e.g. Sonnet 4-6) even though plain string ID works fine.
         if messages and isinstance(messages[-1], ModelResponse) and messages[-1].state == 'suspended':
             if messages[-1].provider_details:
-                return messages[-1].provider_details.get('container_id')
-            return None  # pragma: lax no cover
+                return messages[-1].provider_details.get('container_id'), False
+            return None, False
 
         for m in reversed(messages):
             if isinstance(m, ModelResponse) and m.provider_name == self.system and m.provider_details:
                 if cid := m.provider_details.get('container_id'):
-                    return cid
-        return None
+                    return cid, True
+        return None, False
 
     async def _messages_count_tokens(
         self,
@@ -1011,18 +1497,18 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # real tokens. This undercounts the prompt by the server tools' definitions, but it's the
         # only way to get a count until Anthropic supports them.
         # TODO: Remove this workaround if Anthropic starts accepting server tools on `count_tokens`.
+        # Recheck: POST /v1/messages/count_tokens with a web_search tool. Docs now list those tools: https://platform.claude.com/docs/en/api/messages/count_tokens
         count_tokens_parameters = replace(
             model_request_parameters,
             native_tools=[tool for tool in model_request_parameters.native_tools if isinstance(tool, MemoryTool)],
         )
-        # Params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search leaves
-        # `tool_search_active` True so tool-search replay renders the same `tool_reference` wire shape
-        # as `/v1/messages` (those references point at `function_tools`, which aren't stripped here, so
-        # they stay valid), and leaves the deferred tools carrying `defer_loading` for the same reason:
-        # both sides of the reveal read the same condition, so a count that dropped the flag would be
-        # describing a request we never send. The endpoint honors the flag rather than ignoring it —
-        # one deferred 30-field tool counts 440 tokens with it and 1761 without on `claude-opus-4-8` —
-        # so this is the difference between counting the prompt and counting the hidden schemas too.
+        # Params that keep `ToolSearchTool` but drop `AdvisorTool`. Keeping tool search means the
+        # count describes the request we'd really send, deferred tools and all: `function_tools`
+        # aren't stripped here, so they keep their `defer_loading` and the tool-search replay still
+        # renders the same `tool_reference` wire shape as `/v1/messages`. The endpoint honors the flag
+        # rather than ignoring it — one deferred 30-field tool counts 440 tokens with it and 1761
+        # without on `claude-opus-4-8` — so this is the difference between counting the prompt and
+        # counting the hidden schemas too.
         # Dropping advisor makes `advisor_active` False so its call/result history blocks are stripped
         # during replay — the advisor tool is a server tool that `count_tokens` rejects (and that
         # `_add_native_tools` keeps off the wire below), and replaying advisor blocks without the tool
@@ -1033,10 +1519,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
 
         # standalone function to make it easier to override
+        revealed_tool_order = _revealed_deferred_tool_order(messages, map_parameters)
         tools, tool_choice = self._prepare_tools_and_tool_choice(model_settings, map_parameters)
         # `count_tokens_parameters` here, not `map_parameters`: the server-side tool definitions are
         # what the endpoint rejects, so they're the one thing that has to differ from the real request.
         tools, mcp_servers, native_tool_betas = self._add_native_tools(tools, count_tokens_parameters, model_settings)
+        _append_revealed_tool_params(tools, revealed_tool_order)
 
         auto_cache_control, resolved_cache_ttl = self._build_automatic_cache_control(model_settings)
         system_prompt, anthropic_messages = await self._map_message(messages, map_parameters, model_settings)
@@ -1047,35 +1535,62 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         output_config = self._build_output_config(model_request_parameters, model_settings)
         anthropic_profile = self.profile
-        betas, extra_headers = self._get_betas_and_extra_headers(model_settings, anthropic_profile, messages)
+        thinking = self._translate_thinking(model_settings, model_request_parameters)
+        effective_thinking = _effective_thinking(model_settings, thinking)
+        betas, extra_headers = self._get_betas_and_extra_headers(
+            model_settings, anthropic_profile, messages, model_request_parameters, effective_thinking
+        )
         betas.update(native_tool_betas)
         context_management = self._add_compaction_params(messages, betas, model_settings)
         self._validate_task_budget_vs_context_management(model_settings, context_management)
-        if isinstance(self.client, AsyncAnthropicBedrock):
-            from ._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
+        recovery_messages, compaction_boundary = self._stale_thinking_block_recovery_history(messages)
+        initial_thinking, initial_betas, initial_thinking_override, initial_effective_thinking = (
+            _thinking_with_stale_block_history(
+                anthropic_profile,
+                recovery_messages,
+                thinking,
+                effective_thinking,
+                betas,
+                compaction_boundary=compaction_boundary,
+                include_count_tokens_recovery=True,
+            )
+        )
 
-            with _map_api_errors(self.model_name):
+        async def count(
+            thinking: BetaThinkingConfigParam | Omit,
+            betas: set[str],
+            thinking_override: dict[str, object] | None,
+        ) -> BetaMessageTokensCount:
+            extra_body = (
+                _build_extra_body(model_settings, thinking_override)
+                if thinking_override is not None
+                else model_settings.get('extra_body')
+            )
+            if isinstance(self.client, AsyncAnthropicBedrock):
+                from ._anthropic_bedrock_count_tokens import count_tokens_via_bedrock
+
                 return await count_tokens_via_bedrock(
                     self.client,
                     self._model_name,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
-                    max_tokens=model_settings.get('max_tokens', 4096),
+                    max_tokens=model_settings.get(
+                        'max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)
+                    ),
                     tools=tools or OMIT,
                     tool_choice=tool_choice or OMIT,
                     mcp_servers=mcp_servers or OMIT,
                     betas=sorted(betas) or OMIT,
                     output_config=output_config or OMIT,
                     cache_control=auto_cache_control or OMIT,
-                    thinking=self._translate_thinking(model_settings, model_request_parameters),
+                    thinking=thinking,
                     context_management=context_management or OMIT,
-                    timeout=model_settings.get('timeout', NOT_GIVEN),
+                    timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                     speed=self._effective_speed(model_settings, anthropic_profile),
                     extra_headers=extra_headers,
-                    extra_body=model_settings.get('extra_body'),
+                    extra_body=extra_body,
                 )
 
-        with _map_api_errors(self.model_name):
             return await self.client.beta.messages.count_tokens(
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
@@ -1086,13 +1601,29 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 betas=sorted(betas) or OMIT,
                 output_config=output_config or OMIT,
                 cache_control=auto_cache_control or OMIT,
-                thinking=self._translate_thinking(model_settings, model_request_parameters),
+                thinking=thinking,
                 context_management=context_management or OMIT,
-                timeout=model_settings.get('timeout', NOT_GIVEN),
+                timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
                 speed=self._effective_speed(model_settings, anthropic_profile),
                 extra_headers=extra_headers,
-                extra_body=model_settings.get('extra_body'),
+                extra_body=extra_body,
             )
+
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            try:
+                return await count(initial_thinking, initial_betas, initial_thinking_override)
+            except APIStatusError as error:
+                if not _is_stale_thinking_block_error(anthropic_profile, initial_effective_thinking, error):
+                    raise
+
+            result = await count(
+                OMIT,
+                betas | {_ANTHROPIC_THINKING_BINDING_BETA},
+                _drop_stale_thinking_blocks(effective_thinking),
+            )
+            _mark_history_to_drop_stale_thinking_blocks_for_count_tokens(messages)
+            _warn_stale_thinking_block_recovery(self.model_name)
+            return result
 
     def _process_response(  # noqa: C901
         self,
@@ -1155,7 +1686,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 call_part = builtin_tool_calls.get(item.tool_use_id)
                 items.append(_map_mcp_server_result_block(item, call_part, self.system))
             elif isinstance(item, BetaCompactionBlock):
-                items.append(CompactionPart(content=item.content, provider_name=self.system))
+                items.append(
+                    CompactionPart(
+                        content=item.content,
+                        provider_name=self.system,
+                        provider_details=_compaction_provider_details(item.encrypted_content),
+                    )
+                )
             else:
                 assert isinstance(item, BetaToolUseBlock), f'unexpected item type {type(item)}'
                 items.append(
@@ -1180,6 +1717,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if response.container:
             provider_details = provider_details or {}
             provider_details['container_id'] = response.container.id
+        if response.input_transformations:
+            provider_details = provider_details or {}
+            provider_details['input_transformations'] = _report_input_transformations(response.input_transformations)
 
         return ModelResponse(
             parts=items,
@@ -1227,7 +1767,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         peekable_response: _utils.PeekableAsyncStream[
             BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
@@ -1246,6 +1786,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             _model_name=model_name,
             _response=peekable_response,
             _provider_name=self._provider.name,
+            _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _enabled_server_tool_names=self._get_enabled_server_tool_names(model_request_parameters, model_settings),
         )
@@ -1310,7 +1851,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     def _map_web_fetch_tool(
         tool: WebFetchTool, supports_dynamic_filtering: bool
     ) -> tuple[BetaWebFetchTool20260209Param | BetaWebFetchTool20250910Param, str | None]:
-        citations = BetaCitationsConfigParam(enabled=tool.enable_citations) if tool.enable_citations else None
+        citations = BetaCitationsConfigParamParam(enabled=tool.enable_citations) if tool.enable_citations else None
         if supports_dynamic_filtering:
             return (
                 BetaWebFetchTool20260209Param(
@@ -1363,7 +1904,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 if beta_feature is not None:
                     beta_features.add(beta_feature)
             elif isinstance(tool, MemoryTool):  # pragma: no branch
-                if 'memory' not in model_request_parameters.tool_defs:
+                if 'memory' not in {tool.name for tool in model_request_parameters.declared_function_tools}:
                     raise UserError("Native `MemoryTool` requires a 'memory' tool to be defined.")
                 # Replace the memory tool definition with the native memory tool
                 tools = [tool for tool in tools if tool.get('name') != 'memory']
@@ -1423,28 +1964,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         Returns:
             A tuple of (filtered_tools, tool_choice).
         """
-        tool_defs = model_request_parameters.tool_defs
-        tool_search_corpus = [
-            tool_def for tool_def in tool_defs.values() if tool_def.with_native == ToolSearchTool.kind
-        ]
-        # Anthropic accepts application-driven `tool_reference` reveals without a search
-        # tool. Remove the search surface when the entire corpus is capability-owned,
-        # since capability-owned tools are never searchable.
-        capability_only_corpus = bool(tool_search_corpus) and all(
-            tool_def.capability_id in model_request_parameters.deferred_capability_ids
-            for tool_def in tool_search_corpus
-        )
-        if capability_only_corpus:
-            tool_defs = {
-                name: replace(tool_def, with_native=None)
-                if tool_def.capability_id in model_request_parameters.deferred_capability_ids
-                else tool_def
-                for name, tool_def in tool_defs.items()
-                if tool_def.tool_kind != 'tool-search'
-            }
-
+        tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        supports_forced_tool_choice = self.profile.get('anthropic_supports_forced_tool_choice', True)
 
         tool_choice: BetaToolChoiceParam
 
@@ -1452,27 +1973,16 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # tool_choice = {'type': resolved_tool_choice}`: pyright can't narrow this properly
             tool_choice = {'type': 'auto'} if resolved_tool_choice == 'auto' else {'type': 'none'}
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(
-                model_settings,
-                model_request_parameters,
-                resolved_tool_choice,
-                "tool_choice='required'",
-                supports_forced_tool_choice=supports_forced_tool_choice,
-            )
+            supports = _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
             tool_choice = {'type': 'any'} if supports else {'type': 'auto'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(
-                model_settings,
-                model_request_parameters,
-                resolved_tool_choice,
-                supports_forced_tool_choice=supports_forced_tool_choice,
-            )
+            supports = _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
                 else:
-                    # Forcing not supported (thinking enabled, or a model that rejects it outright):
+                    # Forcing not supported (extended thinking, or a model that rejects it outright):
                     # filter so the model can only see the requested tool, since `auto` alone
                     # wouldn't restrict the choice.
                     # Breaks caching, but Anthropic doesn't support limiting tools via API arg.
@@ -1488,17 +1998,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if not tool_defs:
             return [], None
 
-        # `defer_loading` hides a tool's schema until something reveals it, and on Anthropic the only
-        # reveal is a `tool_reference` block, which `_map_message` renders under this same condition.
-        # A model that doesn't support the tool-search native tool never gets one, so sending it the
-        # flag would hide a tool nothing can unhide — reachable once a capability has been loaded,
-        # since `defer_loading` records authored intent and stays set after the reveal. Keeping both
-        # sides on one condition is what stops them from drifting apart.
-        supports_deferred_tools = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.native_tools)
-
-        # Map ToolDefinitions to Anthropic format
+        # `'deferred'` visibility means "withhold this tool's schema", which
+        # `prepare_request` only leaves set on models that can unhide it again — so the flag goes on
+        # the wire as it stands, with no second opinion from here. Anthropic unhides through a
+        # `tool_reference` block, from a `tool_addition` or a tool-search result, and the tool keeps
+        # the flag afterwards so an advertised entry never graduates into the cache-keyed segment.
         tools: list[BetaToolUnionParam] = [
-            self._map_tool_definition(t, model_settings, include_defer_loading=supports_deferred_tools)
+            self._map_tool_definition(t, model_settings, visibility=model_request_parameters.visibility_of(t.name))
             for t in tool_defs.values()
         ]
 
@@ -1525,6 +2031,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         model_settings: AnthropicModelSettings,
     ) -> tuple[str | list[BetaTextBlockParam], list[BetaMessageParam]]:
         """Just maps a `pydantic_ai.Message` to a `anthropic.types.MessageParam`."""
+        messages = self._trim_before_compaction(messages)
         system_prompt_parts: list[str] = []
         anthropic_messages: list[BetaMessageParam] = []
         # Cross-provider files are dropped silently here, not raised via
@@ -1536,15 +2043,26 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             for file in tool.files
             if file.provider_name == self.system
         ]
-        # Whenever the current request carries any `ToolSearchTool` builtin, render any
-        # local-shape `search_tools` history exchanges as Anthropic's "client-side"
-        # tool-search wire — `tool_use` paired with a `tool_result` whose `content` is a
-        # `tool_reference` array. This unlocks the deferred tools' schemas server-side
-        # without forcing the model to re-search, and works regardless of the current
-        # turn's strategy (default native, named native, or custom callable). The flag
-        # also covers the no-history single-turn custom callable case (where the local
+        # Whenever this request withholds a tool's schema, render any local-shape `search_tools`
+        # history exchanges as Anthropic's "client-side" tool-search wire — `tool_use` paired with a
+        # `tool_result` whose `content` is a `tool_reference` array. That block is the reveal: it
+        # unlocks the withheld schemas server-side without forcing the model to re-search, and works
+        # regardless of the current turn's strategy (default native, named native, or custom
+        # callable), covering the no-history single-turn custom callable case too (where the local
         # `search_tools` exchange is created on this turn).
-        tool_search_active = any(isinstance(t, ToolSearchTool) for t in model_request_parameters.native_tools)
+        #
+        # Reading the deferred tools rather than the presence of a `ToolSearchTool` is deliberate:
+        # tool search is one thing that can trigger a reveal, not what makes a reveal legal. A run
+        # whose deferred tools are all capability-gated sends no search tool at all and still needs
+        # this, and Anthropic agrees — a `tool_reference` result with no tool-search tool in the
+        # request returns 200 and the model calls the revealed tool (verified live on
+        # `claude-sonnet-5` and `claude-opus-4-8`).
+        # A `None` visibility means unresolved parameters from a direct `Model` call (every
+        # production path resolves via `prepare_request` first); the authored flag is the stand-in.
+        deferred_tools_active = any(
+            model_request_parameters.visibility_of(t.name) == 'deferred'
+            for t in model_request_parameters.function_tools
+        )
         # The API 400s if advisor blocks appear in history without the advisor tool in the current
         # request, so when it's absent we strip advisor call/result blocks during replay (per
         # Anthropic's docs). When present, blocks — including a dangling pause_turn call — round-trip
@@ -1554,36 +2072,52 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         # will actually send: Anthropic rejects references to tools not in the wire `tools`
         # list (e.g. an MCP that failed to register this turn). The previously-discovered
         # name still lives in history; it just isn't worth replaying as a tool reference.
-        available_tool_names = {t.name for t in model_request_parameters.function_tools}
-        orphan_tool_search_call_ids = _collect_orphan_tool_search_call_ids(messages)
-        # `SystemPromptPart`s in the first request are the run's own system prompt and always hoist to the
-        # top-level `system` parameter. Later ones are mid-conversation operator instructions: where we
-        # support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`) and
-        # it's on us to render them, as a `{'role': 'system'}` entry, so that adding an instruction leaves
-        # the cached prefix the top-level `system` parameter sits in untouched. Where we don't,
+        #
+        # `tool_defs` rather than `function_tools` so this matches what `_prepare_tools_and_tool_choice`
+        # actually sends, which includes output tools. Nothing generates a reveal naming an output tool
+        # today — the framework's only generator reads `function_tools`, and the UI adapters round-trip
+        # names from it — so this changes no current behavior. It keeps the filter honest against the
+        # wire regardless, rather than silently dropping a block whenever the two sets diverge.
+        declared_tool_names = set(model_request_parameters.declared_tool_defs)
+        # Only the opening `SystemPromptPart`s in the first request are the run's own system prompt and
+        # hoist to the top-level `system` parameter. Later ones are mid-conversation operator instructions:
+        # where we support them they reach us verbatim (rather than `<system>`-tagged by `prepare_messages`)
+        # and it's on us to render them as a `{'role': 'system'}` entry, so adding an instruction leaves the
+        # cached prefix the top-level `system` parameter sits in untouched. Where we don't,
         # `prepare_messages` has already rewritten them and none reach this branch — bar the adapter's
         # direct entry points, `count_tokens` and `request`, where hoisting them is the safe reading.
         inline_system_prompts = self.profile.get('supports_inline_system_prompts', False)
+        # Already narrowed for transports that can't serve the `system` role, so this covers both halves
+        # of the gate — and it's the same flag the beta header is added under.
+        supports_tool_availability_delta = self.tool_addition_mode == 'by_reference'
         leading_request = next((m for m in messages if isinstance(m, ModelRequest)), None)
+        rendered_tool_additions: set[str] = set()
+        tool_defs_by_name = {tool.name: tool for tool in model_request_parameters.function_tools}
         for m in messages:
             if isinstance(m, ModelRequest):
+                standing_prompt_count = _standing_system_prompt_count(m) if m is leading_request else 0
                 user_content_params: list[BetaContentBlockParam] = []
                 mid_conversation_system_prompts: list[str] = []
-                # `CachePoint`s authored after a mid-conversation instruction, as the number of user
-                # blocks that preceded each one. They can't be placed while mapping: the instruction is
-                # authored before them but renders after this request's user blocks, so whether it falls
-                # inside the boundary depends on whether anything else follows the marker.
+                tool_availability_blocks: list[dict[str, Any]] = []
+                # `CachePoint`s authored after a mid-conversation instruction or a tool availability
+                # change, as the number of user blocks that preceded each one. They can't be placed
+                # while mapping: both render after this request's user blocks in the `system` entry
+                # despite being authored before the marker, so whether they fall inside the boundary
+                # depends on whether anything else follows the marker.
                 deferred_cache_points: list[tuple[int, Literal['5m', '1h']]] = []
-                for request_part in m.parts:
+                for part_index, request_part in enumerate(m.parts):
                     if isinstance(request_part, SystemPromptPart):
-                        if not inline_system_prompts or m is leading_request:
+                        if not inline_system_prompts or part_index < standing_prompt_count:
                             system_prompt_parts.append(request_part.content)
                         else:
+                            # System-voice parts within one request all precede the same assistant
+                            # response. Rendering an interleaved entry after sibling user content is
+                            # deterministic and preserves the only ordering boundary that matters.
                             mid_conversation_system_prompts.append(request_part.content)
                     elif isinstance(request_part, UserPromptPart):
                         async for content in self._map_user_prompt(request_part):
                             if isinstance(content, CachePoint):
-                                if mid_conversation_system_prompts:
+                                if mid_conversation_system_prompts or tool_availability_blocks:
                                     deferred_cache_points.append((len(user_content_params), content.ttl))
                                 else:
                                     # A `CachePoint` asks to cache everything up to that point, and it
@@ -1603,11 +2137,42 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                             else:
                                 user_content_params.append(content)
+                    elif isinstance(request_part, ToolAvailabilityDeltaPart):
+                        if not supports_tool_availability_delta:
+                            # `prepare_messages` projects the delta onto the local tool-search exchange
+                            # for every model and transport that can't render it natively, so arriving
+                            # here means that projection didn't run — the same pipeline bug the other
+                            # adapters raise on, reachable by calling `Model.request` directly. Raising
+                            # matches them; rendering the blocks anyway would send them without the
+                            # `mid-conversation-tool-changes` beta header, which is added under this
+                            # same condition, and earn a 400 in place of an explanation.
+                            raise _unsynthesized_tool_availability_delta_error()
+                        # Both block types carry a `tool_reference`, and the API rejects one naming a
+                        # tool this request doesn't declare: `tool_addition/tool_removal references
+                        # unknown tool '...'`. Replayed history routinely names tools that have since
+                        # gone — the turn announcing a removal is the last one that still declares it,
+                        # and a tool added then removed is absent from every turn after that. So a
+                        # block that can no longer be referenced is dropped, not asserted away: the
+                        # tool's absence from `tools` already tells the model what the block would.
+                        # `declared_tool_names` is the one bound above and shared with the tool-search
+                        # replay filters — same question, so it should be the same answer.
+                        for name in request_part.tools_added:
+                            tool_def = tool_defs_by_name.get(name)
+                            if (
+                                name in declared_tool_names
+                                and name not in rendered_tool_additions
+                                and tool_def is not None
+                                and model_request_parameters.visibility_of(name) != 'visible'
+                            ):
+                                tool_availability_blocks.append(
+                                    {'type': 'tool_addition', 'tool': {'type': 'tool_reference', 'name': name}}
+                                )
+                                rendered_tool_additions.add(name)
                     elif isinstance(request_part, ToolReturnPart):
                         tool_result_content: list[beta_tool_result_block_param.Content] = []
 
                         custom_tool_refs, custom_empty_message = _build_custom_tool_search_replay_blocks(
-                            request_part, tool_search_active, available_tool_names
+                            request_part, deferred_tools_active, declared_tool_names
                         )
                         if custom_tool_refs:
                             tool_result_block_param = beta_tool_result_block_param.BetaToolResultBlockParam(
@@ -1667,6 +2232,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                             is_error=request_part.outcome == 'failed',
                         )
                         user_content_params.append(tool_result_block_param)
+                    elif isinstance(request_part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
+                        raise _unconverted_speech_part_error()
                     elif isinstance(request_part, RetryPromptPart):  # pragma: no branch
                         if request_part.tool_name is None:
                             text = request_part.model_response()
@@ -1694,10 +2262,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         )
                 if len(user_content_params) > 0:
                     anthropic_messages.append(BetaMessageParam(role='user', content=user_content_params))
-                if mid_conversation_system_prompts:
+                if mid_conversation_system_prompts or tool_availability_blocks:
                     system_content_params: list[BetaContentBlockParam] = [
                         BetaTextBlockParam(text=content, type='text') for content in mid_conversation_system_prompts
                     ]
+                    system_content_params.extend(cast('list[BetaContentBlockParam]', tool_availability_blocks))
+                    # The boundary covers the whole system entry, availability blocks included — a
+                    # terminal `CachePoint` lands on the entry's final block, never inside the entry.
                     if system_entry_cache_ttl is not None:
                         self._add_cache_control_to_last_param(system_content_params, ttl=system_entry_cache_ttl)
                     anthropic_messages.append(BetaMessageParam(role='system', content=system_content_params))
@@ -1732,9 +2303,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                         )
                         assistant_content_params.append(tool_use_block_param)
                     elif isinstance(response_part, ThinkingPart):
-                        if (
-                            response_part.provider_name == self.system and response_part.signature is not None
-                        ):  # pragma: no branch
+                        # An empty signature (e.g. from an interrupted stream) is never valid,
+                        # so fall back to tagged text rather than triggering a 400 from the API.
+                        if response_part.provider_name == self.system and response_part.signature:
                             if response_part.id == 'redacted_thinking':
                                 assistant_content_params.append(
                                     BetaRedactedThinkingBlockParam(
@@ -1804,18 +2375,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 _add_anthropic_caller_param(server_tool_use_block_param, response_part)
                                 assistant_content_params.append(server_tool_use_block_param)
                             elif response_part.tool_name == ToolSearchTool.kind:
-                                if tool_use_id in orphan_tool_search_call_ids:
-                                    # Anthropic occasionally emits a `tool_search_tool_*` server tool use
-                                    # in parallel with a client `tool_use` and ends the turn before
-                                    # delivering the corresponding `tool_search_tool_*_tool_result` block
-                                    # (see https://github.com/anthropics/anthropic-sdk-python/issues/1325). Direct API tolerates
-                                    # the unpaired call on resend (the result arrives in the next turn),
-                                    # but Bedrock 400s with `tool use ... was found without a corresponding
-                                    # tool_search_tool_*_tool_result block`. Drop the orphaned call from the
-                                    # wire payload — the model will re-search if it still wants to. We don't
-                                    # synthesize an empty result block because that would falsely tell the
-                                    # model the search ran and returned nothing.
-                                    continue
                                 # Round-trip the native variant (bm25/regex) so we don't
                                 # silently rewrite the algorithm. `_map_server_tool_use_block`
                                 # stashes it in `provider_details['strategy']`. Clients that don't
@@ -1958,7 +2517,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     )
                             elif isinstance(response_part, NativeToolSearchReturnPart):
                                 assistant_content_params.append(
-                                    _build_tool_search_replay_block(response_part, tool_use_id, available_tool_names)
+                                    _build_tool_search_replay_block(response_part, tool_use_id, declared_tool_names)
                                 )
                             elif response_part.tool_name.startswith(MCPServerTool.kind) and isinstance(
                                 response_part.content, dict
@@ -1976,12 +2535,23 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                 )
                     elif isinstance(response_part, CompactionPart):
                         if response_part.provider_name == self.system:  # pragma: no branch
-                            assistant_content_params.append(
-                                BetaCompactionBlockParam(content=response_part.content, type='compaction')
+                            compaction_block = BetaCompactionBlockParam(
+                                content=response_part.content, type='compaction'
                             )
+                            if (
+                                response_part.provider_details
+                                and response_part.provider_details.get('encrypted_content') is not None
+                            ):
+                                compaction_block['encrypted_content'] = response_part.provider_details[
+                                    'encrypted_content'
+                                ]
+                            assistant_content_params.append(compaction_block)
                     elif isinstance(response_part, FilePart):  # pragma: no cover
                         # Files generated by models are not sent back to models that don't themselves generate files.
                         pass
+                    elif isinstance(response_part, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(response_part)
                 if len(assistant_content_params) > 0:
@@ -1989,25 +2559,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             else:
                 assert_never(m)
 
+        _drop_unpaired_native_tool_calls(anthropic_messages)
         _place_system_messages_before_generation(anthropic_messages)
         _anchor_system_messages(anthropic_messages)
 
         if pending_container_uploads:
-            upload_blocks = [
-                BetaContainerUploadBlockParam(type='container_upload', file_id=file_id)
-                for file_id in pending_container_uploads
-            ]
-            # Inject the uploads into the *first* user message, not the last. The blocks are
-            # recomputed from the static `CodeExecutionTool.files` config on every request, so
-            # pinning them to the first message keeps that message byte-identical as history grows,
-            # which keeps the cacheable prefix stable across steps. Injecting at the tail instead
-            # would move the insertion point every turn and silently bust the prompt cache.
-            for msg in anthropic_messages:
-                if msg['role'] == 'user':
-                    existing = msg['content']
-                    assert not isinstance(existing, str)
-                    msg['content'] = [*existing, *upload_blocks]
-                    break
+            for message in anthropic_messages:
+                if message['role'] == 'user':
+                    existing = message['content']
+                    assert isinstance(existing, list)
+                    if _is_tool_result_only(existing):
+                        continue
+                    extra: list[BetaContainerUploadBlockParam] = [
+                        {'type': 'container_upload', 'file_id': file_id} for file_id in pending_container_uploads
+                    ]
+                    message['content'] = [*existing, *extra]
 
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         system_prompt = '\n\n'.join(system_prompt_parts)
@@ -2360,7 +2926,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     raise RuntimeError(f'Unsupported content type: {type(item)}')  # pragma: no cover
 
     def _map_tool_definition(
-        self, f: ToolDefinition, model_settings: AnthropicModelSettings, *, include_defer_loading: bool = True
+        self,
+        f: ToolDefinition,
+        model_settings: AnthropicModelSettings,
+        *,
+        visibility: ToolVisibility,
     ) -> BetaToolParam:
         """Maps a `ToolDefinition` dataclass to an Anthropic `BetaToolParam` dictionary."""
         tool_param: BetaToolParam = {
@@ -2372,7 +2942,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             tool_param['strict'] = f.strict
         if model_settings.get('anthropic_eager_input_streaming'):
             tool_param['eager_input_streaming'] = True
-        if include_defer_loading and f.defer_loading:
+        if visibility == 'deferred':
             tool_param['defer_loading'] = True
         return tool_param
 
@@ -2387,19 +2957,22 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         effort: AnthropicEffort | None = model_settings.get('anthropic_effort')
         # Fall back to unified thinking effort level when anthropic_effort is not set
         # Only map effort level strings; bare True just enables thinking without a specific effort
-        profile = self.profile
         if (
             effort is None
-            and profile.get('anthropic_supports_effort', False)
+            and self.profile.get('anthropic_supports_effort', False)
             and isinstance(model_request_parameters.thinking, str)
         ):
             effort = resolve_anthropic_effort(
                 model_request_parameters.thinking,
-                supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False),
+                supports_xhigh=self.profile.get('anthropic_supports_xhigh_effort', False),
             )
 
         if effort is not None:
-            self._validate_effort_vs_disabled_thinking(effort, model_settings)
+            # Validate what reaches the wire, where a caller's `extra_body` thinking wins.
+            self._validate_effort_vs_disabled_thinking(
+                effort,
+                _effective_thinking(model_settings, self._translate_thinking(model_settings, model_request_parameters)),
+            )
 
         task_budget = self._get_task_budget(model_settings)
 
@@ -2416,7 +2989,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return config
 
     def _validate_effort_vs_disabled_thinking(
-        self, effort: AnthropicEffort, model_settings: AnthropicModelSettings
+        self, effort: AnthropicEffort, thinking: dict[str, object] | Omit
     ) -> None:
         """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
 
@@ -2428,12 +3001,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return
         if not self.profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False):
             return
-        thinking = model_settings.get('anthropic_thinking')
-        if thinking is None or thinking.get('type') != 'disabled':
+        if isinstance(thinking, Omit) or thinking.get('type') != 'disabled':
             return
         raise UserError(
-            f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while '
-            "`anthropic_thinking={'type': 'disabled'}`. Use an effort of 'high' or below, or enable thinking."
+            f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while thinking is '
+            "disabled (`thinking=False` or `anthropic_thinking={'type': 'disabled'}`). "
+            "Use an effort of 'high' or below, or enable thinking."
         )
 
     def _get_task_budget(self, model_settings: AnthropicModelSettings) -> AnthropicTaskBudget | None:
@@ -2441,8 +3014,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if task_budget is None:
             return None
 
-        profile = self.profile
-        if not profile.get('anthropic_supports_task_budgets', False):
+        if not self.profile.get('anthropic_supports_task_budgets', False):
             raise UserError(
                 f'Model {self.model_name!r} does not support `anthropic_task_budget`. '
                 'See https://platform.claude.com/docs/en/build-with-claude/task-budgets for the supported models.'
@@ -2546,7 +3118,7 @@ _COMPACTION_TOKEN_KEYS = ('input_tokens', 'output_tokens', 'cache_creation_input
 
 
 def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) -> dict[str, int]:
-    """Extract Anthropic usage into a flat dict, preserving compaction and advisor iteration totals.
+    """Extract Anthropic usage into a flat dict, preserving the web search count and iteration totals.
 
     Anthropic's top-level `input_tokens`/`output_tokens` exclude both compaction and advisor iteration
     usage (see <https://docs.anthropic.com/en/docs/build-with-claude/compaction#understanding-usage>),
@@ -2562,12 +3134,30 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         if isinstance((value := getattr(response_usage, key, None)), int):
             details[key] = value
 
+    # One-hour cache writes are billed at a higher rate than five-minute ones (see
+    # <https://platform.claude.com/docs/en/about-claude/pricing>). The rest of
+    # `cache_creation_input_tokens` is priced at the five-minute rate, so the one-hour count is all pricing needs.
+    # In streaming, only the start event carries the split, so it's kept in `details` to survive the merge.
+    if (
+        isinstance(response_usage, BetaUsage)
+        and response_usage.cache_creation is not None
+        and (ephemeral_1h_input_tokens := response_usage.cache_creation.ephemeral_1h_input_tokens)
+    ):
+        details['ephemeral_1h_input_tokens'] = ephemeral_1h_input_tokens
+
     # Anthropic bills thinking tokens inside `output_tokens`, so this is a readable subset of the
     # output total rather than an additive one, matching `reasoning_tokens` on OpenAI and
     # `thoughts_tokens` on Google.
     output_tokens_details = response_usage.output_tokens_details
     if output_tokens_details is not None and (thinking_tokens := output_tokens_details.thinking_tokens):
         details['thinking_tokens'] = thinking_tokens
+
+    # Native web searches are billed per search (see
+    # <https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/web-search-tool#usage-and-pricing>)
+    # and the count is only reported here, not as response parts, as searches can also run inside code execution.
+    server_tool_use = response_usage.server_tool_use
+    if server_tool_use is not None and (web_search_requests := server_tool_use.web_search_requests):
+        details['web_search_requests'] = web_search_requests
 
     iterations = response_usage.iterations
     if not iterations:
@@ -2587,6 +3177,10 @@ def _extract_usage_details(response_usage: BetaUsage | BetaMessageDeltaUsage) ->
         for key in _COMPACTION_TOKEN_KEYS:
             if compaction_total := sum(getattr(it, key) for it in compaction_iterations):
                 details[f'compaction_{key}'] = compaction_total
+        if compaction_ephemeral_1h_input_tokens := sum(
+            it.cache_creation.ephemeral_1h_input_tokens for it in compaction_iterations if it.cache_creation is not None
+        ):
+            details['compaction_ephemeral_1h_input_tokens'] = compaction_ephemeral_1h_input_tokens
 
     if advisor_iterations:
         details['advisor_iterations'] = len(advisor_iterations)
@@ -2628,10 +3222,20 @@ def _map_usage(
 
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
-    usage_for_extraction = dict(details)
+    usage_for_extraction: dict[str, Any] = dict(details)
     for key in _COMPACTION_TOKEN_KEYS:
         if compaction_value := details.get(f'compaction_{key}'):
             usage_for_extraction[key] = usage_for_extraction.get(key, 0) + compaction_value
+
+    # genai-prices reads the web search count from Anthropic's nested wire shape and maps it to `web_searches`.
+    if web_search_requests := details.get('web_search_requests'):
+        usage_for_extraction['server_tool_use'] = {'web_search_requests': web_search_requests}
+    # Likewise the one-hour cache write count, which it maps to `cache_write_1h_tokens`. Compaction iterations write
+    # to the cache with the request's TTL, so their one-hour writes are summed back in like the totals above.
+    if ephemeral_1h_input_tokens := details.get('ephemeral_1h_input_tokens', 0) + details.get(
+        'compaction_ephemeral_1h_input_tokens', 0
+    ):
+        usage_for_extraction['cache_creation'] = {'ephemeral_1h_input_tokens': ephemeral_1h_input_tokens}
 
     # Note: genai-prices already extracts cache_creation_input_tokens and cache_read_input_tokens
     # from the Anthropic response and maps them to cache_write_tokens and cache_read_tokens
@@ -2644,6 +3248,12 @@ def _map_usage(
     )
 
 
+def _compaction_provider_details(encrypted_content: str | None) -> dict[str, Any] | None:
+    if encrypted_content is not None:
+        return {'encrypted_content': encrypted_content}
+    return None
+
+
 @dataclass
 class AnthropicStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Anthropic models."""
@@ -2651,12 +3261,13 @@ class AnthropicStreamedResponse(StreamedResponse):
     _model_name: AnthropicModelName
     _response: _utils.PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]
     _provider_name: str
+    _model_id_namespace: str
     _provider_url: str
     _enabled_server_tool_names: frozenset[str]
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name, self._model_id_namespace):
             current_block: BetaContentBlock | None = None
             ignored_server_tool_use_indices: set[int] = set()
 
@@ -2673,6 +3284,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.message.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.message.container.id
+                    # A live stream reports dropped thinking blocks here, on the opening message.
+                    # The final `message_delta` carries them only when a server-side model fallback
+                    # happened mid-stream, and then it replaces this array rather than extending it.
+                    if event.message.input_transformations:
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['input_transformations'] = _report_input_transformations(
+                            event.message.input_transformations
+                        )
 
                 elif isinstance(event, BetaRawContentBlockStartEvent):
                     current_block = event.content_block
@@ -2793,7 +3412,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                     elif isinstance(current_block, BetaCompactionBlock):
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
-                            part=CompactionPart(content=current_block.content, provider_name=self.provider_name),
+                            part=CompactionPart(
+                                content=current_block.content,
+                                provider_name=self.provider_name,
+                                provider_details=_compaction_provider_details(current_block.encrypted_content),
+                            ),
                         )
 
                 elif isinstance(event, BetaRawContentBlockDeltaEvent):
@@ -2830,7 +3453,11 @@ class AnthropicStreamedResponse(StreamedResponse):
                             # Re-emit part with updated content; replaces the initial block start part
                             yield self._parts_manager.handle_part(
                                 vendor_part_id=event.index,
-                                part=CompactionPart(content=event.delta.content, provider_name=self.provider_name),
+                                part=CompactionPart(
+                                    content=event.delta.content,
+                                    provider_name=self.provider_name,
+                                    provider_details=_compaction_provider_details(event.delta.encrypted_content),
+                                ),
                             )
                     # TODO(Marcelo): We need to handle citations.
                     elif isinstance(event.delta, BetaCitationsDelta):
@@ -2854,6 +3481,14 @@ class AnthropicStreamedResponse(StreamedResponse):
                     if event.delta.container:
                         self.provider_details = self.provider_details or {}
                         self.provider_details['container_id'] = event.delta.container.id
+                    if event.input_transformations:
+                        # Replaces, never extends: a `message_delta` reports this only after a
+                        # mid-stream model fallback, and then it holds the serving model's whole
+                        # array, which repeats the entries `message_start` already reported.
+                        self.provider_details = self.provider_details or {}
+                        self.provider_details['input_transformations'] = _report_input_transformations(
+                            event.input_transformations
+                        )
 
                 elif isinstance(event, BetaRawContentBlockStopEvent):  # pragma: no branch
                     if event.index in ignored_server_tool_use_indices:
@@ -2909,7 +3544,7 @@ class AnthropicStreamedResponse(StreamedResponse):
 
 
 def _build_custom_tool_search_replay_blocks(
-    request_part: ToolReturnPart, tool_search_active: bool, available_tool_names: set[str]
+    request_part: ToolReturnPart, deferred_tools_active: bool, declared_tool_names: set[str]
 ) -> tuple[list[BetaToolReferenceBlockParam] | None, str | None]:
     """Tool-search replay payload for the Anthropic `tool_result` block.
 
@@ -2920,34 +3555,33 @@ def _build_custom_tool_search_replay_blocks(
     * `empty_message`: fallback text to send when no matches were found (Anthropic
       rejects an empty `tool_result` content list).
 
-    Returns `(None, None)` when the current request has no tool search active or this
-    isn't a typed `search_tools` return — the caller then falls through to the default
-    text-formatting path. Fires for any active tool-search strategy (default native,
-    named native, or custom callable), so cross-provider history (e.g. a prior local
-    turn on Google) gets re-shaped into Anthropic's "client-side" tool_search wire
-    when the current turn runs on Anthropic. Both flavors live in one helper because
-    the wire shape is the same: `tool_use` + `tool_result` with `tool_reference`
-    content blocks.
+    Returns `(None, None)` when the current request withholds no tool schemas — nothing for a
+    reference to unhide — or when this isn't a typed `search_tools` return; the caller then falls
+    through to the default text-formatting path. Fires for any active tool-search strategy (default
+    native, named native, or custom callable), so cross-provider history (e.g. a prior local turn on
+    Google) gets re-shaped into Anthropic's "client-side" tool_search wire when the current turn runs
+    on Anthropic. Both flavors live in one helper because the wire shape is the same: `tool_use` +
+    `tool_result` with `tool_reference` content blocks.
 
-    `available_tool_names` filters the references against the tools currently in
+    `declared_tool_names` filters the references against the tools currently in
     `function_tools` on the wire — Anthropic rejects `tool_reference` entries for
     tools not in the request's `tools` list (e.g. an MCP server that failed to
     register this turn).
     """
-    if not tool_search_active:
+    if not deferred_tools_active:
         return None, None
     if not isinstance(request_part, ToolSearchReturnPart):
         return None, None
     refs = [
         BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference')
         for match in request_part.discovered_tools
-        if match['name'] in available_tool_names
+        if match['name'] in declared_tool_names
     ]
     return refs, request_part.message
 
 
 def _build_tool_search_replay_block(
-    response_part: NativeToolSearchReturnPart, tool_use_id: str, available_tool_names: set[str]
+    response_part: NativeToolSearchReturnPart, tool_use_id: str, declared_tool_names: set[str]
 ) -> BetaToolSearchToolResultBlockParam:
     """Reconstruct an Anthropic tool-search result block for history replay.
 
@@ -2955,7 +3589,7 @@ def _build_tool_search_replay_block(
     [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent] off
     `content` and any error fields the parse-time mapper stashed on `provider_details`.
 
-    `available_tool_names` filters references against the tools currently in
+    `declared_tool_names` filters references against the tools currently in
     `function_tools` on the wire — Anthropic rejects `tool_reference` entries for
     tools not in the request's `tools` list (e.g. an MCP server that failed to
     register this turn).
@@ -2974,7 +3608,7 @@ def _build_tool_search_replay_block(
         tool_refs = [
             BetaToolReferenceBlockParam(tool_name=match['name'], type='tool_reference')
             for match in response_part.discovered_tools
-            if match['name'] in available_tool_names
+            if match['name'] in declared_tool_names
         ]
         inner = BetaToolSearchToolSearchResultBlockParam(
             type='tool_search_tool_search_result',
@@ -3184,6 +3818,77 @@ def _last_message_content(anthropic_messages: list[BetaMessageParam]) -> list[Be
     return content if isinstance(content, list) else []
 
 
+def _drop_unpaired_native_tool_calls(anthropic_messages: list[BetaMessageParam]) -> None:  # noqa: C901
+    """Drop native tool calls that Anthropic will reject without a rendered result.
+
+    A result can arrive in a later response, or exist as a `NativeToolReturnPart` but fail to render.
+    Anthropic accepts an unpaired native call only while every later message is a user turn containing
+    only concurrent client-tool results. That shape is `_is_tool_result_only`, shared with the
+    `container_upload` injection so the two cannot drift.
+    """
+    returned_native_tool_call_ids: set[str] = set()
+    for message in anthropic_messages:
+        content = message['content']
+        assert isinstance(content, list)
+        for block in content:
+            if isinstance(block, BetaMCPToolResultBlock):
+                returned_native_tool_call_ids.add(block.tool_use_id)
+            elif is_str_dict(block) and (tool_use_id := block.get('tool_use_id')) is not None:
+                returned_native_tool_call_ids.add(tool_use_id)
+
+    suffix_is_tool_result_only = True
+    for index in range(len(anthropic_messages) - 1, -1, -1):
+        message = anthropic_messages[index]
+        content = message['content']
+        assert isinstance(content, list)
+        kept: list[BetaContentBlockParam] = []
+        for block in content:
+            # Preserve the union type before `is_str_dict` narrows `block` to `dict[str, Any]`.
+            block_param = block
+            if isinstance(block, BetaMCPToolResultBlock) or not is_str_dict(block):
+                kept.append(block_param)
+                continue
+
+            unpaired = (
+                block['type'] in ('server_tool_use', 'mcp_tool_use')
+                and block['id'] not in returned_native_tool_call_ids
+            )
+            tool_search = block.get('name') in ('tool_search_tool_bm25', 'tool_search_tool_regex')
+            if unpaired and (not suffix_is_tool_result_only or tool_search):
+                # Tool search is retried instead of preserved in flight because Bedrock rejects
+                # that shape even though the direct Anthropic API accepts other native tools there.
+                # Keep a cache boundary on the nearest preceding cacheable block. Moving it
+                # forward would cache content the user placed outside the boundary. If no such
+                # block exists, the boundary disappears with the block that carried it.
+                if (cache_control := block.get('cache_control')) is not None:
+                    carriers: list[BetaContentBlockParam] = []
+                    for preceding_content in [
+                        preceding_message['content'] for preceding_message in anthropic_messages[:index]
+                    ] + [kept]:
+                        assert isinstance(preceding_content, list)
+                        for param in preceding_content:
+                            # Preserve the union type before `is_str_dict` narrows `param`.
+                            param_value = param
+                            if is_str_dict(param) and param['type'] in _ANTHROPIC_CACHEABLE_PARAM_TYPES:
+                                carriers.append(param_value)
+                    if carriers:
+                        _add_cache_control_param(carriers, cache_control)
+                continue
+            kept.append(block_param)
+
+        if len(kept) != len(content):
+            if not kept:
+                # Anthropic rejects empty messages; an assistant turn containing only the
+                # dropped call has nothing left to send.
+                del anthropic_messages[index]
+                continue
+            message['content'] = kept
+
+        suffix_is_tool_result_only = (
+            suffix_is_tool_result_only and message['role'] == 'user' and _is_tool_result_only(kept)
+        )
+
+
 def _anchor_system_messages(anthropic_messages: list[BetaMessageParam]) -> None:
     """Give each `system` section a user turn to follow, if it doesn't already have one.
 
@@ -3269,31 +3974,6 @@ def _leave_cache_boundary_behind(anthropic_messages: list[BetaMessageParam], ind
     if (cache_control := last_block.pop('cache_control', None)) is None:
         return
     _add_cache_control_param(_last_message_content(anthropic_messages[:index]), cache_control)
-
-
-def _collect_orphan_tool_search_call_ids(messages: list[ModelMessage]) -> set[str]:
-    """Collect `tool_call_id`s of `NativeToolSearchCallPart`s without a paired return.
-
-    Anthropic occasionally emits a `tool_search_tool_*` server tool use alongside a
-    client `tool_use` and ends the turn before delivering the corresponding result
-    block. The result may arrive in a later `ModelResponse` (direct API), or never
-    at all (Bedrock). Anything truly unpaired must be dropped from the wire payload
-    on the next request, since Bedrock rejects orphans with `tool use ... was found
-    without a corresponding tool_search_tool_*_tool_result block`.
-
-    The pair lookup is by `tool_call_id` across *all* messages — a return part may
-    sit in a later assistant turn than the call.
-    """
-    call_ids: set[str] = set()
-    return_ids: set[str] = set()
-    for message in messages:
-        if isinstance(message, ModelResponse):
-            for part in message.parts:
-                if isinstance(part, NativeToolSearchCallPart) and part.tool_call_id:
-                    call_ids.add(part.tool_call_id)
-                elif isinstance(part, NativeToolSearchReturnPart) and part.tool_call_id:
-                    return_ids.add(part.tool_call_id)
-    return call_ids - return_ids
 
 
 def _normalize_tool_search_args(tool_args: dict[str, Any] | None, tool_name: str) -> ToolSearchArgs:
@@ -3476,42 +4156,73 @@ def _map_mcp_server_result_block(
     )
 
 
+def _effective_thinking_type(
+    anthropic_thinking: BetaThinkingConfigParam | None,
+    unified_thinking: ThinkingLevel | None,
+    profile: AnthropicModelProfile,
+) -> Literal['enabled', 'adaptive'] | None:
+    """Resolve whether a request will think, and how, for the output-mode and tool-forcing decisions.
+
+    Extended thinking (`{'type': 'enabled'}`) rejects a forced `tool_choice`; adaptive thinking accepts it, but
+    the model then answers without thinking. Unified thinking maps to `adaptive` when the profile advertises it
+    and to `enabled` otherwise, the same mapping `_translate_thinking` uses to build the wire payload. With no
+    thinking setting, models that think by default resolve to `adaptive`, as does `thinking=False` on a model
+    that can't turn thinking off. Returns `None` when the request won't think.
+    """
+    if anthropic_thinking:
+        thinking_type = anthropic_thinking.get('type')
+        return thinking_type if thinking_type in ('enabled', 'adaptive') else None
+    if unified_thinking:
+        return 'adaptive' if profile.get('anthropic_supports_adaptive_thinking', False) else 'enabled'
+    if unified_thinking is False and not profile.get('thinking_always_enabled', False):
+        return None
+    return 'adaptive' if profile.get('thinking_enabled_by_default', False) else None
+
+
+def _request_thinking_type(
+    profile: AnthropicModelProfile,
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+) -> Literal['enabled', 'adaptive'] | None:
+    """`_effective_thinking_type` for a request, before or after `Model.prepare_request` runs.
+
+    `params.thinking` is checked first since `Model.prepare_request` moves unified `thinking` from `model_settings`
+    into it, but `AnthropicModel.prepare_request` also asks before that happens.
+    """
+    anthropic_settings = cast(AnthropicModelSettings, model_settings or {})
+    unified_thinking = model_request_parameters.thinking
+    if unified_thinking is None:
+        unified_thinking = anthropic_settings.get('thinking')
+    return _effective_thinking_type(anthropic_settings.get('anthropic_thinking'), unified_thinking, profile)
+
+
 def _support_tool_forcing(
+    model_name: str,
+    profile: AnthropicModelProfile,
     model_settings: AnthropicModelSettings,
     model_request_parameters: ModelRequestParameters,
-    resolved_tool_choice: ResolvedToolChoice,
-    context: str = 'forcing specific tools',
-    *,
-    supports_forced_tool_choice: bool = True,
 ) -> bool:
-    """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
+    """Whether to send a forced `tool_choice` ('any'/specific tool), raising if explicitly requested but unavailable.
 
-    Thinking mode rejects forcing, and some models (e.g. Claude Fable 5, Claude Mythos Preview) reject it unconditionally.
-    We only raise an error if the user explicitly set a forcing value; a forcing value that came
-    from the `tool_choice` resolution logic falls back softly to 'auto'.
+    On top of the profile's forcing flags, extended thinking rejects forcing, and adaptive thinking accepts it
+    but answers without thinking, so only an explicit forcing `tool_choice` is sent then.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
-    # Mirror the dual-check pattern from prepare_request(); also check params.thinking
-    # since Model.prepare_request strips unified `thinking` from model_settings into params.thinking.
-    thinking_enabled = bool(model_request_parameters.thinking)
-    if not thinking_enabled:
-        if anthropic_thinking := model_settings.get('anthropic_thinking'):
-            thinking_enabled = anthropic_thinking.get('type') in ('enabled', 'adaptive')
-        elif model_settings.get('thinking'):
-            thinking_enabled = True
-
-    if supports_forced_tool_choice and not thinking_enabled:
-        return True
-
-    explicit_choice = model_settings.get('tool_choice')
-    if explicit_choice == 'required' or isinstance(explicit_choice, list):
-        if not supports_forced_tool_choice:
-            raise UserError(f"Anthropic does not support {context} for this model. Use `tool_choice='auto'`.")
-        raise UserError(
-            f"Anthropic does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`."
+    thinking_type = _request_thinking_type(profile, model_settings, model_request_parameters)
+    unavailable_reason = tool_forcing_unavailable_reason(
+        profile,
+        thinking=thinking_type is not None,
+        thinking_remedy="Disable thinking with `thinking=False` or `anthropic_thinking={'type': 'disabled'}`",
+    )
+    if unavailable_reason is None and thinking_type == 'enabled':
+        unavailable_reason = (
+            "Extended thinking doesn't support forcing tool use. Disable thinking or use `tool_choice='auto'`."
         )
-
-    if resolved_tool_choice == 'required' or isinstance(resolved_tool_choice, tuple):
-        return False
-
-    return True
+        if profile.get('anthropic_supports_adaptive_thinking', False):
+            unavailable_reason += " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports forcing."
+    return support_tool_forcing(
+        model_name,
+        model_settings,
+        unavailable_reason,
+        disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
+    )

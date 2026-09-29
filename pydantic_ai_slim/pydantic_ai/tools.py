@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from functools import cached_property
 from typing import Annotated, Any, Concatenate, Generic, Literal, TypeAlias, Union, cast
 
@@ -21,6 +22,7 @@ from ._deferred import (
     ToolApproved as ToolApproved,
     ToolDenied as ToolDenied,
 )
+from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
 from .function_signature import FunctionSignature
@@ -125,7 +127,7 @@ def only_if_42(
 def hitchhiker(ctx: RunContext[int], answer: str) -> str:
     return f'{ctx.deps} {answer}'
 
-hitchhiker = Tool(hitchhiker, prepare=only_if_42)
+hitchhiker_tool = Tool(hitchhiker, prepare=only_if_42)
 ```
 
 Usage `ToolPrepareFunc[AgentDepsT]`.
@@ -244,6 +246,11 @@ NativeToolFunc: TypeAlias = Callable[
 
 This is useful if you want to customize the native tool based on the run context (e.g. user dependencies),
 or omit it completely from a step.
+
+Returning `None` omits the tool. The one exception is a
+[`NativeOrLocalTool`][pydantic_ai.capabilities.NativeOrLocalTool] capability that routes native configuration
+into a `fallback_subagent_model` subagent, where the subagent has already been invoked and cannot omit; see
+[`XSearch`][pydantic_ai.capabilities.XSearch] and [`ImageGeneration`][pydantic_ai.capabilities.ImageGeneration].
 """
 
 AgentNativeTool: TypeAlias = AbstractNativeTool | NativeToolFunc[AgentDepsT]
@@ -266,6 +273,41 @@ A = TypeVar('A')
 
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
+    def enum_schema(self, schema: core_schema.EnumSchema) -> JsonSchemaValue:
+        # A docstring under an enum member describes that option, as `anyOf` of `const`s with descriptions
+        # (the JSON Schema way to describe single values), so models can tell the options apart.
+        #
+        # Opted into by mixing in `UseEnumMemberDocstrings`, rather than by the enclosing model's
+        # `use_attribute_docstrings` config: that config is pushed while the *core* schema is built and nothing
+        # pushes it while the JSON schema is generated, so an enum reached from a tool's parameters never sees it
+        # even though `_function_schema` sets it. A base class is also the only marker an `Enum` can carry — a
+        # plain class attribute, annotated or not, becomes a member — so the opt-in is read off the class itself.
+        json_schema = super().enum_schema(schema)
+        # `schema['cls']` is `Any`, and narrowing an `Any` by `issubclass` loses the enum along with it, so the
+        # declared type is spelled out here to keep both sides of the intersection.
+        enum_cls: type[Enum] = schema['cls']
+        if not issubclass(enum_cls, UseEnumMemberDocstrings):
+            return json_schema
+        # A docstring is read under the name it was declared under, but an alias (`urgent = 'high'` beside
+        # `high = 'high'`) is the same member, so the schema only ever names the canonical one. Resolve the
+        # declared names through `__members__` so an alias's docstring describes the option it was written
+        # for; `setdefault` keeps the canonical name's own docstring when both have one, since `__members__`
+        # lists a member before its aliases.
+        declared = _utils.enum_member_docstrings(enum_cls)
+        docstrings: dict[str, str] = {}
+        for name, member in enum_cls.__members__.items():
+            if (docstring := declared.get(name)) is not None:
+                docstrings.setdefault(member.name, docstring)
+        # A `None` member has no `const` a schema can carry: `{'const': None}` reads as "no const" to anything
+        # that looks the key up with a default, and the option silently loses its constraint. Such an enum keeps
+        # the plain `enum` list, which states every value including the null.
+        if docstrings and all(value is not None for value in json_schema.get('enum', ())):
+            json_schema['anyOf'] = [
+                {'const': value, **({'description': docstrings[member.name]} if member.name in docstrings else {})}
+                for member, value in zip(schema['members'], json_schema.pop('enum'))
+            ]
+        return json_schema
+
     def _named_required_fields_schema(self, named_required_fields: Sequence[tuple[str, bool, Any]]) -> JsonSchemaValue:
         # Remove largely-useless property titles
         s = super()._named_required_fields_schema(named_required_fields)
@@ -347,7 +389,7 @@ class Tool(Generic[ToolAgentDepsT]):
         async def my_tool(ctx: RunContext[int], x: int, y: int) -> str:
             return f'{ctx.deps} {x} {y}'
 
-        agent = Agent('test', tools=[Tool(my_tool)])
+        agent = Agent('test', tools=[Tool(my_tool)], deps_type=int)
         ```
 
         or with a custom prepare method:
@@ -367,7 +409,7 @@ class Tool(Generic[ToolAgentDepsT]):
             if ctx.deps == 42:
                 return tool_def
 
-        agent = Agent('test', tools=[Tool(my_tool, prepare=prep_my_tool)])
+        agent = Agent('test', tools=[Tool(my_tool, prepare=prep_my_tool)], deps_type=int)
         ```
 
 
@@ -401,7 +443,8 @@ class Tool(Generic[ToolAgentDepsT]):
             metadata: Optional metadata for the tool. This is not sent to the model but can be used for filtering and tool behavior customization.
             timeout: Timeout in seconds for tool execution. If the tool takes longer, a retry prompt is returned to the model.
                 Defaults to None (no timeout).
-            defer_loading: Whether to hide this tool until it's discovered via tool search. Defaults to False.
+            defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
+                or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
@@ -421,7 +464,7 @@ class Tool(Generic[ToolAgentDepsT]):
         )
         self.takes_ctx = self.function_schema.takes_ctx
         self.max_retries = max_retries
-        self.description = description or self.function_schema.description
+        self.description = description if description is not None else self.function_schema.description
         self.prepare = prepare
         self.args_validator = args_validator
         self.docstring_format = docstring_format
@@ -577,7 +620,7 @@ class ToolDefinition:
     (Gemini 2.5+); Anthropic and Bedrock leave it off unless you explicitly set `strict=True`.
 
     Note: this is currently supported by OpenAI, Anthropic, Google, and Bedrock models. See
-    [Strict Mode](https://ai.pydantic.dev/tools-advanced/#strict-mode) for the full per-provider table.
+    [Strict Mode](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode) for the full per-provider table.
     """
 
     sequential: bool = False
@@ -619,7 +662,8 @@ class ToolDefinition:
 
     Set on `Tool(defer_loading=True)` (or via a custom toolset) to opt this tool into
     deferred loading. This author intent remains stable after the tool is revealed;
-    current visibility is tracked separately in the request context.
+    current wire placement is tracked separately by
+    [`ModelRequestParameters.tool_visibility`][pydantic_ai.models.ModelRequestParameters.tool_visibility].
 
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
@@ -640,19 +684,18 @@ class ToolDefinition:
     """
 
     with_native: str | None = None
-    """If set, this tool is kept on the wire when the named native tool is supported, with the
-    native tool's adapter applying any wire-format adjustments (e.g. setting `defer_loading=True`
-    on the request param for the framework-managed tool-search native tool).
+    """If set, this tool is a member of a corpus the named native tool manages.
 
     Symmetric pair with `unless_native`:
 
     * `unless_native='X'` — drop me from the wire when X is supported (local fallback).
-    * `with_native='X'` — keep me on the wire when X is supported, formatted via X's adapter
-      (corpus member managed by the native tool).
+    * `with_native='X'` — I belong to X's corpus, so X's adapter decides my wire format.
 
-    When the named native tool is unsupported, a tool with `with_native` and `defer_loading=True`
-    is dropped (the corpus member is currently undiscovered, so the model can't call it on
-    this provider); otherwise it's kept as a regular function tool.
+    Set by `ToolSearchToolset` on the deferred tools the model may search for, and only those: a
+    tool an on-demand capability gates is deferred without being searchable, and carries
+    `defer_loading` alone. When the named native tool isn't supported by the model, this is cleared
+    — a corpus with no manager is not a corpus — which is independent of whether the tool stays on
+    the wire; that's `defer_loading`'s question.
     """
 
     # Implementation note for new typed native tools: registering a new tool_kind value

@@ -90,6 +90,58 @@ diff, and expect the first real execution to be on `main`. This is unlike
 `.github/workflows/ci.yml`, which runs on `pull_request` from the PR's own merge
 ref and therefore does test itself.
 
+# `Protect .github` keeps external changes out of this directory
+
+`protect-github-dir.yml` fails a PR that changes anything under `.github/` unless its
+author is trusted. Everything here executes with repository credentials, so an edit from
+outside the org is a supply-chain change rather than an ordinary code review — a
+maintainer carries legitimate ones forward in their own PR (#7024 is the case that
+prompted the guard). **It only blocks merge once it is marked a required check in repo
+settings**; until then it is advisory.
+
+**The author's resolved repository permission is the only trust signal**, and the two
+shortcuts it replaces are both unsound — the same reasoning `bots.yml`'s agent-config
+guard spells out:
+
+- **A base-repo head branch does not imply push access.** GitHub Apps push branches
+  straight into this repository, so `pydanty[bot]` — which builds those branches out of
+  externally-authored issue text — clears any same-repo check. Trusting the head repo
+  would hand the guard's whole threat model a bypass.
+- **`author_association` misreports** a genuine collaborator as `CONTRIBUTOR` when their
+  org membership is private (#6359).
+
+Read `.permission`, never `.role_name`: the latter can be an arbitrary custom role name
+that fails a hardcoded match and blocks a real maintainer, while `.permission` maps
+`maintain` and custom roles onto their stable base level (#6797, which fixed exactly this
+in `bots.yml` and `at-claude.yml`). The endpoint needs only metadata access, which every
+token carries and no `permissions:` key can withhold — so `pull-requests: write` alone
+reaches it. It fails **closed**: an unreadable permission blocks, because this is a
+security boundary, not `pr-guard.yml`'s courtesy gate.
+
+`dependabot[bot]` is allowlisted because it owns the action-pin bumps here (the
+`github-actions` ecosystem entry in `dependabot.yml`) and holds no repo permission of its
+own. It is the only bot with a bypass: a blanket `*[bot]` glob would hand one to any bot
+installed later, and `pydanty[bot]` must not have one for the reason above.
+
+**Do not add a `paths:` filter to its trigger.** A `pull_request_target` filtered to
+`.github/**` does not run at all on the PRs that don't touch it, and a required check
+that never runs stays *pending* — blocking every merge. The job runs on every PR and
+exits 0 when nothing protected changed. `edited` is in `types:` because it is the only
+event fired when a PR's **base branch** changes, and the verdict is a diff against that
+base — hence also the `state != open` early exit, since `edited` fires on closed PRs too.
+
+Two consequences of the trigger, both easy to get backwards:
+
+- On github.com `pull_request_target` runs in the context of the **default branch of the
+  base repository** ([docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target)),
+  *not* the PR's base branch. So `main`'s copy guards PRs targeting **every** branch,
+  `v1` included — a maintenance branch needs no copy of its own. It also means a PR that
+  changes the guard is judged by `main`'s copy, the same blind spot as `bots.yml` above.
+- Branches whose names look like SHAs [may not trigger `pull_request_target` at all](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target).
+  While the check is merely advisory such a PR shows no guard run and no failing check, so
+  it reads as clean. Marking the check **required** is what closes that: a check that never
+  ran stays pending and blocks the merge.
+
 # Agentic workflows (`gh-aw`)
 
 The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://github.com/githubnext/gh-aw) authored as human-editable `<name>.md` sources (frontmatter + prompt) that **compile** to a generated `<name>.lock.yml`. GitHub Actions runs the `.lock.yml`, never the `.md`.
@@ -117,6 +169,8 @@ The `pydantic-ai-*` workflows in this directory are [agentic workflows](https://
 | `job-timeout-env-missing` / `job-timeout-env-mismatch` | a source whose `env.PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is absent, or set to something other than its `timeout-minutes` | The shim derives the agent's own wall-clock budget from that variable, because gh-aw's `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and never reaches the agent container. Drift means the agent either stops early and wastes the time it was granted, or overruns and is killed with nothing emitted. Every new workflow trips this until it declares the pair. |
 | `job-timeout-too-short` | `timeout-minutes:` at or below the shim's teardown headroom (2) | The shim reserves that headroom for container teardown and artifact upload, so it falls back to 30 minutes rather than granting a non-positive budget — the agent then runs far past the point Actions kills the job. |
 | `compiler-version-drift` | locks built by different gh-aw versions | Catches a partial `gh aw compile`. |
+| `awf-binary-version` | a lock whose `install_awf_binary.sh` pin differs from the `GH_AW_INFO_AWF_VERSION` gh-aw compiled it against, or that carries a pin the lock declares no such version for | `engine.command` makes gh-aw skip its own AWF install, so `shared/pre-steps.md` re-runs the installer with a version written by hand. A gh-aw upgrade moves the bundled version and leaves that pin behind, and the older binary then rejects the newer firewall config — the agent job dies before the model starts. Bump the pin in the same change as the compiler. The skip is tracked upstream at [github/gh-aw#58340](https://github.com/github/gh-aw/issues/58340) — retire this check and the hand-written pre-step once gh-aw installs the firewall binary independently of the engine. |
+| `ai-credits-accounting` | an AWF config carrying `apiProxy.providers` | That key is the API proxy's AI-credits *pricing* table, not reporting metadata — a model priced there gets charged, and AWF caps a run at 10,000 credits that no frontmatter field lifts (`max-ai-credits` only drops gh-aw's own budget, and the schema types it `exclusiveMinimum: 0`). One ordinary request costs tens of thousands, so every agent job 403s on its first call with `ai_credits_limit_exceeded`. The weekly spend report reads token counts from each run's `agent_usage.json`, so nothing here needs the overlay. |
 | `lock-not-regenerated` | a changed `*.md` (or `shared/*.md` import) without its recompiled lock | Enforces the rule above. Checks that source and lock changed *together*, not that the lock was actually recompiled — `gh aw compile` is still on you. |
 
 Run it locally before pushing:

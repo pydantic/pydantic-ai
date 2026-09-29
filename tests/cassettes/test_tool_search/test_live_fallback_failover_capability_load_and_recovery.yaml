@@ -1,0 +1,438 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '925'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Can I get a refund on order-123? Use your tools.
+        role: user
+      instructions: |-
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+        - refunds: Refund policy tools.
+      model: gpt-5.6
+      reasoning:
+        context: all_turns
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        name: load_capability
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '3392'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '30033'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785967076
+      created_at: 1785967046
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0d330ce99f3cca61006a73b1c6d1508196bc4a3e14b1888254
+      incomplete_details: null
+      instructions: |-
+        The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+        - refunds: Refund policy tools.
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5.6-sol
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqc7HklZnbhXLChM7qFJQUoBs5VEP92ugkVO4kWMR2tvxOJ-Kl6J7jy5Nt-YMZ-HoNkgb1LQVC0WhedjpHU27cjVCruCkX52ZcuubLW0mY9UoD3peaED-p6pVFnhwwTWbafBqSz2PPPYDCGPBmcGqWN7CnywFZ6gfNFLdAEN3lI8LtypCk1bls3-B-TEa4BBsSndV1jS9jpjp2PzFJh3Ehf24oj4fYNbSRTdTF9vz5EW9Zeyag7reZ5X6cKM6k89w2dEK7gYrtTNSQnzG9aUkYXiZQW4jRY38l3INhikV8_DCwZyn5BTG-Xs6HrhI77AMGrq_APIrBmn7LWEQZIByIGdq4qwJD1ud7oJ-aTNBYQtvihgGb3LiWKyqh-sgbogpiXuPBT0L_zzHjNEfSZJ7bzNgY_HYghp4imVnn9wYc1HIGxt3s4H7xDKXaglXHrYnCxl7P7EyD9LH7KH5PWQ_OqKiwluT6GCi8GrxAF_caG73EwzMf4g5FS-zQX5hfbArodopIHNAiX8F29LDeFX7RNXfsEoItXzcbRttVVDdGM1mOgCEAmunqraBuptdLZ2SvTCQsjFVLu1IP9ORJkGn-Di5IyRdb3Vx-JSpEQTdahj_aXfJcXFZneUlN2t7tg7AnRTHExQafSnmoZpcE0afSIPjzNMy2xOZ8ZVXIh3Gc1ha5vuFsTBepNk_ZTc0LRYz9Ke8zgClcIpsqosFfEhX_Cg4jMy8uyriqP-VjNts5iPxkuYdWJx7gPTDc5-rLTddVXF8Wdon8BRyaGbo5-gy8SMYI6YXX6A7cEGV9763w1Yu5Wt60mNFyrtfMZUrqvhbdr_oSCp3Mcp7MA5x_rdIQWQoTYwyP-5UqSr-ncSu7-CMiQ-nYlGQFosVAe-DgYoRnWBdg1zff_aYlDyyOS_xpCRTEbSYwtTUvWry3rcbRNIwQk-wWPote6byTxcVsl_tJGMNd
+        id: rs_0d330ce99f3cca61006a73b1e45da4819687fac7dddfa4696a
+        summary: []
+        type: reasoning
+      - arguments: '{"id":"refunds"}'
+        call_id: call_vnlaFYmpoXTeM8aMi5LWUYvG
+        id: fc_0d330ce99f3cca61006a73b1e4696c8196b75fb5a64d161ced
+        name: load_capability
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: 24h
+      reasoning:
+        context: all_turns
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        name: load_capability
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 0.98
+      truncation: disabled
+      usage:
+        input_tokens: 139
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 32
+        output_tokens_details:
+          reasoning_tokens: 10
+        total_tokens: 171
+      user: null
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1654'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Can I get a refund on order-123? Use your tools.
+          type: text
+        role: user
+      - content:
+        - id: call_vnlaFYmpoXTeM8aMi5LWUYvG
+          input:
+            id: refunds
+          name: load_capability
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: '{"instructions":"Use the refund policy tool before answering refund questions."}'
+            type: text
+          is_error: false
+          tool_use_id: call_vnlaFYmpoXTeM8aMi5LWUYvG
+          type: tool_result
+        role: user
+      - content:
+        - tool:
+            name: lookup_refund_policy
+            type: tool_reference
+          type: tool_addition
+        role: system
+      model: claude-opus-4-8
+      stream: false
+      system:
+      - text: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - refunds: Refund policy tools.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        input_schema:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        name: load_capability
+      - defer_loading: true
+        description: Look up the refund policy for an order.
+        input_schema:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        name: lookup_refund_policy
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '732'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      server-timing:
+      - x-originResponse;dur=1920
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-9814a08dbae77711d858a8a9f905cbe0-e3c0f8f3d593c04d-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: I'll look up the refund policy for your order.
+        type: text
+      - caller:
+          type: direct
+        id: toolu_017nhrhVkYMfrWuzKkcmgsy7
+        input:
+          order_id: order-123
+        name: lookup_refund_policy
+        type: tool_use
+      id: msg_011CdkMH4hryt2wnwpaGa891
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: tool_use
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 825
+        output_tokens: 72
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '2100'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Can I get a refund on order-123? Use your tools.
+          type: text
+        role: user
+      - content:
+        - id: call_vnlaFYmpoXTeM8aMi5LWUYvG
+          input:
+            id: refunds
+          name: load_capability
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: '{"instructions":"Use the refund policy tool before answering refund questions."}'
+            type: text
+          is_error: false
+          tool_use_id: call_vnlaFYmpoXTeM8aMi5LWUYvG
+          type: tool_result
+        role: user
+      - content:
+        - tool:
+            name: lookup_refund_policy
+            type: tool_reference
+          type: tool_addition
+        role: system
+      - content:
+        - text: I'll look up the refund policy for your order.
+          type: text
+        - id: toolu_017nhrhVkYMfrWuzKkcmgsy7
+          input:
+            order_id: order-123
+          name: lookup_refund_policy
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - text: 'order-123: refund allowed for 30 days'
+            type: text
+          is_error: false
+          tool_use_id: toolu_017nhrhVkYMfrWuzKkcmgsy7
+          type: tool_result
+        role: user
+      model: claude-opus-4-8
+      stream: false
+      system:
+      - text: |-
+          The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+          - refunds: Refund policy tools.
+        type: text
+      tool_choice:
+        type: auto
+      tools:
+      - description: Load a listed capability whenever it is plausibly relevant to the task. Loading makes the capability
+          instructions and any tools it provides available.
+        input_schema:
+          description: Typed arguments for a `load_capability` tool call.
+          properties:
+            id:
+              description: The id of the capability to load.
+              type: string
+          required:
+          - id
+          type: object
+        name: load_capability
+      - defer_loading: true
+        description: Look up the refund policy for an order.
+        input_schema:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        name: lookup_refund_policy
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '750'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-52c2f3e9901bc0fa59b4edf6c8cf405d-b33750d5cdcefb60-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: |-
+          Good news! Order-123 is eligible for a refund. The refund policy allows refunds within 30 days, and your order qualifies.
+
+          Would you like me to help you proceed with the refund, or do you have any other questions about it?
+        type: text
+      id: msg_011CdkMHCPyMXB4o8oJqjcqq
+      model: claude-opus-4-8
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 916
+        output_tokens: 72
+        output_tokens_details:
+          thinking_tokens: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

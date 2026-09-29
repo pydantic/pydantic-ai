@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import contextvars
 import functools
-import importlib
+import importlib.util
 import os
 import sys
 import threading
@@ -12,8 +12,10 @@ from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
+from types import ModuleType
 from typing import Any
 
+import anyio
 import pytest
 
 import pydantic_ai._utils as utils_module
@@ -21,6 +23,7 @@ from pydantic_ai import Agent, UserError
 from pydantic_ai._utils import (
     UNSET,
     PeekableAsyncStream,
+    await_maybe,
     check_object_json_schema,
     dataclasses_no_defaults_repr,
     format_inlined_text_file,
@@ -39,7 +42,15 @@ from ._inline_snapshot import snapshot
 from .conftest import undrivable_event_loop
 from .models.mock_async_stream import MockAsyncStream
 
-pytestmark = pytest.mark.anyio
+
+async def test_await_maybe():
+    async def _coro() -> int:
+        return 1
+
+    # A plain (non-awaitable) value is returned unchanged.
+    assert await await_maybe(1) == 1
+    # A coroutine (however it was produced — e.g. a plain `def` returning one) is awaited.
+    assert await await_maybe(_coro()) == 1
 
 
 def test_get_first_param_type_annotation_type_error():
@@ -166,7 +177,6 @@ def test_check_object_json_schema():
 
 
 @pytest.mark.parametrize('peek_first', [True, False])
-@pytest.mark.anyio
 async def test_peekable_async_stream(peek_first: bool):
     async_stream = MockAsyncStream(iter([1, 2, 3]))
     peekable_async_stream: PeekableAsyncStream[int, MockAsyncStream[int]] = PeekableAsyncStream(async_stream)
@@ -201,6 +211,82 @@ async def test_peekable_async_stream_aclose_before_iteration():
     await peekable_async_stream.aclose()
 
     assert await peekable_async_stream.is_exhausted()
+
+
+@pytest.mark.parametrize('peek_pull', [False, True])
+async def test_peekable_async_stream_aclose_cancels_in_flight_pull(peek_pull: bool):
+    """Closing independently of a stalled pull must finalize the source without cancelling its consumer."""
+    pull_started = anyio.Event()
+    finalized = anyio.Event()
+    followup_ran = anyio.Event()
+
+    async def source() -> AsyncIterator[int]:
+        try:
+            yield 1
+            pull_started.set()
+            await asyncio.sleep(30)
+        finally:
+            finalized.set()
+
+    stream: PeekableAsyncStream[int, AsyncIterator[int]] = PeekableAsyncStream(source())
+    assert await anext(stream) == 1
+
+    async def consume() -> None:
+        if peek_pull:
+            assert await stream.peek() is UNSET
+        else:
+            with pytest.raises(StopAsyncIteration):
+                await anext(stream)
+        followup_ran.set()
+
+    pull = asyncio.create_task(consume())
+    await pull_started.wait()
+
+    with anyio.fail_after(5):
+        await stream.aclose()
+        await finalized.wait()
+        await pull
+
+    assert followup_ran.is_set()
+    assert not pull.cancelled()
+
+
+async def test_peekable_async_stream_aclose_cancels_all_in_flight_pulls():
+    pull_started = anyio.Event()
+    source_closed = anyio.Event()
+    peek_done = anyio.Event()
+    next_done = anyio.Event()
+
+    async def source() -> AsyncIterator[int]:
+        try:
+            pull_started.set()
+            await anyio.sleep_forever()
+            yield 1  # pragma: no cover
+        finally:
+            source_closed.set()
+
+    stream: PeekableAsyncStream[int, AsyncIterator[int]] = PeekableAsyncStream(source())
+
+    async def peek() -> None:
+        assert await stream.peek() is UNSET
+        peek_done.set()
+
+    async def pull() -> None:
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+        next_done.set()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(peek)
+        await pull_started.wait()
+        task_group.start_soon(pull)
+        await anyio.sleep(0)
+        assert len(stream._pull_scopes) == 2  # pyright: ignore[reportPrivateUsage]
+        with anyio.fail_after(1):
+            await stream.aclose()
+            await source_closed.wait()
+            await peek_done.wait()
+            await next_done.wait()
 
 
 def test_run_until_complete_cleans_up_own_task_on_interrupt():
@@ -386,35 +472,45 @@ async def test_disable_threads_takes_priority_over_custom_executor() -> None:
         executor.shutdown(wait=True)
 
 
+def _load_utils_module_for_current_platform() -> ModuleType:
+    """Execute `pydantic_ai._utils` into a private module object under the current `sys.platform`.
+
+    `_disable_threads` evaluates its default at import time, so the platform tests below need the module
+    executed under a patched platform. Loading a separate copy keeps the shared module untouched: reloading
+    it in place rebinds module-level singletons such as `UNSET`, which breaks every later test that compares
+    against the identity imported at collection time.
+    """
+    spec = importlib.util.find_spec(utils_module.__name__)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 async def test_disable_threads_defaults_false_on_non_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, 'platform', 'linux')
-    importlib.reload(utils_module)
-    try:
-        main_thread = threading.current_thread()
+    platform_utils = _load_utils_module_for_current_platform()
+    main_thread = threading.current_thread()
 
-        def check_thread() -> threading.Thread:
-            return threading.current_thread()
+    def check_thread() -> threading.Thread:
+        return threading.current_thread()
 
-        result = await utils_module.run_in_executor(check_thread)
-        assert result is not main_thread
-    finally:
-        importlib.reload(utils_module)
+    result = await platform_utils.run_in_executor(check_thread)
+    assert result is not main_thread
+    assert utils_module.UNSET is UNSET
 
 
 async def test_run_in_executor_runs_inline_by_default_on_emscripten(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, 'platform', 'emscripten')
-    importlib.reload(utils_module)
-    try:
-        main_thread = threading.current_thread()
+    platform_utils = _load_utils_module_for_current_platform()
+    main_thread = threading.current_thread()
 
-        def check_thread() -> threading.Thread:
-            return threading.current_thread()
+    def check_thread() -> threading.Thread:
+        return threading.current_thread()
 
-        result = await utils_module.run_in_executor(check_thread)
-        assert result is main_thread
-    finally:
-        monkeypatch.setattr(sys, 'platform', 'linux')
-        importlib.reload(utils_module)
+    result = await platform_utils.run_in_executor(check_thread)
+    assert result is main_thread
+    assert utils_module.UNSET is UNSET
 
 
 def test_is_async_callable():

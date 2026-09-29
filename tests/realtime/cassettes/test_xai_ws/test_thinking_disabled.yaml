@@ -1,0 +1,316 @@
+version: 1
+interactions:
+- kind: message
+  direction: received
+  data:
+    type: session.created
+    event_id: 02e0f7a0-0740-4fe2-8441-4a1828a0aeaa
+    session:
+      id: fb603e89709148c8b14e028a73a9eee2
+      object: realtime.session
+      instructions: ''
+      voice: ara
+      modalities:
+      - audio
+      turn_detection:
+        type: null
+      tools: []
+      model: grok-voice-think-fast-1.0
+- kind: message
+  direction: sent
+  data:
+    type: session.update
+    session:
+      instructions: Answer in two or three words.
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+      reasoning:
+        effort: none
+- kind: message
+  direction: received
+  data:
+    type: conversation.created
+    event_id: 809b2baa-e418-4c14-a14f-fc01b89218fe
+    conversation:
+      id: 1e1f578b-fff6-4cc1-8ab7-5a64527fee39
+      object: realtime.conversation
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: ping
+    event_id: 47918d34-a8d6-48ec-a293-e6daac72556c
+    timestamp: 1785457594562
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    session:
+      instructions: Answer in two or three words.
+      enable_noise_suppression: true
+      turn_detection:
+        type: server_vad
+        create_response: true
+        interrupt_response: true
+      reasoning:
+        effort: none
+      model: grok-voice-think-fast-1.0
+      keep_context: false
+      enable_phonetic_spelling: false
+      input_audio_transcription:
+        model: grok-transcribe
+      modalities:
+      - audio
+      input_audio_format: not specified
+      output_audio_format: not specified
+      tool_choice: auto
+      temperature: -1.0
+      max_response_output_tokens: inf
+      audio:
+        input:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+          transcription:
+            model: grok-transcribe
+        output:
+          format:
+            type: audio/pcm
+            rate: 24000
+          transport: json
+    type: session.updated
+    event_id: 168cf927-c312-4e38-a107-372a9b0c578d
+    previous_item_id: null
+- kind: message
+  direction: sent
+  data:
+    type: conversation.item.create
+    item:
+      type: message
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+- kind: message
+  direction: sent
+  data:
+    type: response.create
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: b7f762ef-21f9-4b3e-aafa-aa81c68f24c2
+    item:
+      id: 1efa7ee1-cca7-4dd4-a91b-6dad8ad9fad2
+      object: realtime.item
+      type: message
+      status: completed
+      role: user
+      content:
+      - type: input_text
+        text: Say a short greeting.
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.created
+    event_id: 4f0458f4-5fb1-4a93-aa9f-72b81dfcb163
+    response:
+      id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+      object: realtime.response
+      output: []
+      status: in_progress
+      status_details: unimplemented
+      usage: {}
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.added
+    event_id: cf941632-a246-453f-8dd5-ba5089cecd68
+    item:
+      id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: conversation.item.added
+    event_id: 0f9a50e4-6cab-4884-910c-01d2c47cc1ae
+    item:
+      id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+      object: realtime.item
+      type: message
+      status: in_progress
+      role: assistant
+      content: []
+    previous_item_id: 1efa7ee1-cca7-4dd4-a91b-6dad8ad9fad2
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.added
+    event_id: 7987729c-18d7-41e1-8642-b7197067ca1d
+    item_id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+    previous_item_id: '0'
+    part:
+      type: audio
+      transcript: ''
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    content_index: 0
+    output_index: 0
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 60242b94-ea1a-4f96-b2b0-fc23afec8f0e
+    item_id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    delta: BQANABUAFAANAAkACAAJAA4AGQAhACEAGwAUAAwABQAA
+    content_index: 0
+    output_index: 0
+    rid: d5c74b07-8089-4e22-b643-a62ed4737f82
+    latency: '0.67'
+    audio_duration_ms: 642
+    ts: 1785457595641
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.delta
+    event_id: d5c74b07-8089-4e22-b643-a62ed4737f82
+    item_id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    delta: Hello there!
+    content_index: 0
+    output_index: 0
+    rid: d5c74b07-8089-4e22-b643-a62ed4737f82
+    start_time: 0.0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 1a7f6917-c3d5-4588-b296-f6f72e23a5c4
+    item_id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    delta: Bfwo/E/8d/yk/Nj8EP1F/XD9jP2a/aH9pf2p/a39t/3P
+    content_index: 0
+    output_index: 0
+    rid: d5c74b07-8089-4e22-b643-a62ed4737f82
+    audio_duration_ms: 31
+    ts: 1785457595645
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.delta
+    event_id: 270ec25a-dac9-4129-b3c0-a4ccc444c8a9
+    item_id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    delta: 3f/W/83/xv/I/9P/3v/o//X/BAARABoAHQAcABgADQD7
+    content_index: 0
+    output_index: 0
+    rid: d5c74b07-8089-4e22-b643-a62ed4737f82
+    audio_duration_ms: 97
+    ts: 1785457595647
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio_transcript.done
+    event_id: 7f8aee59-1455-4116-a134-ce011679e27f
+    item_id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+    transcript: Hello there!
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.content_part.done
+    event_id: dabc807a-d5cb-471c-abb1-0273e641b0ed
+    item_id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_audio.done
+    event_id: 4636bc32-1039-461a-8e93-a6ace8c8c700
+    item_id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    content_index: 0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.output_item.done
+    event_id: 9e8cd673-ce63-430f-b798-47bec56d8e29
+    item:
+      id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+      object: realtime.item
+      type: message
+      status: completed
+      role: assistant
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    output_index: 0
+    previous_item_id: null
+- kind: message
+  direction: received
+  data:
+    type: response.done
+    event_id: ccd2aad9-9096-4165-a834-f7b896547e79
+    response:
+      id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+      object: realtime.response
+      output:
+      - id: efa37bc3-e352-41e9-8f02-8f29148e8ce0
+        object: realtime.item
+        type: message
+        status: completed
+        role: assistant
+        content:
+        - type: audio
+          transcript: Hello there!
+      status: completed
+      status_details: unimplemented
+      usage: {}
+    response_id: 3f720fed-5bb7-4523-a9b9-edc1e3bf6ed0
+    usage:
+      input_tokens: 5
+      input_token_details:
+        text_tokens: 5
+        audio_tokens: 0
+        grok_tokens: 0
+      output_tokens: 42
+      output_token_details:
+        text_tokens: 3
+        audio_tokens: 39
+        grok_tokens: 0
+      total_tokens: 47
+      output_audio_seconds: 0.7699999999999999
+      billable_audio_seconds: 1
+    previous_item_id: null

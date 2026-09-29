@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from temporalio.plugin import SimplePlugin
@@ -63,21 +64,23 @@ def _setup_replay_safe_logfire() -> tuple[Logfire, TracerProvider]:
 
 
 class LogfirePlugin(SimplePlugin):
-    """Temporal client plugin for Logfire."""
+    """Temporal client plugin for Logfire.
+
+    Args:
+        setup_logfire: Function that configures Logfire and Pydantic AI instrumentation and returns the
+            Logfire instance. By default, the plugin uses replay-safe instrumentation; providing a
+            callback opts out and uses the global tracer provider.
+        metrics: Whether to send Temporal metrics to Logfire.
+        metric_periodicity: How often to export Temporal metrics. Defaults to 60 seconds.
+    """
 
     def __init__(
         self,
         setup_logfire: Callable[[], Logfire] | None = None,
         *,
         metrics: bool = True,
-    ):
-        """Initialize a Logfire plugin.
-
-        Args:
-            setup_logfire: Set up Logfire and Pydantic AI instrumentation. The default uses replay-safe
-                instrumentation; providing a callback opts out and uses the global tracer provider.
-            metrics: Whether to send Temporal metrics to Logfire.
-        """
+        metric_periodicity: timedelta = timedelta(seconds=60),
+    ) -> None:
         try:
             import logfire  # noqa: F401 # pyright: ignore[reportUnusedImport]
             from opentelemetry.trace import get_tracer
@@ -90,6 +93,7 @@ class LogfirePlugin(SimplePlugin):
 
         self.setup_logfire = setup_logfire
         self.metrics = metrics
+        self.metric_periodicity = metric_periodicity
         self._replay_safe = setup_logfire is None
         self._logfire: Logfire | None = None
 
@@ -139,7 +143,13 @@ class LogfirePlugin(SimplePlugin):
                 headers = {'Authorization': f'Bearer {token}'}
 
                 config.runtime = Runtime(
-                    telemetry=TelemetryConfig(metrics=OpenTelemetryConfig(url=metrics_url, headers=headers))
+                    telemetry=TelemetryConfig(
+                        metrics=OpenTelemetryConfig(
+                            url=metrics_url,
+                            headers=headers,
+                            metric_periodicity=self.metric_periodicity,
+                        )
+                    )
                 )
 
         return await next(config)

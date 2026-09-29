@@ -8,7 +8,7 @@ from typing import Any, Literal, cast, overload
 
 from typing_extensions import assert_never
 
-from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -29,10 +29,12 @@ from ..messages import (
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryPromptPart,
+    SpeechPart,
     SystemPromptPart,
     TextContent,
     TextPart,
     ThinkingPart,
+    ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
@@ -48,6 +50,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
+    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
+    _unsynthesized_tool_availability_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 from ._tool_choice import resolve_tool_choice
@@ -67,7 +71,7 @@ try:
         ChatCompletionStreamOutput,
         TextGenerationOutputFinishReason,
     )
-    from huggingface_hub.errors import HfHubHTTPError
+    from huggingface_hub.errors import HfHubHTTPError, TextGenerationError
 
 except ImportError as _import_error:
     raise ImportError(
@@ -87,6 +91,10 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             body=e.response.content,
             headers=dict(e.response.headers),
         ) from e
+    except TextGenerationError as e:
+        # Raised for an error object inside a stream, after the HTTP 200 has already been received, so there is no
+        # status code to report.
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
 __all__ = (
@@ -351,7 +359,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         Returns a tuple of (tools, tool_choice).
         """
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        tool_defs = model_request_parameters.tool_defs
+        tool_defs = model_request_parameters.declared_tool_defs
 
         tool_choice: Literal['none', 'required', 'auto'] | ChatCompletionInputToolChoiceClass | None
         if resolved_tool_choice in ('auto', 'required'):
@@ -378,7 +386,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         tools = [HuggingFaceModel._map_tool_definition(r) for r in tool_defs.values()]
         return tools, tool_choice
 
-    async def _map_messages(
+    async def _map_messages(  # noqa: C901
         self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters
     ) -> list[ChatCompletionInputMessage | ChatCompletionOutputMessage]:
         """Just maps a `pydantic_ai.Message` to a `huggingface_hub.ChatCompletionInputMessage`."""
@@ -407,6 +415,9 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     elif isinstance(item, CompactionPart):  # pragma: no cover
                         # Compaction parts are not sent back to models that don't support compaction.
                         pass
+                    elif isinstance(item, SpeechPart):  # pragma: no cover
+                        # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
+                        raise _unconverted_speech_part_error()
                     else:
                         assert_never(item)
                 message_param = ChatCompletionInputMessage(role='assistant')
@@ -487,6 +498,11 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                             'content': part.model_response(),
                         }
                     )
+            elif isinstance(part, ToolAvailabilityDeltaPart):  # pragma: no cover
+                raise _unsynthesized_tool_availability_delta_error()
+            elif isinstance(part, SpeechPart):  # pragma: no cover
+                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
+                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
         if file_content:
@@ -541,13 +557,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_utils.now_utc)
 
     async def close_stream(self) -> None:
-        try:
-            # huggingface_hub types this as AsyncIterable, but at runtime it's an
-            # async generator that exposes aclose().
-            await self._response.source.aclose()  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
-        except RuntimeError as exc:
-            if not _utils.is_async_generator_already_running(exc):
-                raise
+        await self._response.aclose()
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         with _map_api_errors(self._model_name):
@@ -580,10 +590,11 @@ class HuggingFaceStreamedResponse(StreamedResponse):
                         yield event
 
                 for dtc in choice.delta.tool_calls or []:
+                    # The SDK declares `function` as required, but the API can send chunks without it.
                     maybe_event = self._parts_manager.handle_tool_call_delta(
                         vendor_part_id=dtc.index,
-                        tool_name=dtc.function and dtc.function.name,  # pyright: ignore[reportArgumentType]
-                        args=dtc.function and dtc.function.arguments,
+                        tool_name=dtc.function.name if dtc.function is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
+                        args=dtc.function.arguments if dtc.function is not None else None,  # pyright: ignore[reportUnnecessaryComparison]
                         tool_call_id=dtc.id,
                     )
                     if maybe_event is not None:

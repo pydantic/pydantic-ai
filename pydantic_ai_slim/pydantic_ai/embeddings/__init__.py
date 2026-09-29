@@ -169,7 +169,7 @@ class Embedder:
     If this isn't set, then the last value set by
     [`Embedder.instrument_all()`][pydantic_ai.embeddings.Embedder.instrument_all]
     will be used, which defaults to False.
-    See the [Debugging and Monitoring guide](https://ai.pydantic.dev/logfire/) for more info.
+    See the [Debugging and Monitoring guide](https://pydantic.dev/docs/ai/integrations/logfire/) for more info.
     """
 
     _instrument_default: ClassVar[InstrumentationSettings | bool] = False

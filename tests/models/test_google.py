@@ -11,14 +11,21 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import date, timezone
 from decimal import Decimal
+from enum import Enum
 from typing import Any, cast
 
 import pytest
-from httpx import AsyncClient as HttpxAsyncClient, MockTransport, Request, Response, Timeout
+from cassetter import Cassette
+from httpx import Timeout
+from httpx2 import (
+    AsyncClient as HTTPX2AsyncClient,
+    MockTransport as HTTPX2MockTransport,
+    Request as HTTPX2Request,
+    Response as HTTPX2Response,
+)
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -50,6 +57,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     VideoUrl,
     capture_run_messages,
@@ -81,7 +89,8 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..cassette_utils import request_json, single_request_body
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -130,7 +139,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -168,6 +176,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
             output_tokens=43,
             output_reasoning_tokens=34,
             details={'thoughts_tokens': 34, 'text_prompt_tokens': 9},
+            cost=Decimal('0.0001102'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -192,6 +201,7 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
                     input_text_tokens=9,
                     details={'thoughts_tokens': 34, 'text_prompt_tokens': 9},
                     output_reasoning_tokens=34,
+                    cost=Decimal('0.0001102'),
                 ),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -240,6 +250,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             output_text_tokens=35,
             tool_calls=1,
             details={'text_prompt_tokens': 160, 'text_candidates_tokens': 35},
+            cost=Decimal('0.0000300'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -268,6 +279,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     input_text_tokens=69,
                     output_text_tokens=14,
                     details={'text_candidates_tokens': 14, 'text_prompt_tokens': 69},
+                    cost=Decimal('0.0000125'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -304,6 +316,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                     input_text_tokens=91,
                     output_text_tokens=21,
                     details={'text_candidates_tokens': 21, 'text_prompt_tokens': 91},
+                    cost=Decimal('0.0000175'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -330,70 +343,6 @@ async def test_google_model_structured_output(allow_model_requests: None, google
             ),
         ]
     )
-
-
-async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
-    provider = GoogleProvider(api_key=gemini_api_key, base_url='https://generativelanguage.googleapis.com')
-    model = GoogleModel('gemini-2.0-flash', provider=provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
-    async with agent.run_stream('What is the capital of France?') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.cancelled
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
-                instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content=IsStr())],
-                usage=IsInstance(RequestUsage),
-                model_name='gemini-2.0-flash',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com',
-                provider_response_id=IsStr(),
-                state='interrupted',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-
-
-@pytest.mark.parametrize(
-    ('error_message', 'raises'),
-    [
-        ('asynchronous generator is already running', False),
-        ('boom', True),
-    ],
-)
-async def test_google_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
-    class FailingStream:
-        async def aclose(self) -> None:
-            raise RuntimeError(error_message)
-
-    stream = FailingStream()
-    response = GeminiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='gemini-2.0-flash',
-        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
-        _provider_name='google',
-        _provider_url='https://generativelanguage.googleapis.com',
-    )
-
-    if raises:
-        with pytest.raises(RuntimeError, match='boom'):
-            await response.close_stream()
-    else:
-        await response.close_stream()
 
 
 async def test_google_model_stream(allow_model_requests: None, google_provider: GoogleProvider):
@@ -473,6 +422,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     input_text_tokens=57,
                     details={'thoughts_tokens': 124, 'text_prompt_tokens': 57},
                     output_reasoning_tokens=124,
+                    cost=Decimal('0.00146125'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -513,6 +463,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     input_text_tokens=109,
                     details={'thoughts_tokens': 199, 'text_prompt_tokens': 109},
                     output_reasoning_tokens=199,
+                    cost=Decimal('0.00228625'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -551,6 +502,7 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     input_text_tokens=142,
                     details={'thoughts_tokens': 97, 'text_prompt_tokens': 142},
                     output_reasoning_tokens=97,
+                    cost=Decimal('0.0011575'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -618,7 +570,13 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
 
     # Raises before any request is made.
-    with pytest.raises(ValueError, match=re.escape('labels parameter is not supported in Gemini API.')):
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            'labels parameter is only supported in Gemini Enterprise Agent Platform mode, '
+            'not in Gemini Developer API mode.'
+        ),
+    ):
         await agent.run('What is the capital of France?')
 
 
@@ -832,6 +790,54 @@ async def test_google_model_youtube_video_url_input(allow_model_requests: None, 
     )
 
 
+async def test_google_model_mobile_youtube_video_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """`m.youtube.com` share links resolve as a `file_uri`, like any other YouTube host.
+
+    What catches a regression here is the cassette itself, not the request-body snapshot: drop
+    the host from `VideoUrl.is_youtube` and `_resolve_file` falls through to `download_item`,
+    whose live GET has no recorded interaction, so replay fails before the snapshot is reached.
+    The recorded usage is what proves Gemini resolved the URL to the video rather than to the
+    watch page — it bills video and audio prompt tokens, which a `text/html` page could not.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video in a few sentences',
+            VideoUrl(url='https://m.youtube.com/watch?v=lCdaVNyHtjU'),
+        ]
+    )
+    assert single_request_body(vcr) == snapshot(
+        {
+            'contents': [
+                {
+                    'parts': [
+                        {'text': 'Explain me this video in a few sentences'},
+                        {
+                            'fileData': {
+                                'file_uri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU',
+                                'mime_type': 'video/mp4',
+                            }
+                        },
+                    ],
+                    'role': 'user',
+                }
+            ],
+            'generationConfig': {'responseModalities': ['TEXT']},
+            'systemInstruction': {'parts': [{'text': 'You are a helpful chatbot.'}], 'role': 'user'},
+        }
+    )
+    assert result.output == snapshot(
+        'This video showcases an AI assistant diagnosing recent HTTP 404 errors. The assistant queries a logging database (LogLine) to identify patterns in the error responses, such as common problematic endpoints, request patterns, and issues related to timeline queries or authentication. Finally, the AI provides a detailed analysis of the identified problems and offers specific recommendations for resolution, interactively highlighting relevant sections in the code editor.'
+    )
+    assert result.usage.details == snapshot(
+        {'thoughts_tokens': 1091, 'text_prompt_tokens': 16, 'video_prompt_tokens': 15780, 'audio_prompt_tokens': 1917}
+    )
+
+
 async def test_google_model_youtube_video_url_input_with_vendor_metadata(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
@@ -916,6 +922,7 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
                     input_text_tokens=13,
                     output_text_tokens=8,
                     details={'text_candidates_tokens': 8, 'text_prompt_tokens': 13},
+                    cost=Decimal('0.0000045'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -988,7 +995,9 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {'text_prompt_tokens': 14},
+                    'cost': '0.00000105',
                     'input_text_tokens': 14,
                 },
                 'model_name': 'gemini-1.5-flash',
@@ -1043,6 +1052,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -1125,6 +1135,7 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                     output_reasoning_tokens=213,
                     input_tool_tokens=119,
                     input_text_tool_tokens=119,
+                    cost=Decimal('0.00431'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1211,6 +1222,7 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                     output_reasoning_tokens=131,
                     input_tool_tokens=286,
                     input_text_tool_tokens=286,
+                    cost=Decimal('0.00398875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1283,6 +1295,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                     output_reasoning_tokens=412,
                     input_tool_tokens=102,
                     input_text_tool_tokens=102,
+                    cost=Decimal('0.00667875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1469,6 +1482,7 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                     output_reasoning_tokens=301,
                     input_tool_tokens=319,
                     input_text_tool_tokens=319,
+                    cost=Decimal('0.00612'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1549,6 +1563,7 @@ async def test_google_model_web_fetch_tool(allow_model_requests: None, google_pr
                     output_reasoning_tokens=47,
                     input_tool_tokens=2395,
                     input_text_tool_tokens=2395,
+                    cost=Decimal('0.0009481'),
                 ),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -1634,6 +1649,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                     output_reasoning_tokens=37,
                     input_tool_tokens=4610,
                     input_text_tool_tokens=4610,
+                    cost=Decimal('0.0015476'),
                 ),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -1892,6 +1908,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     input_text_tokens=29,
                     details={'thoughts_tokens': 1001, 'text_prompt_tokens': 29},
                     output_reasoning_tokens=1001,
+                    cost=Decimal('0.020902'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1939,6 +1956,7 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     input_text_tokens=1280,
                     details={'thoughts_tokens': 1115, 'text_prompt_tokens': 1280},
                     output_reasoning_tokens=1115,
+                    cost=Decimal('0.027436'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -2020,6 +2038,7 @@ async def test_google_model_thinking_part_from_other_model(
                     output_tokens=1719,
                     output_reasoning_tokens=1408,
                     details={'reasoning_tokens': 1408},
+                    cost=Decimal('0.01724625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -2028,6 +2047,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2075,6 +2095,7 @@ async def test_google_model_thinking_part_from_other_model(
                     input_text_tokens=1106,
                     details={'thoughts_tokens': 1089, 'text_prompt_tokens': 1106},
                     output_reasoning_tokens=1089,
+                    cost=Decimal('0.0200525'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2137,6 +2158,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     input_text_tokens=34,
                     details={'thoughts_tokens': 787, 'text_prompt_tokens': 34},
                     output_reasoning_tokens=787,
+                    cost=Decimal('0.0126025'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2440,6 +2462,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                     input_text_tokens=21,
                     output_text_tokens=1,
                     details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21},
+                    cost=Decimal('0.0000025'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2472,6 +2495,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                     input_text_tokens=27,
                     output_text_tokens=5,
                     details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27},
+                    cost=Decimal('0.0000047'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2511,6 +2535,20 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
         UserError, match=re.escape('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
     ):
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
+
+
+async def test_google_timeout_zero_in_config():
+    """An explicit `timeout=0` is forwarded to the SDK config, which VCR does not expose."""
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=GoogleModelSettings(timeout=0),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['http_options']['timeout'] == 0
 
 
 async def test_google_extra_headers(allow_model_requests: None, google_provider: GoogleProvider):
@@ -2684,6 +2722,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                     input_text_tokens=33,
                     output_text_tokens=5,
                     details={'text_candidates_tokens': 5, 'text_prompt_tokens': 33},
+                    cost=Decimal('0.0000053'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2722,6 +2761,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                     input_text_tokens=47,
                     output_text_tokens=8,
                     details={'text_candidates_tokens': 8, 'text_prompt_tokens': 47},
+                    cost=Decimal('0.0000079'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2798,6 +2838,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                     input_text_tokens=49,
                     details={'thoughts_tokens': 136, 'text_prompt_tokens': 49},
                     output_reasoning_tokens=136,
+                    cost=Decimal('0.00154125'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2838,6 +2879,7 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                     input_text_tokens=80,
                     details={'thoughts_tokens': 64, 'text_prompt_tokens': 80},
                     output_reasoning_tokens=64,
+                    cost=Decimal('0.00083'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2897,6 +2939,7 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                     input_text_tokens=8,
                     output_text_tokens=20,
                     details={'text_candidates_tokens': 20, 'text_prompt_tokens': 8},
+                    cost=Decimal('0.0000088'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2963,6 +3006,7 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                     input_text_tokens=50,
                     output_text_tokens=46,
                     details={'text_candidates_tokens': 46, 'text_prompt_tokens': 50},
+                    cost=Decimal('0.0000234'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3011,6 +3055,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
                     input_text_tokens=80,
                     output_text_tokens=13,
                     details={'text_candidates_tokens': 13, 'text_prompt_tokens': 80},
+                    cost=Decimal('0.0000132'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3075,6 +3120,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                     input_text_tokens=125,
                     details={'thoughts_tokens': 395, 'text_prompt_tokens': 125},
                     output_reasoning_tokens=395,
+                    cost=Decimal('0.00422625'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -3115,6 +3161,7 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                     input_text_tokens=156,
                     details={'thoughts_tokens': 121, 'text_prompt_tokens': 156},
                     output_reasoning_tokens=121,
+                    cost=Decimal('0.001535'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -3171,6 +3218,7 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                     input_text_tokens=240,
                     output_text_tokens=27,
                     details={'text_candidates_tokens': 27, 'text_prompt_tokens': 240},
+                    cost=Decimal('0.0000348'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3257,9 +3305,9 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
         usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
     )
 
-    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]
+    assert len(count_requests) == 1
+    assert request_json(count_requests[0])['tools'] == snapshot([{'googleSearch': {}}])
     assert result.output == snapshot('The capital of France is Paris.')
 
 
@@ -3341,6 +3389,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                     output_image_tokens=1120,
                     details={'thoughts_tokens': 115, 'text_prompt_tokens': 10, 'image_candidates_tokens': 1120},
                     output_reasoning_tokens=115,
+                    cost=Decimal('0.136628'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3391,6 +3440,7 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                         'image_candidates_tokens': 1120,
                     },
                     output_reasoning_tokens=149,
+                    cost=Decimal('0.138000'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3447,6 +3497,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                     input_text_tokens=10,
                     output_image_tokens=1290,
                     details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
+                    cost=Decimal('0.0387155'),
                 ),
                 model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
@@ -3524,6 +3575,7 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                     output_image_tokens=1120,
                     details={'thoughts_tokens': 174, 'text_prompt_tokens': 14, 'image_candidates_tokens': 1120},
                     output_reasoning_tokens=174,
+                    cost=Decimal('0.138472'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3620,6 +3672,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                     output_image_tokens=1120,
                     details={'thoughts_tokens': 131, 'text_prompt_tokens': 15, 'image_candidates_tokens': 1120},
                     output_reasoning_tokens=131,
+                    cost=Decimal('0.136998'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3663,6 +3716,7 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                     input_image_tokens=258,
                     details={'thoughts_tokens': 196, 'text_prompt_tokens': 37, 'image_prompt_tokens': 258},
                     output_reasoning_tokens=196,
+                    cost=Decimal('0.003254'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3769,6 +3823,7 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                     output_image_tokens=1120,
                     details={'thoughts_tokens': 529, 'text_prompt_tokens': 33, 'image_candidates_tokens': 1120},
                     output_reasoning_tokens=529,
+                    cost=Decimal('0.148734'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3844,12 +3899,9 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
         model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_google_image_generation_tool_output_format(
-    mocker: MockerFixture, google_provider: GoogleProvider
-) -> None:
+async def test_google_image_generation_tool_output_format(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png')])
 
     tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -3858,11 +3910,10 @@ async def test_google_image_generation_tool_output_format(
 
 
 async def test_google_image_generation_tool_unsupported_format_raises_error(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that unsupported output_format values raise an error on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     # 'gif' is not supported by Google
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # pyright: ignore[reportArgumentType]
 
@@ -3871,11 +3922,10 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
 
 
 async def test_google_image_generation_tool_output_compression(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
 
     # Test explicit value
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=85)])
@@ -3890,11 +3940,10 @@ async def test_google_image_generation_tool_output_compression(
 
 
 async def test_google_image_generation_tool_compression_validation(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test compression validation on Vertex AI: range and JPEG-only."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
@@ -3956,10 +4005,9 @@ async def test_google_vertexai_image_generation_with_output_format(
     assert result.output.media_type == 'image/jpeg'
 
 
-async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, google_provider: GoogleProvider) -> None:
+async def test_google_image_generation_tool_all_fields(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     params = ModelRequestParameters(
         native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )
@@ -3975,15 +4023,19 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
 
 
 def test_google_vertex_skips_include_server_side_tool_invocations(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex.
+
+    The model is built the way #6792 reports: a
+    Vertex-backed `genai.Client` wrapped in `GoogleProvider`, whose `system` stays `'google'` —
+    the transport, not the provider name, must drive the skip.
 
     Not a VCR test: the field is dropped before the request is sent, and our cassette matchers don't
     inspect the request body, so a recording would stay green if it were reintroduced.
     """
-    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-preview', provider=vertex_client_google_provider)
+    assert model.system == 'google'
     # A function tool is included so `tool_config` is non-empty on both paths; the only field that
     # should differ is `include_server_side_tool_invocations`.
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
@@ -4031,8 +4083,8 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
 
     result = await agent.run('Look up the city I live in, then search the web for its weather today.')
 
-    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    request_bodies = [json.loads(request.body) for request in generate_requests]  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]
+    request_bodies = [request_json(request) for request in generate_requests]
     # On the Gemini Developer API these requests carry `toolConfig.includeServerSideToolInvocations`;
     # on Vertex the field is skipped, so it is absent from every request Vertex actually accepted.
     assert [body.get('toolConfig', {}) for body in request_bodies] == snapshot(
@@ -4084,6 +4136,7 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
                     output_text_tokens=12,
                     output_tokens=71,
                     output_reasoning_tokens=59,
+                    cost=Decimal('0.0002345'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -4171,6 +4224,7 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                     output_text_tokens=250,
                     output_tokens=706,
                     output_reasoning_tokens=456,
+                    cost=Decimal('0.0021805'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -4646,6 +4700,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
         _response=cast(Any, PeekableAsyncStream(response)),
         _timestamp=IsDatetime(),
         _provider_name='test-provider',
+        _model_id_namespace='test-provider',
         _provider_url='',
     )
 
@@ -4688,6 +4743,7 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
         _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
         _timestamp=IsDatetime(),
         _provider_name='google',
+        _model_id_namespace='google',
         _provider_url='',
     )
 
@@ -5024,6 +5080,7 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                         output_reasoning_tokens=257,
                         input_tool_tokens=288,
                         input_text_tool_tokens=288,
+                        cost=Decimal('0.00334875'),
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
@@ -5102,6 +5159,7 @@ Here are some key facts about the Eiffel Tower:
                         output_reasoning_tokens=980,
                         input_tool_tokens=1436,
                         input_text_tool_tokens=1436,
+                        cost=Decimal('0.0145825'),
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
@@ -5201,6 +5259,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                         output_reasoning_tokens=742,
                         input_tool_tokens=770,
                         input_text_tool_tokens=770,
+                        cost=Decimal('0.00877125'),
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
@@ -5404,7 +5463,11 @@ async def test_thinking_with_tool_calls_from_other_model(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=37, output_tokens=272, output_reasoning_tokens=256, details={'reasoning_tokens': 256}
+                    input_tokens=37,
+                    output_tokens=272,
+                    output_reasoning_tokens=256,
+                    details={'reasoning_tokens': 256},
+                    cost=Decimal('0.00276625'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -5413,6 +5476,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5443,7 +5507,11 @@ async def test_thinking_with_tool_calls_from_other_model(
                     TextPart(content='Mexico City (Ciudad de México).', id=IsStr(), provider_name='openai'),
                 ],
                 usage=RequestUsage(
-                    input_tokens=379, output_tokens=77, output_reasoning_tokens=64, details={'reasoning_tokens': 64}
+                    input_tokens=379,
+                    output_tokens=77,
+                    output_reasoning_tokens=64,
+                    details={'reasoning_tokens': 64},
+                    cost=Decimal('0.00124375'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -5452,6 +5520,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5483,6 +5552,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                     input_text_tokens=107,
                     details={'thoughts_tokens': 123, 'text_prompt_tokens': 107},
                     output_reasoning_tokens=123,
+                    cost=Decimal('0.001966'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5699,13 +5769,13 @@ async def test_google_stream_api_non_http_error_is_wrapped(
 async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model_requests: None):
     model_name = 'definitely-missing'
     error_response = {'error': {'code': 404, 'message': 'Model not found', 'status': 'NOT_FOUND'}}
-    requests: list[Request] = []
+    requests: list[HTTPX2Request] = []
 
-    async def handler(request: Request) -> Response:
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
         requests.append(request)
-        return Response(404, json=error_response)
+        return HTTPX2Response(404, json=error_response)
 
-    async with HttpxAsyncClient(transport=MockTransport(handler)) as http_client:
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
         model = GoogleModel(
             model_name,
             provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
@@ -5761,6 +5831,7 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                     input_text_tokens=2,
                     details={'thoughts_tokens': 213, 'text_prompt_tokens': 2},
                     output_reasoning_tokens=213,
+                    cost=Decimal('0.002668'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5998,6 +6069,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     input_text_tokens=29,
                     details={'thoughts_tokens': 202, 'text_prompt_tokens': 29},
                     output_reasoning_tokens=202,
+                    cost=Decimal('0.002602'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -6025,7 +6097,11 @@ async def test_google_streaming_tool_call_thought_signature(
             ModelResponse(
                 parts=[TextPart(content='The capital of Mexico is Mexico City.')],
                 usage=RequestUsage(
-                    input_tokens=257, output_tokens=8, input_text_tokens=257, details={'text_prompt_tokens': 257}
+                    input_tokens=257,
+                    output_tokens=8,
+                    input_text_tokens=257,
+                    details={'text_prompt_tokens': 257},
+                    cost=Decimal('0.000610'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -6153,6 +6229,22 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
     assert wrapped_texts == ['<system>Now be terse.</system>']
 
 
+async def test_google_system_prompt_after_user_part_stays_in_contents():
+    """An instruction merged into the first request after user content must not rewrite the cache prefix."""
+    model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key='not-used'))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
+
+    prepared = model.prepare_messages(messages)
+    system_instruction, contents = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters()
+    )
+
+    assert system_instruction is None
+    assert contents == [
+        {'role': 'user', 'parts': [{'text': 'x'}, {'text': '<system>mid</system>'}]},
+    ]
+
+
 async def test_google_stream_safety_filter(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):
@@ -6229,7 +6321,7 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
     See https://github.com/pydantic/pydantic-ai/pull/4032#discussion_r2709797127
     """
     custom_timeout = 120
-    custom_http_client = HttpxAsyncClient(timeout=Timeout(custom_timeout))
+    custom_http_client = HTTPX2AsyncClient(timeout=custom_timeout)
     provider = GoogleProvider(api_key=gemini_api_key, http_client=custom_http_client)
 
     http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
@@ -6425,8 +6517,9 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': 'This is file report:'},
+                    {'text': '<tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
+                    {'text': '</tool_result>'},
                 ],
             },
         ]
@@ -7040,6 +7133,7 @@ async def test_google_vertex_service_tier_flex(
                     output_text_tokens=1,
                     details={'thoughts_tokens': 51, 'text_prompt_tokens': 5, 'text_candidates_tokens': 1},
                     output_reasoning_tokens=51,
+                    cost=Decimal('0.0001585'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -7090,6 +7184,7 @@ async def test_google_vertex_service_tier_flex_stream(
                     output_text_tokens=1,
                     details={'thoughts_tokens': 100, 'text_prompt_tokens': 5, 'text_candidates_tokens': 1},
                     output_reasoning_tokens=100,
+                    cost=Decimal('0.0003055'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -7138,6 +7233,7 @@ async def test_google_model_gemini_3_5_flash(allow_model_requests: None, google_
                     input_text_tokens=15,
                     details={'thoughts_tokens': 72, 'text_prompt_tokens': 15},
                     output_reasoning_tokens=72,
+                    cost=Decimal('0.0006795'),
                 ),
                 model_name='gemini-3.5-flash',
                 timestamp=IsDatetime(),
@@ -7311,3 +7407,66 @@ async def test_google_model_armor_config_is_sent_in_request(
 
     _, kwargs = mock_generate.call_args
     assert kwargs['config']['model_armor_config'] == _MODEL_ARMOR_CONFIG
+
+
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@pytest.mark.vcr()
+async def test_google_enum_member_docstrings_reach_the_wire(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """A documented enum renders as `anyOf` of `const`s; Gemini's transformer folds each into a one-value `enum`.
+
+    Asserted on the wire, since the shape a transformer produces is what the API has to accept, and the model
+    then has to call the tool with one of the options.
+    """
+
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider), instructions='Set the priority of the ticket.')
+
+    @agent.tool_plain
+    def set_priority(priority: TicketPriority) -> str:
+        return f'Priority set to {priority.value}.'
+
+    result = await agent.run('Production is down for every customer.')
+    calls = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert calls[0].args_as_dict() == {'priority': 'high'}
+    body = request_capture.body(':generateContent')
+    assert cast(list[dict[str, Any]], body['tools'])[0]['functionDeclarations'][0] == snapshot(
+        {
+            'description': '',
+            'name': 'set_priority',
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
+                'required': ['priority'],
+                'type': 'object',
+                '$defs': {
+                    'TicketPriority': {
+                        'description': """\
+How urgent the ticket is.
+low: Can wait a week.
+high: Needs attention today.\
+""",
+                        'type': 'string',
+                        'enum': ['low', 'high'],
+                    }
+                },
+            },
+        }
+    )

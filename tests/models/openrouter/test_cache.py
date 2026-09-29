@@ -7,10 +7,11 @@ OpenRouter API).
 
 from __future__ import annotations as _annotations
 
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import (
     Agent,
@@ -41,7 +42,6 @@ if TYPE_CHECKING:
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
-    pytest.mark.anyio,
 ]
 
 
@@ -450,6 +450,7 @@ async def test_openrouter_cache_point_anthropic_e2e(
                     output_tokens=34,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.001038'),
                 ),
                 model_name='anthropic/claude-4.6-sonnet-20260217',
                 timestamp=IsDatetime(),
@@ -519,6 +520,7 @@ async def test_openrouter_cache_point_gemini_e2e(
                     output_tokens=11,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.0000779'),
                 ),
                 model_name='google/gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -583,6 +585,7 @@ async def test_openrouter_cache_instructions_e2e(
                     output_tokens=10,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.00093'),
                 ),
                 model_name='anthropic/claude-4.6-sonnet-20260217',
                 timestamp=IsDatetime(),
@@ -646,6 +649,7 @@ async def test_openrouter_cache_messages_e2e(
                     output_tokens=5,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.000126'),
                 ),
                 model_name='anthropic/claude-4.6-sonnet-20260217',
                 timestamp=IsDatetime(),
@@ -724,6 +728,7 @@ I have one tool available:
                     output_tokens=27,
                     output_reasoning_tokens=0,
                     details={'is_byok': False, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.002103'),
                 ),
                 model_name='anthropic/claude-4.6-sonnet-20260217',
                 timestamp=IsDatetime(),
@@ -874,6 +879,7 @@ async def test_openrouter_cache_streaming_e2e(
                     output_reasoning_tokens=0,
                     output_tokens=5,
                     details={'is_byok': 0, 'audio_tokens': 0, 'reasoning_tokens': 0, 'image_tokens': 0},
+                    cost=Decimal('0.000837'),
                 ),
                 model_name='anthropic/claude-4.6-sonnet-20260217',
                 timestamp=IsDatetime(),
