@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import sys
+import threading
 from collections.abc import AsyncIterator, Callable, Generator, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
@@ -22,7 +23,8 @@ import httpx
 import httpx2
 import pytest
 from _pytest.assertion.rewrite import AssertionRewritingHook
-from cassetter import Cassette, RecordMode
+from cassetter import Cassette, HttpResponse, RecordMode
+from cassetter.cassette import NoMatchError
 from pydantic import JsonValue, TypeAdapter
 from pytest_mock import MockerFixture
 
@@ -730,6 +732,62 @@ def pytest_runtest_makereport(
     outcome = yield
     report = outcome.get_result()
     setattr(item, f'rep_{report.when}', report)
+
+
+_cassetter_play = Cassette.play
+_cassetter_record = Cassette.record
+_cassette_recording_lock = threading.Lock()
+
+
+def _play_unplayed_only(
+    self: Cassette, method: str, uri: str, headers: dict[str, list[str]], body: bytes | None
+) -> HttpResponse:
+    """While recording, replay only interactions that haven't been played yet, and send anything else live.
+
+    When nothing unplayed matches a request, cassetter replays an interaction that has already been played, and
+    it appends new recordings unplayed. With the default method + URI matching, every later turn of a conversation
+    being recorded would get the first response back instead of reaching the API. Remove both patches once
+    cassetter stops doing that while recording: https://github.com/pydantic/pydantic-ai/issues/9054.
+    """
+    if not self.can_record:
+        return _cassetter_play(self, method, uri, headers, body)
+    with _cassette_recording_lock:
+        played_before = self.played_indices
+        counts_before = self.play_counts
+        response = _cassetter_play(self, method, uri, headers, body)
+        (index,) = (self.play_counts - counts_before).keys()
+    if played_before[index]:
+        raise NoMatchError('only already played interactions match')
+    return response
+
+
+def _record_played(
+    self: Cassette,
+    method: str,
+    uri: str,
+    request_headers: dict[str, list[str]],
+    request_body: bytes | None,
+    status: int,
+    response_headers: dict[str, list[str]],
+    response_body: bytes | None,
+    order: int | None = None,
+) -> HttpResponse:
+    """Record an interaction as played by the request that produced it; see `_play_unplayed_only`."""
+    with _cassette_recording_lock:
+        count_before = len(self.played_indices)
+        response = _cassetter_record(
+            self, method, uri, request_headers, request_body, status, response_headers, response_body, order
+        )
+        # A `before_record_response` hook raising `SkipRecording` appends nothing.
+        for index in range(count_before, len(self.played_indices)):
+            for cassette in (self._inner, self._match_inner):  # pyright: ignore[reportPrivateUsage]
+                if cassette is not None:
+                    cassette.mark_played(index)
+    return response
+
+
+Cassette.play = _play_unplayed_only
+Cassette.record = _record_played
 
 
 @pytest.fixture(scope='module')
