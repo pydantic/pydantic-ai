@@ -206,17 +206,17 @@ async def test_load_all_skips_missing_plugin_modules_quietly(tmp_path: Path, mon
     (package / 'plugin.py').write_text('import clai_missing_dependency\n')
     monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
     harness = Harness(tmp_path)
-    # Saved by a CLAI version that shipped a `slack` built-in; this one does not.
-    harness.store.save_plugin(PluginSettings(id='slack', factory='pydantic_clai2.slack'))
+    # Saved by a CLAI version that shipped a `retired` built-in; this one does not.
+    harness.store.save_plugin(PluginSettings(id='retired', factory='pydantic_clai2.retired'))
     harness.store.save_plugin(PluginSettings(id='gone', factory='clai_gone.plugin:activate'))
     harness.store.save_plugin(PluginSettings(id='broken', factory='clai_broken.plugin'))
     await harness.loader.load_all()
     states = {entry.name: entry.state for entry in harness.loader.entries()}
-    assert states['slack'] == "enabled, failed: ModuleNotFoundError: No module named 'pydantic_clai2.slack'"
+    assert states['retired'] == "enabled, failed: ModuleNotFoundError: No module named 'pydantic_clai2.retired'"
     assert states['gone'] == "enabled, failed: ModuleNotFoundError: No module named 'clai_gone'"
     assert harness.text == ("Plugin 'broken': ModuleNotFoundError: No module named 'clai_missing_dependency'\n")
-    with pytest.raises(PluginError, match=r"No module named 'pydantic_clai2\.slack'"):
-        await harness.loader.command(['enable', 'slack'])
+    with pytest.raises(PluginError, match=r"No module named 'pydantic_clai2\.retired'"):
+        await harness.loader.command(['enable', 'retired'])
 
 
 async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
