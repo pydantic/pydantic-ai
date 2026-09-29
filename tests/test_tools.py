@@ -4993,6 +4993,25 @@ def test_return_schema_self_bound_method():
     assert 'temperature' in td.return_schema['properties']
 
 
+def test_return_schema_self_bound_classmethod():
+    """Self return type on a bound classmethod resolves to the owning class."""
+    from pydantic import BaseModel
+    from typing_extensions import Self
+
+    class Weather(BaseModel):
+        temperature: float
+
+        @classmethod
+        def from_city(cls, city: str) -> Self:
+            return cls(temperature=1.0)  # pragma: no cover
+
+    tool = Tool(Weather.from_city)
+    td = tool.tool_def
+    assert td.return_schema is not None
+    assert td.return_schema['type'] == 'object'
+    assert 'temperature' in td.return_schema['properties']
+
+
 def test_return_schema_self_unbound():
     """Self return type on a non-bound function falls back to unconstrained schema."""
     from typing import Any

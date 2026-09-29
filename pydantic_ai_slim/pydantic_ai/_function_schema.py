@@ -416,14 +416,11 @@ def extract_return_schema_type(return_annotation: Any, function: Callable[..., A
     # Bare ToolReturn without type parameter — pre-generic legacy form
     if return_annotation is ToolReturn:
         return Any
-    # Resolve Self to the owning class for bound methods.
-    # Only works when the function is already bound (e.g. instance.method);
-    # unbound methods and classmethods fall back to Any since there's no
-    # instance to infer the class from.
+    # Resolve Self to the owning class for bound methods and classmethods.
     if return_annotation is Self:
         self_obj = getattr(function, '__self__', None)
         if self_obj is not None:
-            return cast(type[Any], type(self_obj))
+            return cast(type[Any], self_obj if isinstance(self_obj, type) else type(self_obj))
         return Any
     if get_origin(return_annotation) is ToolReturn:
         type_args = get_args(return_annotation)
