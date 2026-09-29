@@ -20,7 +20,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
-from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_default_changed
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace, workspace_path
 from pydantic_ai_harness.subagents._disk import AgentOverride, DiskDefinition, load_definitions
 from pydantic_ai_harness.subagents._effort import clamp_effort
@@ -39,6 +39,13 @@ if TYPE_CHECKING:
 ToolResolver = Callable[[str], 'Sequence[AgentToolset[object]] | None']
 """Maps one tool name from a disk definition's `tools` list to the toolsets that
 provide it, or `None` when the name is unknown (the loader warns and skips it)."""
+
+
+class _UnsetFolders(tuple[Path, ...]):
+    """Private marker distinguishing an omitted `agent_folders` from explicit `None`."""
+
+
+_UNSET_FOLDERS: Sequence[str | Path] = _UnsetFolders()
 
 
 def _folder_path(folder: str | Path) -> str:
@@ -89,12 +96,11 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     one of the menu's keys, so the parent routes each task to the model that fits
     it. A `SubAgent` can restrict which keys it accepts (`SubAgent.models`).
 
-    Sub-agents are also loaded from disk by default: each markdown agent definition
-    under `.agents/agents/` (or `.claude/agents/`) in the run's workspace becomes a
-    delegate, built with the parent's model. Folders are read at the start of every
-    run, through `ctx.workspace`, or through `workspace` when set. Disk delegates get no tools
-    by default (`inherit_tools` is `False`); set `inherit_tools=True` to expose the
-    parent's tools, or pass a `tool_resolver` to map their frontmatter tool names.
+    Sub-agents can also be loaded from disk: each markdown agent definition under
+    `agent_folders` in the run's workspace becomes a delegate, built with the
+    parent's model. Folders are read at the start of every run, through
+    `ctx.workspace`, or through `workspace` when set. Disk delegates get no tools
+    by default; pass a `tool_resolver` to map their frontmatter tool names.
     Disk delegates coexist with explicitly-passed ones; explicitly-passed agents take
     precedence, then earlier folders. A disk delegate whose
     name is already taken is skipped with a warning. Configure or disable this with
@@ -107,10 +113,9 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     The parent's `deps` are forwarded to each sub-agent (sub-agents therefore
     share the parent's `AgentDepsT`), and by default the parent's `usage` is
-    shared so usage limits apply across the whole agent tree. Optionally, the
-    parent's tools can be inherited (`inherit_tools`), extra capabilities can be
-    applied to every sub-agent run (`shared_capabilities`), and sub-agent events
-    can be streamed to a handler (`event_stream_handler`).
+    shared so usage limits apply across the whole agent tree. Extra capabilities
+    can be applied to every sub-agent run (`shared_capabilities`), and sub-agent
+    events can be streamed to a handler (`event_stream_handler`).
 
     ```python
     from pydantic_ai import Agent
@@ -151,24 +156,26 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     ```
     """
 
-    agent_folders: str | Sequence[str | Path] | None = 'agents'
+    agent_folders: str | Sequence[str | Path] | None = _UNSET_FOLDERS
     """Where to load markdown agent definitions from, in addition to `agents`.
-    Defaults to the conventional layout, so a repo's agent files load with no extra
-    configuration. Every folder is read at the start of each run through the run's
-    workspace (`ctx.workspace`), or through `workspace` when set.
+    Off by default: only `agents` are exposed unless this is set. Every folder is
+    read at the start of each run through the run's workspace (`ctx.workspace`),
+    or through `workspace` when set.
 
-    - a folder-name `str` (the default `'agents'` is the conventional layout): load
+    - a folder-name `str` (`'agents'` is the conventional layout): load
       from `.agents/<name>/` under the workspace's working directory, falling back to
-      `.claude/<name>/` when `.agents/` is absent. Skipped when the run has no workspace,
-      with a `HarnessDeprecationWarning` when this process's working directory or the home
-      directory has that folder, which earlier releases read.
+      `.claude/<name>/` when `.agents/` is absent. Skipped when the run has no workspace.
     - a sequence of paths in the workspace, absolute or relative to its working
       directory: load from exactly those folders, in order. A run with no workspace
       fails at its start; pass `workspace=LocalWorkspaceBackend('.')` to read them from
       this machine.
-    - `None`: disable disk loading entirely (only `agents` are exposed).
+    - `None`: no disk loading (the default).
 
-    Missing folders are skipped. Within a folder every `*.md` file is a candidate."""
+    Missing folders are skipped. Within a folder every `*.md` file is a candidate.
+
+    This previously defaulted to `'agents'`. Leaving it unset while the run's
+    workspace contains a conventional agent definition emits a
+    `HarnessDeprecationWarning`; pass either value explicitly to stay silent."""
 
     agent_overrides: Mapping[str, AgentOverride] = field(default_factory=dict[str, AgentOverride])
     """Per-disk-agent overrides keyed by the agent's name. An entry can set the
@@ -180,17 +187,20 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     name in a definition's `tools`/`allowed-tools` frontmatter is passed to this
     resolver and the returned toolsets are attached to that agent; an unknown name
     (resolver returns `None`) is skipped with a warning. When unset, the
-    frontmatter tool list is ignored and disk agents inherit the parent's tools
-    via `inherit_tools` (set `inherit_tools=True` to expose them)."""
+    frontmatter tool list is ignored and disk agents have no tools of their own."""
 
     forward_usage: bool = True
     """If `True`, the parent run's `usage` is shared with each sub-agent run, so
     token usage aggregates and usage limits apply across the whole agent tree."""
 
     inherit_tools: bool = False
-    """If `True`, the parent agent's tools are exposed to each sub-agent run (the
-    delegate tool itself is filtered out, so sub-agents can't recurse into
-    further delegation). Off by default to avoid silently widening sub-agent access."""
+    """Deprecated: setting it to `True` emits a `HarnessDeprecationWarning`.
+
+    If `True`, the parent agent's own tools (registered via `tools=` or `toolsets=`,
+    not those contributed by capabilities) are exposed to each sub-agent run, minus
+    the delegate tool. Bind required tools directly to explicit sub-agents, use
+    `include_self=True` to delegate to an agent with all of the parent's tools and
+    capabilities, or use `tool_resolver` to give disk agents tools."""
 
     shared_capabilities: Sequence[AgentCapability[AgentDepsT]] = ()
     """Capabilities applied to every sub-agent run, in addition to whatever each
@@ -283,6 +293,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """Whether the no-longer-read host folder warning was given, shared with every per-run copy so it
     is given once per instance rather than once per run."""
 
+    _agent_folders_was_unset: bool = field(default=False, init=False, repr=False, compare=False)
+    """Whether `agent_folders` was omitted, so an affected run gets the default-change warning."""
+
+    _warned_default_folders: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """The conventional workspace folder already reported for this capability instance."""
+
     _run_toolset: SubAgentToolset[AgentDepsT] | None = field(default=None, init=False, repr=False, compare=False)
     """This run's delegate toolset, on a per-run copy only. Built once per run, so every step of the
     run sees the same toolset instance."""
@@ -308,6 +324,18 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     toolset and cleared per run in `wrap_run`. Backs `SubAgent.max_calls`."""
 
     def __post_init__(self) -> None:
+        if self.agent_folders is _UNSET_FOLDERS:
+            self.agent_folders = None
+            self._agent_folders_was_unset = True
+        if self.inherit_tools:
+            warnings.warn(
+                '`SubAgents(inherit_tools=True)` is deprecated and will be removed in a future release. It passes '
+                "only the parent's own tools, not those of its capabilities. Bind required tools directly to "
+                'explicit sub-agents, use `include_self=True` to delegate to a fresh run of the agent with all '
+                'of its tools and capabilities, or use `tool_resolver` to give disk-loaded agents tools.',
+                category=HarnessDeprecationWarning,
+                stacklevel=3,
+            )
         self._workspace = secondary_workspace(self.workspace, 'SubAgents')
         self._build_roster([])
 
@@ -407,7 +435,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         """
         if at_max_depth(self.max_depth):
             return replace_no_init(self, _delegation_off=True)
-        if self.agent_folders is None:
+        if self.agent_folders is None and not self._agent_folders_was_unset:
             return self
         run = replace_no_init(self)
         run._per_run = True
@@ -416,8 +444,12 @@ class SubAgents(AbstractCapability[AgentDepsT]):
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Read the agent folders' definitions through the workspace and rebuild this run's roster."""
+        if not self._per_run:
+            return
         folders = self.agent_folders
-        if not self._per_run or folders is None:
+        if folders is None:
+            if self._agent_folders_was_unset:
+                await self._warn_agent_folders_default_changed(ctx)
             return
         workspace = self._workspace
         if workspace is None:
@@ -438,6 +470,38 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             return
         self._build_roster(self._disk_agents(definitions))
         self._run_toolset = self._make_toolset()
+
+    async def _warn_agent_folders_default_changed(self, ctx: RunContext[AgentDepsT]) -> None:
+        """Warn once when the old default would have found definitions in this run's workspace."""
+        workspace = self._workspace
+        if workspace is None:
+            if not ctx.workspace.attached:
+                return
+            workspace = ctx.workspace
+        try:
+            agents_root = await workspace.stat('.agents')
+        except (FileNotFoundError, NotADirectoryError):
+            folder = '.claude/agents'
+        else:
+            folder = '.agents/agents' if agents_root.is_dir else '.claude/agents'
+        try:
+            entries = await workspace.list_dir(folder)
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        if not any(not entry.is_dir and entry.name.endswith('.md') for entry in entries):
+            return
+        resolved = await workspace.resolve(folder)
+        if resolved in self._warned_default_folders:
+            return
+        self._warned_default_folders.add(resolved)
+        warn_default_changed(
+            owner='SubAgents',
+            option='agent_folders',
+            old='agents',
+            new=None,
+            impact=f'The agent definitions in {resolved!r} are no longer loaded as delegates.',
+            stacklevel=3,
+        )
 
     async def _warn_host_folder_ignored(self, name: str, roots: Sequence[anyio.Path]) -> None:
         """Earlier releases read this folder under `roots` on this machine; say so once rather than drop it silently."""

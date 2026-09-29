@@ -12,6 +12,10 @@ Context management is the built-in `compaction` plugin,
 [described below](#compacting-the-conversation).
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
+The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
+token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
+entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
+[its settings](PLUGINS.md#google_workspace-gmail-calendar-and-drive-tools).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
 `stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON
@@ -254,6 +258,9 @@ Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
 Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
+
+Without installing, run `uvx pydantic-clai2`. The package also installs a
+`pydantic-clai2` command that is an alias for `clai2`.
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
