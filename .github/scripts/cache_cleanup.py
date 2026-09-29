@@ -1,10 +1,11 @@
-"""Prune GitHub Actions caches so the repository stays inside its 10 GB budget.
+"""Prune GitHub Actions caches so the repository stays inside its storage limit.
 
-GitHub evicts least-recently-used caches once a repository passes 10 GB, which turns every
-cache into a coin flip rather than a guarantee: `setup-uv` installs swing between 19s and
-211s, and the pinned sentence-transformers model is re-downloaded by every eligible job in
-the run that loses the race. Dropping the entries nothing can reach any more keeps the ones
-that still pay for themselves resident.
+GitHub evicts least-recently-used caches once a repository passes its limit -- 10 GB unless
+an admin raises it -- which turns every cache into a coin flip rather than a guarantee:
+`setup-uv` installs swing between 19s and 211s, and the pinned sentence-transformers model
+is re-downloaded by every eligible job in the run that loses the race. Dropping the entries
+nothing can reach any more keeps the ones that still pay for themselves resident, and past
+the free 10 GB it also stops the dead ones being billed.
 
 Two classes of entry are pruned, in order:
 
@@ -35,8 +36,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
-# GitHub's per-repository limit is 10 GB. Aim below it so a run that lands between two
-# cleanups still has room to save its own caches without evicting anything.
+# GitHub's per-repository limit is 10 GB until an admin raises it with
+# `PUT /repos/{owner}/{repo}/actions/cache/storage-limit`. Aim below whatever that limit is,
+# so a week's runs still have room to save their own caches without evicting anything --
+# raise this alongside the limit rather than letting the gap close.
 DEFAULT_TARGET_BYTES = 8 * 1024**3
 # One warm entry per group is enough to serve the next run; a second covers a branch that
 # forked before the most recent lockfile bump.

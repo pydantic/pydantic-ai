@@ -1,15 +1,21 @@
 name: Cache Cleanup
 
-# Keep the Actions cache inside GitHub's 10 GB per-repository budget. Past it, GitHub evicts
+# Keep the Actions cache inside its storage limit. Past the limit GitHub evicts
 # least-recently-used entries, so a `setup-uv` install or the pinned sentence-transformers
 # model download becomes a coin flip instead of a cache hit. `cache_cleanup.py` drops the
 # entries nothing can reach any more -- closed pull requests first, then entries superseded
 # by a newer lockfile or commit -- and never the newest entry of a group.
+#
+# Raising the repository's limit past the free 10 GB bills the excess storage, so the
+# closed-pull-request pass keeps paying for itself whatever the limit is. Bump
+# `DEFAULT_TARGET_BYTES` in `cache_cleanup.py` alongside any change to the limit itself,
+# which is set out of band with
+# `gh api -X PUT repos/{owner}/{repo}/actions/cache/storage-limit -F max_cache_size_gb=N`.
 
 on:
   schedule:
-    # Daily at 04:17 UTC, off the hour so it doesn't queue behind everything else.
-    - cron: '17 4 * * *'
+    # Weekly, Monday at 04:17 UTC, off the hour so it doesn't queue behind everything else.
+    - cron: '17 4 * * 1'
   workflow_dispatch:
     inputs:
       # Underscored: a hyphen in an input name has to be read as `inputs['dry-run']`, because
