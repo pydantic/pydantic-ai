@@ -51,9 +51,9 @@ A capability **cannot** be added to a live, already-executing run. pydantic-ai r
 
 ### Integration contract
 
-The orchestrator drives the loop, so it owns the one-line contract: thread the store's active capabilities into each run via `agent.run(..., capabilities=...)`. With that in place, the authored capability is live on the very next loop iteration -- no process restart:
-
 The successful `author_capability` result reminds the model about this contract. Writing and validating a capability does not schedule or inject it automatically.
+
+The orchestrator drives the loop, so it owns the one-line contract: thread the store's active capabilities into each run via `agent.run(..., capabilities=...)`. With that in place, the authored capability is live on the very next loop iteration -- no process restart:
 
 ```python
 from pathlib import Path
