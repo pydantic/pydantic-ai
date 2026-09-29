@@ -30,7 +30,20 @@ from pydantic_ai.output import ToolOutput
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from ._inline_snapshot import snapshot, warns
-from .conftest import IsDatetime, IsNow, IsStr
+from .conftest import IsDatetime, IsNow, IsStr, try_import
+
+with try_import() as openai_installed:
+    from openai.types.chat import ChatCompletionMessage
+    from openai.types.completion_usage import (
+        CompletionTokensDetails,
+        CompletionUsage,
+        PromptTokensDetails,
+    )
+
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAI, completion_message
 
 pytestmark = pytest.mark.anyio
 
@@ -63,6 +76,53 @@ def test_total_token_limit() -> None:
 
     with pytest.raises(UsageLimitExceeded, match=re.escape('Exceeded the total_tokens_limit of 50 (total_tokens=55)')):
         test_agent.run_sync('Hello', usage_limits=UsageLimits(total_tokens_limit=50))
+
+
+def test_extract_with_reasoning_tokens_reports_real_counts() -> None:
+    """genai-prices <0.1 extracts real counts from the #8841 payload; 0.1.x returns zeros.
+
+    The slim dependency is capped below 0.1; this pins the public-API behavior the cap protects.
+    """
+    issue_payload = {
+        'prompt_tokens': 2083,
+        'completion_tokens': 41,
+        'total_tokens': 2124,
+        'prompt_tokens_details': {'cached_tokens': 2027},
+        'completion_tokens_details': {'reasoning_tokens': 0},
+    }
+    usage = RequestUsage.extract(
+        {'model': 'google/gemini-2.5-flash', 'usage': issue_payload},
+        provider='openrouter',
+        provider_url='https://openrouter.ai/api/v1',
+        provider_fallback='openai',
+        api_flavor='chat',
+    )
+    assert usage.input_tokens == 2083
+    assert usage.output_tokens == 41
+    assert usage.cache_read_tokens == 2027
+
+
+@pytest.mark.skipif(not openai_installed(), reason='openai not installed')
+async def test_usage_limits_fire_on_extracted_usage(allow_model_requests: None) -> None:
+    """A token limit below the extracted input tokens must fire, not be silently disabled by zero usage."""
+    response = completion_message(
+        ChatCompletionMessage(content='done', role='assistant'),
+        usage=CompletionUsage(
+            completion_tokens=41,
+            prompt_tokens=2083,
+            total_tokens=2124,
+            prompt_tokens_details=PromptTokensDetails(cached_tokens=2027),
+            completion_tokens_details=CompletionTokensDetails(reasoning_tokens=0),
+        ),
+    )
+    mock_client = MockOpenAI.create_mock(response)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    with pytest.raises(
+        UsageLimitExceeded, match=re.escape('Exceeded the input_tokens_limit of 2000 (input_tokens=2083)')
+    ):
+        await agent.run('Hello', usage_limits=UsageLimits(input_tokens_limit=2000))
 
 
 def test_retry_limit() -> None:
