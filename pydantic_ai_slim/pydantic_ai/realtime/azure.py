@@ -218,6 +218,10 @@ class AzureVoiceLiveVoice(TypedDict, total=False):
     """Speaking style, e.g. `'cheerful'`, for voices that support styles."""
     locale: str
     """Locale to speak in, e.g. `'en-US'`, for multilingual voices."""
+    prefer_locales: list[str]
+    """Locales to prefer when a multilingual voice detects the language, e.g. `['en-US', 'en-GB']`."""
+    custom_lexicon_url: str
+    """URL of a custom lexicon that sets how the voice pronounces specific words."""
 
 
 class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
@@ -227,10 +231,9 @@ class AzureRealtimeModelSettings(OpenAIRealtimeModelSettings, total=False):
     field, but when [`azure_voice_live`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live]
     is set the Voice Live session config is built from only the cross-protocol fields — `instructions`,
     `openai_voice` (by name, unless `azure_voice_live_voice` is set), `turn_detection` (or
-    `azure_voice_live_turn_detection`),
-    `input_transcription_model`, `output_modality`, `max_tokens`, `tool_choice`, and tools. The
-    inherited `openai_*` fields, plus `thinking` and `parallel_tool_calls`, are **silently ignored**
-    under Voice Live; they still apply on the GA path.
+    `azure_voice_live_turn_detection`), `input_transcription_model`, `output_modality`, `max_tokens`,
+    `tool_choice`, and tools. The other inherited `openai_*` fields, plus `thinking` and
+    `parallel_tool_calls`, are **silently ignored** under Voice Live; they still apply on the GA path.
 
     They fall into two groups, and only the first is settled:
 
