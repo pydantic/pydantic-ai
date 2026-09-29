@@ -57,7 +57,6 @@ from .plugin_loader import PluginError, PluginLoader
 from .plugin_menu import open_plugins_menu
 from .plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart, bare_screen
 from .project_settings import ProjectSettings
-from .promoted_plugins import adopt_promoted
 from .prompt_transcript import TranscriptBuffer
 from .reloading import reload_clai
 from .screen import Screen
@@ -82,7 +81,7 @@ if TYPE_CHECKING:
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
-_PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload')
+_PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
 _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 
 
@@ -100,6 +99,11 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='notifications', factory='pydantic_clai2.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
     PluginSettings(id='github', factory='pydantic_clai2.github', enabled=False),
+    PluginSettings(id='pylon', factory='pydantic_clai2.pylon', enabled=False),
+    PluginSettings(id='google_workspace', factory='pydantic_clai2.google_workspace', enabled=False),
+    PluginSettings(id='day_ai', factory='pydantic_clai2.day_ai', enabled=False),
+    PluginSettings(id='ordinal', factory='pydantic_clai2.ordinal', enabled=False),
+    PluginSettings(id='notion', factory='pydantic_clai2.notion', enabled=False),
     PluginSettings(id='slack', factory='pydantic_clai2.slack', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
@@ -410,14 +414,12 @@ def create_shell(
     )
     screen = Screen()
     status = Status()
-    builtin = tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins)
-    adopt_promoted(store, builtin)
     loader: PluginLoader[DepsT] = PluginLoader(
         store=store,
         console=console,
         commands=commands,
         session_start=lambda: SessionStart(agent=agent, settings=context.settings),
-        builtin=builtin,
+        builtin=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,

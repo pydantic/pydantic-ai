@@ -1,24 +1,27 @@
 """The built-in `slack` plugin: a settings menu for `Slack`'s options, with the user token kept in `/keys`."""
 
-import sqlite3
+import io
 import threading
-from contextlib import closing
 
 import anyio
 import pytest
 from anyio import to_thread
 from pydantic import SecretStr
+from rich.console import Console
 from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS, slack as slack_plugin
 from pydantic_clai2.api_keys import KeyReference, delete_key, load_keys, rename_key, save_key
+from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
 from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.plugin_loader import PluginError
+from pydantic_clai2.plugin_loader import PluginError, PluginLoader
 from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
-from pydantic_clai2.promoted_plugins import adopt_promoted
+from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.menu_script import pick, typed
 from tests.clai2.slack_shell import BUILTIN, ENABLED, ESC, script, shell
@@ -103,7 +106,7 @@ async def test_reopening_repicks_a_shared_key_that_stays_live(monkeypatch: pytes
         rename_key(name='ACME_SLACK', new_name='OTHER')
     delete_key(name='ACME_SLACK')
     assert await app.turn_token() is None
-    assert 'ACME_SLACK is missing. Restore it in /keys or reconfigure through /plugins configure slack.' in (
+    assert 'ACME_SLACK is missing. Restore it in /keys or reconfigure the connection that uses it.' in (
         app.output.getvalue()
     )
     await app.plugins.close('exit')
@@ -347,40 +350,27 @@ async def test_settings_reject_a_token() -> None:
 RAW = PluginSettings(id='slack', factory='pydantic_ai_harness.slack:Slack')
 
 
+def declarations(store: SettingsStore) -> dict[str, PluginSettings]:
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=DEFAULT_PLUGINS,
+    )
+    return {entry.name: entry.declaration for entry in loader.entries()}
+
+
 @pytest.mark.parametrize('enabled', [True, False])
-def test_saved_catalog_row_adopts_the_builtin(enabled: bool) -> None:
+def test_saved_catalog_row_loads_the_builtin(enabled: bool) -> None:
     store = SettingsStore()
     store.save_plugin(RAW.model_copy(update={'enabled': enabled}))
-    store.save_plugin(PluginSettings(id='notion', factory='pydantic_ai_harness.notion:Notion'))
-    adopt_promoted(store, DEFAULT_PLUGINS)
-    assert store.plugins() == [
-        PluginSettings(id='notion', factory='pydantic_ai_harness.notion:Notion'),
-        BUILTIN.model_copy(update={'enabled': enabled}),
-    ]
-
-
-def test_adopting_holds_the_write_lock_between_its_check_and_its_write() -> None:
-    store = SettingsStore()
-    store.save_plugin(RAW)
-
-    def adopt(saved: PluginSettings) -> PluginSettings:
-        # Another CLAI saving its own Slack settings now waits until this update commits.
-        with closing(sqlite3.connect(store.path, timeout=0)) as other, pytest.raises(sqlite3.OperationalError):
-            other.execute('UPDATE plugins SET declaration = declaration')
-        return BUILTIN
-
-    store.update_plugin('slack', adopt)
-    assert store.plugins() == [BUILTIN]
+    assert declarations(store)['slack'] == BUILTIN.model_copy(update={'enabled': enabled})
+    assert store.plugins() == [RAW.model_copy(update={'enabled': enabled})], 'the saved row itself is left alone'
 
 
 def test_own_declarations_are_kept() -> None:
     store = SettingsStore()
-    adopt_promoted(store, DEFAULT_PLUGINS)
-    assert store.plugins() == [], 'nothing saved, nothing to adopt'
     custom = RAW.model_copy(update={'settings': {'read_only': False}})
     store.save_plugin(custom)
-    adopt_promoted(store, DEFAULT_PLUGINS)
-    assert store.plugins() == [custom]
-    store.save_plugin(RAW)
-    adopt_promoted(store, [plugin for plugin in DEFAULT_PLUGINS if plugin.id != 'slack'])
-    assert store.plugins() == [RAW]
+    assert declarations(store)['slack'] == custom

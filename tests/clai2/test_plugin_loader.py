@@ -8,6 +8,7 @@ from types import ModuleType
 
 import anyio
 import pytest
+from pydantic import BaseModel
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -245,6 +246,30 @@ async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
         await harness.loader.load('clash')
 
 
+async def test_saved_settings_persist_and_a_failed_start_after_saving_can_load_again(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'tuned.py').write_text(
+        'from pydantic import BaseModel\n'
+        'from pydantic_clai2.plugins import PluginHost, SessionStart\n'
+        'class Tuned(BaseModel):\n'
+        '    level: int = 1\n'
+        'def activate(host: PluginHost) -> None:\n'
+        "    @host.on('session_start')\n"
+        '    async def started(event: SessionStart) -> None:\n'
+        '        level = host.settings(Tuned).level\n'
+        '        host.save_settings(Tuned(level=level + 1))\n'
+        '        if level == 1:\n'
+        "            raise RuntimeError('first start fails')\n"
+    )
+    await harness.loader.load_all()
+    [entry] = harness.loader.entries()
+    assert entry.state == 'enabled, failed: RuntimeError: first start fails'
+    assert harness.store.plugins()[0].settings == {'level': 2}
+    await harness.loader.load('tuned')
+    assert harness.loader.entries()[0].state == 'enabled, loaded'
+    assert harness.store.plugins()[0].settings == {'level': 3}
+
+
 async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.write('counter', end_body='pass')
@@ -271,6 +296,23 @@ async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) 
     assert message.startswith('Disabled counter. Delete ')
     assert not harness.store.plugins()[0].enabled
     assert harness.loader.entries()[0].state == 'disabled'
+
+
+async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path) -> None:
+    """Another CLAI process may replace the declaration while this one has the plugin loaded."""
+
+    class Chosen(BaseModel):
+        level: int
+
+    harness = Harness(tmp_path)
+    path = harness.write('counter')
+    await harness.loader.load('counter')
+    newer = PluginSettings(id='counter', factory='counter:activate', path=str(path), settings={'level': 1})
+    harness.store.save_plugin(newer)
+    host = harness.loader.entries()[0].host
+    assert host is not None
+    host.save_settings(Chosen(level=2))
+    assert harness.store.plugins() == [newer.model_copy(update={'settings': {'level': 2}})]
 
 
 async def test_fire_reports_observers_and_fails_closed_on_turn_start(tmp_path: Path) -> None:

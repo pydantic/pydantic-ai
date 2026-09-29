@@ -127,7 +127,7 @@ def connected_token() -> str:
         if os.environ.get(TOKEN_NAME):
             raise UserError(f'CLAI does not read {TOKEN_NAME} from the environment. {SETUP}')
         raise _NotSetUp(SETUP)
-    return resolve_key(token=connection.token, configure='/plugins configure slack')
+    return resolve_key(token=connection.token)
 
 
 def saved_connection() -> SlackConnection | None:

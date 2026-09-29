@@ -2,7 +2,7 @@
 
 import os
 import sqlite3
-from collections.abc import Callable, Generator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -104,20 +104,6 @@ class SettingsStore:
                 'INSERT INTO plugins VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET declaration = excluded.declaration',
                 (plugin.id, plugin.model_dump_json()),
             )
-
-    def update_plugin(self, plugin_id: str, update: Callable[[PluginSettings], PluginSettings | None]) -> None:
-        """Replace a saved declaration with `update(saved)`, or keep it when that is `None`, as one transaction.
-
-        Nothing another CLAI saves can land between the read and the write, so `update` decides on current data.
-        """
-        with self._connect() as connection:
-            connection.execute('BEGIN IMMEDIATE')
-            row = connection.execute('SELECT declaration FROM plugins WHERE id = ?', (plugin_id,)).fetchone()
-            replacement = None if row is None else update(PluginSettings.model_validate_json(row[0]))
-            if replacement is not None:
-                connection.execute(
-                    'UPDATE plugins SET declaration = ? WHERE id = ?', (replacement.model_dump_json(), plugin_id)
-                )
 
     def delete_plugin(self, plugin_id: str) -> None:
         """Forget a declaration; a plugin file in the plugins folder is not deleted."""

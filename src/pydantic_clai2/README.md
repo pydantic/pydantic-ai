@@ -12,6 +12,10 @@ Context management is the built-in `compaction` plugin,
 [described below](#compacting-the-conversation).
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
+The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
+token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
+entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
+[its settings](PLUGINS.md#google_workspace-gmail-calendar-and-drive-tools).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
 `stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON
@@ -254,6 +258,9 @@ Launch `clai2`. The default model is `openai-codex:gpt-6-astra`.
 Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
+
+Without installing, run `uvx pydantic-clai2`. The package also installs a
+`pydantic-clai2` command that is an alias for `clai2`.
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
@@ -742,6 +749,11 @@ shows `(editing)` meanwhile. Clearing the draft and pressing Enter removes the
 message from the queue. If the run takes the message before you press Enter,
 the edit is queued as a new follow-up. With nothing queued, Up/down only walk
 history.
+While you walk history, Up/down stay on history even when a recalled slash
+command shows completion suggestions. Press Tab to pick a suggestion; Up/down
+then move through the suggestions. Editing the recalled text ends the walk, so
+suggestions for a prefix you type take Up/down as before. Esc closes the
+suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
 To steer instead, first queue the message with Enter, then press Alt+Enter
 (Option+Enter). This sends the oldest queued follow-up to the active run at its
@@ -1381,6 +1393,12 @@ reload, and remove. Closing the menu returns to the prompt without printing the
 plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
 
 [PLUGINS.md](PLUGINS.md) has the full list of hooks, events, and rules.
+
+`/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
+settings menu (`/plugins configure notion` reopens it). The token is picked from
+`/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one, it
+signs in through the browser. Plugin settings never hold the token. See
+[PLUGINS.md](PLUGINS.md#notion-workspace-tools).
 
 ## Questions from the model
 
