@@ -7,7 +7,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
-from cassetter import Cassette, RecordMode
+from cassetter import Body, Cassette, RecordMode, WsFrame
 from coverage.python import get_python_source
 
 from . import conftest
@@ -54,7 +54,22 @@ def test_check_vcr_cassette_usage_reports_unused_interactions() -> None:
     cassette = _recorded_cassette('https://example.com/one', 'https://example.com/two')
     cassette.play('POST', 'https://example.com/one', {}, b'{}')
 
-    with pytest.raises(pytest.fail.Exception, match=r'played 1/2; unused indexes: \[1\]'):
+    with pytest.raises(pytest.fail.Exception, match=r'unused HTTP indexes: \[1\]$'):
+        check_vcr_cassette_usage(cassette, strict_usage=False)
+
+
+def test_check_vcr_cassette_usage_numbers_each_protocol_separately() -> None:
+    """HTTP, gRPC and WebSocket interactions are numbered separately, and only HTTP has play counts."""
+    cassette = _recorded_cassette('https://example.com/one', 'https://example.com/two')
+    cassette.record_ws('wss://example.com/ws', {}, [WsFrame('recv', 'text', Body('text', 'hi'), 0)])
+    cassette.record_grpc(
+        method='/pkg.Svc/Call', metadata={}, request_body=Body('binary', b'\x01'), response_body=Body('binary', b'\x02')
+    )
+    cassette.play('POST', 'https://example.com/one', {}, b'{}')
+    cassette.play('POST', 'https://example.com/two', {}, b'{}')
+    cassette.play_ws('wss://example.com/ws')
+
+    with pytest.raises(pytest.fail.Exception, match=r'did not play all interactions: unused gRPC indexes: \[0\]$'):
         check_vcr_cassette_usage(cassette, strict_usage=False)
 
 
