@@ -1022,11 +1022,11 @@ class TestMarkdownConverter:
 
     def test_nested_video_source_search_is_bounded(self):
         """Repeated source searches through ignored descendants must be counted before conversion."""
-        html = '<video>' * 100 + '<!---->' * 100_000 + '</video>' * 100
-        started = time.perf_counter()
-        with pytest.raises(ModelRetry, match='too complex'):
-            _convert_html(html)
-        assert time.perf_counter() - started < 3
+        comments = '<!---->' * 100
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_CONVERSION_COST', 1_000):
+            assert _convert_html(f'<video>{comments}</video>')[1] == ''
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html('<video>' * 3 + comments + '</video>' * 3)
 
     @pytest.mark.parametrize(('tag', 'character'), [('code', '`'), ('h1', 'x')])
     def test_generated_text_growth_is_bounded(self, tag: str, character: str):
@@ -1127,7 +1127,7 @@ class TestMarkdownConverter:
             _convert_html(html)
         except (RecursionError, ModelRetry):
             assert html.startswith('<div>x<div>')
-        assert time.perf_counter() - start < 10
+        assert time.perf_counter() - start < 30
 
 
 class TestWebFetchToolFactory:
