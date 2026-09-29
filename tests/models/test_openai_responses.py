@@ -10301,7 +10301,7 @@ async def test_openai_responses_image_generation_store_false(
     call is left out of the replay, like any other server-side item that can't be sent back.
     """
     model = OpenAIResponsesModel(
-        'gpt-5-mini',
+        'gpt-5.6-sol',
         provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.http_client(timeout=300)),
     )
     agent = Agent(
@@ -10321,7 +10321,7 @@ async def test_openai_responses_image_generation_store_false(
         message_history=result.all_messages(),
         output_type=str,
     )
-    assert result.output == snapshot('It was red.')
+    assert result.output == snapshot('The circle was red.')
 
     _, second_request = request_capture.bodies('/v1/responses')
     second_input = cast(list[dict[str, Any]], second_request['input'])

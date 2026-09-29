@@ -703,7 +703,8 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     the conversation history across retries and subsequent requests within the same run.
 
     When set to `False` on `OpenAIResponsesModel`, image generation calls in the message history are
-    not sent back to the model, as the API can only look them up in a stored response.
+    not sent back to the model, as the API can only look them up in a stored response. The model then
+    doesn't see that it generated those images.
     """
 
     openai_user: str
