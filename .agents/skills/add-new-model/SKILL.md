@@ -78,6 +78,18 @@ Until then, for that id: `ModelResponse.cost()` raises `LookupError`, `RunContex
 is `None`, and a `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end
 instead. Open the genai-prices PR alongside the model add and link the two.
 
+Before you write the entry, check that no one has added it already. Other sessions add prices on
+release day too. Grep genai-prices `main`, then the diffs of its open PRs that touch the provider
+file:
+
+```bash
+git -C ~/pydantic/genai-prices/base fetch -q origin && git -C ~/pydantic/genai-prices/base grep -n '<id>' origin/main -- prices/providers/
+for n in $(gh pr list --repo pydantic/genai-prices --state open --json number,files --jq '.[] | select(any(.files[]; .path | startswith("prices/providers/"))) | .number'); do gh pr diff "$n" --repo pydantic/genai-prices | grep -q '<id>' && echo "#$n"; done
+```
+
+A hit means you link that entry or PR instead of opening your own. Do not rely on `gh search prs`: it
+missed a same-day PR whose title named the model (genai-prices #732).
+
 Check the current catalogs of other providers that host the new model before scoping that PR.
 For example, OpenRouter may publish `openai/<id>` and a `YYYYMMDD` canonical slug on release day
 even when OpenAI's own model list exposes only the base id. Add a separate genai-prices entry
