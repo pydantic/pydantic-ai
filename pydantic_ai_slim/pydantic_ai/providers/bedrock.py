@@ -501,6 +501,9 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
+_BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS = frozenset({'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'})
+
+
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an OpenAI model used via Bedrock Converse."""
     # Exact names, not prefixes: GPT-5.6 Cyber is Mantle-only, unlike Sol/Luna/Terra.
@@ -568,12 +571,12 @@ class BedrockProvider(Provider[BaseClient]):
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
             'openai': lambda model_name: merge_profile(
                 bedrock_openai_model_profile(model_name),
-                # GPT-5.6 on Bedrock has a documented 30-minute minimum TTL; other OpenAI models get
+                # Bedrock documents a 30-minute minimum TTL for exactly these; other OpenAI models get
                 # automatic caching with no documented retention.
                 # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
-                ModelProfile(
-                    default_cache_retention=timedelta(minutes=30) if model_name.startswith('gpt-5.6') else None
-                ),
+                ModelProfile(default_cache_retention=timedelta(minutes=30))
+                if model_name in _BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS
+                else None,
             ),
             'qwen': bedrock_qwen_model_profile,
             'google': bedrock_google_model_profile,
