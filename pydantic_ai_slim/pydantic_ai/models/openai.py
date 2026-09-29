@@ -1274,12 +1274,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if response.created is None:  # pyright: ignore[reportUnnecessaryComparison]
             response.created = 0
 
-        # Some OpenAI-compatible providers (e.g. local Ollama) omit the finish reason, which fails validation. The
-        # response is treated as a `'stop'`, like a stream that ends without one, but that's not the provider's value.
+        # Some OpenAI-compatible providers omit the finish reason (e.g. local Ollama) or send an empty one (e.g. Snowflake
+        # Cortex), which fails validation. The response is treated as a `'stop'`, like a stream that ends without one
+        # (subclasses may pick another in `_validate_completion`), but that's not reported as the provider's value.
         missing_finish_reason = False
-        if response.choices and (choice := response.choices[0]) and choice.finish_reason is None:  # pyright: ignore[reportUnnecessaryComparison]
-            choice.finish_reason = 'stop'
+        if response.choices and not (choice := response.choices[0]).finish_reason:
             missing_finish_reason = True
+            if choice.finish_reason is None:  # pyright: ignore[reportUnnecessaryComparison]
+                choice.finish_reason = 'stop'
 
         try:
             response = self._validate_completion(response)
@@ -1287,6 +1289,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
+        finish_reason = self._map_finish_reason(choice.finish_reason)
         if missing_finish_reason:
             # Restore the missing value after validation, so it's not reported as the provider's.
             choice.finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
@@ -1354,7 +1357,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_response_id=response.id or None,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
-            finish_reason=self._map_finish_reason(choice.finish_reason or 'stop'),
+            finish_reason=finish_reason,
         )
 
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
@@ -4133,9 +4136,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                     message='Streamed response ended without a `finish_reason`',
                 )
             if not self._has_finish_reason and not self._has_refusal and not self.cancelled:
-                # Some OpenAI-compatible providers never send a finish reason; a complete response without one is
-                # treated as a `'stop'` too.
-                self.finish_reason = 'stop'
+                # Some OpenAI-compatible providers never send a finish reason.
+                self.finish_reason = self._missing_finish_reason()
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
@@ -4243,6 +4245,13 @@ class OpenAIStreamedResponse(StreamedResponse):
             # once the stream ends.
             self._logprobs.extend(logprobs)
         return provider_details or None
+
+    def _missing_finish_reason(self) -> FinishReason:
+        """The finish reason of a stream that ended without one, matching `OpenAIChatModel._process_response`.
+
+        This method may be overridden by subclasses of `OpenAIStreamResponse` whose model picks another one.
+        """
+        return 'stop'
 
     def _map_chunk_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
         """Hook that generates provider details from a chunk's top-level fields, rather than its choice.
