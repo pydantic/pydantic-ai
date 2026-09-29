@@ -447,9 +447,10 @@ Each option goes by the name you gave the route:
 - a tool or an [output function](../output.md#output-functions) by the function's name;
 - an output type by its class name, an `Enum`'s included, or by the `name` you gave it with [`ToolOutput`][pydantic_ai.output.ToolOutput];
 - a `None` member of a union as `None`;
+- an [on-demand capability](#on-demand-capabilities) by its `id`;
 - a single output type with no class name of its own, such as a bare `bool` or `Literal`, as `output`.
 
-Where a tool and an output type would share a name, the tool keeps it and the output type's option becomes, say, `Refund (output)`.
+Where a tool and an output type would share a name, the tool keeps it and the output type's option becomes, say, `Refund (output)`. A capability that shares a tool's name becomes `refund (capability)` the same way.
 
 The route the model picks is the one that runs. The fields of every route the model can fill — a tool's arguments, a [union](#a-union-of-output-types) member's fields — ride along in the *same* request as the route question, so the answers the pick needs are already in hand when it comes back. Only the picked route's answers are read: the rest are about routes that were not taken, and reach neither the output nor `provider_details`. A route with no arguments — an [output function](../output.md#output-functions) that takes nothing but the run context, or a tool with no parameters — is called on the pick alone.
 
@@ -460,7 +461,7 @@ A route with even one field or argument the model cannot fill is still offered, 
 | a single output type or output function with arguments | its fields in the same request as the route question, or alone when nothing else is on offer | only the route is asked, and picking it escalates; with no route beside it that the model can take, a [`UserError`][pydantic_ai.exceptions.UserError] |
 | a member of a union of output types or output functions | its fields beside the route question, or, past the size cutoff below, in a second request once picked | picking it escalates |
 | a tool with arguments | its arguments beside the route question, or, past the size cutoff, in a second request once picked | picking it escalates |
-| an output function with no arguments, `None`, or a tool with no arguments | picked, and taken with nothing to fill | — |
+| an output function with no arguments, `None`, a tool with no arguments, or an [on-demand capability](#on-demand-capabilities) | picked, and taken with nothing to fill | — |
 
 Asking every route up front costs the questions of the routes not taken, so it is only done while they cost no more than the second request they save, which sends the state again, and while the request stays under about 16,000 tokens. Past that, a route is picked first and filled after, in a second request carrying only its questions; a single output type beside tools is still asked up front. Many routes with many fields, over a short text, is what tips it, as in the [support desk](#how-it-runs).
 
@@ -568,6 +569,69 @@ async def main():
 An `Args:` entry describes the *argument*, not its options: a `Literal` argument's options go out named and nothing more, the same as [a `Literal` output field](#where-the-wording-comes-from). Where the difference between two of them needs explaining, make the argument an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] with a docstring under each member, or a [`Choices`][pydantic_ai.output.Choices] set built from a mapping of option to meaning — either puts a description on each option in the schema, which is what the model weighs them by. `Choices` built from a bare sequence of names describes nothing, and leaves the model weighing the names alone like a `Literal` does.
 
 **Unsupported arguments: the model behind it.** A plain `str`, an unbounded number, or any other unsupported argument cannot be filled, so picking the tool [escalates](#escalating-to-a-language-model) the step.
+
+### On-demand capabilities
+
+An [on-demand capability](../capabilities/on-demand.md) is offered as a route of its own, under its `id` and described by its `description`, beside the tools and output types. Picking it loads it, on the pick alone: its instructions come back as the load's result, which the next request sees in the history, and its tools are on offer from then on. A capability the history shows loaded is not offered again, and loading one leaves the others on offer, so a turn that needs two can load both.
+
+A language model loads a capability by calling `load_capability` with the capability's `id`, and reads which ids there are from a catalog appended to the agent's instructions. A decision model cannot fill a free-form `id`, and the catalog would otherwise be framing on every question, fields included, repeating every capability's description whatever was being asked. So a decision model leaves the catalog out, and offers each capability as the route it is instead. What a language model is sent does not change:
+
+```python {title="decision_on_demand_capability.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import Capability
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+
+
+class Resolution(BaseModel):
+    """Close the conversation once the customer's question has been answered."""
+
+    resolved: bool = Field(description="Has the customer's question been answered?")
+
+
+refunds = Capability(
+    id='refunds',
+    description='Use for refund eligibility, refund status, or processing a refund.',
+    instructions='Confirm the order ID before issuing a refund.',
+    defer_loading=True,
+)
+
+
+@refunds.tool_plain
+def latest_refund() -> str:
+    """Look up the status of the customer's latest refund."""
+    return 'Refund of $40 issued on 2026-05-01.'
+
+
+shipping = Capability(
+    id='shipping',
+    description='Use for where an order is, delivery dates, and tracking.',
+    defer_loading=True,
+)
+
+agent = Agent(
+    'typesafe:jev-latest',
+    output_type=Resolution,
+    instructions='You are a customer support assistant for an online store.',
+    capabilities=[refunds, shipping],
+)
+result = agent.run_sync('Has the refund for my returned blender gone through?')
+print(result.output)
+#> resolved=True
+print(
+    [
+        part.tool_name
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+)
+#> ['load_capability', 'latest_refund', 'final_result']
+```
+
+The first request's route question offers `Resolution`, `refunds` and `shipping`. Once `refunds` has loaded, it offers `Resolution`, `shipping` and `latest_refund`, and once `latest_refund` has returned, `Resolution` and `shipping`. Every request here is a decision model request.
 
 ### A union of output types
 

@@ -22,6 +22,15 @@ into an id against whatever source contributes it) and whether it counts as
 AgentInstructions = AgentInstruction[AgentDepsT] | Sequence[AgentInstruction[AgentDepsT]] | None
 
 
+DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME = 'capability-catalog'
+"""The [`name`][pydantic_ai.messages.InstructionPart.name] of the instruction part listing the deferred capabilities.
+
+The loader has no `id` of its own, so the part has no `id` either and cannot be addressed or overridden; the name
+only says what it is, for a model that treats the catalog differently from the rest of the instructions. It is
+reserved, so no other part can be mistaken for the catalog.
+"""
+
+
 def validate_instruction_id_segment(id: str, *, kind: str) -> None:
     """Reject values that cannot be represented unambiguously in an instruction id."""
     if ':' in id:
@@ -33,12 +42,16 @@ def validate_instruction_name(name: str) -> None:
 
     A name is one segment of the id built around it, so it must not be able to spell a key by itself.
     `'agent'` is the only one it could reach: every other key is namespaced, and a colon is rejected
-    above.
+    above. `'capability-catalog'` is reserved too, because a decision model tells the catalog apart by it.
     """
     validate_instruction_id_segment(name, kind='Instruction name')
     if name == 'agent':
         raise UserError(
             "Instruction name 'agent' is reserved for the agent's own instructions; choose a different name."
+        )
+    if name == DEFERRED_CAPABILITY_CATALOG_INSTRUCTION_NAME:
+        raise UserError(
+            f'Instruction name {name!r} is reserved for the catalog of on-demand capabilities; choose a different name.'
         )
 
 
