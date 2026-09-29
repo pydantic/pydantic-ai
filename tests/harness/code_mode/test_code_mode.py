@@ -621,18 +621,30 @@ class TestCodeMode:
             await wrapper.call_tool('run_code', {'code': 'print(x)', 'restart': True}, ctx, run_code)
 
     async def test_advertised_modules_match_the_docs_and_import(self) -> None:
-        """The model is told exactly the modules the docs list, and each of them imports."""
+        """The model is told exactly the modules the docs, README, and skill list, and each of them imports."""
         wrapper = CodeMode[object]().get_wrapper_toolset(_build_function_toolset(add))
         assert isinstance(wrapper, CodeModeToolset)
         ctx = await build_ctx(None, wrapper)
         tools = await wrapper.get_tools(ctx)
         description = tools['run_code'].tool_def.description or ''
         advertised = re.search(r'Importable standard library modules\*\*: (.*?)\. ', description)
-        docs = (Path(__file__).parents[3] / 'docs' / 'harness' / 'code-mode.md').read_text()
-        documented = re.search(r'Allowed stdlib modules: (.*?) \(', docs)
-        assert advertised is not None and documented is not None
+        repo = Path(__file__).parents[3]
+        harness = repo / 'src' / 'pydantic_ai_harness' / 'pydantic_ai_harness'
+        doc_lists = [
+            (repo / 'docs' / 'harness' / 'code-mode.md', r'Allowed stdlib modules: (.*?) \('),
+            (harness / 'code_mode' / 'README.md', r'allowed stdlib: (.*?)\)'),
+            (
+                harness / '.agents' / 'skills' / 'pydantic-ai-harness' / 'references' / 'CODE-MODE.md',
+                r'must be imported before use: (.*?)\n',
+            ),
+        ]
+        assert advertised is not None
         modules = re.findall(r'`(\w+)`', advertised.group(1))
-        assert modules == re.findall(r'`(\w+)`', documented.group(1))
+        assert 'collections' in modules
+        for path, pattern in doc_lists:
+            documented = re.search(pattern, path.read_text(), re.DOTALL)
+            assert documented is not None, path
+            assert re.findall(r'`(\w+)`', documented.group(1)) == modules, path
         code = '\n'.join(f'import {module}' for module in modules) + '\n"ok"'
         result = await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
         assert result.return_value == 'ok'
