@@ -253,7 +253,7 @@ def _pick_probability(provider_details: Mapping[str, object] | None, pick: str) 
     if not _is_object_mapping(options):
         return None
     probability = options.get(pick)
-    return probability if isinstance(probability, float) else None
+    return float(probability) if isinstance(probability, (int, float)) and not isinstance(probability, bool) else None
 
 
 def _is_object_mapping(value: object) -> TypeGuard[Mapping[object, object]]:

@@ -308,6 +308,9 @@ class TestModelRouter:
             pytest.param({'probabilities': {'other': {'fast': 0.4}}}, 'fast', id='other-field'),
             pytest.param({'probabilities': {'choice': {'capable': 0.4}}}, 'fast', id='pick-missing'),
             pytest.param({'probabilities': {'choice': {'fast': 'low'}}}, 'fast', id='non-numeric'),
+            pytest.param({'probabilities': {'choice': {'fast': False}}}, 'fast', id='boolean'),
+            pytest.param({'probabilities': {'choice': {'fast': 1}}}, 'fast', id='integer-above-threshold'),
+            pytest.param({'probabilities': {'choice': {'fast': 0}}}, 'capable', id='integer-below-threshold'),
             pytest.param({'probabilities': {'choice': {'fast': 0.8}}}, 'fast', id='above-threshold'),
             pytest.param({'probabilities': {'choice': {'fast': 0.4}}}, 'capable', id='below-threshold'),
             pytest.param(
