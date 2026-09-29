@@ -83,11 +83,11 @@ from ..capabilities._ordering import has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
 from ..capabilities._run_resolution import (
     RunCapabilityResolutions as _RunCapabilityResolutions,
-    capture_run_capability_resolutions,
-    reconstructing_setup_cleanup,
-    replace_resolved_run_capabilities,
-    resolve_capability_for_run,
-    setup_error_dispatch_scope,
+    capture_run_capability_resolutions as _capture_run_capability_resolutions,
+    reconstructing_setup_cleanup as _reconstructing_setup_cleanup,
+    replace_resolved_run_capabilities as _replace_resolved_run_capabilities,
+    resolve_capability_for_run as _resolve_capability_for_run,
+    setup_error_dispatch_scope as _setup_error_dispatch_scope,
 )
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -240,7 +240,7 @@ async def _run_setup_error_hook(
     assert resolved_layers
     # Each layer's `for_run()` ran, including ones the run layer later overrides. Their hooks
     # must all get a chance to clean up setup side effects.
-    with reconstructing_setup_cleanup():
+    with _reconstructing_setup_cleanup():
         run_capability = CombinedCapability(resolved_layers) if len(resolved_layers) > 1 else resolved_layers[0]
     run_ctx.root_capability = run_capability
     if not run_ctx.capabilities:
@@ -251,7 +251,7 @@ async def _run_setup_error_hook(
     # There is no run result to recover here, so preserve the setup error if the hook returns.
     setup_traceback = error.__traceback__
     try:
-        with anyio.CancelScope(shield=True), setup_error_dispatch_scope(run_ctx):
+        with anyio.CancelScope(shield=True), _setup_error_dispatch_scope(run_ctx):
             await run_capability.on_run_error(run_ctx, error=error)
     except BaseException as hook_error:
         if hook_error is error:
@@ -3286,15 +3286,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # pieces yields the same structure as resolving a pre-composed tree, since the same
         # flatten-and-sort runs on the same resolved children either way.
         if resolution_capture is None:
-            resolved_layers = await _utils.gather(*(resolve_capability_for_run(cap, ctx) for cap in run_layers))
+            resolved_layers = await _utils.gather(*(_resolve_capability_for_run(cap, ctx) for cap in run_layers))
         else:
             resolution_capture.layers = layer_resolutions[setup_layer_start:]
 
             async def resolve_layer(
                 capability: AbstractCapability[AgentDepsT], layer_capture: _RunCapabilityResolutions
             ) -> AbstractCapability[AgentDepsT]:
-                with capture_run_capability_resolutions(layer_capture):
-                    return await resolve_capability_for_run(capability, ctx)
+                with _capture_run_capability_resolutions(layer_capture):
+                    return await _resolve_capability_for_run(capability, ctx)
 
             resolved_layers = await _utils.gather(
                 *(
@@ -3405,7 +3405,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         base_is_override: bool,
     ) -> _ResolvedRunCapabilities[AgentDepsT]:
         """Resolve capabilities and clean up if per-run setup fails before lifecycle hooks begin."""
-        with capture_run_capability_resolutions() as resolutions:
+        with _capture_run_capability_resolutions() as resolutions:
             try:
                 return await self._resolve_run_capabilities(
                     ctx,
@@ -3419,9 +3419,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             except BaseException as error:
                 if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
                     raise
-                with reconstructing_setup_cleanup():
+                with _reconstructing_setup_cleanup():
                     resolved_layers = [
-                        replace_resolved_run_capabilities(capability, layer_resolutions)
+                        _replace_resolved_run_capabilities(capability, layer_resolutions)
                         for capability, layer_resolutions in zip(
                             [base_capability, *extra_capabilities], resolutions.layers, strict=True
                         )

@@ -22,7 +22,10 @@ from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._on_event import collect_on_event_methods, marked_listens_to
-from ._run_resolution import record_partial_run_capability_resolution, resolve_capability_for_run
+from ._run_resolution import (
+    record_partial_run_capability_resolution as _record_partial_run_capability_resolution,
+    resolve_capability_for_run as _resolve_capability_for_run,
+)
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -200,12 +203,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return new_self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_wrapped = await resolve_capability_for_run(self.wrapped, ctx)
+        new_wrapped = await _resolve_capability_for_run(self.wrapped, ctx)
         if new_wrapped is self.wrapped:
             return self
         new_self = replace_no_init(self, wrapped=new_wrapped)
         new_self.__adopt_wrapped_identity()
-        record_partial_run_capability_resolution(self, new_self)
+        _record_partial_run_capability_resolution(self, new_self)
         return new_self
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:

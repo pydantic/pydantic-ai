@@ -33,7 +33,11 @@ from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
-from ._run_resolution import is_setup_error_dispatching, resolve_capability_for_run, setup_cleanup_reconstruction_active
+from ._run_resolution import (
+    is_setup_error_dispatching as _is_setup_error_dispatching,
+    resolve_capability_for_run as _resolve_capability_for_run,
+    setup_cleanup_reconstruction_active as _setup_cleanup_reconstruction_active,
+)
 from .abstract import (
     AbstractCapability,
     AgentModel,
@@ -170,7 +174,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             else:
                 flat.append(cap)
         self.capabilities = flat
-        if not setup_cleanup_reconstruction_active.get() and any(
+        if not _setup_cleanup_reconstruction_active.get() and any(
             leaf.get_ordering() is not None for leaf in collect_leaves(self)
         ):
             self.capabilities = sort_capabilities(list(self.capabilities))
@@ -251,7 +255,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return self._rebound(new_caps)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_caps = await gather(*(resolve_capability_for_run(c, ctx) for c in self.capabilities))
+        new_caps = await gather(*(_resolve_capability_for_run(c, ctx) for c in self.capabilities))
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
             return self
         return self._rebound(new_caps)
@@ -547,7 +551,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         *,
         error: BaseException,
     ) -> AgentRunResult[Any]:
-        if is_setup_error_dispatching(ctx):
+        if _is_setup_error_dispatching(ctx):
             for capability in reversed(self.capabilities):
                 cap_ctx = _ctx_for_cap(capability, ctx)
                 try:
