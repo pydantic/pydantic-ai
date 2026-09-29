@@ -1,3 +1,7 @@
+---
+description: "Connect a Pydantic AI agent to xAI Grok Voice with XaiRealtimeModel: setup, grok-voice model names, voices, turn detection, reasoning and session resumption."
+---
+
 # xAI Grok Voice
 
 [`XaiRealtimeModel`][pydantic_ai.realtime.xai.XaiRealtimeModel] brings Grok Voice into the typed,
@@ -76,6 +80,7 @@ Other Grok Voice models ignore the setting.
 | Interruption | Limited parameter support | [`interrupt()`](turns.md#barge-in) works; output truncation with `played_ms` does not |
 | Input transcription | Full feature support | [Dedicated provider path](audio.md#input-transcription); `'auto'` by default |
 | Native tools | Unsupported | Configure [local fallbacks](tools.md#native-tools) for web capabilities |
+| Async tool calls | Full feature support | Grok Voice keeps talking, and answers the user, while a [tool runs](tools.md#concurrent-tool-execution) |
 | Usage | Full feature support | Audio-token buckets and `billable_audio_seconds` in `RunUsage.details` |
 | State-restoring reconnect | Full feature support | Native [resumption](#session-resumption) is automatic with a reconnect policy |
 

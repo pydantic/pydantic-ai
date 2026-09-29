@@ -1,3 +1,7 @@
+---
+description: "Install the Pydantic AI skill so coding agents like Claude Code and Codex get current framework knowledge when they build Pydantic AI applications for you."
+---
+
 # Coding Agent Skills
 
 If you're building Pydantic AI applications with a coding agent, you can install the Pydantic AI skill from the [`pydantic/skills`](https://github.com/pydantic/skills) repository to give your agent up-to-date framework knowledge.

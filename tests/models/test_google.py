@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Any, cast
 
 import pytest
+from cassetter import Cassette
 from httpx import Timeout
 from httpx2 import (
     AsyncClient as HTTPX2AsyncClient,
@@ -25,7 +26,6 @@ from httpx2 import (
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -89,7 +89,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
-from ..cassette_utils import single_request_body
+from ..cassette_utils import request_json, single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 from ..parts_from_messages import part_types_from_messages
 
@@ -139,7 +139,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -817,7 +816,12 @@ async def test_google_model_mobile_youtube_video_url_input(
                 {
                     'parts': [
                         {'text': 'Explain me this video in a few sentences'},
-                        {'fileData': {'fileUri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU', 'mimeType': 'video/mp4'}},
+                        {
+                            'fileData': {
+                                'file_uri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU',
+                                'mime_type': 'video/mp4',
+                            }
+                        },
                     ],
                     'role': 'user',
                 }
@@ -827,19 +831,10 @@ async def test_google_model_mobile_youtube_video_url_input(
         }
     )
     assert result.output == snapshot(
-        'This video demonstrates an AI assistant within a code editor analyzing recent 404 HTTP responses from a logfile database. The AI queries the database, identifies common patterns related to specific endpoints, request types, timeline issues, and authentication problems. Finally, it provides a detailed analysis of these patterns along with actionable recommendations to resolve the identified issues.'
+        'This video showcases an AI assistant diagnosing recent HTTP 404 errors. The assistant queries a logging database (LogLine) to identify patterns in the error responses, such as common problematic endpoints, request patterns, and issues related to timeline queries or authentication. Finally, the AI provides a detailed analysis of the identified problems and offers specific recommendations for resolution, interactively highlighting relevant sections in the code editor.'
     )
     assert result.usage.details == snapshot(
-        {
-            'cached_content_tokens': 17379,
-            'thoughts_tokens': 821,
-            'text_prompt_tokens': 16,
-            'video_prompt_tokens': 15780,
-            'audio_prompt_tokens': 1917,
-            'audio_cache_tokens': 1881,
-            'text_cache_tokens': 15,
-            'video_cache_tokens': 15483,
-        }
+        {'thoughts_tokens': 1091, 'text_prompt_tokens': 16, 'video_prompt_tokens': 15780, 'audio_prompt_tokens': 1917}
     )
 
 
@@ -1000,6 +995,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {'text_prompt_tokens': 14},
                     'cost': '0.00000105',
                     'input_text_tokens': 14,
@@ -1056,6 +1052,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -2050,6 +2047,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3307,9 +3305,9 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
         usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
     )
 
-    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]
+    assert len(count_requests) == 1
+    assert request_json(count_requests[0])['tools'] == snapshot([{'googleSearch': {}}])
     assert result.output == snapshot('The capital of France is Paris.')
 
 
@@ -4085,8 +4083,8 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
 
     result = await agent.run('Look up the city I live in, then search the web for its weather today.')
 
-    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    request_bodies = [json.loads(request.body) for request in generate_requests]  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]
+    request_bodies = [request_json(request) for request in generate_requests]
     # On the Gemini Developer API these requests carry `toolConfig.includeServerSideToolInvocations`;
     # on Vertex the field is skipped, so it is absent from every request Vertex actually accepted.
     assert [body.get('toolConfig', {}) for body in request_bodies] == snapshot(
@@ -5478,6 +5476,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5521,6 +5520,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',

@@ -1,3 +1,7 @@
+---
+description: "Fix common Pydantic AI realtime voice problems: no audio, a model that never replies or answers twice, echo cutoffs, stalled tools, lost reconnects."
+---
+
 # Realtime troubleshooting
 
 Below are suggestions on how to fix some common problems with realtime sessions, each linking to

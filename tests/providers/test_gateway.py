@@ -39,7 +39,7 @@ with try_import() as imports_successful:
 if not imports_successful():
     pytest.skip('Providers not installed', allow_module_level=True)  # pragma: lax no cover
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 # Any URL works here — these tests exercise the explicit `PYDANTIC_AI_GATEWAY_BASE_URL` override path.
 GATEWAY_BASE_URL = 'https://gateway.pydantic.dev/proxy'
@@ -293,13 +293,9 @@ def gateway_api_key():
 
 
 @pytest.fixture(scope='module')
-def vcr_config():
-    return {
-        'ignore_localhost': False,
-        # Note: additional header filtering is done inside the serializer
-        'filter_headers': ['authorization', 'x-api-key'],
-        'decode_compressed_response': True,
-    }
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
+    """The gateway cassettes were recorded against a local gateway, so localhost traffic must replay."""
+    return {**vcr_config, 'ignore_localhost': False}
 
 
 @patch.dict(

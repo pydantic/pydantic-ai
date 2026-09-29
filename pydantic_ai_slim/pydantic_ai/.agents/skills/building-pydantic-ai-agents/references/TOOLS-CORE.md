@@ -69,6 +69,9 @@ def set_urgency(urgency: Urgency) -> str:
 Without the mix-in the docstrings are ignored and the schema is unchanged. `Literal`s have nowhere to write a
 docstring; use a described `Enum` when the model needs to know what each option means.
 
+A `bool` has two answers and nowhere to describe them; `Annotated[bool, BoolCriteria(true='...', false='...')]`
+sends what each one means the same way, and the value stays a plain `bool`.
+
 ## Organize or Restrict Which Tools an Agent Can Use
 
 Use toolsets when the user has multiple related tools or wants cross-cutting behavior applied to a group.

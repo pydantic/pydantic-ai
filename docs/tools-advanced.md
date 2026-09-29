@@ -1,3 +1,7 @@
+---
+description: "Advanced Pydantic AI function tools: return images and files, custom schemas, strict mode, dynamic tools, tool choice, retries, parallel calls and tool search."
+---
+
 # Advanced Tool Features
 
 This page covers advanced features for function tools in Pydantic AI. For basic tool usage, see the [Function Tools](tools.md) documentation.
@@ -249,7 +253,7 @@ As with the previous example, we use [`TestModel`][pydantic_ai.models.test.TestM
 
 from pydantic_ai import Agent, RunContext, ToolDefinition
 
-agent = Agent('test')
+agent = Agent('test', deps_type=int)
 
 
 async def only_if_42(
@@ -306,6 +310,7 @@ agent = Agent(test_model, tools=[greet_tool], deps_type=Literal['human', 'machin
 result = agent.run_sync('testing...', deps='human')
 print(result.output)
 #> {"greet":"hello a"}
+assert test_model.last_model_request_parameters is not None
 print(test_model.last_model_request_parameters.function_tools)
 """
 [
@@ -365,6 +370,7 @@ def echo(message: str) -> str:
 
 
 agent.run_sync('testing...')
+assert test_model.last_model_request_parameters is not None
 assert test_model.last_model_request_parameters.function_tools[0].strict is None
 
 # Set the system attribute of the test_model to 'openai'
@@ -522,18 +528,20 @@ All providers support `'auto'` and `'none'`. Key differences for other options:
 | Provider | `'required'` | Specific tools | Notes |
 |----------|:------------:|:--------------:|-------|
 | OpenAI | ✓ | ✓ | Full support |
-| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking; adaptive thinking is compatible |
+| Anthropic | ⚠️ | ⚠️ | Not supported with extended thinking, or on Claude Opus 5.5, Sonnet 5.5, Fable 5.1 and Mythos 5.1; adaptive thinking accepts forcing but answers without thinking |
 | Google | ✓ | ✓ | |
 | Bedrock | ✓ | Single only | Multiple tools fall back to 'any' mode. See [thinking and structured output](models/bedrock.md#thinking-and-structured-output) for thinking compatibility |
 | Groq/HuggingFace | ✓ | Single only | Multiple tools fall back to 'required' mode |
 | Mistral | ✓ | ✓ | Maps `'required'` to `'any'` mode |
 | Cohere | ✓ | ✓ | Maps `'required'` to `'REQUIRED'`; a named subset is applied by trimming the tools array |
-| xAI | ✓ | ✓ | Some models may not support forcing; falls back to 'auto' |
+| xAI | ✓ | ✓ | |
 
-With adaptive thinking, a forced tool response may contain only the tool call and no visible thinking block. Enabling
-adaptive thinking does not guarantee that the model will return visible reasoning.
+With adaptive thinking, Claude answers a forced tool choice with only the tool call and no thinking, so Pydantic AI
+only sends one you asked for explicitly: forcing it inferred itself falls back to `'auto'` while the request thinks.
 
-The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — behave as the OpenAI row describes, with two exceptions. Ollama documents `tool_choice` as unsupported and ignores it. OpenRouter raises a `UserError` for an explicit `'required'` or named subset on models that can't combine forced tool choice with thinking, rather than silently dropping the reasoning; forcing that Pydantic AI merely inferred falls back to `'auto'` instead.
+The model classes built on `OpenAIChatModel` — Cerebras, Crusoe, GitHub Copilot, Ollama, OpenRouter, Snowflake, Z.AI and Bedrock Mantle Chat — behave as the OpenAI row describes, except that Ollama documents `tool_choice` as unsupported and ignores it.
+
+Whether a model can be forced to call a tool is a property of the model, set on its [profile](models/overview.md) by [`supports_forced_tool_choice`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice] and [`supports_forced_tool_choice_with_thinking`][pydantic_ai.profiles.ModelProfile.supports_forced_tool_choice_with_thinking], so it applies on every provider that serves the model: Claude Opus 5.5 rejects forcing on OpenRouter just as it does on the Anthropic API. Where forcing isn't available, an explicit `'required'` or list of tools raises a [`UserError`][pydantic_ai.exceptions.UserError], while forcing that Pydantic AI inferred itself, for example from an [output tool](output.md#tool-output), falls back to `'auto'`. OpenRouter treats forcing as unavailable while an Anthropic model thinks, since it would otherwise silently drop the reasoning.
 
 ### Prompt caching implications {#tool-choice-caching}
 

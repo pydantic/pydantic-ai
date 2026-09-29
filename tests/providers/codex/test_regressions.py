@@ -22,7 +22,7 @@ with try_import() as imports_successful:
         _post_token_request,  # pyright: ignore[reportPrivateUsage]
     )
 
-pytestmark = [pytest.mark.anyio, pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed')]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='OpenAI client not installed')]
 
 
 async def test_refresh_failure_shared_then_later_request_recovers():

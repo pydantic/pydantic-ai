@@ -1,3 +1,7 @@
+---
+description: "See which Pydantic AI capabilities and hooks run in a realtime voice session, which do not, and how tools and hooks reach the live session through RunContext."
+---
+
 # Capabilities and hooks
 
 A [capability](../capabilities/overview.md) attached to the agent or passed to

@@ -213,7 +213,7 @@ def is_model_like(type_: Any) -> bool:
     These should all generate a JSON Schema with `{"type": "object"}` and therefore be usable directly as
     function parameters.
     """
-    return (
+    return bool(
         isinstance(type_, type)
         and not isinstance(type_, GenericAlias)
         and (
@@ -287,7 +287,12 @@ async def gather(*coros: Awaitable[T]) -> list[T]:
     Unlike `asyncio.gather`, a failure in one coroutine cancels the rest instead of leaving them
     as orphan background tasks. If exactly one task fails, its exception is re-raised directly to
     match `asyncio.gather`'s shape; multi-failure cases propagate as an `ExceptionGroup`.
+
+    A single awaitable has nothing to run alongside, so it is awaited directly in the calling task.
     """
+    if len(coros) == 1:
+        return [await coros[0]]
+
     sentinel = Unset()
     results: list[T | Unset] = [sentinel] * len(coros)
 
@@ -1058,7 +1063,7 @@ def strip_markdown_fences(text: str) -> str:
     return text
 
 
-def _unwrap_annotated(tp: Any) -> Any:
+def unwrap_annotated(tp: Any) -> Any:
     origin = get_origin(tp)
     while typing_objects.is_annotated(origin):
         tp = tp.__origin__
@@ -1066,15 +1071,21 @@ def _unwrap_annotated(tp: Any) -> Any:
     return tp
 
 
-def get_union_args(tp: Any) -> tuple[Any, ...]:
-    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple."""
+def get_union_args(tp: Any, *, unwrap_members: bool = True) -> tuple[Any, ...]:
+    """Extract the arguments of a Union type if `tp` is a union, otherwise return an empty tuple.
+
+    Each `Annotated[X, ...]` member is returned as `X`, which is what an `isinstance` check or a type's name needs.
+    With `unwrap_members=False` it is returned as written instead, keeping the validators and `Field(...)` a schema
+    built from that member has to carry.
+    """
     if typing_objects.is_typealiastype(tp):
         tp = tp.__value__
 
-    tp = _unwrap_annotated(tp)
+    tp = unwrap_annotated(tp)
     origin = get_origin(tp)
     if is_union_origin(origin):
-        return tuple(_unwrap_annotated(arg) for arg in get_args(tp))
+        args = get_args(tp)
+        return tuple(unwrap_annotated(arg) for arg in args) if unwrap_members else args
     else:
         return ()
 
@@ -1099,7 +1110,7 @@ def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:
 def is_text_like_media_type(media_type: str) -> bool:
     """Check if a media type represents text-like content.
 
-    Returns True for `text/*`, JSON, XML, YAML, and their structured syntax suffixes.
+    Returns True for `text/*`, JSON, XML, YAML, TOML, and their structured syntax suffixes.
     """
     return (
         media_type.startswith('text/')
@@ -1108,6 +1119,8 @@ def is_text_like_media_type(media_type: str) -> bool:
         or media_type == 'application/xml'
         or media_type.endswith('+xml')
         or media_type in ('application/x-yaml', 'application/yaml')
+        # TOML is UTF-8 text (RFC 9519); `BinaryContent.from_path` infers it for `.toml` files.
+        or media_type == 'application/toml'
     )
 
 

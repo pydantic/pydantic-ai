@@ -97,6 +97,7 @@ from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
 
 if TYPE_CHECKING:
@@ -184,8 +185,6 @@ else:
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, iter_message_parts, message, message_part
 from .continuation_utils import ScriptedContinuationModel, scripted_response
-
-pytestmark = pytest.mark.anyio
 
 requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
@@ -1610,7 +1609,7 @@ def test_output_type_tool_output_union():
         c: bool
 
     m = TestModel()
-    marker: ToolOutput[Foo | Bar] = ToolOutput(Foo | Bar, strict=False)  # pyright: ignore[reportArgumentType, reportAssignmentType]
+    marker = ToolOutput(Foo | Bar, strict=False)
     agent = Agent(m, output_type=marker)
     result = agent.run_sync('Hello')
     assert result.output == snapshot(Foo(a=0, b='a'))
@@ -8407,6 +8406,7 @@ def test_binary_content_serializable():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -8422,6 +8422,7 @@ def test_binary_content_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             },
         ]
     )
@@ -8482,6 +8483,7 @@ def test_image_url_serializable_missing_media_type():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -8497,6 +8499,7 @@ def test_image_url_serializable_missing_media_type():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             },
         ]
     )
@@ -8563,6 +8566,7 @@ def test_image_url_serializable():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -8578,6 +8582,7 @@ def test_image_url_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             },
         ]
     )
@@ -12228,6 +12233,29 @@ async def test_agent_capability_for_run_called_once_per_run():
     assert for_run_calls == {'agent': 1, 'run': 1}
 
 
+async def test_no_workspace_for_run_keeps_unresolved_root_capability() -> None:
+    class InspectCapability(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            assert ctx.root_capability is None
+            return self
+
+    await Agent(TestModel(), capabilities=[InspectCapability()]).run('Hello')
+
+
+async def test_no_workspace_preserves_history_response_identity() -> None:
+    agent = Agent(TestModel())
+    first = await agent.run('Hello')
+    response = first.all_messages()[-1]
+    second = await agent.run(message_history=first.all_messages())
+    assert second.all_messages()[-1] is response
+
+
+async def test_no_workspace_rejects_commands() -> None:
+    result = await Agent(TestModel()).run('Hello')
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
+        await result.workspace.run('pwd')
+
+
 async def test_run_with_unapproved_tool_call_in_history():
     def should_not_call_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise ValueError('The agent should not call the model.')  # pragma: no cover
@@ -13118,7 +13146,7 @@ async def test_agent_still_fails_if_none_not_allowed():
 def test_agent_output_type_bare_none_error():
     """Test that Agent(output_type=None) raises a clear error."""
     with pytest.raises(UserError, match='At least one output type must be provided other than `None`'):
-        Agent('test', output_type=None)  # type: ignore[arg-type]
+        Agent('test', output_type=None)
 
 
 async def test_agent_allows_none_output_tool_mode_none_via_tool():
@@ -13201,7 +13229,7 @@ async def test_agent_allows_none_output_tool_output_union_null():
             parts=[ToolCallPart(tool_name='final_result', args={'response': None}, tool_call_id='pyd_ai_id')]
         )
 
-    agent = Agent(FunctionModel(function=call_final_result), output_type=ToolOutput(int | None))  # type: ignore[arg-type]
+    agent = Agent(FunctionModel(function=call_final_result), output_type=ToolOutput(int | None))
     result = await agent.run('hello')
     assert result.output is None
 

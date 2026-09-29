@@ -127,7 +127,7 @@ def only_if_42(
 def hitchhiker(ctx: RunContext[int], answer: str) -> str:
     return f'{ctx.deps} {answer}'
 
-hitchhiker = Tool(hitchhiker, prepare=only_if_42)
+hitchhiker_tool = Tool(hitchhiker, prepare=only_if_42)
 ```
 
 Usage `ToolPrepareFunc[AgentDepsT]`.
@@ -389,7 +389,7 @@ class Tool(Generic[ToolAgentDepsT]):
         async def my_tool(ctx: RunContext[int], x: int, y: int) -> str:
             return f'{ctx.deps} {x} {y}'
 
-        agent = Agent('test', tools=[Tool(my_tool)])
+        agent = Agent('test', tools=[Tool(my_tool)], deps_type=int)
         ```
 
         or with a custom prepare method:
@@ -409,7 +409,7 @@ class Tool(Generic[ToolAgentDepsT]):
             if ctx.deps == 42:
                 return tool_def
 
-        agent = Agent('test', tools=[Tool(my_tool, prepare=prep_my_tool)])
+        agent = Agent('test', tools=[Tool(my_tool, prepare=prep_my_tool)], deps_type=int)
         ```
 
 
