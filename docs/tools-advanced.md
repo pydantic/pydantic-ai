@@ -627,7 +627,7 @@ def read_file(path: str) -> str:
     file_path = Path(path)
     if not file_path.is_file():
         raise ToolFailed(f'File not found: {path}')
-    return file_path.read_text()
+    return file_path.read_text(encoding='utf-8')
 ```
 
 The exception message is recorded in message history as a [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with `outcome='failed'`. Where the model API has a native error or failed-status field for tool results, Pydantic AI uses it. For APIs without a native error channel, the model-visible content is JSON-framed as `{"error": ...}` so the failure is still explicit. The failed outcome is preserved in Pydantic AI message history; protocol adapters may need their own carrier when that history is round-tripped, as described for [AG-UI](ui/ag-ui.md#preserving-failed-tool-outcomes). The call is traced as an error in telemetry.
