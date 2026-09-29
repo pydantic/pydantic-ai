@@ -215,7 +215,7 @@ class Checker:
             violation.findings = findings
             if self.enforce.intersection(findings):
                 raise FindingReproduced(code, detail, self.sim.trace, context, findings=findings)
-            if self.strict or not findings:  # pragma: no cover (only when the session breaks an invariant)
+            if self.strict or not findings:
                 raise violation
             self.known_hits.append((findings[0], code))
 
