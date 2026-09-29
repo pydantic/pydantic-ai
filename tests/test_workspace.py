@@ -1312,6 +1312,25 @@ async def test_setup_failure_cleans_nested_shared_dynamic_child_occurrence() -> 
     assert sorted(cleaned) == [1, 2]
 
 
+async def test_setup_failure_cleans_unresolved_wrapper_child() -> None:
+    cleaned: list[str] = []
+
+    class Cleanup(AbstractCapability[object]):
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            cleaned.append('child')
+            raise error
+
+    class FailingWrapper(WrapperCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            raise RuntimeError('wrapper setup failed')
+
+    wrapper = FailingWrapper(wrapped=CombinedCapability([Cleanup()]))
+    with pytest.raises(RuntimeError, match='wrapper setup failed'):
+        await Agent(TestModel(), capabilities=[wrapper]).run('go')
+
+    assert cleaned == ['child']
+
+
 async def test_setup_failure_calls_on_run_error_for_each_repeated_resolved_capability() -> None:
     cleanup_order: list[int] = []
     second_resolution_complete = asyncio.Event()
