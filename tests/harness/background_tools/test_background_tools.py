@@ -819,9 +819,7 @@ class TestBackgroundTools:
         slow_started = asyncio.Event()
         slow_cancelled = asyncio.Event()
 
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            if _ack_seen(messages):
-                return ModelResponse(parts=[TextPart(content='waiting')])
+        def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='broken', args='{}'), ToolCallPart(tool_name='slow', args='{}')]
             )
