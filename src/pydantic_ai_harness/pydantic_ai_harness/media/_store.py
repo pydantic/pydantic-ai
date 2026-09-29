@@ -353,7 +353,6 @@ class SqliteMediaStore:
         connection: SqliteConnection | None = None,
         table: str = 'media',
         public_url: PublicUrlResolver | None = None,
-        _thread_lock: threading.RLock | None = None,
     ) -> None:
         if (database is None) == (connection is None):
             raise ValueError('provide exactly one of `database=` or `connection=`')
@@ -364,7 +363,7 @@ class SqliteMediaStore:
         self._table = table
         self._schema_ready = False
         self._public_url_resolver = public_url
-        self._thread_lock = _thread_lock or threading.RLock()
+        self._thread_lock = threading.RLock()
 
     def _run_locked(self, operation: Callable[[], _T]) -> _T:
         if self._connection is None:

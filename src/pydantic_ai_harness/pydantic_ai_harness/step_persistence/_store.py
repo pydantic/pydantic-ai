@@ -945,6 +945,10 @@ CREATE TABLE IF NOT EXISTS tool_effects (
 
 
 class _ConnectionMediaStore(SqliteMediaStore):
+    def __init__(self, connection: SqliteConnection, thread_lock: threading.RLock) -> None:
+        super().__init__(connection=connection)
+        self._thread_lock = thread_lock
+
     def ensure_schema(self, connection: SqliteConnection) -> None:
         self._ensure_schema(connection)
 
@@ -1032,7 +1036,7 @@ class SqliteStepStore:
                 resolved = SqliteMediaStore(database=self._database)
             else:
                 assert connection is not None
-                resolved = _ConnectionMediaStore(connection=connection, _thread_lock=self._thread_lock)
+                resolved = _ConnectionMediaStore(connection, self._thread_lock)
                 self._connection_media_store = resolved
         else:
             resolved = media_store
