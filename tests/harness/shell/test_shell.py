@@ -1853,8 +1853,8 @@ class _RemovesFileOnReadCheck(LocalWorkspaceBackend):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        if isinstance(command, str):
-            command = 'test() { if [ "$1" = -r ]; then rm -f "$2"; fi; command test "$@"; }\n' + command
+        assert isinstance(command, str)
+        command = 'test() { if [ "$1" = -r ]; then rm -f "$2"; fi; command test "$@"; }\n' + command
         return await super().run(command, shell=shell, env=env, timeout=timeout)
 
 
