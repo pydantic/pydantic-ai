@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from logfire.variables import Variable
 
@@ -11,13 +13,16 @@ from pydantic_ai import TemplateStr
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.logfire._managed_variable import ManagedVariableCapability
 
+if TYPE_CHECKING:
+    from logfire import Logfire
+
 # Logfire exposes a managed prompt with slug `<slug>` as a variable named `prompt__<slug>`,
 # with hyphens replaced by underscores (see the Logfire prompt-management docs). `prompt__`
 # is reserved for these system-managed prompts.
 _PROMPT_VARIABLE_PREFIX = 'prompt__'
 
 
-@dataclass
+@dataclass(init=False)
 class ManagedPrompt(ManagedVariableCapability[AgentDepsT, str]):
     """Back an agent's instructions with a Logfire-managed prompt.
 
@@ -89,10 +94,38 @@ class ManagedPrompt(ManagedVariableCapability[AgentDepsT, str]):
     filled from `deps`. Requires `pydantic-handlebars` (install `pydantic-ai-slim[spec]`).
     Defaults to `False`, so the resolved prompt is used verbatim.
 
-    Keyword-only: this capability's other options moved to keyword-only when it was refactored onto
-    [`ManagedVariableCapability`][pydantic_ai_harness.logfire.ManagedVariableCapability], and a third
-    positional argument used to be `label`. Binding one here instead would silently turn a label into
-    template rendering, so a call that passes one raises `TypeError` and says so."""
+    The constructor retains the positional argument order from before this capability was refactored
+    onto [`ManagedVariableCapability`][pydantic_ai_harness.logfire.ManagedVariableCapability]."""
+
+    def __init__(
+        self,
+        name: str | Variable[str] | None = None,
+        default: str | None = None,
+        label: str | None = None,
+        targeting_key: str | Callable[[RunContext[AgentDepsT]], str | None] | None = None,
+        attributes: Mapping[str, Any] | Callable[[RunContext[AgentDepsT]], Mapping[str, Any] | None] | None = None,
+        render_template: bool = False,
+        logfire_instance: Logfire | None = None,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+    ) -> None:
+        """Initialize the managed prompt while preserving its original positional arguments."""
+        self.id = id
+        self.description = description
+        self.defer_loading = defer_loading
+        self.label = label
+        self.targeting_key = targeting_key
+        self.attributes = attributes
+        self.logfire_instance = logfire_instance
+        self.name = name
+        self.default = default
+        self.render_template = render_template
+        self._deferred = None
+        self._variables_by_agent = {}
+        self._build_lock = threading.Lock()
+        self.__post_init__()
 
     def __post_init__(self) -> None:
         # A prompt name (given or derived from the agent) needs a code default; only a pre-built

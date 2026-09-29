@@ -10,7 +10,7 @@ into the agent's instructions (including template rendering) and the resolution 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 from unittest.mock import patch
 
 import logfire
@@ -379,10 +379,21 @@ def test_logfire_instance_with_prebuilt_variable_warns() -> None:
         ManagedPrompt(var, logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE)
 
 
-def test_third_positional_argument_is_rejected() -> None:
-    # `label` was the third positional argument before this capability moved onto
-    # `ManagedVariableCapability`, which made it (and `targeting_key`, `attributes`,
-    # `logfire_instance`) keyword-only. Leaving `render_template` positional would have bound a label
-    # to it and quietly switched on Handlebars rendering; it is keyword-only so the call says so.
-    with pytest.raises(TypeError, match='positional argument'):
-        ManagedPrompt('support_agent', 'fallback', cast(Any, 'production'))  # type: ignore[misc]
+def test_original_positional_arguments_remain_compatible() -> None:
+    capability = ManagedPrompt(
+        'support_agent',
+        'fallback',
+        'production',
+        'customer-123',
+        {'plan': 'pro'},
+        True,
+        None,
+    )
+
+    assert capability.name == 'support_agent'
+    assert capability.default == 'fallback'
+    assert capability.label == 'production'
+    assert capability.targeting_key == 'customer-123'
+    assert capability.attributes == {'plan': 'pro'}
+    assert capability.render_template is True
+    assert capability.logfire_instance is None
