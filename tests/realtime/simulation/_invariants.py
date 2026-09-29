@@ -161,7 +161,8 @@ class Checker:
         self._seen: dict[int, tuple[ModelMessage, bytes]] = {}
         self._previous: list[int] = []
         self._judged_waiters: set[int] = set()
-        self._judged_operations = 0
+        self._judged_operations: set[int] = set()
+        """`id()`s of the finished operations already judged (they can finish in any order)."""
         self._judged_events = 0
         self._judged_truncations = 0
         self._consumer_error_judged = False
@@ -228,8 +229,10 @@ class Checker:
 
     def _check_errors(self) -> None:
         sim = self.sim
-        done = [operation for operation in sim.operations if operation.done]
-        judged, self._judged_operations = done[self._judged_operations :], len(done)
+        judged = [
+            operation for operation in sim.operations if operation.done and id(operation) not in self._judged_operations
+        ]
+        self._judged_operations.update(id(operation) for operation in judged)
         unexpected = [
             (f'{operation.name} raised {operation.error!r}', {'operation': operation.name})
             for operation in judged
@@ -697,13 +700,12 @@ class Checker:
             if input_.kind in ('text', 'context', 'image'):
                 arrivals.setdefault(input_.key, []).append(input_.seq)
         # A send that failed after the frame went out is sent again: the client can't know it arrived.
-        ambiguous = any(fault == 'ambiguous' for *_, fault in sim.failed_sends)
         self.report(
             'wire.duplicate',
             [
                 (f'the server received {key!r} {len(seqs)} times', {'input': key})
                 for key, seqs in arrivals.items()
-                if len(seqs) > 1 and not ambiguous
+                if len(seqs) > 1 and key not in sim.truth.ambiguous_inputs
             ],
         )
         callers: dict[str, list[tuple[int, int, str]]] = {}

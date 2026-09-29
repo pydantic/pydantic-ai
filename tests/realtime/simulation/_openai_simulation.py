@@ -34,6 +34,10 @@ class OpenAIOptions:
     transcription: bool = True
     dialect: Dialect = 'openai'
     """Which provider's model the session connects to: OpenAI, Azure OpenAI, or xAI Grok Voice."""
+    vad_interrupts: bool = True
+    """Server VAD's `interrupt_response`: whether the user starting to speak cancels the active response."""
+    vad_responds: bool = True
+    """Server VAD's `create_response`: whether the user stopping answers their turn (xAI answers regardless)."""
 
 
 class OpenAISimulation(Simulation):
@@ -57,10 +61,6 @@ class OpenAISimulation(Simulation):
         """How many requests for a response the connection deferred behind an active one."""
         if self.options.latency:
             self.server.network.latency = lambda: self.rng.choice((0, 0, 0, 1, 2, 4))
-
-    @property
-    def failed_sends(self) -> list[tuple[str | None, str | None, SendFault]]:
-        return self.server.network.failed_sends
 
     @property
     def truth(self) -> GroundTruth:
@@ -96,6 +96,17 @@ class OpenAISimulation(Simulation):
             'input_transcription_model': 'gpt-4o-mini-transcribe' if self.openai.transcription else None,
         }
         settings['reconnect'] = {'max_attempts': 2, 'base_delay': 0.1, 'jitter': False}
+        vad = self.openai
+        if (
+            vad.turn_detection == 'server_vad'
+            and vad.dialect != 'xai'
+            and not (vad.vad_interrupts and vad.vad_responds)
+        ):
+            settings['openai_turn_detection'] = {
+                'type': 'server_vad',
+                'interrupt_response': vad.vad_interrupts,
+                'create_response': vad.vad_responds,
+            }
         return settings
 
     @contextmanager
@@ -218,6 +229,8 @@ def _options(dialect: Dialect) -> st.SearchStrategy[OpenAIOptions]:
         turn_detection=st.sampled_from(['server_vad', 'manual']),
         transcription=st.booleans(),
         dialect=st.just(dialect),
+        vad_interrupts=st.booleans(),
+        vad_responds=st.booleans(),
     )
 
 

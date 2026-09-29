@@ -744,6 +744,21 @@ TERMINAL_DISCARDED_WITH_THE_CONNECTION = Finding(
     matches=_terminal_read_as_the_connection_dropped,
 )
 
+BARGE_IN_WITHOUT_A_VAD_REPLY = Finding(
+    id='SIM-23',
+    title=(
+        "with server VAD's `create_response` off, a request deferred behind a response the user barged in on is "
+        'dropped as if VAD would answer the turn, but nothing does, so `wait_for_reply()` hangs'
+    ),
+    tracked_by='a request dropped for a barge-in only when server VAD answers the turn; found by this simulator',
+    evidence='simulated',
+    codes=frozenset({'wait.hang'}),
+    providers=frozenset({'openai', 'azure'}),
+    matches=lambda sim, violation: (
+        getattr(sim, 'deferred_requests', 0) > 0 and not getattr(getattr(sim, 'openai', None), 'vad_responds', True)
+    ),
+)
+
 NON_AUDIO_SEND_DURING_RECONNECT = Finding(
     id='G3b',
     title=(
@@ -761,6 +776,7 @@ NON_AUDIO_SEND_DURING_RECONNECT = Finding(
 KNOWN_FINDINGS.extend(
     [
         NON_AUDIO_SEND_DURING_RECONNECT,
+        BARGE_IN_WITHOUT_A_VAD_REPLY,
         LOST_REFUSAL,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
         BARGE_IN_ON_A_TOOL_ROUND,

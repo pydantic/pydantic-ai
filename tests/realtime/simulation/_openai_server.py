@@ -105,9 +105,21 @@ class ServerSession:
 
     @property
     def server_vad(self) -> bool:
-        # The session keeps server VAD's defaults: it cancels the active response when the user starts
-        # speaking (`interrupt_response`) and answers the turn when they stop (`create_response`).
         return self.turn_detection is not None
+
+    @property
+    def interrupt_response(self) -> bool:
+        """Whether server VAD cancels the active response when the user starts speaking."""
+        return bool((self.turn_detection or {}).get('interrupt_response', True))
+
+    @property
+    def create_response(self) -> bool:
+        """Whether server VAD answers a turn when the user stops speaking.
+
+        xAI echoes `create_response: False` back but responds anyway (see `XaiRealtimeModelSettings`); its
+        `session.update` sets neither flag, so this is always its default there.
+        """
+        return bool((self.turn_detection or {}).get('create_response', True))
 
 
 class OpenAIServer:
@@ -134,8 +146,9 @@ class OpenAIServer:
         self._client_items: dict[int, str] = {}
         self._client_images: dict[int, bool] = {}
         self._conversation_id = 'conv_simulated'
-        # The finished conversation, as `(role, text)`, which an xAI resumption replays.
-        self._finished_items: list[tuple[Literal['user', 'assistant'], str]] = []
+        # The finished conversation's items (messages, function calls and their outputs), which an xAI resumption
+        # replays.
+        self._finished_items: list[dict[str, Any]] = []
         # Azure OpenAI speaks the GA event names too (every `test_azure_ws` cassette does); only Voice Live, which
         # has a connection class of its own that isn't simulated, still uses the beta names.
         self._audio_delta = 'response.output_audio.delta'
@@ -272,7 +285,7 @@ class OpenAIServer:
         if session.resumed:
             # xAI replays the resumed conversation during the handshake, under fresh item ids (recorded:
             # `test_xai_ws/test_session_resumption_after_drop`).
-            for role, text in self._finished_items:
+            for item in self._finished_items:
                 session.socket.emit(
                     {
                         'type': 'conversation.item.added',
@@ -280,10 +293,8 @@ class OpenAIServer:
                         'item': {
                             'id': self._new_item('item_replayed'),
                             'object': 'realtime.item',
-                            'type': 'message',
                             'status': 'completed',
-                            'role': role,
-                            'content': [{'type': 'input_text' if role == 'user' else 'text', 'text': text}],
+                            **item,
                         },
                     },
                     immediately=True,
@@ -327,6 +338,9 @@ class OpenAIServer:
                 # Replayed with the rest of the history on a re-dial: already part of the conversation.
                 return
             call.output_received = True
+            self._finished_items.append(
+                {'type': 'function_call_output', 'call_id': call_id, 'output': item.get('output', '')}
+            )
             self.truth.add_input(call_id, 'tool_output')
             session.unanswered_tool_outputs.append(call_id)
             return
@@ -350,7 +364,9 @@ class OpenAIServer:
             return
         self.truth.add_input(key, kind, client_index=client_index)
         if kind == 'text':
-            self._finished_items.append(('user', key))
+            self._finished_items.append(
+                {'type': 'message', 'role': 'user', 'content': [{'type': 'input_text', 'text': key}]}
+            )
         assert client_index is not None
         self._client_items[client_index] = key
         self._client_images[client_index] = kind == 'image'
@@ -499,8 +515,15 @@ class OpenAIServer:
         }
         if self.dialect == 'xai':
             done['usage'] = usage
-        if status == 'completed' and truth.words:
-            self._finished_items.append(('assistant', ' '.join(truth.words)))
+        if status == 'completed':
+            for item in active.output:
+                if item['type'] == 'function_call':
+                    self._finished_items.append({key: item[key] for key in ('type', 'call_id', 'name', 'arguments')})
+                else:
+                    text = item['content'][0]['transcript']
+                    self._finished_items.append(
+                        {'type': 'message', 'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}
+                    )
         self._end_truth(truth, status)
         session.active = None
         session.ended_responses.append(done)
@@ -671,7 +694,7 @@ class OpenAIServer:
         self._emit(
             session, {'type': 'input_audio_buffer.speech_started', 'item_id': f'item_{key}', 'audio_start_ms': 0}
         )
-        if session.active is not None:
+        if session.active is not None and session.interrupt_response:
             self._finish_active(session, 'cancelled', reason='turn_detected', late=late)
         return key
 
@@ -683,11 +706,14 @@ class OpenAIServer:
         item_id = f'item_{key}'
         self._emit(session, {'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 1000})
         session.audio_ms = 0
-        self.truth.add_input(key, 'speech', solicits=True)
+        self.truth.add_input(key, 'speech', solicits=session.create_response)
         self._emit(session, {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None})
         if session.transcription:
             session.pending_transcripts.append(key)
-        if session.active is None:
+        if not session.create_response:
+            # The turn is committed as it is under push-to-talk: the app asks for the reply itself.
+            pass
+        elif session.active is None:
             self._start_response(session, trigger='vad', answers=[key], user_turn=key)
         else:
             session.pending_vad_response = key

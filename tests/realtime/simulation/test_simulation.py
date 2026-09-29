@@ -448,6 +448,18 @@ def test_known_failed_deferred_create_after_a_refusal_keeps_its_reservation() ->
     reproduce('SIM-4', OpenAISimulation(), scenario)
 
 
+@known('SIM-23')
+def test_known_barge_in_drops_a_request_vad_will_not_answer() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.create_response()
+        sim.create_response()
+        sim.send_audio()
+        sim.speech_start(deliver=False)
+        sim.settle()
+
+    reproduce('SIM-23', OpenAISimulation(openai=OpenAIOptions(vad_responds=False, transcription=False)), scenario)
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
@@ -1145,3 +1157,53 @@ def test_baseline_openai_tool_result_with_media(dialect: str) -> None:
         sim.finish()
 
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)  # pyright: ignore[reportArgumentType]
+
+
+def test_baseline_xai_resumption_replays_a_tool_round() -> None:
+    """xAI's resumed conversation includes the tool call and its output, which the session must not run again."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.call_tool()
+        sim.finish()
+        sim.finish_tool()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+        sim.drop()
+        sim.settle()
+        replayed = [
+            frame['item']['type']
+            for frame in sim.server.network.sockets[-1].received
+            if frame['type'] == 'conversation.item.added'
+        ]
+        assert replayed == ['message', 'message', 'function_call', 'function_call_output', 'message']
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect='xai')), scenario)
+
+
+def test_baseline_server_vad_without_interrupting_or_responding() -> None:
+    """Server VAD with `interrupt_response` and `create_response` off: the user's speech neither cuts the reply
+    off nor gets one of its own, until the app asks for it."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.send_audio()
+        sim.speech_start()
+        sim.speech_stop()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+        assert len(sim.truth.responses) == 1
+        sim.create_response()
+        sim.speak()
+        sim.finish()
+
+    run_clean(
+        OpenAISimulation(openai=OpenAIOptions(vad_interrupts=False, vad_responds=False, transcription=False)), scenario
+    )

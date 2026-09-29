@@ -122,6 +122,8 @@ class GroundTruth:
     """How many usage-bearing frames the client read, duplicates included."""
     repeated_terminals: set[str] = field(default_factory=set[str])
     """Responses the client read a second terminal for."""
+    ambiguous_inputs: set[str] = field(default_factory=set[str])
+    """Inputs a send delivered but reported as failed (an `ambiguous` fault), which the client may send again."""
     speech_started: dict[str, int] = field(default_factory=dict[str, int])
     """When server VAD heard each spoken user turn start, on the shared clock."""
     word_seq: dict[str, int] = field(default_factory=dict[str, int])
