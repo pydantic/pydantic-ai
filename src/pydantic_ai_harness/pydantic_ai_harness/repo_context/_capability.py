@@ -182,7 +182,8 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return None
 
         async def instructions(ctx: RunContext[AgentDepsT]) -> str | None:
-            return self._render_instructions(include_inventory_hint=not await self._uses_file_tools(ctx))
+            include_inventory_hint = self.expose_inventory_tool and not await self._uses_file_tools(ctx)
+            return self._render_instructions(include_inventory_hint=include_inventory_hint)
 
         return instructions
 
@@ -207,13 +208,18 @@ class RepoContext(AbstractCapability[AgentDepsT]):
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         """Drop the inventory tool when active general file tools can inspect every asset root."""
-        if self.expose_inventory_tool and await self._uses_file_tools(ctx):
+        if self.expose_inventory_tool and await self._uses_file_tools(
+            ctx, tool_names={tool.name for tool in tool_defs}
+        ):
             return [tool_def for tool_def in tool_defs if tool_def.name != self.inventory_tool_name]
         return tool_defs
 
-    async def _uses_file_tools(self, ctx: RunContext[AgentDepsT]) -> bool:
+    async def _uses_file_tools(self, ctx: RunContext[AgentDepsT], *, tool_names: set[str] | None = None) -> bool:
         paths = self.asset_roots or ('.',)
-        return await file_tools_provider(ctx, paths) is not None
+        return (
+            await file_tools_provider(ctx, paths, tool_names=tool_names, require_listing=True, require_tree=True)
+            is not None
+        )
 
     async def after_tool_execute(
         self,

@@ -22,9 +22,10 @@ dropping context already inside it.
 
 `Spill` is lossless: the full payload is persisted and the model reads slices of it through
 `read_tool_result(handle, offset, limit, from_end, pattern)` (the Claude Code pattern, the core
-[#4352](https://github.com/pydantic/pydantic-ai/issues/4352) design). When an active `FileSystem`
-can read spills in the run's workspace, `read_tool_result` is omitted and the spill marker gives
-the exact path to open with `read_file` instead.
+[#4352](https://github.com/pydantic/pydantic-ai/issues/4352) design). When an active file-tools
+provider can return a complete text spill in the run's workspace, `read_tool_result` is omitted
+and the spill marker gives the exact path and provider read tool instead. Binary spills and text
+with a line longer than the provider's read ceiling retain the dedicated reader.
 That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the joined output
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking. The read-back tool's own returns are exempt from
@@ -241,10 +242,12 @@ sandbox the files live in the sandbox. The handle is the file's absolute path, s
 such as `FileSystem`'s `read_file` can open it too. `read_tool_result` only opens handles
 inside the store's directory.
 
-With an active `FileSystem` whose `root_dir` and access patterns admit the spill path, the
-capability omits `read_tool_result` and names the path in the truncation marker. The dedicated
-reader stays when no such provider is active, when it cannot read the path, or when
-`WorkspaceStore(workspace=...)` or another store keeps spills outside the run's workspace.
+With an active file-tools provider whose access rules admit the spill path and whose read ceiling
+can return every line intact, the capability omits `read_tool_result` and names the provider tool
+and path in the truncation marker. Reads of known spill paths are exempt from reduction so they
+cannot recursively spill themselves. The dedicated reader stays for binary or overlong-line
+spills, when no provider can read the exact path, or when `WorkspaceStore(workspace=...)` or
+another store keeps spills outside the run's workspace.
 
 To keep spills in a different workspace than the run's, pass a backend:
 

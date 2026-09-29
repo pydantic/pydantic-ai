@@ -59,10 +59,10 @@ Rename the tool with `inventory_tool_name`, or scope which roots it scans with
 `asset_roots`.
 Skill discovery goes at most eight directories deep.
 
-When an active `FileSystem` can read every configured asset root, RepoContext omits the
-inventory tool and its instruction hint. The model can inspect the same directories with its
-general list, find, search, and read tools. The inventory stays when `FileSystem` is absent or
-inactive, or when its `root_dir` or access patterns exclude any asset root.
+When an active file-tools provider can list and read every descendant of every configured asset
+root, RepoContext omits the inventory tool and its instruction hint. The inventory stays when no
+such provider is active, its discovery tools are unavailable, or its root or access patterns
+cannot guarantee access to the complete trees.
 
 ### 3. Nested-on-traversal (off by default)
 

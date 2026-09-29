@@ -37,11 +37,12 @@ agent = Agent(
 
 `FileStore` keeps the notes as Markdown files in the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so the model can also open them with its file tools. A run without a workspace fails at its start. With a read-only run workspace, the write and delete tools are hidden; a store with its own workspace follows that workspace's permissions instead. Workspace refusals during mutations become tool failures. To keep them on your machine while the agent works in a sandbox, pass a backend: `FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/myapp/memory'))`.
 
-When an active `FileSystem` can read a `FileStore` in the run's workspace, Memory omits
-`read_memory` and its guidance points `read_file` at the scoped memory directory. `search_memory`
-stays because it provides bounded ranked search rather than a plain file read. The dedicated
-reader stays for every other store, a `FileStore(workspace=...)`, an inactive `FileSystem`, or a
-path excluded by its `root_dir` or access patterns.
+When an active file-tools provider can read every file in a `FileStore` in the run's workspace and
+can return a complete `max_memory_size` file, Memory omits `read_memory` and points its guidance at
+the provider's read tool. `search_memory` stays because it provides bounded ranked search rather
+than a plain file read. The dedicated reader stays for every other store, a
+`FileStore(workspace=...)`, an inactive or size-limited provider, or a tree excluded by its root or
+access patterns.
 
 The namespace is resolved by application code, not supplied to the tools. The model therefore cannot select another user's namespace in a tool call.
 

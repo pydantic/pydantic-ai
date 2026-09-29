@@ -16,7 +16,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, T
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai_harness.filesystem._providers import file_tools_provider
+from pydantic_ai_harness.filesystem._providers import FileToolsInfo, file_tools_provider
 from pydantic_ai_harness.memory._store import FileStore, InMemoryStore, MemoryFile, MemoryStore, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
@@ -174,14 +174,15 @@ class Memory(AbstractCapability[AgentDepsT]):
 
         return instructions
 
-    def _render_guidance(self, file_tools_path: str | None = None) -> str | None:
+    def _render_guidance(self, file_tools: tuple[str, FileToolsInfo] | None = None) -> str | None:
         guidance = _DEFAULT_GUIDANCE if self.guidance is None else self.guidance
         if not guidance:
             return None
-        if self.guidance is None and file_tools_path is not None:
+        if self.guidance is None and file_tools is not None:
+            path, info = file_tools
             guidance = guidance.replace(
                 'Read a listed file with `read_memory` when it looks relevant,',
-                f'Read a listed file with `read_file` under `{file_tools_path}` when it looks relevant,',
+                f'Read a listed file with `{info.read_tool}` under `{path}` when it looks relevant,',
             )
         return render_memory_prompt(
             '',
@@ -194,17 +195,25 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         """Drop `read_memory` when active general file tools can read this run's file store."""
-        if await self._file_tools_path(ctx) is not None:
+        if await self._file_tools_path(ctx, tool_names={tool.name for tool in tool_defs}) is not None:
             return [tool_def for tool_def in tool_defs if tool_def.name != 'read_memory']
         return tool_defs
 
-    async def _file_tools_path(self, ctx: RunContext[AgentDepsT]) -> str | None:
+    async def _file_tools_path(
+        self, ctx: RunContext[AgentDepsT], *, tool_names: set[str] | None = None
+    ) -> tuple[str, FileToolsInfo] | None:
         store, scope = self.resolve_scope(ctx)
         if not isinstance(store, FileStore) or store.workspace is not None:
             return None
         path = posixpath.join(store.directory, scope)
-        main_path = posixpath.join(path, MAIN_FILENAME)
-        return path if await file_tools_provider(ctx, main_path) is not None else None
+        match = await file_tools_provider(
+            ctx,
+            path,
+            tool_names=tool_names,
+            require_tree=True,
+            min_read_chars=self.max_memory_size + 512,
+        )
+        return (path, match[1]) if match is not None else None
 
     async def before_model_request(
         self,

@@ -24,7 +24,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
-from pydantic_ai_harness.filesystem._providers import file_tools_provider
+from pydantic_ai_harness.filesystem._providers import FileToolsInfo, file_tools_provider
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -258,18 +258,28 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
         """Drop `read_tool_result` when active general file tools can read every workspace spill."""
-        if await self._uses_file_tools(ctx):
+        if await self._file_tools(ctx, tool_names={tool.name for tool in tool_defs}) is not None:
             return [tool_def for tool_def in tool_defs if tool_def.name != READ_TOOL_NAME]
         return tool_defs
 
-    async def _uses_file_tools(self, ctx: RunContext[AgentDepsT], handle: str | None = None) -> bool:
+    async def _file_tools(
+        self,
+        ctx: RunContext[AgentDepsT],
+        handle: str | None = None,
+        *,
+        tool_names: set[str] | None = None,
+    ) -> FileToolsInfo | None:
         store = self._store
         if not isinstance(store, WorkspaceStore) or store.workspace is not None:
-            return False
-        paths = [handle] if handle is not None else _workspace_spill_paths(ctx)
+            return None
+        spills = [(handle, False)] if handle is not None else _workspace_spills(ctx)
+        if any(requires_reader for _, requires_reader in spills):
+            return None
+        paths = [path for path, _ in spills]
         if not paths:
             paths = [posixpath.join(METADATA_DIR, 'tool-output')]
-        return await file_tools_provider(ctx, paths) is not None
+        match = await file_tools_provider(ctx, paths, tool_names=tool_names)
+        return match[1] if match is not None else None
 
     # --- reduction ---
 
@@ -284,7 +294,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Reduce the tool result -- both `return_value` and model-visible `content`."""
         original: object = result
-        if call.tool_name == READ_TOOL_NAME:
+        if call.tool_name == READ_TOOL_NAME or await self._is_workspace_spill_read(ctx, call, args):
             return original
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return original
@@ -341,7 +351,14 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if wrapped:
             new_metadata = metadata
             if value_handle is not None or content_handle is not None:
-                new_metadata = _with_handles(metadata, value_handle, len(value_unit.data), content_handle)
+                new_metadata = _with_handles(
+                    metadata,
+                    value_handle,
+                    len(value_unit.data),
+                    content_handle,
+                    value_requires_reader=value_handle is not None and _READ_TOOL_HINT in (value_text or ''),
+                    content_requires_reader=content_handle is not None and _READ_TOOL_HINT in (content_text or ''),
+                )
             wrapped_out: ToolReturn[object] = ToolReturn(
                 return_value=value_text if value_text is not None else return_value,
                 content=content_text if content_text is not None else content,
@@ -352,7 +369,13 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         # A plain (non-`ToolReturn`) result has no separate content part.
         if value_handle is not None:
             spilled_out: ToolReturn[object] = ToolReturn(
-                return_value=value_text, metadata=_with_handles(None, value_handle, len(value_unit.data))
+                return_value=value_text,
+                metadata=_with_handles(
+                    None,
+                    value_handle,
+                    len(value_unit.data),
+                    value_requires_reader=_READ_TOOL_HINT in (value_text or ''),
+                ),
             )
             return spilled_out
         return value_text
@@ -482,14 +505,33 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         except Exception:
             return await self._fallback(ctx, call, action.then, unit)
 
+        file_tools = await self._file_tools(ctx, handle)
+        if file_tools is not None and not _file_tools_can_read_unit(file_tools, unit):
+            file_tools = None
         preview = _build_spill_preview(
             handle,
             unit,
             action.preview_chars,
             over_tokens=self.over_tokens,
-            use_file_tools=await self._uses_file_tools(ctx, handle),
+            file_tools=file_tools,
         )
         return preview, handle
+
+    async def _is_workspace_spill_read(
+        self, ctx: RunContext[AgentDepsT], call: ToolCallPart, args: dict[str, Any]
+    ) -> bool:
+        """Exempt a provider read of a known spill from recursively spilling itself."""
+        store = self._store
+        if not isinstance(store, WorkspaceStore) or store.workspace is not None:
+            return False
+        for handle, _ in _workspace_spills(ctx):
+            match = await file_tools_provider(ctx, handle)
+            if match is None:
+                continue
+            _, info = match
+            if call.tool_name == info.read_tool and args.get(info.path_arg) == handle:
+                return True
+        return False
 
     async def _summarize_action(
         self,
@@ -631,6 +673,9 @@ def _with_handles(
     value_handle: str | None,
     value_bytes: int,
     content_handle: str | None = None,
+    *,
+    value_requires_reader: bool = False,
+    content_requires_reader: bool = False,
 ) -> dict[str, object]:
     """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens)."""
     base: dict[str, object] = {}
@@ -641,8 +686,12 @@ def _with_handles(
     if value_handle is not None:
         base['overflow_handle'] = value_handle
         base['overflow_bytes'] = value_bytes
+        if value_requires_reader:
+            base['overflow_requires_reader'] = True
     if content_handle is not None:
         base['overflow_content_handle'] = content_handle
+        if content_requires_reader:
+            base['overflow_content_requires_reader'] = True
     return base
 
 
@@ -651,22 +700,40 @@ def _copy_mapping(source: Mapping[object, object]) -> dict[str, object]:
     return {str(key): source[key] for key in source}
 
 
-def _workspace_spill_paths(ctx: RunContext[AgentDepsT]) -> list[str]:
-    """Collect workspace spill paths already present in model history."""
-    paths: list[str] = []
+def _workspace_spills(ctx: RunContext[AgentDepsT]) -> list[tuple[str, bool]]:
+    """Collect workspace spill paths and whether they require the dedicated reader."""
+    spills: list[tuple[str, bool]] = []
     for message in ctx.messages:
         for part in message.parts:
             if not isinstance(part, ToolReturnPart) or not _is_mapping(part.metadata):
                 continue
-            for key in ('overflow_handle', 'overflow_content_handle'):
+            for key, requirement_key in (
+                ('overflow_handle', 'overflow_requires_reader'),
+                ('overflow_content_handle', 'overflow_content_requires_reader'),
+            ):
                 handle = part.metadata.get(key)
                 if isinstance(handle, str):
-                    paths.append(handle)
-    return paths
+                    spills.append((handle, part.metadata.get(requirement_key) is True))
+    return spills
+
+
+def _file_tools_can_read_unit(info: FileToolsInfo, unit: _Unit) -> bool:
+    """Whether one provider read can return the whole spill without losing a line."""
+    if unit.binary:
+        return False
+    if info.max_read_chars is None:
+        return True
+    longest_line = max((len(line) for line in (unit.text or '').splitlines(keepends=True)), default=0)
+    return longest_line + 512 <= info.max_read_chars
 
 
 def _build_spill_preview(
-    handle: str, unit: _Unit, preview_chars: int, *, over_tokens: bool, use_file_tools: bool = False
+    handle: str,
+    unit: _Unit,
+    preview_chars: int,
+    *,
+    over_tokens: bool,
+    file_tools: FileToolsInfo | None = None,
 ) -> str:
     """Compose the model-visible spill stand-in: marker, sketch, and a head/tail preview."""
     if unit.binary:
@@ -681,10 +748,10 @@ def _build_spill_preview(
         body = _head_tail_preview(text, preview_chars)
         sketch = json_sketch(unit.value)
 
-    if use_file_tools:
+    if file_tools is not None:
         header = (
             f'[Tool output too large ({size_desc}); stored at {handle!r}. '
-            f'Read it with read_file(path={handle!r}, offset=0, limit=200).]'
+            f'Read it with `{file_tools.read_tool}` at path {handle!r}.]'
         )
     else:
         header = (

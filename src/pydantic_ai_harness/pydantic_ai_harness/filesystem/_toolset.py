@@ -485,10 +485,15 @@ def root_spelling(root_dir: Path | None) -> str | None:
     return spelling
 
 
-async def file_toolset_can_read(toolset: FileSystemToolset, path: str, *, workspace: WorkspaceBackend) -> bool:
+async def file_toolset_can_read(
+    toolset: FileSystemToolset[AgentDepsT], path: str, *, workspace: WorkspaceBackend
+) -> bool:
     """Predicate form of `read_file`'s path checks, shared with the `FileSystem` capability."""
     try:
-        await toolset._safe_resolve(await toolset._scope(workspace), path)
+        await toolset._safe_resolve(  # pyright: ignore[reportPrivateUsage]
+            await toolset._scope(workspace),  # pyright: ignore[reportPrivateUsage]
+            path,
+        )
     except (OSError, UserError, WorkspaceError):
         return False
     return True

@@ -137,12 +137,14 @@ access patterns, and event paths retain their `root_dir` basis, as does
 
 ### File-tool provider protocol
 
-`FileSystem` implements the runtime-checkable `ProvidesFileTools` protocol. Its
-`can_read(path, workspace=...)` check applies the same `root_dir`, allowed-pattern,
+`FileSystem` implements the runtime-checkable `ProvidesFileTools` protocol. `file_tools()`
+returns `FileToolsInfo`, which describes the read tool, its path argument, discovery tools, and
+read-size ceiling. `can_read(path, workspace=...)` applies the same `root_dir`, allowed-pattern,
 denied-pattern, and symlink-target rules as `read_file`, without requiring the path to exist.
-Harness capabilities use this protocol to omit a narrower reader tool only when the provider is
-active for the current run and can read the capability's files in that run's workspace. Custom
-file-tool capabilities can implement the protocol to participate in the same discovery.
+`can_read_tree(...)` additionally guarantees that every descendant is readable; `FileSystem`
+answers false when allow or deny patterns prevent that guarantee. Harness capabilities use these
+checks only for providers active in the current run. Custom file-tool capabilities can implement
+the protocol to participate in the same discovery.
 
 ## Events
 

@@ -5,9 +5,9 @@ from __future__ import annotations
 import inspect
 import json
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -15,7 +15,7 @@ import pytest
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
@@ -56,7 +56,8 @@ def _write(path: Path, content: str) -> Path:
 async def _render_capability_instructions(capability: RepoContext[object], ctx: RunContext[object]) -> str | None:
     instructions = capability.get_instructions()
     assert callable(instructions)
-    pending = instructions(ctx)
+    instruction_func = cast(Callable[[RunContext[object]], Awaitable[str | None]], instructions)
+    pending = instruction_func(ctx)
     assert inspect.isawaitable(pending)
     rendered = await pending
     assert isinstance(rendered, str) or rendered is None
@@ -280,7 +281,7 @@ class TestToolset:
         result = await agent.run('go', workspace=backend)
         assert 'inventory_agent_context' in result.output
 
-    @pytest.mark.parametrize('case', ['present', 'absent', 'inactive', 'unreadable'])
+    @pytest.mark.parametrize('case', ['present', 'absent', 'inactive', 'unreadable', 'no-listing'])
     async def test_inventory_deduplicates_only_for_active_file_tools_that_reach_every_root(
         self, tmp_path: Path, case: str
     ) -> None:
@@ -291,18 +292,20 @@ class TestToolset:
             file_system = FileSystem(id='files', defer_loading=True)
         elif case == 'unreadable':
             file_system = FileSystem(denied_patterns=['.claude'])
+        elif case == 'no-listing':
+            file_system = FileSystem(tools=['read_file'])
 
         seen_tools: set[str] = set()
         seen_instructions: list[str] = []
 
-        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        async def model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
             seen_tools.update(tool.name for tool in info.function_tools)
             request = next(message for message in reversed(messages) if isinstance(message, ModelRequest))
             seen_instructions.append(request.instructions or '')
-            return ModelResponse(parts=[TextPart('done')])
+            yield 'done'
 
         await Agent(
-            FunctionModel(model),
+            FunctionModel(stream_function=model),
             capabilities=[
                 RepoContext[object](autoload_instructions=False),
                 LocalWorkspace(tmp_path),
