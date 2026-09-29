@@ -434,7 +434,20 @@ pydantic_clai2, which supplies the stock coder and ask_user plugins and lets
 Provider implementation, not a terminal plugin. See
 https://pydantic.dev/docs/ai/models/overview/ and inspect installed core abstract
 classes for required methods. Supply that Model instance to Agent as above.
-There is no --agent option in the current CLI; run the Python launcher instead.
+To chat with an Agent instance you already have, skip the launcher and run
+clai2 --agent MODULE:ATTR (or -a), for example
+clai2 --agent pydantic_ai.main:my_cool_agent. CLAI appends the launch directory to
+sys.path, after installed packages, so a module next to where you start CLAI
+resolves without installing it. ATTR must
+name an Agent instance, not a class or factory; the agent runs with deps=None.
+For that session only, CLAI loads no plugins at all: no built-ins (so no stock
+Coder or ask_user), no saved or drop-in user plugins, and no project plugins, and
+/plugins reports that plugins are off. Nothing saved changes, so the next plain
+clai2 loads plugins as before. The agent keeps its own model unless -m or
+CLAI_MODEL selects another; a saved or project model does not replace it. -p runs
+the same agent headlessly, --resume and --worktree work as usual, and --agent
+cannot be combined with the config or plugins subcommands. A launcher is still the
+way to pass deps, plugins, or builtin_plugins.
 
 chat preserves a supplied agent's model when no settings override selects another
 one. /model or /set model changes subsequent turns to the selected core model

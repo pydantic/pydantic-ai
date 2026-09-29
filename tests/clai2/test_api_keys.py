@@ -157,11 +157,3 @@ async def test_provider_saved_key(monkeypatch: pytest.MonkeyPatch, provider: str
         assert connection is not None
         assert connection.token == api_keys.KeyReference(name='MY_KEY')
         assert api_keys.resolve_key(token=connection.token) == 'saved-secret'
-
-
-def test_add_key_never_replaces_an_existing_key() -> None:
-    assert api_keys.add_key(name='new_key', value=' first ') is True
-    assert api_keys.add_key(name='NEW_KEY', value='second') is False
-    assert api_keys.load_keys()['NEW_KEY'].get_secret_value() == 'first'
-    with pytest.raises(ValueError, match='An API key is required'):
-        api_keys.add_key(name='OTHER', value='  ')

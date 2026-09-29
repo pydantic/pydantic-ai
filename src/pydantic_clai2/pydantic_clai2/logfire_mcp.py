@@ -20,7 +20,7 @@ from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LOGFIRE_US_MCP_U
 
 from . import theme
 from ._rendering import markdown_style
-from .api_keys import KeyReference, SavedKey, add_key, load_keys, prompt_api_key, save_key
+from .api_keys import KeyExistsError, KeyReference, SavedKey, load_keys, prompt_api_key, save_key
 from .commands import Command
 from .field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from .logfire_oauth import SIGN_IN_TIMEOUT, Announce, DeviceAuth, SignInError, forget, status
@@ -341,7 +341,9 @@ async def _choose_key() -> KeyReference | None | str:
     if not value:
         return None
     # Added only if absent, atomically, so a key another CLAI process just saved is never replaced unasked.
-    if not await asyncio.to_thread(add_key, name=KEY_NAME, value=value):
+    try:
+        await asyncio.to_thread(save_key, name=KEY_NAME, value=value, replace=False)
+    except KeyExistsError:
         if not await run_worker(_confirm_replace):
             return None
         await asyncio.to_thread(save_key, name=KEY_NAME, value=value)
