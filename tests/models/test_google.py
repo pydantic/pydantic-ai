@@ -4902,18 +4902,36 @@ async def test_google_stream_usage_retains_dropped_field_mid_stream(
     assert usage_seen == snapshot([(5, 16365), (10, 16365), (15, 16365)])
 
 
+@pytest.mark.parametrize(
+    'model_name,grounding_chunks,expected_web_searches',
+    [
+        pytest.param('gemini-3-flash-preview', [], 2, id='gemini-3-per-unique-query'),
+        pytest.param(
+            'gemini-2.5-flash', [{'web': {'uri': 'https://ai.pydantic.dev'}}], 1, id='gemini-2.5-per-sourced-prompt'
+        ),
+        pytest.param('gemini-2.5-flash', [], 0, id='gemini-2.5-no-sources-free'),
+    ],
+)
 async def test_google_web_search_grounding_usage(
-    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+    model_name: str,
+    grounding_chunks: list[dict[str, Any]],
+    expected_web_searches: int,
 ):
-    """Google Search grounding queries surface as first-class `web_searches` and a `web_search_requests` detail."""
+    """Grounding surfaces as billed `web_searches` and a `web_search_requests` detail of unique non-empty queries."""
     response = GenerateContentResponse.model_validate(
         {
             'response_id': 'resp-grounding-1',
-            'model_version': 'gemini-2.5-flash',
+            'model_version': model_name,
             'candidates': [
                 {
                     'content': {'role': 'model', 'parts': [{'text': 'Grounded answer.'}]},
-                    'grounding_metadata': {'web_search_queries': ['pydantic ai', 'web search']},
+                    'grounding_metadata': {
+                        'web_search_queries': ['pydantic ai', '', 'web search', 'pydantic ai'],
+                        'grounding_chunks': grounding_chunks,
+                    },
                 }
             ],
             'usage_metadata': {
@@ -4923,7 +4941,7 @@ async def test_google_web_search_grounding_usage(
             },
         }
     )
-    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    model = GoogleModel(model_name, provider=google_provider)
     mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
 
     agent = Agent(model=model)
@@ -4934,7 +4952,7 @@ async def test_google_web_search_grounding_usage(
     usage = response_message.usage
     assert usage.input_tokens == 100
     assert usage.output_tokens == 50
-    assert usage.web_searches == 2  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    assert getattr(usage, 'web_searches', 0) == expected_web_searches
     assert usage.details['web_search_requests'] == 2
 
 
@@ -4951,7 +4969,10 @@ async def test_google_web_search_grounding_usage_stream(
                 'candidates': [
                     {
                         'content': {'role': 'model', 'parts': [{'text': 'answer.'}]},
-                        'grounding_metadata': {'web_search_queries': ['pydantic ai', 'web search']},
+                        'grounding_metadata': {
+                            'web_search_queries': ['pydantic ai', 'web search'],
+                            'grounding_chunks': [{'web': {'uri': 'https://ai.pydantic.dev'}}],
+                        },
                     }
                 ],
                 'usage_metadata': {
@@ -4975,7 +4996,7 @@ async def test_google_web_search_grounding_usage_stream(
     usage = response_message.usage
     assert usage.input_tokens == 100
     assert usage.output_tokens == 15
-    assert usage.web_searches == 2  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
+    assert usage.web_searches == 1  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     assert usage.details['web_search_requests'] == 2
 
 

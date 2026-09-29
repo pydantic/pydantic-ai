@@ -2061,11 +2061,17 @@ def _metadata_as_usage(
     metadata = response.usage_metadata
     if metadata is None:
         return existing_usage or usage.RequestUsage()
-    web_search_requests = sum(
-        len(candidate.grounding_metadata.web_search_queries or [])
-        for candidate in response.candidates or []
-        if candidate.grounding_metadata is not None
-    )
+    grounding = [c.grounding_metadata for c in response.candidates or [] if c.grounding_metadata is not None]
+    # Gemini 3 bills each unique non-empty query, see https://ai.google.dev/gemini-api/docs/google-search#pricing.
+    web_search_requests = len({query for g in grounding for query in g.web_search_queries or [] if query.strip()})
+    # Gemini 2.x and older bill once per grounded prompt, and only when it returned a web source,
+    # see https://cloud.google.com/vertex-ai/generative-ai/pricing.
+    model_version = response.model_version or ''
+    if 'gemini-1' in model_version or 'gemini-2.' in model_version:
+        returned_sources = any(chunk.web and chunk.web.uri for g in grounding for chunk in g.grounding_chunks or [])
+        web_searches = 1 if web_search_requests and returned_sources else 0
+    else:
+        web_searches = web_search_requests
     return _usage_metadata_as_usage(
         prompt_token_count=metadata.prompt_token_count,
         output_token_count=metadata.candidates_token_count,
@@ -2077,6 +2083,7 @@ def _metadata_as_usage(
         output_tokens_details=metadata.candidates_tokens_details,
         tool_use_prompt_tokens_details=metadata.tool_use_prompt_tokens_details,
         output_details_prefix='candidates',
+        web_searches=web_searches,
         web_search_requests=web_search_requests,
         extract_data=response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
         provider=provider,
@@ -2097,6 +2104,7 @@ def _usage_metadata_as_usage(
     output_tokens_details: Sequence[ModalityTokenCount] | None,
     tool_use_prompt_tokens_details: Sequence[ModalityTokenCount] | None,
     output_details_prefix: Literal['candidates', 'response'],
+    web_searches: int | None = None,
     web_search_requests: int | None = None,
     extract_data: dict[str, Any],
     provider: str,
@@ -2111,9 +2119,10 @@ def _usage_metadata_as_usage(
     [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
     speaks the generate-content field names, so a Live caller translates before handing it over.
 
-    `web_search_requests` is the number of Google Search grounding queries on the response, if any. genai-prices
-    can't yet extract it from the raw payload, so the caller counts it from the candidates and passes it in; it is
-    surfaced as first-class `web_searches` and an informational `web_search_requests` detail.
+    `web_searches` is the billed Google Search grounding count and `web_search_requests` the number of queries the
+    model ran; they differ on Gemini 2.5 and older, which bill per grounded prompt. genai-prices can't yet extract
+    either from the raw payload, so the caller counts them from the candidates and passes them in; they are surfaced
+    as first-class `web_searches` and an informational `web_search_requests` detail.
     """
     details: dict[str, int] = {}
     if cached_content_token_count:
@@ -2158,7 +2167,7 @@ def _usage_metadata_as_usage(
     # genai-prices can't map Google grounding searches from the raw payload, so the count computed from the
     # response candidates is set first-class here. An earlier streamed chunk can report queries that a later
     # cumulative chunk's candidates no longer carry, so carry the value forward like the token fields below.
-    web_searches = web_search_requests or getattr(existing_usage, 'web_searches', None)
+    web_searches = web_searches or getattr(existing_usage, 'web_searches', None)
     if web_searches:
         new_usage.web_searches = web_searches  # pyright: ignore[reportAttributeAccessIssue]
 
