@@ -2168,6 +2168,22 @@ async def test_connect_captures_server_reported_model(monkeypatch: pytest.Monkey
         assert conn.model_name == 'gpt-realtime-2025-06-03'
 
 
+async def test_connect_accepts_session_values_the_sdk_does_not_know(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The SDK's session models close their enums to today's values; a server default added later must not
+    # fail the handshake, which only needs the model name.
+    session = {
+        'type': 'realtime',
+        'model': 'gpt-realtime-2025-06-03',
+        'output_modalities': ['audio'],
+        'truncation': 'retention_ratio_v2',
+        'audio': {'input': {'turn_detection': {'type': 'neural_vad'}}},
+    }
+    ws = FakeWebSocket([json.dumps({'type': 'session.created', 'session': session}), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x') as conn:
+        assert conn.model_name == 'gpt-realtime-2025-06-03'
+
+
 async def test_connect_without_server_model(monkeypatch: pytest.MonkeyPatch) -> None:
     # A handshake that doesn't report a model (like these bare test frames) leaves `model_name` unset,
     # so the session falls back to the configured id.
