@@ -289,9 +289,8 @@ def test_anthropic_claude_3_5_sonnet_legacy():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openai_gpt_5_4():
-    from pydantic_ai.providers.openai import OpenAIProvider
-
     profile = OpenAIProvider.model_profile('gpt-5.4')
     assert _normalize(profile) == snapshot(
         {
@@ -315,6 +314,7 @@ def test_openai_gpt_5_4():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openai_gpt_5_6():
     """Not a VCR test: this pins the resolved GPT-5.6 profile against drift.
 
@@ -324,7 +324,6 @@ def test_openai_gpt_5_6():
     label messages with it) and native `tool_search` is on (verified live). Reasoning behavior
     verified against the Responses API.
     """
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     profile = OpenAIProvider.model_profile('gpt-5.6-sol')
     assert _normalize(profile) == snapshot(
@@ -353,6 +352,7 @@ def test_openai_gpt_5_6():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openai_gpt_6_astra():
     """Not a VCR test: this pins the resolved GPT-6 Astra profile against drift.
 
@@ -360,7 +360,6 @@ def test_openai_gpt_6_astra():
     `reasoning.context='all_turns'`, native `tool_search`, image generation, prompt cache
     breakpoints, and no `minimal` effort.
     """
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     profile = OpenAIProvider.model_profile('gpt-6-astra')
     assert _normalize(profile) == snapshot(
@@ -389,18 +388,19 @@ def test_openai_gpt_6_astra():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize(
     'model_name',
     ['gpt-6-sol', 'gpt-6-luna', 'gpt-6-sol-2026-09-22', 'gpt-6-luna-2026-09-22'],
 )
 def test_openai_gpt_6_sol_luna(model_name: str):
     """Pin GPT-6 Sol/Luna capabilities for base names and future dated snapshots."""
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     profile = OpenAIProvider.model_profile(model_name)
     assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-5.6-sol'))
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize(
     'model_name',
     [
@@ -414,7 +414,6 @@ def test_openai_gpt_6_sol_luna(model_name: str):
 )
 def test_openrouter_gpt_6_sol_luna(model_name: str):
     """OpenRouter's published GPT-6 routes retain the OpenAI reasoning capabilities."""
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
@@ -423,19 +422,19 @@ def test_openrouter_gpt_6_sol_luna(model_name: str):
     assert profile.get('openai_responses_supports_reasoning_context') is True
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-6.1-sol', 'gpt-6.1-sol-2026-09-29'])
 def test_openai_gpt_6_1_sol(model_name: str):
     """GPT-6.1 Sol resolves GPT-6 Astra's capabilities, not GPT-6 Sol's: it rejects `effort='none'`."""
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     profile = OpenAIProvider.model_profile(model_name)
     assert _normalize(profile) == _normalize(OpenAIProvider.model_profile('gpt-6-astra'))
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['openai/gpt-6.1-sol', 'openai/gpt-6.1-sol-pro', 'openai/gpt-6.1-sol-20260929'])
 def test_openrouter_gpt_6_1_sol(model_name: str):
     """OpenRouter's published GPT-6.1 Sol routes retain the OpenAI reasoning capabilities."""
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
@@ -444,23 +443,23 @@ def test_openrouter_gpt_6_1_sol(model_name: str):
     assert profile.get('openai_responses_supports_reasoning_context') is True
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize('model_name', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-6-astra'])
 def test_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     profile = OpenAIProvider.model_profile(model_name)
     assert profile is not None
     assert profile.get('openai_responses_supports_reasoning_mode') is True
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize(
     'model_name',
     ['openai/gpt-5.6-sol', 'openai/gpt-5.6-terra', 'openai/gpt-5.6-luna', 'openai/gpt-6-astra'],
 )
 def test_openrouter_openai_gpt_5_6_reasoning_mode(model_name: str):
     """Not a VCR test: this validates local provider-profile capability resolution."""
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     profile = OpenRouterProvider.model_profile(model_name)
     assert profile is not None
@@ -502,9 +501,8 @@ def test_azure_gpt_5_reasoning_context(model_name: str):
     assert profile.get('openai_responses_supports_reasoning_context') is True
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openai_gpt_4o():
-    from pydantic_ai.providers.openai import OpenAIProvider
-
     profile = OpenAIProvider.model_profile('gpt-4o')
     assert _normalize(profile) == snapshot(
         {
@@ -522,9 +520,8 @@ def test_openai_gpt_4o():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openai_o3_mini():
-    from pydantic_ai.providers.openai import OpenAIProvider
-
     profile = OpenAIProvider.model_profile('o3-mini')
     assert _normalize(profile) == snapshot(
         {
@@ -1068,9 +1065,9 @@ def test_bedrock_unknown_provider_returns_none():
 # =============================================================================
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_anthropic_claude_sonnet_4_6():
     """Anthropic via OpenRouter — relays Anthropic's profile through OpenAI chat."""
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     profile = OpenRouterProvider.model_profile('anthropic/claude-sonnet-4-6')
     assert _normalize(profile) == snapshot(
@@ -1104,9 +1101,8 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_openai_gpt_5_4():
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
     profile = OpenRouterProvider.model_profile('openai/gpt-5.4')
     assert _normalize(profile) == snapshot(
         {
@@ -1134,9 +1130,9 @@ def test_openrouter_openai_gpt_5_4():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_google_gemini_3_pro():
     """Google via OpenRouter — uses `_OpenRouterGoogleJsonSchemaTransformer` (lab wins over OpenAI fallback)."""
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     profile = OpenRouterProvider.model_profile('google/gemini-3.0-pro')
     assert _normalize(profile) == snapshot(
@@ -1174,7 +1170,6 @@ def test_openrouter_google_gemini_3_pro():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_google_gemini_3_8_flash_thinking_levels():
     """Google via OpenRouter — the restricted level set survives the three-layer merge."""
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     profile = OpenRouterProvider.model_profile('google/gemini-3.8-flash')
     assert profile is not None
@@ -1212,9 +1207,8 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_mistral_large():
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
     profile = OpenRouterProvider.model_profile('mistralai/mistral-large-latest')
     assert _normalize(profile) == snapshot(
         {
@@ -1234,9 +1228,8 @@ def test_openrouter_mistral_large():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_xai_grok_4():
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
     profile = OpenRouterProvider.model_profile('x-ai/grok-4')
     assert _normalize(profile) == snapshot(
         {
@@ -1401,9 +1394,8 @@ def test_github_copilot_openai_family_prefix_arms(model_name: str):
     assert _normalize(GitHubCopilotProvider.model_profile(model_name)) == expected
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_qwen():
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
     profile = OpenRouterProvider.model_profile('qwen/qwen3-235b-a22b')
     assert _normalize(profile) == snapshot(
         {
@@ -1424,9 +1416,8 @@ def test_openrouter_qwen():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_deepseek():
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
     profile = OpenRouterProvider.model_profile('deepseek/deepseek-chat')
     assert _normalize(profile) == snapshot(
         {
@@ -1446,9 +1437,8 @@ def test_openrouter_deepseek():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_meta_llama():
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
     profile = OpenRouterProvider.model_profile('meta-llama/llama-3.3-70b-instruct')
     assert _normalize(profile) == snapshot(
         {
@@ -1468,9 +1458,8 @@ def test_openrouter_meta_llama():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_moonshotai():
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
-
     profile = OpenRouterProvider.model_profile('moonshotai/kimi-k2-0905')
     assert _normalize(profile) == snapshot(
         {
@@ -1491,9 +1480,9 @@ def test_openrouter_moonshotai():
     )
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_unknown_provider_falls_back_to_overlay_only():
     """Unknown lab → no upstream profile, but OpenRouter overrides still apply."""
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
     profile = OpenRouterProvider.model_profile('unknown-lab/unknown-model')
     assert _normalize(profile) == snapshot(
@@ -2470,6 +2459,7 @@ def test_anthropic_tool_availability_delta_support(model_name: str, supported: b
     assert profile.get('tool_addition_mode') == ('by_reference' if supported else None)
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 @pytest.mark.parametrize(
     'model_name',
     ['gpt-5.6', 'gpt-5.6-sol', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.1', 'gpt-5', 'gpt-4.1', 'gpt-4o'],
@@ -2487,7 +2477,6 @@ def test_openai_tool_availability_delta_support(model_name: str):
     OpenAI-compatible endpoints that speak the Responses API without necessarily implementing the item,
     and they keep the `False` default.
     """
-    from pydantic_ai.providers.openai import OpenAIProvider
 
     profile = OpenAIProvider.model_profile(model_name)
     assert profile is not None
