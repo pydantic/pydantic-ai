@@ -2090,6 +2090,21 @@ class TestRunErrorHooks:
             await agent.run('hello', toolsets=toolsets)
         assert not any(reconstruction_states[reconstruction_count_before_setup:])
 
+    async def test_on_run_error_not_called_for_grouped_generator_exit_during_run(self):
+        called = False
+
+        class RecoveringCapability(AbstractCapability[Any]):
+            async def on_run_error(self, ctx: RunContext[Any], *, error: BaseException) -> AgentRunResult[Any]:
+                nonlocal called
+                called = True
+                return AgentRunResult(output='recovered')
+
+        control_error = BaseExceptionGroup('outer', [BaseExceptionGroup('inner', [GeneratorExit()])])
+        with pytest.raises(BaseExceptionGroup, match='outer'):
+            async with Agent(TestModel(), capabilities=[RecoveringCapability()]).iter('hello'):
+                raise control_error
+        assert not called
+
     async def test_on_run_error_can_transform_error(self):
         @dataclass
         class TransformErrorCap(AbstractCapability[Any]):

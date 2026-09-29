@@ -393,7 +393,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
             _run_error = extract_error(exc) if extract_error is not None else exc
             # Don't attempt recovery for GeneratorExit/KeyboardInterrupt — awaiting
             # `_wrap_task` during cleanup could delay shutdown.
-            if isinstance(_run_error, (GeneratorExit, KeyboardInterrupt)):
+            if _is_run_control_error(_run_error):
                 raise
             # Don't re-raise yet — give wrap_run a chance to recover. If wrap_run catches
             # the error from handler() and returns a recovery result, it is suppressed.

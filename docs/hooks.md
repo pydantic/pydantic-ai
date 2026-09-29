@@ -121,7 +121,7 @@ Use on-demand hooks for optional behavior that only applies after the capability
 | `run` | `run=` | `wrap_run` |
 | `run_error` | `run_error=` | `on_run_error` |
 
-Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wraps graph execution and supports error recovery. For graph runs and realtime sessions, if capability or toolset `for_run()` setup fails before lifecycle hooks begin, every run error hook still fires in reverse order for cleanup; no `AgentRunResult` exists yet, so those hooks cannot recover the setup error.
+Run hooks fire once per agent run. `wrap_run` (registered via `hooks.on.run`) wraps graph execution and supports error recovery. For graph runs and realtime sessions, if capability or toolset `for_run()` setup fails before lifecycle hooks begin, run error hooks fire for cleanup in reverse capability order, while hooks within one `Hooks` instance keep registration order. No `AgentRunResult` exists yet, so those hooks cannot recover the setup error.
 
 A [realtime session](realtime/capabilities.md) is a run: the same four hooks fire once around the session, with `wrap_run` recovery and `after_run` result transformation applied when the session closes.
 
