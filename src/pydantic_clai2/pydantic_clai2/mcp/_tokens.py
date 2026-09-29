@@ -167,5 +167,10 @@ class SignIn(OAuth):
 
 
 def oauth(name: str, server: RemoteServer) -> OAuth | None:
-    """The server's sign-in handler, or `None` when it does not use OAuth."""
-    return SignIn(name) if server.auth else None
+    """A sign-in handler with keyring-backed tokens; FastMCP refreshes them or opens the browser on connect."""
+    return sign_in(name) if server.auth else None
+
+
+def sign_in(name: str) -> OAuth:
+    """Browser sign-in whose tokens are kept in the `mcp-NAME` credential."""
+    return SignIn(name)
