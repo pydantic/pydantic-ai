@@ -15,10 +15,17 @@ def adopt_promoted(store: SettingsStore, builtin: Sequence[PluginSettings]) -> N
     Toggling a catalog row saved the whole declaration, and a saved declaration outranks the built-in, so
     without this the raw capability would keep loading instead. A declaration with the user's own settings is theirs.
     """
-    shipped = {plugin.id: plugin for plugin in builtin}
-    for saved in store.plugins():
-        factory = _PROMOTED.get(saved.id)
-        if factory is None or saved.id not in shipped:
+    for plugin in builtin:
+        factory = _PROMOTED.get(plugin.id)
+        if factory is None:
             continue
-        if saved == PluginSettings(id=saved.id, factory=factory, enabled=saved.enabled):
-            store.save_plugin(shipped[saved.id].model_copy(update={'enabled': saved.enabled}))
+
+        def adopt(
+            saved: PluginSettings, plugin: PluginSettings = plugin, factory: str = factory
+        ) -> PluginSettings | None:
+            if saved != PluginSettings(id=saved.id, factory=factory, enabled=saved.enabled):
+                return None
+            return plugin.model_copy(update={'enabled': saved.enabled})
+
+        # One transaction: a declaration another CLAI saves meanwhile is never overwritten by a stale check.
+        store.update_plugin(plugin.id, adopt)

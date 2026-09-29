@@ -343,5 +343,6 @@ class PKCESignIn:
                     raise UserError(
                         f'The {self.service} sign-in could not be renewed. Run {self.setup} to sign in again.'
                     ) from None
-                self._save(tokens)
+                self._save(tokens)  # Saved even when narrowed: the old refresh token may be spent.
+                tokens = self._usable(tokens)
             return tokens.access_token.get_secret_value()

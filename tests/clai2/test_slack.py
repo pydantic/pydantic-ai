@@ -1,6 +1,8 @@
 """The built-in `slack` plugin: a settings menu for `Slack`'s options, with the user token kept in `/keys`."""
 
+import sqlite3
 import threading
+from contextlib import closing
 
 import anyio
 import pytest
@@ -357,8 +359,24 @@ def test_saved_catalog_row_adopts_the_builtin(enabled: bool) -> None:
     ]
 
 
+def test_adopting_holds_the_write_lock_between_its_check_and_its_write() -> None:
+    store = SettingsStore()
+    store.save_plugin(RAW)
+
+    def adopt(saved: PluginSettings) -> PluginSettings:
+        # Another CLAI saving its own Slack settings now waits until this update commits.
+        with closing(sqlite3.connect(store.path, timeout=0)) as other, pytest.raises(sqlite3.OperationalError):
+            other.execute('UPDATE plugins SET declaration = declaration')
+        return BUILTIN
+
+    store.update_plugin('slack', adopt)
+    assert store.plugins() == [BUILTIN]
+
+
 def test_own_declarations_are_kept() -> None:
     store = SettingsStore()
+    adopt_promoted(store, DEFAULT_PLUGINS)
+    assert store.plugins() == [], 'nothing saved, nothing to adopt'
     custom = RAW.model_copy(update={'settings': {'read_only': False}})
     store.save_plugin(custom)
     adopt_promoted(store, DEFAULT_PLUGINS)

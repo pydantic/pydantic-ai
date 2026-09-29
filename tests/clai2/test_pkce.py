@@ -311,6 +311,15 @@ async def test_a_sign_in_without_the_scopes_the_client_now_asks_for_is_not_used(
         await wider.token()
 
 
+async def test_a_refresh_that_narrows_the_scopes_is_saved_but_not_used() -> None:
+    endpoint = TokenEndpoint(granted(access='at-narrow', refresh_token='rt-new', scope='read'))
+    store(tokens(expires_in=0))
+    with pytest.raises(UserError, match='does not grant what this setup needs'):
+        await session(endpoint).token()
+    saved = Tokens.model_validate_json(load_codex_credentials(account=ACCOUNT) or '')
+    assert saved.refresh_token == SecretStr('rt-new'), 'the rotated refresh token is kept, the old one is spent'
+
+
 async def test_token_is_reused_until_close_to_expiry_then_refreshed_and_saved() -> None:
     endpoint = TokenEndpoint(granted(access='at-new', refresh_token='rt-new'))
     sign_in = session(endpoint)
