@@ -60,8 +60,11 @@ async def test_destroy_ref_without_resuming_workspace() -> None:
         ref = backend.ref
         assert ref is not None
         await ModalSandbox().destroy(ref)
-        # Modal may keep poll() at running while it shuts down; refusal to exec
-        # proves the ref can no longer run work without waiting for poll convergence.
+        # Termination is asynchronous; wait for shutdown before checking that the cached
+        # handle cannot run work. Starting an exec during shutdown can time out.
+        with anyio.fail_after(60):
+            while await (await backend.get_sandbox()).poll.aio() is None:
+                await anyio.sleep(0.1)
         with pytest.raises(WorkspaceUnavailableError):
             await backend.run(['true'], timeout=10)
 
