@@ -22,7 +22,7 @@ from cassetter import RawRequest, RawResponse
 from pydantic_ai import Agent
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior, UserError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import (
     RealtimeClientSecret,
@@ -70,6 +70,7 @@ class _SignalingModel(RealtimeModel):
         self.settings = settings
         self.calls: list[tuple[str | None, Sequence[ToolDefinition] | None, RealtimeModelSettings | None]] = []
         self.expires_after_seconds: int | None = None
+        self.message_history: Sequence[ModelMessage] | None = None
 
     @property
     def model_name(self) -> str:
@@ -95,8 +96,10 @@ class _SignalingModel(RealtimeModel):
         instructions: str | None = None,
         tools: Sequence[ToolDefinition] | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> WebRTCAnswer:
         self.calls.append((instructions, tools, model_settings))
+        self.message_history = message_history
         return WebRTCAnswer(sdp=sdp_offer, session=WebRTCSession(provider_name='test', session_id='rtc_test'))
 
     async def create_client_secret(
@@ -149,6 +152,32 @@ async def test_agent_realtime_signaling_resolves_bound_configuration() -> None:
         assert tools is not None
         assert [tool.name for tool in tools] == ['agent_tool', 'accessor_tool']
         assert settings == RealtimeModelSettings(max_tokens=100, output_modality='text')
+
+
+async def test_agent_realtime_offer_carries_the_bound_history() -> None:
+    """The history bound with `agent.realtime(...)` reaches the offer, as it reaches the session.
+
+    Without any, the keyword isn't passed at all, so a `RealtimeModel` written before it existed still works.
+    """
+    history = [ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])]
+    model = _SignalingModel()
+
+    await Agent().realtime(model, message_history=history).answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert model.message_history == history
+
+    class _LegacyModel(_SignalingModel):
+        async def answer_webrtc_offer(  # pyright: ignore[reportIncompatibleMethodOverride]
+            self,
+            sdp_offer: str,
+            *,
+            instructions: str | None = None,
+            tools: Sequence[ToolDefinition] | None = None,
+            model_settings: RealtimeModelSettings | None = None,
+        ) -> WebRTCAnswer:
+            return await super().answer_webrtc_offer(sdp_offer)
+
+    answer = await Agent().realtime(_LegacyModel()).answer_webrtc_offer(SAMPLE_SDP_OFFER)
+    assert answer.sdp == SAMPLE_SDP_OFFER
 
 
 async def test_agent_realtime_signaling_resolves_bound_run_identity() -> None:

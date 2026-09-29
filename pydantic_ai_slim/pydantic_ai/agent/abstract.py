@@ -2210,8 +2210,9 @@ class AgentRealtime(Generic[AgentDepsT]):
 
         Resolution uses the same machinery as opening a session: dynamic `@agent.instructions` functions
         and capability `for_run` hooks run, and toolsets are set up (including starting MCP servers) to list
-        their tools, then torn down. Bound `message_history` is not baked into the offer; a sideband session
-        seeds it when it attaches, except on GPT-Live, which only takes history when it starts.
+        their tools, then torn down. The bound `message_history` is passed along too, so the call continues
+        that conversation on every provider: OpenAI GPT-Live seeds it when the offer starts the session, and
+        the others when a sideband opened from this same object attaches.
 
         This delegates to
         [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer], which is implemented
@@ -2235,12 +2236,18 @@ class AgentRealtime(Generic[AgentDepsT]):
         ) as resolved:
             # Current while the offer is answered, as while a session connects: a model can consult the
             # agent it belongs to (GPT-Live delegates to the agent's own model by default).
+            # Passed only when there is some, so a `RealtimeModel` written before the parameter existed keeps
+            # working without history.
+            history: dict[str, Sequence[_messages.ModelMessage]] = (
+                {'message_history': self._message_history} if self._message_history else {}
+            )
             with set_current_run_context(resolved.run_context):
                 return await resolved.model.answer_webrtc_offer(
                     sdp_offer,
                     instructions=resolved.instructions,
                     tools=resolved.model_request_parameters.function_tools,
                     model_settings=resolved.model_settings,
+                    **history,
                 )
 
     async def create_client_secret(self, *, expires_after_seconds: int | None = None) -> RealtimeClientSecret:
