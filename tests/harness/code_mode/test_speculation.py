@@ -1066,7 +1066,9 @@ class TestSpeculationEdgeCases:
             )
             try:
                 await asyncio.wait_for(cancellation_seen.wait(), timeout=5)
-                result = await asyncio.wait_for(run_code_task, timeout=0.75)
+                done, _ = await asyncio.wait({run_code_task}, timeout=0.75)
+                assert run_code_task in done
+                result = run_code_task.result()
             finally:
                 if not run_code_task.done():
                     run_code_task.cancel()
