@@ -20,6 +20,8 @@ from typing import Any
 from openai.types.realtime import (
     InputAudioBufferCommittedEvent,
     InputAudioBufferSpeechStartedEvent,
+    InputAudioBufferSpeechStoppedEvent,
+    InputAudioBufferTimeoutTriggered,
     RealtimeErrorEvent,
 )
 
@@ -101,6 +103,11 @@ class OpenAILifecycle:
         """Our tool outputs awaiting their `conversation.item.added`, by call id."""
         self._carried_over: set[InputId] = set()
         """Inputs an old socket never acknowledged, which join the conversation once a reconnect succeeds."""
+        self._idle_items: set[str] = set()
+        """Audio items the server committed for an idle timeout: a nudge to the model, not a user turn."""
+        self._refused_while_active: tuple[InputId, ...] = ()
+        """Inputs whose request the provider refused because a response it started on its own was active, which
+        answers them instead, once it is reported started."""
         self._committed: set[str] = set()
         """Spoken turns already committed, so a repeated commit doesn't make a second turn of one."""
 
@@ -183,8 +190,11 @@ class OpenAILifecycle:
         user_turn_id = None
         if not answers:
             # Started by the provider on its own: with server VAD, that is the reply to the spoken turn it
-            # just committed.
+            # just committed, and to the inputs whose request it refused because it was starting this one.
             user_turn_id, self._unclaimed_turn = self._unclaimed_turn, None
+            if self._refused_while_active:
+                answers, basis = self._refused_while_active, 'inferred'
+        self._refused_while_active = ()
         return [self._start(response_id, answers=self._settle(answers), basis=basis, user_turn_id=user_turn_id)]
 
     def response_done(
@@ -216,8 +226,13 @@ class OpenAILifecycle:
             return self.speech_started(data)
         if event_type == 'input_audio_buffer.committed':
             return self.audio_committed(data)
+        if event_type == 'input_audio_buffer.speech_stopped':
+            return self.speech_stopped(data)
         if event_type == 'input_audio_buffer.cleared':
             return self.audio_cleared()
+        if event_type == 'input_audio_buffer.timeout_triggered':
+            self._idle_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
+            return []
         if event_type in _CONVERSATION_ITEM_ADDED_FRAMES:
             return self.item_added(data)
         if event_type == 'error':
@@ -232,23 +247,48 @@ class OpenAILifecycle:
         return [UserTurnStarted(turn_id=item_id)]
 
     def audio_committed(self, data: dict[str, Any]) -> list[LifecycleEvent]:
-        """The input audio buffer was committed: the spoken turn joins the conversation here."""
+        """The input audio buffer was committed: the spoken turn joins the conversation here, if it hadn't."""
         item_id = InputAudioBufferCommittedEvent.model_validate(data).item_id
+        events = self._place(item_id)
+        self._speaking.pop(item_id, None)
+        return events
+
+    def speech_stopped(self, data: dict[str, Any]) -> list[LifecycleEvent]:
+        """Server VAD heard the user stop: it commits the turn right away, so the turn joins the conversation here."""
+        item_id = InputAudioBufferSpeechStoppedEvent.model_validate(data).item_id
+        if not item_id:
+            return []
+        events = self._place(item_id)
+        self._speaking.pop(item_id, None)
+        return events
+
+    def _place(self, item_id: str) -> list[LifecycleEvent]:
+        """The spoken turn joins the conversation (once), whatever says so first."""
         if item_id in self._committed:
             return []
         self._committed.add(item_id)
-        events: list[LifecycleEvent] = []
-        if item_id in self._speaking:
-            del self._speaking[item_id]
-        else:
-            # Push-to-talk reports no speech start: the commit both starts and ends the turn.
+        if item_id in self._idle_items:
+            # An idle timeout's empty audio item: the server nudges the model to speak, nobody said anything.
+            self._unclaimed_turn = None
+            return []
+        # Semantic VAD can hear several starts and commit only the last: the ones before it merged into it.
+        merged = [turn_id for turn_id in self._speaking if turn_id != item_id and turn_id not in self._committed]
+        events: list[LifecycleEvent] = [UserTurnDiscarded(turn_id=turn_id) for turn_id in merged]
+        for turn_id in merged:
+            del self._speaking[turn_id]
+        # Push-to-talk reports no speech start: the commit both starts and ends the turn.
+        if item_id not in self._speaking:
             events.append(UserTurnStarted(turn_id=item_id))
         events.append(UserTurnEnded(turn_id=item_id))
         self._unclaimed_turn = item_id
         return events
 
     def audio_cleared(self) -> list[LifecycleEvent]:
-        """The input audio buffer was cleared: a spoken turn under way never joins the conversation."""
+        """The input audio buffer was cleared: the spoken turn under way gets no more audio.
+
+        If it hadn't joined the conversation yet, it never will; if it had (xAI adds its item at speech start),
+        it stays, with nothing more to come for it.
+        """
         events: list[LifecycleEvent] = [UserTurnDiscarded(turn_id=turn_id) for turn_id in self._speaking]
         self._speaking.clear()
         return events
@@ -258,8 +298,12 @@ class OpenAILifecycle:
         item = CONVERSATION_ITEM_ADDED_EVENT_ADAPTER.validate_python(data).item
         if item.type == 'function_call_output' and item.call_id is not None:
             input_id = self._tool_outputs.pop(item.call_id, None)
+        elif item.id is not None and item.id in self._speaking:
+            # A spoken turn joins the conversation when its item is added. That can be before the user has
+            # stopped speaking: xAI adds it at speech start, and starts responding before the commit.
+            return self._place(item.id)
         elif not is_user_message_item(item):
-            # The model's output, or a spoken turn the server committed.
+            # The model's output, or a spoken turn already committed.
             return []
         elif (input_id := client_item_input(item.id)) is not None:
             if input_id not in self._messages:
@@ -283,6 +327,11 @@ class OpenAILifecycle:
                 # Refused content never joins the conversation, so no `conversation.item.added` will place it.
                 self._messages.remove(rejected.input_index)
         if error.event_id is None or (request := self._requests.pop(error.event_id, None)) is None:
+            return []
+        if error.code == 'conversation_already_has_active_response' and not self._open:
+            # Refused because the provider already started a response of its own, reported next: that one
+            # answers these inputs, which reached the conversation before it.
+            self._refused_while_active = (*self._refused_while_active, *request[0])
             return []
         return [ResponseRequestRefused(input_ids=answers)] if (answers := self._settle(request[0])) else []
 

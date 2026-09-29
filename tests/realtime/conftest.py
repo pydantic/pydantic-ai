@@ -186,6 +186,8 @@ def _shadow_core(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
     node = cast('pytest.Item', request.node)  # pyright: ignore[reportUnknownMemberType]
     if node.get_closest_marker('shadow_divergence') is None:
         assert not divergences, '\n'.join(divergences)
+    else:
+        assert divergences, 'the session cores agree on this trace now: drop its `shadow_divergence` mark'
 
 
 @pytest.fixture(autouse=True)

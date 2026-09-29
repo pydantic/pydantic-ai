@@ -84,7 +84,18 @@ from ..native_tools import SUPPORTED_NATIVE_TOOLS
 from ..run import AgentRunResult
 from ..tool_manager import ToolManager
 from ..usage import RequestUsage, RunUsage, UsageLimits
-from ._core import AudioCleared, AudioSent, Closed, InputSent, InputWithdrawn, Interrupted, SessionCore, ToolReturned
+from ._core import (
+    AudioCleared,
+    AudioSent,
+    Closed,
+    ExchangeAbandoned,
+    InputSent,
+    InputWithdrawn,
+    Interrupted,
+    ReceiveEnded,
+    SessionCore,
+    ToolReturned,
+)
 from ._instrumentation import (
     SessionInstrumentation,
 )
@@ -2184,6 +2195,8 @@ class RealtimeSession:
         """Park a background failure for iteration or close, ending receive-only views if nobody is iterating."""
         self._parked_errors.append(error)
         self._queue_put(error)
+        if self._core is not None:
+            self._core.apply(ExchangeAbandoned())
         if not self._response_limit_checked or any(isinstance(part, ToolCallPart) for part in self._response_parts):
             # A tool that raised, or a usage limit tripped by the request its result would make, stops
             # the model from getting that result, so the exchange waiting on it is over: a caller in
@@ -3847,6 +3860,8 @@ class RealtimeSession:
             self._pump_error = e
         finally:
             self._pump_finished = True
+            if self._core is not None:
+                self._core.apply(ReceiveEnded())
             self._exchange_progress.set()
             if not self._closed:
                 self._finish_taps()

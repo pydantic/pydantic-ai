@@ -137,11 +137,34 @@ class Interrupted:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ExchangeAbandoned:
+    """The session hit a failure that stops the model getting what it needs (a tool raised, a limit tripped).
+
+    Nothing owed until now is waited for any more; what is asked for afterwards is.
+    """
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReceiveEnded:
+    """The session stopped reading the connection: nothing more will be said, so nothing is owed any more."""
+
+
+@dataclass(frozen=True, kw_only=True)
 class Closed:
     """The session is closing: everything still open is settled into history, and nothing is owed any more."""
 
 
-Command: TypeAlias = InputSent | InputWithdrawn | AudioSent | AudioCleared | ToolReturned | Interrupted | Closed
+Command: TypeAlias = (
+    InputSent
+    | InputWithdrawn
+    | AudioSent
+    | AudioCleared
+    | ToolReturned
+    | Interrupted
+    | ExchangeAbandoned
+    | ReceiveEnded
+    | Closed
+)
 CoreInput: TypeAlias = RealtimeCodecEvent | LifecycleEvent | Command
 
 
@@ -195,6 +218,16 @@ _Entry: TypeAlias = _Response | _UserTurn | _Input
 _Obligation = Literal['pending', 'answered', 'refused', 'lost', 'void']
 
 
+@dataclass(frozen=True)
+class Owed:
+    """Something the model owes a waiter: a reply to an input, the end of a response, or the answer to a call."""
+
+    kind: Literal['input', 'response', 'call']
+    key: str
+    epoch: int
+    """Which exchange it was owed in; `ExchangeAbandoned` starts the next."""
+
+
 class SessionCore:
     """The session's conversation state; see the module docstring."""
 
@@ -244,7 +277,14 @@ class SessionCore:
         self._settled_calls: set[str] = set()
         """Calls that settled: their result is recorded (sent or not), or the provider cancelled them."""
         self._input_audio = bytearray()
+        self._user_speaking = False
+        self._speech_segmented = False
+        """Whether the provider draws speech-end boundaries, so the retained audio is cut into turns at them."""
         self._closed = False
+        self._receiving = True
+        self._epoch = 0
+        self._abandoned: set[tuple[str, str]] = set()
+        """What was owed when an exchange was abandoned: no waiter waits for it again."""
 
     # --- the one transition ------------------------------------------------------------------------
 
@@ -269,8 +309,10 @@ class SessionCore:
         elif isinstance(item, InputTranscript):
             self._input_transcript(item)
         elif isinstance(item, RealtimeInputTranscriptionErrorEvent):
-            if item.item_id is not None:
-                self._transcribed(self._turn(item.item_id), failed=True)
+            if item.item_id is not None and (turn := self._turns.get(item.item_id)) is not None:
+                self._transcribed(turn, failed=True)
+        elif isinstance(item, RealtimeInputSpeechStartEvent):
+            self._user_speaking = True
         elif isinstance(item, RealtimeInputSpeechEndEvent):
             self._speech_ended(item.item_id)
         elif isinstance(item, InputAdded):
@@ -286,7 +328,6 @@ class SessionCore:
             item,
             (
                 ResponseDone,  # the lifecycle's `ResponseEnded` says the same, once per response
-                RealtimeInputSpeechStartEvent,
                 RealtimeOutputSpeechStartEvent,
                 RealtimeOutputSpeechEndEvent,
                 RealtimeResponseInterruptedEvent,
@@ -322,6 +363,11 @@ class SessionCore:
         elif isinstance(command, Interrupted):
             if (response := self._speaking_response()) is not None:
                 response.interrupted_at_ms = command.played_ms
+        elif isinstance(command, ExchangeAbandoned):
+            self._abandoned.update((token.kind, token.key) for token in self.wait_tokens())
+            self._epoch += 1
+        elif isinstance(command, ReceiveEnded):
+            self._receiving = False
         elif isinstance(command, Closed):
             self._close()
         else:
@@ -423,6 +469,12 @@ class SessionCore:
         response = self._responses[event.response_id]
         self._close_part(response)
         response.status = event.status
+        answered_calls_only = bool(response.parts) and all(isinstance(part, ToolCallPart) for part in response.parts)
+        if event.status != 'lost' and not (event.status == 'completed' and answered_calls_only):
+            # A reply is over, and nobody is speaking: audio sent since the last speech boundary is the tail
+            # of the last turn, trailing its commit, not the start of the next one.
+            if self._speech_segmented and not self._user_speaking:
+                self._input_audio.clear()
         interrupted = event.status in ('cancelled', 'lost')
         if event.status == 'lost' and not response.parts and response.usage == RequestUsage():
             # Cut off before it said anything or was billed: there is nothing to record.
@@ -476,8 +528,11 @@ class SessionCore:
         return turn
 
     def _speech_ended(self, item_id: str | None) -> None:
-        if item_id is not None and self._retain_input and self._input_audio:
-            turn = self._turn(item_id)
+        self._user_speaking = False
+        self._speech_segmented = True
+        if item_id is None or (turn := self._turns.get(item_id)) is None:
+            return
+        if self._retain_input and self._input_audio:
             if turn.audio is None:
                 turn.audio = bytes(self._input_audio)
                 self._input_audio.clear()
@@ -498,14 +553,19 @@ class SessionCore:
             self._build_turn(turn)
 
     def _discard_turn(self, turn_id: str) -> None:
-        turn = self._turns.pop(turn_id, None)
-        assert turn is None or not turn.ended, 'a discarded turn never joined the conversation'
+        if (turn := self._turns.get(turn_id)) is None:
+            return
+        if turn.ended:
+            # It joined the conversation, but no more of it is coming: no transcript either.
+            self._transcribed(turn, failed=True)
+        else:
+            del self._turns[turn_id]
 
     def _input_transcript(self, event: InputTranscript) -> None:
-        if event.item_id is None:
-            return
-        turn = self._turn(event.item_id)
-        if turn.message is not None:
+        # Only a spoken turn the connection reported transcribes into history: not, say, the empty audio item
+        # an idle timeout commits to nudge the model.
+        turn = self._turns.get(event.item_id) if event.item_id is not None else None
+        if turn is None or turn.message is not None:
             return
         turn.transcript, _ = user_transcript_update(turn.transcript, event.text, cumulative=event.cumulative)
         if event.is_final:
@@ -603,48 +663,55 @@ class SessionCore:
         """Whether anything the model owes is still to come: what `wait_for_reply()` waits for, taken now."""
         return bool(self.wait_tokens())
 
-    def wait_tokens(self) -> frozenset[tuple[str, str]]:
+    def wait_tokens(self) -> frozenset[Owed]:
         """What the model owes right now, as tokens a waiter follows until they all resolve (see `still_owed`)."""
-        tokens = {('input', str(input_id)) for input_id, outcome in self._obligations.items() if outcome == 'pending'}
-        tokens |= {('response', response_id) for response_id, r in self._responses.items() if r.status is None}
+        epoch = self._epoch
+        tokens = {Owed('input', str(input_id), epoch) for input_id, o in self._obligations.items() if o == 'pending'}
         tokens |= {
-            ('call', call_id)
+            Owed('response', response_id, epoch) for response_id, r in self._responses.items() if r.status is None
+        }
+        tokens |= {
+            Owed('call', call_id, epoch)
             for call_id, response in self._call_response.items()
             if call_id not in self._settled_calls and response.status in (None, 'completed')
         }
         return self.still_owed(frozenset(tokens))
 
-    def still_owed(self, tokens: frozenset[tuple[str, str]]) -> frozenset[tuple[str, str]]:
+    def still_owed(self, tokens: frozenset[Owed]) -> frozenset[Owed]:
         """Follow each token to what it led to, keeping only what is still to come.
 
         An answered input leads to the response that answers it; a finished response to its tool calls, which
         the model answers once it has their results; a call whose result went out to that result's input.
+        Once nothing more is read, nothing more can come, and what was owed when the exchange was abandoned
+        (see `ExchangeAbandoned`) is owed no longer.
         """
-        owed: set[tuple[str, str]] = set()
-        pending = list(tokens)
-        seen: set[tuple[str, str]] = set()
+        if not self._receiving or self._closed:
+            return frozenset()
+        owed: set[Owed] = set()
+        pending = [
+            token for token in tokens if token.epoch == self._epoch and (token.kind, token.key) not in self._abandoned
+        ]
+        seen: set[Owed] = set()
         while pending:
             token = pending.pop()
             if token in seen:
                 continue
             seen.add(token)
-            kind, key = token
-            if kind == 'input':
-                input_id = int(key)
+            if token.kind == 'input':
+                input_id = int(token.key)
                 outcome = self._obligations.get(input_id, 'void')
-                if outcome == 'pending' and not self._closed:
+                if outcome == 'pending':
                     owed.add(token)
                 elif outcome == 'answered':
-                    pending.append(('response', self._answered_by[input_id]))
-            elif kind == 'response':
-                response = self._responses[key]
-                if response.status is None and not self._closed:
+                    pending.append(replace(token, kind='response', key=self._answered_by[input_id]))
+            elif token.kind == 'response':
+                response = self._responses[token.key]
+                if response.status is None:
                     owed.add(token)
                 elif response.status == 'completed':
-                    pending.extend(('call', call_id) for call_id in response.tool_calls)
-            else:
-                if (result := self._result_input.get(key)) is not None:
-                    pending.append(('input', str(result)))
-                elif key not in self._settled_calls and not self._closed:
-                    owed.add(token)
+                    pending.extend(replace(token, kind='call', key=call_id) for call_id in response.tool_calls)
+            elif (result := self._result_input.get(token.key)) is not None:
+                pending.append(replace(token, kind='input', key=str(result)))
+            elif token.key not in self._settled_calls:
+                owed.add(token)
         return frozenset(owed)

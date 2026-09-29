@@ -4675,6 +4675,7 @@ def _response_frames(response_id: str, transcript: str) -> list[dict[str, Any]]:
     ]
 
 
+@pytest.mark.shadow_divergence(reason='SIM-2a: turns sent after the reply started are filed after it, not before')
 @pytest.mark.anyio
 async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for_once() -> None:
     """Turns sent while a reply is in flight share one deferred response, and `wait_for_reply()` returns after it.
@@ -4856,6 +4857,9 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(stat
             await session.wait_for_reply()
 
 
+@pytest.mark.shadow_divergence(
+    reason="SIM-2a: a turn sent after the batch's answer was requested is filed after that answer"
+)
 @pytest.mark.anyio
 async def test_tool_batch_response_create_counts_as_one_request() -> None:
     """A batch's `response.create` is one request, however many outputs it follows.

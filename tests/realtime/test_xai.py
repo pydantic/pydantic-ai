@@ -854,6 +854,12 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
     assert json.loads(good.sent[0])['session']['resumption'] == {'enabled': True}
 
 
+@pytest.mark.shadow_divergence(
+    reason=(
+        'synthetic frames: the transcript and the terminal name different responses, and the input is '
+        'acknowledged before it is sent'
+    )
+)
 async def test_reconnect_replay_burst_is_deduplicated_from_session_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

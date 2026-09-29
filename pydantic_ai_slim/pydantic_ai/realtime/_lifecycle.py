@@ -92,7 +92,10 @@ class UserTurnEnded:
 
 @dataclass(frozen=True, kw_only=True)
 class UserTurnDiscarded:
-    """A spoken turn that started never joined the conversation: its audio was cleared or its connection lost."""
+    """A spoken turn gets no more audio: it was cleared, or its connection lost.
+
+    One that hadn't joined the conversation (`UserTurnEnded`) never will; one that had stays, as it was.
+    """
 
     turn_id: str
 

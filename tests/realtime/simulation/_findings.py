@@ -621,7 +621,7 @@ PARKED_ERROR_LEAVES_REQUEST_OWED = Finding(
 
 def _speech_cleared_after_barge_in(sim: Simulation, violation: InvariantViolation) -> bool:
     started = sim.truth.speech_started
-    return any(key not in {input_.key for input_ in sim.truth.inputs} for key in started) and any(
+    return any(key not in sim.truth.speech_committed for key in started) and any(
         operation.name == 'clear_audio' for operation in sim.operations
     )
 
