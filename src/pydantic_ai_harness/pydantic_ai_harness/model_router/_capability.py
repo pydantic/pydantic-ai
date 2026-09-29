@@ -179,6 +179,7 @@ class ModelRouter(AbstractCapability[AgentDepsT]):
                 candidate, error_type = None, type(error).__name__
             if candidate is None:
                 fallback_reason = 'error'
+                assert error_type is not None
                 if span.is_recording():
                     span.set_attribute('model_router.error.type', error_type)
                     span.set_status(Status(StatusCode.ERROR, 'Router request failed; used the default choice.'))
