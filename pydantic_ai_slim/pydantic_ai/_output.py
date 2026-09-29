@@ -30,6 +30,7 @@ from .output import (
     TextOutputFunc,
     ToolOutput,
     _ChoicesActions,  # type: ignore[reportPrivateUsage]
+    _NoneOutput,  # type: ignore[reportPrivateUsage]
     _OutputSpecItem,  # type: ignore[reportPrivateUsage]
 )
 from .tools import DeferredToolRequests, GenerateToolJsonSchema, ObjectJsonSchema, ToolDefinition
@@ -106,12 +107,13 @@ def _build_output_handlers(
 
 
 def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
-    """`isinstance(value, type_)` that also works for generics like `list[Bar]`.
+    """`isinstance(value, type_)` that also works for generics like `list[Bar]` and for `Annotated[Bar, ...]`.
 
     `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin
     (here `list`), so union output resolution still matches the collection type when the
     element type can't be checked at runtime.
     """
+    type_ = _utils.unwrap_annotated(type_)
     try:
         return isinstance(value, type_)
     except TypeError:
@@ -471,10 +473,12 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         """Build an OutputSchema dataclass from an output type."""
         outputs = _flatten_output_spec(output_spec)
 
-        # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself
-        allows_none = NoneType in outputs or None in outputs
+        # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself.
+        # `Annotated[None, Field(description=...)]` is still `None`, and its description goes to the `None` output tool.
+        none_outputs = [output for output in outputs if _utils.unwrap_annotated(output) in (NoneType, None)]
+        allows_none = bool(none_outputs)
         if allows_none:
-            outputs = [output for output in outputs if output is not NoneType and output is not None]
+            outputs = [output for output in outputs if output not in none_outputs]
             if len(outputs) == 0:
                 raise UserError('At least one output type must be provided other than `None`.')
 
@@ -565,7 +569,8 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         # output tool so the model can commit to `None` through the structured schema alongside
         # any other output types, matching how the model would pick between them.
         if allows_none and (tool_outputs or other_outputs):
-            other_outputs.append(cast(OutputTypeOrFunction[OutputDataT], NoneType))
+            none_output = next((output for output in none_outputs if output not in (NoneType, None)), NoneType)
+            other_outputs.append(cast(OutputTypeOrFunction[OutputDataT], none_output))
 
         toolset = OutputToolset.build(tool_outputs + other_outputs, name=name, description=description, strict=strict)
 
@@ -844,6 +849,22 @@ class BaseOutputProcessor(ABC, Generic[OutputDataT]):
         raise NotImplementedError()
 
 
+def _output_type_name(output: Any) -> str | None:
+    """What to call an output type where its name is shown to the model.
+
+    `NoneType` is Python's name for the type of `None`; `None` is what the user wrote. A model offered
+    `final_result_NoneType` has to know a Python implementation detail to read it as "no answer", so the
+    route is named for the value instead. Both spellings arrive here: `int | None` resolves to the type,
+    while `ToolOutput(None)` and a bare `None` in a list of output types are unwrapped to the value, which
+    has no `__name__` at all and would otherwise leave its route named `final_result_`. An `Annotated[X, ...]`
+    is named for `X`: its own `__name__` is `Annotated`, which every annotated member of a union would share.
+    """
+    output = _utils.unwrap_annotated(output)
+    if output is NoneType or output is None:
+        return 'None'
+    return getattr(output, '__name__', None)
+
+
 @dataclass(kw_only=True)
 class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
     object_def: OutputObjectDefinition
@@ -895,7 +916,8 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             self.output_type = cast(type[Any], output)
             json_schema_type_adapter: TypeAdapter[Any]
             validation_type_adapter: TypeAdapter[Any]
-            if _utils.is_model_like(output):
+            unwrapped_output = _utils.unwrap_annotated(output)
+            if _utils.is_model_like(unwrapped_output):
                 json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)
             else:
                 self.outer_typed_dict_key = 'response'
@@ -918,9 +940,17 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
             # Really a PluggableSchemaValidator, but it's API-compatible
             self.validator = cast(SchemaValidator, validation_type_adapter.validator)
-            json_schema = _utils.check_object_json_schema(
-                json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+            raw_json_schema = json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+            # `Annotated[Model, Field(...)]` renders as a `$ref` to the model with the annotation's own keywords (`title`,
+            # `description`, `examples`, ...) beside it, so keep them when `check_object_json_schema` swaps the `$ref`
+            # for the model's own schema.
+            annotation_keywords = (
+                {k: v for k, v in raw_json_schema.items() if k not in ('$ref', '$defs')}
+                if '$ref' in raw_json_schema
+                else {}
             )
+            json_schema = _utils.check_object_json_schema(raw_json_schema)
+            json_schema.update(annotation_keywords)
 
             if self.outer_typed_dict_key:
                 # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
@@ -937,7 +967,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         super().__init__(
             object_def=OutputObjectDefinition(
-                name=name or getattr(output, '__name__', None),
+                name=name or _output_type_name(output),
                 description=description,
                 json_schema=json_schema,
                 strict=strict,
@@ -1108,7 +1138,9 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             processor = ObjectOutputProcessor(output=output, strict=strict)
             object_def = processor.object_def
 
-            object_key = object_def.name or output.__name__
+            # Unions are flattened before this point, and `Annotated[...]` or `Literal[...]` has a `__name__` at
+            # run time that `TypeForm` doesn't declare.
+            object_key = object_def.name or getattr(output, '__name__')
             i = 1
             original_key = object_key
             while object_key in self._processors:
@@ -1570,7 +1602,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 
 
 def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem[T]]:
-    outputs: Sequence[OutputSpec[T]]
+    outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
@@ -1580,7 +1612,8 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
     for output in outputs:
         if isinstance(output, Sequence):
             outputs_flat.extend(_flatten_output_spec(cast(OutputSpec[T], output)))
-        elif union_types := _utils.get_union_args(output):
+        # A union's members keep their `Annotated` metadata, as they do when listed: `X | Y` is `[X, Y]`.
+        elif union_types := _utils.get_union_args(output, unwrap_members=False):
             outputs_flat.extend(union_types)
         else:
             outputs_flat.append(cast(_OutputSpecItem[T], output))
@@ -1588,7 +1621,7 @@ def _flatten_output_spec(output_spec: OutputSpec[T]) -> Sequence[_OutputSpecItem
 
 
 def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]]:
-    outputs: Sequence[OutputSpec[T]]
+    outputs: Sequence[OutputSpec[T] | _NoneOutput[T]]
     if isinstance(output_spec, Sequence):
         outputs = output_spec  # pyright: ignore[reportUnknownVariableType]
     else:
@@ -1604,7 +1637,8 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
             outputs_flat.append(str)
         elif isinstance(output, ToolOutput):
             outputs_flat.extend(types_from_output_spec(output.output))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-        elif union_types := _utils.get_union_args(output):
+        # A union's members keep their `Annotated` metadata, as they do when listed: `X | Y` is `[X, Y]`.
+        elif union_types := _utils.get_union_args(output, unwrap_members=False):
             outputs_flat.extend(union_types)
         elif inspect.isfunction(output) or inspect.ismethod(output):
             type_hints = get_function_type_hints(output)

@@ -17,9 +17,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
   <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain">
     <img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI" />
   </a>
-  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai">
-    <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage" />
-  </a>
+  <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage" />
   <a href="https://pypi.python.org/pypi/pydantic-ai">
     <img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI" />
   </a>
@@ -40,7 +38,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
 
 **Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), in [GitHub Actions](https://pydantic.dev/docs/ai/harness/gh-aw/), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](image-generation.md) and [embeddings](embeddings.md) come in the same box; [Pydantic Graph](graph.md) and [Pydantic Evals](evals.md) are separate packages, for typed control flow and for testing agent behavior the way pytest tests code.
 
-**[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) to [planning](https://pydantic.dev/docs/ai/harness/planning/), [context management](https://pydantic.dev/docs/ai/harness/compaction/), and [storage](storage.md), up to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) to [planning](https://pydantic.dev/docs/ai/harness/planning/), [context management](https://pydantic.dev/docs/ai/harness/compaction/), and [persistence](persistence.md), up to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
 [Pydantic Logfire](https://pydantic.dev/logfire) is the AI observability platform that sees your whole app, not just the LLM calls, and the [Pydantic AI Gateway](gateway.md) is one key for every model with real-time cost monitoring and budget control; the Gateway self-hosts if you would rather, and our [instrumentation](logfire.md) is plain OpenTelemetry, so any backend you already run works. Underneath both, [genai-prices](https://github.com/pydantic/genai-prices) keeps model pricing current, and [Monty](https://github.com/pydantic/monty) is the sandboxed Python interpreter that runs model-written code.
 
@@ -116,7 +114,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 
     @agent.tool
-    def recent_reviews(ctx: RunContext[None], product: str) -> list[str]:
+    def recent_reviews(ctx: RunContext, product: str) -> list[str]:
         """Fetch recent review snippets for a product."""
         return ['The new release fixed everything I complained about!']
 

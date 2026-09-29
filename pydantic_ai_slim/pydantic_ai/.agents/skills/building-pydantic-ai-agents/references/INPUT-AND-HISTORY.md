@@ -118,7 +118,7 @@ agent = Agent('anthropic:claude-opus-4-7', name='alerting_agent')
 
 
 @agent.tool
-def trigger_alert(ctx: RunContext[None]) -> str:
+def trigger_alert(ctx: RunContext) -> str:
     ctx.enqueue('Alert: production is degraded, prioritize triage.')
     return 'alert raised'
 ```

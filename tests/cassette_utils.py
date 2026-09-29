@@ -26,7 +26,7 @@ except ImportError:  # pragma: no cover
     from yaml import SafeLoader
 
 if TYPE_CHECKING:
-    from vcr.cassette import Cassette
+    from cassetter import Cassette, RecordedRequest
 
 PrefixBlock = tuple[str, str]
 
@@ -51,7 +51,7 @@ class CassettePrefixViolation:
     later_block: str
 
 
-def check_cache_prefix_stability(node: pytest.Item, cassette_path: Path) -> None:
+def check_cache_prefix_stability(node: pytest.Item, cassette: Path | Cassette) -> None:
     """Fail when a cassette moves its provider-cache wire prefix without an exemption."""
     if (marker := node.get_closest_marker('moves_cache_prefix')) is not None:
         reason = marker.kwargs.get('reason')
@@ -62,8 +62,9 @@ def check_cache_prefix_stability(node: pytest.Item, cassette_path: Path) -> None
             )
         return
 
-    violations = list(iter_cassette_prefix_violations(cassette_path))
+    violations = list(iter_cassette_prefix_violations(cassette))
     if violations:
+        cassette_path = cassette if isinstance(cassette, Path) else cassette.path
         details = '\n'.join(
             f'{cassette_path} [{violation.shape}] pair {violation.pair_index}, {violation.level} block '
             f'{violation.block_index}:\n  earlier: {violation.earlier_block}\n  later:   {violation.later_block}'
@@ -240,35 +241,59 @@ def classify_prefix_pair(a: list[PrefixBlock], b: list[PrefixBlock]) -> tuple[st
     return f'{level}-divergent', divergent_index
 
 
-def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePrefixViolation]:
-    """Yield prompt-cache prefix violations from one VCR cassette.
+def recorded_request_body(request: dict[str, Any]) -> Any:
+    """The decoded body of a request mapping read straight from a cassette file.
+
+    Cassettes recorded under vcrpy carry the parsed JSON as `parsed_body` (and the raw text as `body`);
+    cassetter writes a typed `body: {type: json | text | binary | none, content: ...}` mapping.
+    """
+    if (parsed_body := request.get('parsed_body')) is not None:
+        return parsed_body
+    body = request.get('body')
+    if is_str_dict(body) and 'type' in body:
+        return body.get('content') if body['type'] in ('json', 'text') else None
+    return body
+
+
+def _yaml_cassette_requests(cassette_path: Path) -> Iterator[tuple[Any, Any, Any]]:
+    """Yield `(method, uri, body)` for each request in a cassette file on disk."""
+    cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
+    if not is_str_dict(cassette):
+        return
+    raw_interactions = cassette.get('interactions')
+    if not _is_list(raw_interactions):
+        return
+    for interaction in raw_interactions:
+        if is_str_dict(interaction) and is_str_dict(request := interaction.get('request')):
+            yield request.get('method'), request.get('uri'), recorded_request_body(request)
+
+
+def _loaded_cassette_requests(cassette: Cassette) -> Iterator[tuple[Any, Any, Any]]:
+    """Yield `(method, uri, body)` for each request cassetter already parsed, so the file is not read again."""
+    for interaction in cassette.interactions:
+        request = interaction.request
+        body = request.body.content if request.body.body_type == 'json' else None
+        yield request.method, request.uri, body
+
+
+def iter_cassette_prefix_violations(cassette: Path | Cassette) -> Iterator[CassettePrefixViolation]:
+    """Yield prompt-cache prefix violations from one cassette, either a file on disk or one cassetter loaded.
 
     Across 1,177 cassettes on 2026-07-15, this found 15 deliberately prefix-moving pairs in ten
     cassettes. Requests are grouped by host and provider shape so unrelated endpoints are not paired.
     """
-    cassette = yaml.load(cassette_path.read_text(encoding='utf-8'), Loader=SafeLoader)
-    if not is_str_dict(cassette):
-        return
+    requests = _yaml_cassette_requests(cassette) if isinstance(cassette, Path) else _loaded_cassette_requests(cassette)
     # Group by (host, path, shape): only requests to the same endpoint share a provider cache, so the
     # path must be part of the key. Otherwise a token-count or compaction sub-endpoint, a different
     # model or deployment carried in the path, or any other sibling endpoint on the same host would be
     # pooled with generation requests and compared as if consecutive -- a spurious divergence.
     requests_by_endpoint: dict[tuple[str, str, str], list[tuple[list[PrefixBlock], list[str]]]] = defaultdict(list)
 
-    raw_interactions = cassette.get('interactions')
-    if not _is_list(raw_interactions):
-        return
-    interactions = raw_interactions
-    for interaction in interactions:
-        if not is_str_dict(interaction) or not is_str_dict(request := interaction.get('request')):
-            continue
-        method = request.get('method')
+    for method, uri, body in requests:
         if not isinstance(method, str) or method.upper() != 'POST':
             continue
-        body = request.get('parsed_body')
         if not is_str_dict(body):
             continue
-        uri = request.get('uri')
         if not isinstance(uri, str):
             continue
         canonical = canonical_prefix_blocks(body, uri)
@@ -324,23 +349,22 @@ def iter_cassette_prefix_violations(cassette_path: Path) -> Iterator[CassettePre
 
 
 def get_first_post_body(cassette: Cassette) -> dict[str, Any]:
-    """Return the first POST request body in a VCR cassette, parsed as JSON.
-
-    Some VCR serializers (e.g. the project's custom JSON body serializer used for
-    huggingface cassettes) deserialize `request.body` to a dict ahead of time;
-    others leave it as raw bytes/str. Handle both shapes.
-    """
-    for request in cassette.requests:  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-        if request.method != 'POST':  # pyright: ignore[reportUnknownMemberType]
+    """Return the first POST request body in a cassette, parsed as JSON."""
+    for request in cassette.requests:
+        if request.method != 'POST':
             continue
-        body = request.body  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
+        body = request.body
         if not body:
             continue  # pragma: no cover
-        if isinstance(body, dict):
-            return body  # pyright: ignore[reportUnknownVariableType]
-        parsed: dict[str, Any] = json.loads(body)  # pyright: ignore[reportUnknownArgumentType]
+        parsed: dict[str, Any] = json.loads(body)
         return parsed
     return {}  # pragma: no cover
+
+
+def request_json(request: RecordedRequest) -> Any:
+    """Decode the JSON body of one recorded request."""
+    assert request.body is not None, f'Expected the recorded {request.method} {request.uri} to carry a body'
+    return json.loads(request.body)
 
 
 def single_request_body(cassette: Cassette) -> dict[str, Any]:
@@ -351,9 +375,9 @@ def single_request_body(cassette: Cassette) -> dict[str, Any]:
     translation). Asserts the single-request invariant — tests with intentional
     multi-request cassettes should access `cassette.requests` directly.
     """
-    requests = cassette.requests  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    assert len(requests) == 1, f'Expected 1 request, got {len(requests)}'  # pyright: ignore[reportUnknownArgumentType]
-    return json.loads(requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    requests = cassette.requests
+    assert len(requests) == 1, f'Expected 1 request, got {len(requests)}'
+    return request_json(requests[0])
 
 
 # Provider-specific cassette extractors — group new ones under this header so the module
@@ -378,34 +402,28 @@ def get_cohere_tool_names_from_cassette(cassette: Cassette) -> list[str]:
 
 
 def _get_cassette_request_bodies(cassette: Cassette) -> list[str]:
-    """Get all request bodies from a VCR cassette as strings."""
+    """Get all request bodies from a cassette as strings."""
     bodies: list[str] = []
-    for request in cassette.requests:  # pyright: ignore[reportUnknownVariableType,reportUnknownMemberType]
-        raw_body = request.body  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
+    for request in cassette.requests:
+        raw_body = request.body
         if raw_body:
-            body = raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body  # pyright: ignore[reportUnknownVariableType]
-            bodies.append(body)  # pyright: ignore[reportUnknownArgumentType]
-        elif getattr(request, 'parsed_body', None):  # pyright: ignore[reportUnknownArgumentType]  # pragma: no cover
-            bodies.append(json.dumps(request.parsed_body))  # pyright: ignore[reportUnknownMemberType]
+            bodies.append(raw_body.decode('utf-8', errors='ignore') if isinstance(raw_body, bytes) else raw_body)
     return bodies
 
 
 def _get_cassette_bodies_from_yaml(path: Path) -> list[str]:
-    """Read request bodies from a VCR cassette YAML file on disk.
+    """Read request bodies from a cassette YAML file on disk.
 
-    Used as fallback when the VCR cassette object is not available (e.g. CI playback).
+    Used as fallback when the cassette object is not available (e.g. CI playback).
     """
     data: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
     bodies: list[str] = []
     for interaction in data.get('interactions', []):
-        request = interaction.get('request', {})
-        parsed_body = request.get('parsed_body') or request.get('body')
-        if parsed_body is None:
-            continue
-        if isinstance(parsed_body, dict | list):
-            bodies.append(json.dumps(parsed_body))
-        elif isinstance(parsed_body, str) and parsed_body:
-            bodies.append(parsed_body)
+        body = recorded_request_body(interaction.get('request', {}))
+        if isinstance(body, dict | list):
+            bodies.append(json.dumps(body))
+        elif isinstance(body, str) and body:
+            bodies.append(body)
     return bodies
 
 
@@ -450,9 +468,9 @@ def _pattern_in_bodies(pattern: str, bodies: list[str]) -> bool:
 
 @dataclass
 class CassetteContext:
-    """Unified cassette verification context for VCR and XAI cassettes.
+    """Unified cassette verification context for HTTP and XAI cassettes.
 
-    Encapsulates provider-specific cassette handling (VCR vs XAI proto format)
+    Encapsulates provider-specific cassette handling (cassetter vs XAI proto format)
     and provides a uniform verification interface.
     """
 
@@ -497,8 +515,7 @@ class CassetteContext:
             AssertionError: If a pattern is not found.
         """
         bodies = self._get_bodies()
-        if not bodies:
-            return
+        assert bodies, f'No recorded request bodies to verify for {self.test_name}'
 
         for pattern in patterns:
             if isinstance(pattern, tuple):
@@ -519,8 +536,7 @@ class CassetteContext:
             AssertionError: If ordering is violated or a pattern is not found.
         """
         bodies = self._get_bodies()
-        if not bodies:
-            return
+        assert bodies, f'No recorded request bodies to verify for {self.test_name}'
 
         content = ''.join(bodies)
         last_index = -1

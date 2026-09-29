@@ -1,3 +1,7 @@
+---
+description: "Install Pydantic AI with pip or uv on Python 3.10+, or install pydantic-ai-slim with only the optional extras for the model providers and integrations you use."
+---
+
 # Installation
 
 Pydantic AI is available on PyPI as [`pydantic-ai`](https://pypi.org/project/pydantic-ai/) so installation is as simple as:

@@ -1,3 +1,7 @@
+---
+description: "Continue multi-turn conversations with Pydantic AI message history: reuse and store messages as JSON, inject messages mid-run, and trim or summarize history."
+---
+
 # Messages and chat history
 
 Pydantic AI provides access to messages exchanged during an agent run. These messages can be used both to continue a coherent conversation, and to understand how an agent performed.
@@ -441,7 +445,7 @@ async with agent.run_stream('Tell me a joke.') as streamed:
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
 
-[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, and removes unresolved tool calls at the end of the history.
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, resets [workspace](workspace.md) references so a client can't point your agent at another environment, and removes unresolved tool calls at the end of the history.
 
 Client-supplied [`CompactionPart`][pydantic_ai.messages.CompactionPart]s are kept, so the conversation stays [compacted](capabilities/compaction.md) — but they are never trusted to stand in for the system prompt. Whether that prompt is a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] already in the history or one re-injected by [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt], it is re-sent to the model even where a provider's own compaction state would normally let it be skipped. If you combine the sanitized history with trusted server-side `message_history`, also pass `strip_compaction_parts=True`: everything before a compaction item is hidden from the model, so a client-supplied one would hide the server's history — see [Client-held history](capabilities/compaction.md#client-held-history). The [UI adapters](ui/overview.md) apply this rule automatically when a run combines server-side `message_history` with client-submitted messages.
 
@@ -458,11 +462,11 @@ message_history = sanitize_messages(loaded_history)
 result = agent.run_sync('Tell me a different joke.', message_history=message_history)
 ```
 
-Each sanitization can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False`, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, or set `allow_uploaded_files=True`. See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+Each sanitization can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False`, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, set `allow_uploaded_files=True`, or set `strip_workspace_refs=False`. To continue client-supplied history in the same workspace, pass a reference you saved server-side as `workspace=` (see [Continuing in the same workspace](workspace.md#continuing-in-the-same-workspace)). See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
 
 ## Persisting sessions
 
-[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application, and [Storage](storage.md) lays out the choice, including the cases a stored history doesn't answer. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
+[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application, and [Persistence](persistence.md) lays out the choice, including the cases a stored history doesn't answer. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
 
 For a chat application that is usually the whole design: load a thread's history, pass it as `message_history`, and write back [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] once the run finishes. Appending each run's new messages rather than rewriting the full list keeps each write proportional to the turn instead of to the conversation, and leaves the stored order intact.
 
@@ -692,13 +696,13 @@ agent = Agent('anthropic:claude-opus-4-7')
 
 
 @agent.tool
-def trigger_alert(ctx: RunContext[None]) -> str:
+def trigger_alert(ctx: RunContext) -> str:
     ctx.enqueue('Alert: production is degraded, prioritize triage.')
     return 'alert raised'
 
 
 @agent.tool
-def enter_incident_mode(ctx: RunContext[None]) -> str:
+def enter_incident_mode(ctx: RunContext) -> str:
     # Enqueue a `SystemPromptPart` to adjust the agent's standing instructions mid-run.
     ctx.enqueue(SystemPromptPart(content='You are now in incident mode: be terse and action-oriented.'))
     return 'incident mode enabled'
@@ -935,7 +939,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import ProcessHistory
 
 
 def compact_when_window_fills(
@@ -960,14 +964,14 @@ def compact_when_window_fills(
 
 agent = Agent(
     'openai:gpt-5.2',
-    system_prompt='You are a helpful assistant.',
-    capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
+    instructions='You are a helpful assistant.',
+    capabilities=[ProcessHistory(compact_when_window_fills)],
 )
 ```
 
 Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers.
 
-Keep [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor, as shown, so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
+[Instructions](agent.md#instructions) are sent with every request rather than stored in the history, so compaction can't drop them. If you use [`system_prompt`](agent.md#system-prompts) instead, add [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
 
 Pydantic AI fills the window size from [genai-prices](https://github.com/pydantic/genai-prices) where its data records one. For a custom or local model, or one genai-prices doesn't cover yet, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
 

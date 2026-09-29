@@ -1,0 +1,105 @@
+name: Sandbox live tests
+
+# Runs each `pydantic-ai-harness` sandbox provider's live tier against the provider's real
+# service. Every test starts a billed sandbox, so `sandbox-live-nightly.yml` calls this only
+# on its daily schedule or when a maintainer explicitly dispatches it.
+#
+# This file has no per-provider step. Adding a provider adds its name to `PRESENT` and its
+# secret below.
+#
+# There is deliberately no `ref` input: a scheduled or manual caller runs with the cache of
+# the branch it started from (usually `main`), and checking out another ref there would run
+# untrusted code that can write to that cache.
+
+on:
+  workflow_call:
+    inputs:
+      providers:
+        description: "JSON list of provider names, or `all` for every provider in the tree."
+        type: string
+        required: true
+    secrets:
+      MODAL_TOKEN_ID:
+        required: false
+      MODAL_TOKEN_SECRET:
+        required: false
+      E2B_API_KEY:
+        required: false
+      SPRITE_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: plan sandbox live tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      providers: ${{ steps.plan.outputs.providers }}
+    steps:
+      # Resolves `all`, drops repeated names, and rejects a name that is not a provider in
+      # the workflow, so the matrix below starts each known provider once.
+      - id: plan
+        env:
+          PRESENT: '["modal", "e2b", "sprites"]'
+          REQUESTED: ${{ inputs.providers }}
+        run: |
+          providers="$(python3 -c '
+          import json, os, sys
+          present = json.loads(os.environ["PRESENT"])
+          requested = os.environ["REQUESTED"]
+          providers = present if requested == "all" else list(dict.fromkeys(json.loads(requested)))
+          unknown = [name for name in providers if name not in present]
+          if unknown or not providers:
+              sys.exit(f"No live tier to run for {requested!r}; providers in this tree: {present}")
+          print(json.dumps(providers))
+          ')"
+          echo "providers=${providers}" >> "$GITHUB_OUTPUT"
+
+  live:
+    needs: [plan]
+    name: ${{ matrix.provider }} live tests
+    runs-on: ubuntu-latest
+    # Sandbox creation goes through each provider's control plane; bound a wedged run.
+    timeout-minutes: 15
+    strategy:
+      # One provider's outage must not cancel the others' results.
+      fail-fast: false
+      matrix:
+        provider: ${{ fromJSON(needs.plan.outputs.providers) }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: sandbox-${{ matrix.provider }}
+
+      # The provider SDK is an extra of the `pydantic-ai-harness` workspace member, so
+      # `--package` selects that member and `--group dev` adds the root test tooling. Each
+      # provider's guide has a Temporal worker example, which the docs-example test runs;
+      # `code-mode` and `coder` are what the provider test modules import at collection.
+      - run: >-
+          uv sync --locked --package pydantic-ai-harness --group dev
+          --extra "$PROVIDER" --extra temporal --extra code-mode --extra coder
+        env:
+          PROVIDER: ${{ matrix.provider }}
+
+      # `<NAME>_REQUIRE_LIVE` turns a missing or empty secret into a failure; without it the
+      # live tests skip themselves and the job would report green having tested nothing.
+      - run: |
+          upper="$(printf %s "$PROVIDER" | tr '[:lower:]' '[:upper:]')"
+          export "PYDANTIC_AI_HARNESS_${upper}_LIVE=1" "${upper}_REQUIRE_LIVE=1"
+          uv run --no-sync pytest -p no:cacheprovider -m "${PROVIDER}_live" "tests/harness/${PROVIDER}_sandbox" -q
+        env:
+          PROVIDER: ${{ matrix.provider }}
+          # Scoped to this step so checkout and setup never see the secrets.
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          E2B_API_KEY: ${{ secrets.E2B_API_KEY }}
+          SPRITE_TOKEN: ${{ secrets.SPRITE_TOKEN }}
