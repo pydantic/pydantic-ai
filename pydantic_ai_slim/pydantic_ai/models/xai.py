@@ -624,7 +624,8 @@ class XaiModel(Model[AsyncClient]):
         Returns:
             The file ID from xAI
         """
-        uploaded_file = await self._provider.client.files.upload(data, filename=filename)
+        with _map_api_errors(self.model_name):
+            uploaded_file = await self._provider.client.files.upload(data, filename=filename)
         return uploaded_file.id
 
     async def _map_user_prompt(self, part: UserPromptPart) -> chat_types.chat_pb2.Message | None:  # noqa: C901
