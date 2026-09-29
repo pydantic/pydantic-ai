@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import math
 from collections.abc import Iterator, Sequence
 from contextlib import suppress
@@ -46,8 +45,6 @@ Some tools reply that a call is running in the background. This means that exact
 Do not repeat or poll it. Its result will arrive automatically in a later message. Continue only \
 with independent work. If none remains, end your response; the run will resume when the result arrives.\
 """
-
-logger = logging.getLogger(__name__)
 
 _RUN_IN_BACKGROUND = 'run_in_background'
 
@@ -281,10 +278,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     # The retry budget ran out: it ends the run, as it would for a sequential tool.
                     outcome = e
                 except Exception as e:
-                    # Exception messages can contain private details, so the model only learns the
-                    # type. The operator gets the full traceback.
-                    logger.warning('Background tool %r (task %s) failed', tool_name, task_id, exc_info=e)
-                    outcome = (f"Background tool '{tool_name}' (task {task_id}) failed: {type(e).__name__}",)
+                    outcome = e
                 except BaseException as e:
                     outcome = e
                 else:
