@@ -20,12 +20,16 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.exceptions import UserError
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.native_tools import ImageGenerationTool
     from pydantic_ai.profiles.openai import (
         OpenAIJsonSchemaTransformer,
         OpenAIModelProfile,
         openai_model_profile,
         validate_openai_profile,
     )
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -139,6 +143,8 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_context=True,
     ),
+    ReasoningCase(model='gpt-6.1-sol', enabled_by_default=True, supports_minimal_reasoning_effort=False),
+    ReasoningCase(model='gpt-6.1-sol-2026-09-29', enabled_by_default=True, supports_minimal_reasoning_effort=False),
     ReasoningCase(
         model='gpt-6-luna',
         enabled_by_default=True,
@@ -201,6 +207,25 @@ class TestEncryptedReasoningContent:
             profile = openai_model_profile(model)
             assert isinstance(profile, dict)
             assert profile.get('openai_supports_encrypted_reasoning_content', False) is False
+
+
+@pytest.mark.parametrize('model_name', ['gpt-6.1-sol', 'gpt-6.1-sol-2026-09-29'])
+def test_gpt_6_1_sol_prepares_image_tool_request(model_name: str):
+    """Not a VCR test: image output is validated locally before any provider request."""
+    model = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key='test'))
+    _, params = model.prepare_request(
+        None,
+        ModelRequestParameters(native_tools=[ImageGenerationTool()], allow_image_output=True),
+    )
+    assert params.allow_image_output is True
+    assert model.profile.get('openai_supports_encrypted_reasoning_content') is True
+
+
+def test_unrecognized_model_still_rejects_image_output():
+    """Not a VCR test: unrecognized model names retain the local capability guard."""
+    model = OpenAIResponsesModel('unknown-model', provider=OpenAIProvider(api_key='test'))
+    with pytest.raises(UserError, match='Image output is not supported'):
+        model.prepare_request(None, ModelRequestParameters(allow_image_output=True))
 
 
 def test_send_back_thinking_parts_field_requires_thinking_field():
