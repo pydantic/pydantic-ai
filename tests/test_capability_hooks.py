@@ -18,6 +18,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import (
     CombinedCapability,
@@ -2046,16 +2047,22 @@ class TestRunErrorHooks:
         assert 'on_run_error' not in cap.log
 
     @pytest.mark.parametrize('failure_location', ['capability', 'toolset'])
-    async def test_on_run_error_not_called_for_generator_exit_during_setup(self, failure_location: str):
+    @pytest.mark.parametrize('grouped', [False, True])
+    async def test_on_run_error_not_called_for_generator_exit_during_setup(self, failure_location: str, grouped: bool):
         setup_failed = False
         reconstruction_states: list[bool] = []
+        control_error: BaseException = (
+            BaseExceptionGroup('setup control', [BaseExceptionGroup('nested', [GeneratorExit()])])
+            if grouped
+            else GeneratorExit()
+        )
 
         class FailingSetupCapability(AbstractCapability[Any]):
             async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
                 nonlocal setup_failed
                 if failure_location == 'capability':
                     setup_failed = True
-                    raise GeneratorExit()
+                    raise control_error
                 return self
 
             def visit_and_replace(
@@ -2072,14 +2079,14 @@ class TestRunErrorHooks:
             async def for_run(self, ctx: RunContext[Any]) -> FunctionToolset[Any]:
                 nonlocal setup_failed
                 setup_failed = True
-                raise GeneratorExit()
+                raise control_error
 
         capability = FailingSetupCapability()
         assert capability.visit_and_replace(lambda cap: cap) is capability
         agent = Agent(FunctionModel(simple_model_function), capabilities=[capability])
         reconstruction_count_before_setup = len(reconstruction_states)
         toolsets: list[FunctionToolset[Any]] = [FailingSetupToolset()] if failure_location == 'toolset' else []
-        with pytest.raises(GeneratorExit):
+        with pytest.raises(type(control_error)):
             await agent.run('hello', toolsets=toolsets)
         assert not any(reconstruction_states[reconstruction_count_before_setup:])
 

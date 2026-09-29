@@ -231,11 +231,21 @@ def _prepare_run_capability_context(
     run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
 
+def _is_run_control_error(error: BaseException) -> bool:
+    if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+        return True
+    if isinstance(error, _utils.BaseExceptionGroup):
+        # The exceptiongroup backport types the members as Unknown on Python 3.10.
+        nested_errors = cast(tuple[BaseException, ...], error.exceptions)  # pyright: ignore[reportUnknownMemberType]
+        return any(_is_run_control_error(nested_error) for nested_error in nested_errors)
+    return False
+
+
 async def _run_setup_error_hook(
     resolved_layers: Sequence[AbstractCapability[AgentDepsT]], run_ctx: RunContext[AgentDepsT], error: BaseException
 ) -> None:
     """Dispatch error hooks when setup fails before a run result can be built."""
-    if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+    if _is_run_control_error(error):
         raise error
     assert resolved_layers
     # Each layer's `for_run()` ran, including ones the run layer later overrides. Their hooks
@@ -3417,7 +3427,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     resolution_capture=resolutions,
                 )
             except BaseException as error:
-                if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+                if _is_run_control_error(error):
                     raise
                 with _reconstructing_setup_cleanup():
                     resolved_layers = [
