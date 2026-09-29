@@ -113,6 +113,11 @@ class FakeGeminiSession:
         responses = function_responses if isinstance(function_responses, list) else [function_responses]
         await self._outbound('tool_response', lambda session: self.server.on_tool_response(session, responses))
 
+    @property
+    def _ws(self) -> _RawSocket:  # pragma: lax no cover (as above)
+        """The SDK session's socket, which a connection may write a serialized `LiveClientMessage` to directly."""
+        return _RawSocket(self)
+
     async def receive(self) -> AsyncIterator[gt.LiveServerMessage]:
         while True:
             while not self.inbox:
@@ -161,6 +166,16 @@ class FakeGeminiSession:
     def _push(self, item: gt.LiveServerMessage | _Closed) -> None:
         self.inbox.append(item)
         self._readable.set()
+
+
+@dataclass
+class _RawSocket:  # pragma: lax no cover (for #9065, which writes a tool result with media to it)
+    session: FakeGeminiSession
+
+    async def send(self, text: str) -> None:
+        message = gt.LiveClientMessage.model_validate_json(text)
+        assert message.tool_response is not None, 'only tool responses are sent raw'
+        await self.session.send_tool_response(function_responses=list(message.tool_response.function_responses or []))
 
 
 @dataclass

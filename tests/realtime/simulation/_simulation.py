@@ -38,7 +38,7 @@ from typing import Any, Literal, ParamSpec, TypeVar
 from typing_extensions import Self
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.messages import BinaryImage, ModelMessage
+from pydantic_ai.messages import BinaryImage, ModelMessage, ToolReturn
 from pydantic_ai.realtime import RealtimeEvent, RealtimeModel, RealtimeSession
 from pydantic_ai.realtime.settings import RealtimeModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -52,8 +52,8 @@ from ._wire import SendFault
 P = ParamSpec('P')
 R = TypeVar('R')
 
-ToolOutcome = Literal['ok', 'retry', 'error']
-"""How a gated tool call settles: return a result, ask the model to retry, or raise (ending the session)."""
+ToolOutcome = Literal['ok', 'media', 'retry', 'error']
+"""How a gated tool call settles: return a result (with an image, for `media`), ask the model to retry, or raise."""
 
 
 class InvariantViolation(AssertionError):
@@ -137,7 +137,7 @@ class ToolGates:
         self.order: list[str] = []
         self.settled: dict[str, ToolOutcome] = {}
 
-    async def run(self, call_id: str) -> str:
+    async def run(self, call_id: str) -> str | ToolReturn:
         future = self.started[call_id] = asyncio.get_running_loop().create_future()
         self.order.append(call_id)
         outcome = await future
@@ -145,6 +145,9 @@ class ToolGates:
             raise ModelRetry(f'retry {call_id}')
         if outcome == 'error':
             raise SimulatedToolError(f'tool {call_id} crashed')
+        if outcome == 'media':
+            image = BinaryImage(data=b'\x89PNG\r\n\x1a\n' + call_id.encode(), media_type='image/png')
+            return ToolReturn(return_value=f'result:{call_id}', content=[image])
         return f'result:{call_id}'
 
     def pending(self) -> list[str]:
@@ -295,7 +298,7 @@ class Simulation(ABC):
         gates = self.tools
 
         @agent.tool
-        async def lookup(ctx: RunContext[object]) -> str:
+        async def lookup(ctx: RunContext[object]) -> str | ToolReturn:
             """Look something up."""
             assert ctx.tool_call_id is not None
             return await gates.run(ctx.tool_call_id)
