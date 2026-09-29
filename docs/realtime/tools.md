@@ -83,7 +83,7 @@ says which:
 
 | Mode | Models | Tool calls |
 | --- | --- | --- |
-| `'always'` | OpenAI, Azure OpenAI, OpenAI GPT-Live, xAI, `gemini-3.8-live-extended-thinking` | The model keeps talking; there's no mode that waits |
+| `'always'` | OpenAI (GPT-Live and gpt-realtime), Azure OpenAI, xAI, `gemini-3.8-live-extended-thinking` | The model keeps talking; there's no mode that waits |
 | `'optional'` | Gemini native-audio models, `gemini-3.8-live` | The model waits for the result, unless the session asks otherwise |
 | `'never'` | Other Gemini Live models | The model waits for the result |
 

@@ -20,7 +20,7 @@ shape the adapter:
   the latter produces typed function calls, so it is what this adapter configures: the agent's tools
   are advertised to the backend, its calls arrive nested inside `response.event`, and their results
   go back as Responses input items. See
-  [the Live docs](https://ai.pydantic.dev/realtime/openai-live/) for the split.
+  [the Live docs](https://pydantic.dev/docs/ai/realtime/openai#gpt-live-models) for the split.
 - **Usage has two meters.** Live reports its own audio as a cumulative duration in seconds and no
   tokens at all; the backend it delegates to reports ordinary Responses token usage, which is where
   most of a call's token cost is.
@@ -1125,7 +1125,7 @@ class OpenAILiveModel(RealtimeModel):
     Live differs from the [Realtime API][pydantic_ai.realtime.openai.OpenAIRealtimeModel] in ways that
     change what a session can do — no text input, an inferred turn boundary, no manual turn control or
     interruption, and duration-based usage. See
-    [the Live docs](https://ai.pydantic.dev/realtime/openai-live/).
+    [the Live docs](https://pydantic.dev/docs/ai/realtime/openai#gpt-live-models).
 
     Args:
         model: The model name, e.g. `gpt-live-1`.

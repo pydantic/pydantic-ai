@@ -315,7 +315,7 @@ class _Page(Protocol):
     ) -> list[str]: ...  # pragma: no cover
 
 
-@dataclass(frozen=True)
+@dataclass
 class _Deadlines:
     """The budget one operation runs under, as time remaining rather than time allowed.
 
@@ -343,6 +343,7 @@ class _Deadlines:
     action_ms: int
     navigation_ms: int
     started: float
+    _first_stage: bool = True
 
     @property
     def action(self) -> int:
@@ -355,12 +356,15 @@ class _Deadlines:
         return self._remaining(self.navigation_ms)
 
     def _remaining(self, budget_ms: int) -> int:
-        """Return `budget_ms` less the time already spent, never reaching zero.
+        """Return the configured budget for the first stage, then what remains.
 
         `0` is Playwright's "no deadline", so a configured `0` stays `0` while
         every other budget keeps at least 1ms: counting down to zero would remove
         the deadline at the exact moment it should expire.
         """
+        if self._first_stage:
+            self._first_stage = False
+            return budget_ms
         if budget_ms == 0:
             return 0
         return max(1, budget_ms - int((monotonic() - self.started) * 1000))

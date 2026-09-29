@@ -727,9 +727,14 @@ class ModalSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesystem
             raise errors[0]
         stdout, stderr, exit_code, exited_at = results[0]
 
-        if deadline is not None and (
+        timed_out_by_modal = deadline is not None and (
             exit_code == _CLIENT_DEADLINE_EXIT or (exit_code == _SIGKILL_EXIT and exited_at - started_at >= deadline)
-        ):
+        )
+        if timed_out_by_modal:
+            # A sandbox destroyed near the command deadline can produce the same exit as a command
+            # timeout. Probe before classifying it so the workspace's terminal state wins.
+            if (gone := await _probe(sandbox, exec_probe=True)) is not None:
+                raise gone
             raise WorkspaceTimeoutError(timed_out, stdout=stdout, stderr=stderr)
         if exit_code == _SIGKILL_EXIT:
             # 137 can also be a user's SIGKILL; only a sandbox that is gone proves the workspace
