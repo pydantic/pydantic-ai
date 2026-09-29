@@ -77,7 +77,7 @@ from ..messages import (
     UserPromptPart,
     VideoUrl,
 )
-from ..models import ModelRequestParameters
+from ..models import ModelRequestParameters, download_item
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
@@ -363,6 +363,19 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     `gemini-3.8-live` families, which don't support affective dialog: `gemini-3.1-flash-live-preview`
     refuses the handshake with `1007 Request contains an invalid argument`, and the 3.8 models open the
     session and then close it with the same error on the first send.
+    """
+
+    google_supported_mime_types_in_tool_returns: tuple[str, ...]
+    """Media types a tool result can carry inside its function response. Default: `()`.
+
+    The realtime counterpart of
+    [`google_supported_mime_types_in_tool_returns`][pydantic_ai.profiles.google.GoogleModelProfile.google_supported_mime_types_in_tool_returns]
+    on a standard model: content of these types attached to a tool return (a
+    [`BinaryContent`][pydantic_ai.messages.BinaryContent] or a downloaded
+    [`ImageUrl`][pydantic_ai.messages.ImageUrl]) goes in `FunctionResponse.parts`, and any other media
+    raises [`UserError`][pydantic_ai.exceptions.UserError] with the result unsent. PNG, JPEG, WebP, and
+    plain text on the Gemini 3.x Live models, which read them; `gemini-2.5-flash-native-audio-*`
+    doesn't, and the 3.x models close the session on a PDF.
     """
 
     google_text_turns_see_video_frames: bool
@@ -1364,6 +1377,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._text_turns_see_video_frames = cast('GoogleRealtimeModelProfile', self._profile).get(
             'google_text_turns_see_video_frames', True
         )
+        self._tool_return_mime_types = cast('GoogleRealtimeModelProfile', self._profile).get(
+            'google_supported_mime_types_in_tool_returns', ()
+        )
         self._recent_image: tuple[BinaryImage, float] | None = None
         # Whether the turn's latest output is a tool-call frame, with nothing said since. A model that
         # `google_closes_tool_call_turn_separately` closes that turn with its own `turn_complete` when the
@@ -1463,16 +1479,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
             # Forgotten once sent, or once refused below. A send that fails on a dropped connection leaves
             # the call for the reconnect, which cancels it and answers the resumed session for it.
             name, gemini_id = self._tool_calls.get(content.tool_call_id, ('', None))
-            # `FunctionResponse.response` is JSON-only, so text attachments are folded into the
-            # output and binary attachments raise — loudly, with the tool result unsent, never a
-            # silent placeholder. Every live delivery channel was probed and fails: content in a
+            # Text attachments are folded into the JSON `response`. Media goes in `FunctionResponse.parts`
+            # on a model that reads it there, the analog of the standard Gemini 3 multimodal function
+            # response; any other media raises, with the tool result unsent, never a silent
+            # placeholder. Every other live channel was probed and fails: content in a
             # `send_client_content(turn_complete=False)` turn or a `send_realtime_input` frame is
-            # invisible to the generation `send_tool_response` triggers (the model guesses), a
-            # `turn_complete=True` turn is seen but first triggers a spurious extra spoken response,
-            # and `FunctionResponse.parts` — the true analog of the classic Gemini 3 multimodal
-            # function-response path — doesn't serialize in the SDK's live path yet. Tracked in
-            # https://github.com/pydantic/pydantic-ai/issues/7362.
+            # invisible to the generation `send_tool_response` triggers (the model guesses), and a
+            # `turn_complete=True` turn is seen but first triggers a spurious extra spoken response.
             output = content.output
+            media: list[genai_types.FunctionResponsePart] = []
             if content.content:
                 text_content: list[str] = []
                 for item in content.content:
@@ -1483,35 +1498,65 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     elif isinstance(item, CachePoint):
                         continue
                     elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
-                        self._tool_calls.pop(content.tool_call_id, None)
-                        raise UserError(
-                            f'{self._provider_label} tool results are JSON-only, so `{type(item).__name__}` '
-                            'content attached to a tool return cannot be delivered. Return text instead, or '
-                            'use a realtime provider that supports tool-result media. '
-                            'See https://github.com/pydantic/pydantic-ai/issues/7362.'
-                        )
+                        media.append(await self._tool_result_media(item, tool_call_id=content.tool_call_id))
                     else:
                         assert_never(item)
                 output = '\n\n'.join(part for part in (output, *text_content) if part)
-            await self._session.send_tool_response(
-                function_responses=genai_types.FunctionResponse(
-                    id=gemini_id,
-                    name=name,
-                    response={'output': output},
-                    # `INTERRUPT`, not `WHEN_IDLE`: a non-blocking model keeps talking while the
-                    # tool runs, and `WHEN_IDLE` holds the result until it stops — by which point it
-                    # has usually answered from its own knowledge, so the tool's answer contradicts
-                    # what was already said. (Recorded live: a tool returning "foggy and 12 degrees"
-                    # while the model said "15 degrees with clouds".) A model calls a tool because it
-                    # needs the result, so cut in with it.
-                    scheduling=genai_types.FunctionResponseScheduling.INTERRUPT
-                    if self._async_tool_calls_enabled and self._async_tool_call_scheduling_enabled
-                    else None,
-                )
+            function_response = genai_types.FunctionResponse(
+                id=gemini_id,
+                name=name,
+                response={'output': output},
+                parts=media or None,
+                # `INTERRUPT`, not `WHEN_IDLE`: a non-blocking model keeps talking while the
+                # tool runs, and `WHEN_IDLE` holds the result until it stops — by which point it
+                # has usually answered from its own knowledge, so the tool's answer contradicts
+                # what was already said. (Recorded live: a tool returning "foggy and 12 degrees"
+                # while the model said "15 degrees with clouds".) A model calls a tool because it
+                # needs the result, so cut in with it.
+                scheduling=genai_types.FunctionResponseScheduling.INTERRUPT
+                if self._async_tool_calls_enabled and self._async_tool_call_scheduling_enabled
+                else None,
             )
+            if media:
+                # `google-genai`'s `send_tool_response` (as of 2.25) hands the parts' raw bytes to
+                # `json.dumps`, which can't encode them, so the message is serialized with the SDK's own
+                # types, which base64-encode bytes, and sent over the session's socket as it would be.
+                message = genai_types.LiveClientMessage(
+                    tool_response=genai_types.LiveClientToolResponse(function_responses=[function_response])
+                )
+                await self._session._ws.send(  # pyright: ignore[reportPrivateUsage]
+                    message.model_dump_json(by_alias=True, exclude_none=True)
+                )
+            else:
+                await self._session.send_tool_response(function_responses=function_response)
             self._tool_calls.pop(content.tool_call_id, None)
         else:
             raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
+
+    async def _tool_result_media(
+        self, item: ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile, *, tool_call_id: str
+    ) -> genai_types.FunctionResponsePart:
+        """Map media attached to a tool return to a function-response part, or raise if this model can't carry it."""
+        supported = self._tool_return_mime_types
+        data: bytes | None = None
+        media_type: str | None = None
+        if isinstance(item, BinaryContent):
+            data, media_type = item.data, item.media_type
+        elif isinstance(item, ImageUrl) and any(mime_type.startswith('image/') for mime_type in supported):
+            downloaded = await download_item(item, data_format='bytes')
+            data, media_type = downloaded['data'], downloaded['data_type']
+        if data is None or media_type not in supported:
+            # Forgotten, since the result is refused and never sent.
+            self._tool_calls.pop(tool_call_id, None)
+            raise UserError(
+                f'{self._provider_label} tool results on this model cannot carry `{type(item).__name__}` content'
+                + (f' of type {media_type!r}' if media_type is not None else '')
+                + f', only {", ".join(supported) if supported else "text"}. Return text instead, or use a model '
+                'or realtime provider that supports this tool-result media.'
+            )
+        return genai_types.FunctionResponsePart(
+            inline_data=genai_types.FunctionResponseBlob(data=data, mime_type=media_type)
+        )
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         # `session.receive()` yields a single model turn and then returns, so loop to keep serving
