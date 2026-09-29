@@ -365,6 +365,19 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     session and then close it with the same error on the first send.
     """
 
+    google_supports_seeding_function_parts: bool
+    """Whether seeded tool calls and results go in as native function parts. Default: `False`.
+
+    When `True`, prior [`ToolCallPart`][pydantic_ai.messages.ToolCallPart]s,
+    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]s, and tool
+    [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]s are seeded as `function_call` and
+    `function_response` parts, sent as the session's initial history (`history_config`), rather than
+    projected as readable text. True of the Gemini 3.8 Live models. `gemini-2.5-flash-native-audio-*`
+    rejects function parts in seeded turns, and `gemini-3.1-flash-live-preview` loses history seeded
+    that way when a [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] resumes the
+    session.
+    """
+
     google_text_turns_see_video_frames: bool
     """Whether a typed turn sees an image sent just before it as a live video frame. Default: `True`.
 
@@ -481,11 +494,12 @@ async def _seed_turns(
 ) -> list[genai_types.Content | genai_types.ContentDict]:
     """Map prior history to Gemini `clientContent.turns`.
 
-    Text, transcripts, inline images, and tag-wrapped thinking are replayed in part order. Gemini Live
-    rejects function parts in `clientContent.turns`, so function calls and results are projected as
-    structured text: `[Tool call: name(args)]`, `[Tool "name" returned: result]`, and
-    `[Tool "name" error: error]`. Native-tool parts are skipped because they describe provider-executed
-    work whose answer text is already retained.
+    Text, transcripts, inline images, and tag-wrapped thinking are replayed in part order. On a model
+    whose profile sets `google_supports_seeding_function_parts`, function calls and results are seeded
+    as native `function_call` / `function_response` parts. Other Live models reject function parts in
+    `clientContent.turns`, so there they are projected as structured text: `[Tool call: name(args)]`,
+    `[Tool "name" returned: result]`, and `[Tool "name" error: error]`. Native-tool parts are skipped
+    because they describe provider-executed work whose answer text is already retained.
 
     Thinking signatures and `provider_details` are provider-session-bound and are not replayed.
     `SystemPromptPart`s are routed through `system_instruction`, and `CachePoint`s are ignored. Gemini
@@ -494,16 +508,18 @@ async def _seed_turns(
     """
     turns: list[genai_types.Content | genai_types.ContentDict] = []
     supports_images = profile.get('supports_seeding_images', False)
+    function_parts = cast(GoogleRealtimeModelProfile, profile).get('google_supports_seeding_function_parts', False)
     for message in messages:
         if isinstance(message, ModelRequest):
             parts = await _seed_request_parts(
                 message.parts,
                 provider_name=provider_name,
                 supports_images=supports_images,
+                function_parts=function_parts,
             )
             role = 'user'
         else:
-            parts = _seed_response_parts(message.parts, provider_name=provider_name)
+            parts = _seed_response_parts(message.parts, provider_name=provider_name, function_parts=function_parts)
             role = 'model'
         if parts:
             turns.append(genai_types.Content(role=role, parts=parts))
@@ -515,6 +531,7 @@ async def _seed_request_parts(
     *,
     provider_name: str,
     supports_images: bool,
+    function_parts: bool,
 ) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
@@ -536,7 +553,16 @@ async def _seed_request_parts(
                 parts.append(genai_types.Part(text=content))
         elif isinstance(part, ToolReturnPart):
             output, user_content = part.model_response_str_and_user_content()
-            parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} returned: {output}]'))
+            if function_parts:
+                parts.append(
+                    genai_types.Part(
+                        function_response=genai_types.FunctionResponse(
+                            id=part.tool_call_id, name=part.tool_name, response={'output': output}
+                        )
+                    )
+                )
+            else:
+                parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} returned: {output}]'))
             if user_content:
                 parts.extend(
                     _genai_user_parts(
@@ -549,14 +575,26 @@ async def _seed_request_parts(
                 )
         elif isinstance(part, RetryPromptPart):
             output = part.model_response()
-            text = output if part.tool_name is None else f'[Tool {part.tool_call_id}: {part.tool_name} error: {output}]'
-            parts.append(genai_types.Part(text=text))
+            if part.tool_name is None:
+                parts.append(genai_types.Part(text=output))
+            elif function_parts:
+                parts.append(
+                    genai_types.Part(
+                        function_response=genai_types.FunctionResponse(
+                            id=part.tool_call_id, name=part.tool_name, response={'error': output}
+                        )
+                    )
+                )
+            else:
+                parts.append(genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name} error: {output}]'))
         else:
             assert_never(part)
     return parts
 
 
-def _seed_response_parts(message_parts: Sequence[ModelResponsePart], *, provider_name: str) -> list[genai_types.Part]:
+def _seed_response_parts(
+    message_parts: Sequence[ModelResponsePart], *, provider_name: str, function_parts: bool
+) -> list[genai_types.Part]:
     parts: list[genai_types.Part] = []
     for part in message_parts:
         if isinstance(part, TextPart):
@@ -567,9 +605,18 @@ def _seed_response_parts(message_parts: Sequence[ModelResponsePart], *, provider
                 start_tag, end_tag = DEFAULT_THINKING_TAGS
                 parts.append(genai_types.Part(text='\n'.join([start_tag, part.content, end_tag])))
         elif isinstance(part, ToolCallPart):
-            parts.append(
-                genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name}({part.args_as_json_str()})]')
-            )
+            if function_parts:
+                parts.append(
+                    genai_types.Part(
+                        function_call=genai_types.FunctionCall(
+                            id=part.tool_call_id, name=part.tool_name, args=part.args_as_dict()
+                        )
+                    )
+                )
+            else:
+                parts.append(
+                    genai_types.Part(text=f'[Tool {part.tool_call_id}: {part.tool_name}({part.args_as_json_str()})]')
+                )
         elif isinstance(part, (NativeToolCallPart, NativeToolReturnPart)):
             continue
         elif isinstance(part, SpeechPart):
@@ -1089,6 +1136,7 @@ class GoogleRealtimeModel(RealtimeModel):
         model_settings: GoogleRealtimeModelSettings | None,
         native_tools: list[AbstractNativeTool] | None = None,
         resumption_handle: str | None = None,
+        initial_history_in_client_content: bool = False,
     ) -> genai_types.LiveConnectConfig:
         settings = cast('GoogleRealtimeModelSettings', self._merge_model_settings(model_settings) or {})
         modality = (
@@ -1121,6 +1169,8 @@ class GoogleRealtimeModel(RealtimeModel):
             )
         if self._session_resumption_enabled(settings):
             config.session_resumption = genai_types.SessionResumptionConfig(handle=resumption_handle)
+        if initial_history_in_client_content:
+            config.history_config = genai_types.HistoryConfig(initial_history_in_client_content=True)
         # Typed as `list[Any]` because `LiveConnectConfig.tools` is a broad union (Tool | Callable |
         # MCP types); a precisely-typed `list[Tool]` isn't assignable to it (list invariance).
         genai_tools: list[Any] = []
@@ -1181,12 +1231,23 @@ class GoogleRealtimeModel(RealtimeModel):
                 f'`google_affective_dialog=True` is not supported by {self.model!r}; Gemini Live rejects it. '
                 'Leave it unset for this model.'
             )
+        # Prior conversation is seeded once, after the initial connect. Normalized before dialing, so
+        # unsupported content is a caller `UserError` rather than a session opened for nothing.
+        turns = await _seed_turns(messages, profile=self.profile, provider_name=self.system)
+        # With native function parts, the seed goes in as the session's initial history, which ends with
+        # `turn_complete` without triggering a reply. Only the first dial asks for it: a session resumed
+        # from a handle already has the history, and one that isn't wouldn't get it again, so either way
+        # a server waiting for initial history would take the next typed turn as history and not answer it.
+        history_in_client_content = bool(turns) and self._google_profile.get(
+            'google_supports_seeding_function_parts', False
+        )
         # The live connection's context manager. A reconnect closes the previous one before opening
         # the next (so they don't accumulate), and teardown closes whatever is current.
         cm: AbstractAsyncContextManager[AsyncSession] | None = None
+        dialed = False
 
         async def dial(handle: str | None) -> AsyncSession:
-            nonlocal cm
+            nonlocal cm, dialed
             if cm is not None:
                 previous, cm = cm, None
                 await previous.__aexit__(None, None, None)
@@ -1196,7 +1257,9 @@ class GoogleRealtimeModel(RealtimeModel):
                 model_settings=settings,
                 native_tools=model_request_parameters.native_tools,
                 resumption_handle=handle,
+                initial_history_in_client_content=history_in_client_content and not dialed,
             )
+            dialed = True
             opening = client.aio.live.connect(model=self.model, config=config)
             async with _ws_connect_lock():
                 with ExitStack() as stack:
@@ -1247,11 +1310,12 @@ class GoogleRealtimeModel(RealtimeModel):
                 # (`TimeoutError` is an `OSError`). No HTTP status exists, so this is a `RealtimeError`
                 # too, rather than a bare built-in from what looks like an ordinary model call.
                 raise RealtimeError(model_name=self.model, message=f'Could not reach the realtime API: {e}') from e
-            # Seed prior conversation once, after the initial connect, as inactive context turns (no
-            # `turn_complete`, so the model doesn't respond yet). Reconnects don't re-seed: session
-            # resumption restores server state, and a `RealtimeSessionReconnectEvent` starts a fresh turn.
-            if turns := await _seed_turns(messages, profile=self.profile, provider_name=self.system):
-                await session.send_client_content(turns=turns, turn_complete=False)
+            # Seed prior conversation as inactive context turns: without `turn_complete` the model doesn't
+            # respond yet, and initial history ends with one without prompting a reply. Reconnects don't
+            # re-seed: session resumption restores server state, and a `RealtimeSessionReconnectEvent`
+            # starts a fresh turn.
+            if turns:
+                await session.send_client_content(turns=turns, turn_complete=history_in_client_content)
             yield GoogleRealtimeConnection(
                 session,
                 profile=self.profile,

@@ -43,8 +43,9 @@ async def main(prior_history=()):
         await session.send('Continue where we left off.')
 ```
 
-Providers replay native function calls where their protocol permits. Gemini represents seeded tool
-calls and results as readable text because Live cannot put function parts in seeded turns. Thinking
+Providers replay native function calls where their protocol permits. Gemini does so on its 3.8
+Live models, and represents seeded tool calls and results as readable text on the others (see
+[Gemini quirks](gemini.md#provider-specific-quirks)). Thinking
 signatures and provider-native execution metadata are omitted because they belong to the session
 that produced them.
 
