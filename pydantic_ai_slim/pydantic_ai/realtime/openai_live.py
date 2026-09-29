@@ -55,6 +55,7 @@ from ..messages import (
     BinaryContent,
     BinaryImage,
     CachePoint,
+    DocumentUrl,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -1107,6 +1108,8 @@ async def _tool_result_media(
         kind = f'an uploaded `{item.media_type}` file'
     elif isinstance(item, BinaryContent) and not (item.is_image or item.is_document):
         kind = f'`{item.media_type}` content'
+    elif isinstance(item, DocumentUrl) and _is_audio_or_video_url(item):
+        kind = f'a `{item.media_type}` `DocumentUrl`'
     elif isinstance(item, UploadedFile):
         # An opaque Files-API id reports `application/octet-stream` and goes as `input_file`, as it does on
         # `OpenAIResponsesModel`: the backend reads what the id actually holds.
@@ -1118,6 +1121,19 @@ async def _tool_result_media(
         f'OpenAI GPT-Live cannot send {kind} in a tool result to its delegated backend, which takes only text, '
         'images, and documents. Describe it in text instead.'
     )
+
+
+def _is_audio_or_video_url(item: DocumentUrl) -> bool:
+    """Whether a document URL names audio or video, which the backend can't read as a file.
+
+    A URL whose type can't be inferred is left to the mapper, which fetches it or refuses it as it would on
+    `OpenAIResponsesModel`.
+    """
+    try:
+        media_type = item.media_type
+    except ValueError:
+        return False
+    return media_type.startswith(('audio/', 'video/'))
 
 
 async def _check_context_length(text: str) -> None:

@@ -914,6 +914,11 @@ async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
         (VideoUrl(url='https://example.com/clip'), 'cannot send `VideoUrl` content'),
         (BinaryContent(data=b'x', media_type='audio/wav'), 'cannot send `audio/wav` content'),
         (BinaryContent(data=b'x', media_type='video/mp4'), 'cannot send `video/mp4` content'),
+        (DocumentUrl(url='https://example.com/clip.mp3'), 'cannot send a `audio/mpeg` `DocumentUrl`'),
+        (
+            DocumentUrl(url='https://example.com/clip', media_type='video/mp4'),
+            'cannot send a `video/mp4` `DocumentUrl`',
+        ),
         (UploadedFile(file_id='f', provider_name='openai', media_type='audio/wav'), 'uploaded `audio/wav` file'),
         (UploadedFile(file_id='f', provider_name='openai', media_type='video/mp4'), 'uploaded `video/mp4` file'),
         (UploadedFile(file_id='f', provider_name='anthropic'), "provider_name='anthropic'"),
@@ -2334,3 +2339,8 @@ async def test_a_sideband_cannot_seed_history(model: OpenAILiveModel) -> None:
             model_request_parameters=ModelRequestParameters(),
         ):
             pass  # pragma: no cover
+
+
+def test_a_document_url_of_unknown_type_is_left_to_the_mapper() -> None:
+    """Whether it can be sent is the Responses mapping's call, as on `OpenAIResponsesModel`."""
+    assert not live_module._is_audio_or_video_url(DocumentUrl(url='https://example.com/noext'))  # pyright: ignore[reportPrivateUsage]
