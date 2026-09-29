@@ -1,19 +1,26 @@
 """`!command` input runs in the system shell and never starts an agent turn."""
 
+import asyncio
+import contextlib
 import io
+import os
+import shlex
+import signal
+import sys
 import time
 from pathlib import Path
 
+import anyio
 import pytest
 from rich.console import Console
-from test_app_edges import inputs
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.shell_passthrough import shell_command
+from pydantic_clai2.shell_passthrough import _taskkill_path, shell_command  # pyright: ignore[reportPrivateUsage]
+from tests.clai2.test_app_edges import inputs
 
 
 @pytest.mark.parametrize(
@@ -60,6 +67,14 @@ async def shell_session(
     return output.getvalue()
 
 
+def test_taskkill_is_resolved_from_system_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `taskkill.exe` planted in the working directory must never be the one that runs."""
+    monkeypatch.setenv('SystemRoot', r'D:\Win')
+    assert _taskkill_path() == r'D:\Win\System32\taskkill.exe'
+    monkeypatch.delenv('SystemRoot')
+    assert _taskkill_path() == r'C:\Windows\System32\taskkill.exe'
+
+
 class TestShellPassthrough:
     async def test_runs_in_cwd_without_agent_turn(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         text = await shell_session(tmp_path, monkeypatch, ['  !printf hi > marker.txt  ', '/exit'])
@@ -74,7 +89,7 @@ class TestShellPassthrough:
         assert 'Exit code 3 (' in text
 
     async def test_ctrl_c_interrupts_command_not_clai(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # The shell signals CLAI as the terminal would on Ctrl-C; the exec'd child never sees it, so it is killed.
+        # The shell signals CLAI as the terminal would on Ctrl-C, and CLAI forwards it to the command.
         started = time.monotonic()
         text = await shell_session(
             tmp_path, monkeypatch, ['!kill -INT $PPID; exec sleep 30', '!printf after > marker.txt', '/exit']
@@ -83,13 +98,55 @@ class TestShellPassthrough:
         assert 'Interrupted (' in text
         assert (tmp_path / 'marker.txt').read_text() == 'after'
 
+    @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
+    async def test_ctrl_c_is_forwarded_before_kill(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A command in its own session still gets Ctrl-C, so it can clean up before the grace kill."""
+        spawn = asyncio.create_subprocess_shell
+
+        async def spawn_then_ctrl_c(command: str, *, start_new_session: bool) -> asyncio.subprocess.Process:
+            # Press Ctrl-C only once the spawn has returned and the shell has installed its trap.
+            process = await spawn(command, start_new_session=start_new_session)
+            with anyio.fail_after(5):
+                while not (tmp_path / 'ready').exists():
+                    await anyio.sleep(0.01)  # pragma: lax no cover -- the shell may already be ready.
+            os.kill(os.getpid(), signal.SIGINT)
+            return process
+
+        monkeypatch.setattr('pydantic_clai2.shell_passthrough.asyncio.create_subprocess_shell', spawn_then_ctrl_c)
+        command = "trap 'printf cleaned > cleanup.txt; exit 130' INT; : > ready; while :; do :; done"
+        text = await shell_session(tmp_path, monkeypatch, [f'!{command}', '/exit'])
+        assert 'Interrupted (' in text
+        assert (tmp_path / 'cleanup.txt').read_text() == 'cleaned'
+
+    @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
+    async def test_ctrl_c_kills_shell_descendants(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Cancelling a shell command must also terminate a background child."""
+        child_code = "import os, pathlib, time; pathlib.Path('child.pid').write_text(str(os.getpid())); time.sleep(30)"
+        python = shlex.quote(sys.executable)
+        command = f'{python} -c {shlex.quote(child_code)} & while [ ! -f child.pid ]; do :; done; kill -INT $PPID; wait'
+
+        text = await shell_session(tmp_path, monkeypatch, [f'!{command}', '/exit'])
+        assert 'Interrupted (' in text
+        child_pid = int((tmp_path / 'child.pid').read_text())
+        try:
+            with anyio.fail_after(2):
+                while True:
+                    try:
+                        os.kill(child_pid, 0)
+                    except ProcessLookupError:
+                        break
+                    await anyio.sleep(0.01)
+        finally:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child_pid, signal.SIGKILL)
+
     async def test_second_ctrl_c_exits(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         text = await shell_session(tmp_path, monkeypatch, [KeyboardInterrupt(), '!kill -INT $PPID; exec sleep 30'])
         assert 'Input cleared' in text
         assert 'Interrupted (' in text
 
     async def test_spawn_failure_is_reported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        async def unavailable(command: str) -> None:
+        async def unavailable(command: str, **kwargs: object) -> None:
             raise FileNotFoundError('no shell')
 
         monkeypatch.setattr('pydantic_clai2.shell_passthrough.asyncio.create_subprocess_shell', unavailable)

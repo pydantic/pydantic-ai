@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import detach_dbos_logging
+
 try:
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
@@ -21,10 +23,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.spend import Budget, InMemorySpendStore, SpendEntry, SpendLimits, Spent
 
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+pytestmark = [pytest.mark.xdist_group(name='harness-dbos')]
 
 
 @pytest.fixture
@@ -40,6 +39,7 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
         yield instance
     finally:
         DBOS.destroy()
+        detach_dbos_logging()
 
 
 class AdvancingClock:
@@ -113,7 +113,6 @@ def test_default_id_is_stable_and_composes_with_durability() -> None:
     assert agent.name == 'default_spend_id'
 
 
-@pytest.mark.anyio
 async def test_dbos_journals_clock_reads_and_accrual(dbos: DBOS) -> None:
     global _model_calls
     _model_calls = 0
@@ -145,7 +144,6 @@ async def test_dbos_journals_clock_reads_and_accrual(dbos: DBOS) -> None:
     assert 'durable_spend__capability__spend_limits.accrue' in names
 
 
-@pytest.mark.anyio
 async def test_store_token_deduplicates_without_consulting_the_journal() -> None:
     source = RecordingStore()
     limits = SpendLimits[None](

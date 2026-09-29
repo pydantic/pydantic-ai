@@ -77,7 +77,7 @@ agent_store = SqlitePlanStore('plan.db', session='user-123')
 planning = Planning(store=agent_store)
 ```
 
-Built-in stores: `InMemoryPlanStore` (default), `SqlitePlanStore` (local file, session-scoped), `PostgresPlanStore` (server database over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client). The Postgres and Redis stores take a client you already own, so the harness carries no database driver dependency. Any object implementing the `PlanStore` protocol works. `SqlitePlanStore` requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
+Built-in stores: `InMemoryPlanStore` (default), `SqlitePlanStore` (local file, session-scoped), `PostgresPlanStore` (server database over a caller-owned asyncpg pool), and `RedisPlanStore` (over a caller-owned `redis.asyncio` client). The Postgres and Redis stores take a client you already own, so the harness carries no database driver dependency. Any object implementing the `PlanStore` protocol works. `SqlitePlanStore` keeps its database on the machine running the agent, not in the workspace. It requires a file-backed database; use `InMemoryPlanStore` for ephemeral plans rather than `':memory:'`.
 
 The tail reminder reads the store on every model request, so a store that raises fails the run rather than degrading -- the reminder is not best-effort. That is deliberate: a plan the model can no longer see is not a state to continue running in silently. Retry and fallback policy belongs to the store, not to `Planning`, and `PlanStore` is a protocol precisely so you can wrap one:
 

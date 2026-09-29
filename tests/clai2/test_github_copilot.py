@@ -11,11 +11,9 @@ import keyring
 import pytest
 from cassetter import use_cassette
 from keyring.errors import NoKeyringError
-from menu_script import Script, make_context, pick, typed
 from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
-from test_app_edges import inputs
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
@@ -30,6 +28,8 @@ from pydantic_clai2.credential_store import credentials_path, load_codex_credent
 from pydantic_clai2.model_catalog import github_copilot_models
 from pydantic_clai2.model_menu import ModelMenu, open_add_model_menu
 from pydantic_clai2.settings_store import SettingsStore
+from tests.clai2.menu_script import Script, make_context, pick, typed
+from tests.clai2.test_app_edges import inputs
 
 CREDENTIALS = GitHubCopilotCredentials(access_token='fake-access', token_type='bearer', scope='')
 
@@ -156,7 +156,7 @@ async def test_cancel_stops_polling(device_flow: None, monkeypatch: pytest.Monke
             await anyio.sleep_forever()
         finally:
             stopped.set()
-        raise AssertionError('unreachable')
+        raise AssertionError('unreachable')  # pragma: no cover
 
     monkeypatch.setattr(GitHubCopilotOAuthFlow, 'wait_for_authorization', waiting)
     save_codex_credentials(account='github-copilot', value='previous')

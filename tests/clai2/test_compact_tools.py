@@ -14,11 +14,6 @@ from pydantic_clai2 import StreamRenderer, theme
 from pydantic_clai2.config import Settings, resolve_settings
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.mark.parametrize('exit_code', [0, 1, None])
 async def test_shell_only_prints_invocation(exit_code: int | None) -> None:
     output = io.StringIO()

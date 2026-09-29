@@ -63,7 +63,6 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 
 
 class TestPostHog:
-    @pytest.mark.anyio
     async def test_agent_runs_with_posthog_tools(self) -> None:
         server = FastMCP('posthog-fake')
 
@@ -76,7 +75,6 @@ class TestPostHog:
         result = await agent.run('Show weekly signups')
         assert 'Weekly signups' in result.output
 
-    @pytest.mark.anyio
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
         server = FastMCP('posthog-fake', instructions='PostHog instructions.')
@@ -154,14 +152,12 @@ class TestPostHog:
 
 
 class TestPerRunAuth:
-    @pytest.mark.anyio
     async def test_each_run_connects_with_its_own_credential(self) -> None:
         capability = PostHog[str | None](auth=per_user_token)
         [alice] = await connections_for(capability, 'alice-key')
         [bob] = await connections_for(capability, 'bob-key')
         assert (bearer(alice), bearer(bob)) == ('Bearer alice-key', 'Bearer bob-key')
 
-    @pytest.mark.anyio
     @pytest.mark.parametrize('missing', [None, ''])
     async def test_no_credential_means_no_tools(self, missing: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
         # The environment token is set to show a function never falls back to it.
@@ -169,7 +165,6 @@ class TestPerRunAuth:
         capability = PostHog[str | None](auth=per_user_token)
         assert await connections_for(capability, missing) == []
 
-    @pytest.mark.anyio
     async def test_function_returning_oauth_raises(self) -> None:
         capability = PostHog[str | None](auth=per_user_token)
         with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):
@@ -181,7 +176,6 @@ class TestServerSettings:
     def test_read_only_is_asked_of_the_server(self, read_only: bool, headers: dict[str, str]) -> None:
         assert _http_transport(PostHog(auth='posthog-key', read_only=read_only).get_toolset()).headers == headers
 
-    @pytest.mark.anyio
     async def test_read_only_with_a_client_keeps_only_read_only_tools(self) -> None:
         server = FastMCP('posthog-fake')
 

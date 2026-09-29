@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 import pytest
-from menu_script import Script, make_context, pick
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.input import create_pipe_input
@@ -40,6 +39,7 @@ from pydantic_clai2.spinners import (
     make_spinner,
     user_spinners_path,
 )
+from tests.clai2.menu_script import Script, make_context, pick
 
 PromptT = TypeVar('PromptT')
 CODE_PUPPY_BUILTINS = (
@@ -63,11 +63,6 @@ CODE_PUPPY_BUILTINS = (
     'fistBump',
     'aesthetic',
 )
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def catalogue(tmp_path: Path, *, selected: str = DEFAULT_SPINNER, registered: tuple[Spinner, ...] = ()) -> Spinners:
@@ -332,7 +327,9 @@ class TestPicker:
         ticks = iter([0.0, 0.1, 0.2, 0.3])
         picker = SpinnerPicker(catalogue(tmp_path), clock=lambda: next(ticks))
         assert picker.build().run().cancelled
-        painted = Text.from_ansi(output.getvalue()).plain
+        # The menu paints CRLF rows, and Rich 15.0.0's `from_ansi` blanks each one:
+        # https://github.com/Textualize/rich/issues/4090
+        painted = Text.from_ansi(output.getvalue().replace('\r\n', '\n')).plain
         assert all(f'Working {glyph} ─' in painted for glyph in '⠋⠙⠹')
 
 

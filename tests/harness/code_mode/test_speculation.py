@@ -55,14 +55,6 @@ from pydantic_ai_harness.code_mode import (
 
 from .._recording_durability import RecordingDurability
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
 
 @dataclass
 class ToolLog:
@@ -1002,7 +994,7 @@ class TestSpeculationEdgeCases:
         released = asyncio.Event()
 
         # Whether the body starts before eviction cancels it depends on scheduling.
-        async def search(query: str) -> str:  # pragma: no cover
+        async def search(query: str) -> str:  # pragma: lax no cover
             """Block until released, so eviction has to cancel it."""
             await released.wait()
             return f'result:{query}'
@@ -1039,7 +1031,7 @@ class TestSpeculationEdgeCases:
         stubborn_started = asyncio.Event()
 
         # The run moves on before the swallowed cancellation unwinds, so the tail is unreachable.
-        async def search(query: str) -> str:  # pragma: no cover
+        async def search(query: str) -> str:  # pragma: lax no cover
             """Ignore cancellation for longer than the eviction budget."""
             stubborn_started.set()
             while True:

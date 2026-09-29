@@ -121,7 +121,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1831,10 +1830,48 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/xml') is True
     assert _is_text_like_media_type('application/yaml') is True
     assert _is_text_like_media_type('application/x-yaml') is True
+    assert _is_text_like_media_type('application/toml') is True
     assert _is_text_like_media_type('application/ld+json') is True
     assert _is_text_like_media_type('application/soap+xml') is True
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
+
+
+async def test_toml_document_as_binary_content_input(allow_model_requests: None):
+    """TOML `BinaryContent` is inlined as text, like YAML is.
+
+    Unit test, not VCR: `BinaryContent.from_path` infers `application/toml` (RFC 9519) for `.toml`
+    files, and before it counted as text-like the mapping raised `Unsupported binary content type`
+    before any request was made, so this pins the request shape the mock client receives.
+    """
+    toml_content = BinaryContent(data=b'[project]\nname = "demo"', media_type='application/toml')
+
+    c = completion_message(ChatCompletionMessage(content='A pyproject file.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', toml_content])
+    assert result.output == snapshot('A pyproject file.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="312a73" type="application/toml"-----
+[project]
+name = "demo"
+-----END FILE id="312a73"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
 
 
 async def test_video_url_not_supported(allow_model_requests: None):
@@ -5058,9 +5095,7 @@ async def test_service_tier_non_standard_value(allow_model_requests: None):
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
-    profile = merge_profile(
-        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
-    )
+    profile = merge_profile(OpenAIModelProfile(supports_forced_tool_choice=False), openai_model_profile('stub'))
 
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('stub', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -5079,9 +5114,7 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
 
 async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
     """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
-    profile = merge_profile(
-        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
-    )
+    profile = merge_profile(OpenAIModelProfile(supports_forced_tool_choice=False), openai_model_profile('stub'))
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -5708,6 +5741,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -6190,7 +6224,7 @@ async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_
     c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
 
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    profile = OpenAIModelProfile(supports_forced_tool_choice=False)
     model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
     tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
@@ -6215,13 +6249,13 @@ async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model
     Regression for https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r3127128012 — the tuple
     branch in `_get_tool_choice` previously sent the forced tool choice without consulting the model
     profile, which would push an unsupported parameter to the API for models that have
-    `openai_supports_tool_choice_required=False`. Registers two tools so `resolve_tool_choice` returns
+    `supports_forced_tool_choice=False`. Registers two tools so `resolve_tool_choice` returns
     `('required', {chosen})` rather than collapsing to scalar `'required'`.
     """
     c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
 
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    profile = OpenAIModelProfile(supports_forced_tool_choice=False)
     model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
     tools = [

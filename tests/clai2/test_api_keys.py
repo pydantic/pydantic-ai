@@ -5,18 +5,13 @@ from pathlib import Path
 import keyring
 import pytest
 from keyring.errors import NoKeyringError
-from menu_script import make_context
 from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import api_keys, openrouter, set_menu, vllm
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.credential_store import credentials_path, save_codex_credentials
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import make_context
 
 
 class Prompt:

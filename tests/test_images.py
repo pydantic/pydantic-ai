@@ -59,7 +59,6 @@ from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, try_import
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.usefixtures('allow_model_requests'),
 ]
 

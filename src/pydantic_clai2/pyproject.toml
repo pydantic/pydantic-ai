@@ -14,7 +14,7 @@ format-jinja = "0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ 
 
 [project]
 name = "pydantic-clai2"
-dynamic = ["version", "dependencies"]
+dynamic = ["version", "dependencies", "optional-dependencies"]
 description = "A capability-aware streaming terminal client for Pydantic AI"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -41,8 +41,12 @@ dependencies = [
     "exceptiongroup>=1.0.2; python_version < '3.11'",
 ]
 
+# Providers whose SDK CLAI does not install by default. `/model` names the extra when it is missing.
+[tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
+typesafe = ["pydantic-ai-slim[typesafe]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+
 [project.urls]
-Homepage = "https://pydantic.dev/docs/ai/harness/clai2/"
+Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2"
 Source = "https://github.com/pydantic/pydantic-ai"
 Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 

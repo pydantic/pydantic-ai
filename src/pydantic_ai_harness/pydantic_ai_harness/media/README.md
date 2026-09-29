@@ -13,7 +13,7 @@
 > )
 > ```
 >
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 The storage plumbing that [`StepPersistence`](../step_persistence/) uses to keep run snapshots small: content-addressed stores and walker helpers that move large binary and text payloads out of message history and put them back on demand.
 

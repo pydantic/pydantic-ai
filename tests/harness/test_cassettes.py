@@ -19,10 +19,9 @@ from pathlib import Path
 
 import pytest
 from _pytest.mark import ParameterSet
-from pydantic import BaseModel
-from vcr.serializers import yamlserializer
+from cassetter import Cassette, RecordMode
 
-_ROOT = Path(__file__).parent.parent
+_ROOT = Path(__file__).parents[2]
 
 # `httpx._decoders.SUPPORTED_DECODERS` minus the two entries it pops when their
 # optional package is absent: `br` needs `brotli`/`brotlicffi`, `zstd` needs
@@ -46,43 +45,28 @@ def _optional_encodings(header_value: str) -> list[str]:
     return optional
 
 
-class _Request(BaseModel):
-    uri: str
-
-
-class _Response(BaseModel):
-    headers: dict[str, list[str]]
-
-
-class _Interaction(BaseModel):
-    request: _Request
-    response: _Response
-
-
-class _Cassette(BaseModel):
-    interactions: list[_Interaction]
-
-
 def _cassettes() -> Iterable[ParameterSet]:
-    for directory in ('tests', 'integration_tests'):
+    for directory in ('tests/harness', 'src/pydantic_ai_harness/integration_tests'):
         for path in sorted((_ROOT / directory).glob('**/cassettes/**/*.yaml')):
             yield pytest.param(path, id=str(path.relative_to(_ROOT)))
 
 
 def test_cassettes_discovered() -> None:
     # Guard against a discovery break silently making the check vacuous.
-    assert sum(1 for _ in _cassettes()) >= 7
+    assert sum(1 for _ in _cassettes()) >= 6
 
 
-@pytest.mark.parametrize('path', _cassettes())
+@pytest.mark.parametrize('path', list(_cassettes()))
 def test_cassette_replays_without_an_optional_decompressor(path: Path) -> None:
-    # `vcr`'s own loader, because a cassette can carry tags `yaml.safe_load` rejects.
-    document = yamlserializer.deserialize(path.read_text(encoding='utf-8'))  # pyright: ignore[reportUnknownMemberType]
-    cassette = _Cassette.model_validate(document)
+    # `cassetter`'s own loader, because a cassette can carry tags `yaml.safe_load` rejects.
+    cassette = Cassette(path, record_mode=RecordMode.NONE)
+    cassette.load()
     needs = [
         f'{interaction.request.uri} responds `Content-Encoding: {encoding}`'
         for interaction in cassette.interactions
-        for value in interaction.response.headers.get('content-encoding', [])
+        for name, values in interaction.response.headers.items()
+        if name.lower() == 'content-encoding'
+        for value in values
         for encoding in _optional_encodings(value)
     ]
     assert not needs, (

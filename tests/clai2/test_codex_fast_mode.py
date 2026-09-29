@@ -5,7 +5,6 @@ from pathlib import Path
 
 import httpx2 as httpx
 import pytest
-from menu_script import Script, make_context, pick
 from pydantic import JsonValue, TypeAdapter
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
@@ -16,11 +15,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
 from pydantic_clai2.field_menu import FieldMenu
 from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_command
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import Script, make_context, pick
 
 
 @pytest.mark.parametrize('name', ['gpt-6-astra', 'gpt-5.6-luna', 'gpt-5.4'])

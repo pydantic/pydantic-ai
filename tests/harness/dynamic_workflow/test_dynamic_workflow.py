@@ -38,14 +38,6 @@ from pydantic_ai_harness.dynamic_workflow import (
     WorkflowResourceLimits,
 )
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (the shared Monty loop uses asyncio)."""
-    return 'asyncio'
-
 
 def _sub_agent(text: str = 'ok', name: str | None = 'sub', description: str | None = None) -> Agent[object, str]:
     return Agent(TestModel(custom_output_text=text), name=name, description=description)

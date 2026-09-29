@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 import pytest
-from vcr.cassette import Cassette
+from cassetter import Cassette
 
 from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings, ThinkingLevel
@@ -39,7 +39,7 @@ with try_import() as mistral_imports:
 if TYPE_CHECKING:
     from pydantic_ai.models import Model
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = [pytest.mark.vcr]
 
 # Per-provider skip mark, keyed by a case's `provider`. A case naming a provider missing from this
 # map fails loudly at collection (KeyError) rather than silently skipping on the wrong SDK's presence.
