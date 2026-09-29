@@ -44,11 +44,9 @@ class ZaiProvider(_OpenAICompatibleProvider):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        profile = zai_model_profile(model_name)
-
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
-            profile,
+            zai_model_profile(model_name),
             OpenAIModelProfile(
                 supports_json_object_output=True,
                 openai_chat_thinking_field='reasoning_content',
