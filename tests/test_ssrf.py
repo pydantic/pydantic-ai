@@ -36,8 +36,6 @@ from pydantic_ai._ssrf import (
     validate_url_protocol,
 )
 
-pytestmark = [pytest.mark.anyio]
-
 
 @pytest.fixture
 def mock_dns(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:

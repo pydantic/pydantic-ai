@@ -68,9 +68,7 @@ from .conftest import IsDatetime, IsStr, iter_message_parts
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 # ===== Pending Message Queue Tests =====

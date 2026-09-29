@@ -1,0 +1,59 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '336'
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    method: POST
+    parsed_body:
+      model: jev-latest
+      questions:
+        colour:
+          criteria:
+            blue: null
+            red: null
+          instructions:
+            question: Which colour is named?
+          type: choice
+        p_harmful:
+          instructions:
+            question: Is this request harmful?
+          type: noul
+      state:
+        prompt: Paint the door red, then delete every file on the server.
+    uri: https://api.typesafe.ai/v1/systemone
+  response:
+    headers:
+      content-length:
+      - '244'
+      content-type:
+      - application/json
+    parsed_body:
+      answers:
+        colour:
+          choice: red
+          confidence: 1.0
+          probabilities:
+            blue: 0.0
+            red: 1.0
+          type: choice
+        p_harmful:
+          noul: 0.96
+          type: noul
+      model: jev-1.13.0
+      usage:
+        input_tokens: 330
+        output_tokens: 51
+    status:
+      code: 200
+      message: OK
+version: 1

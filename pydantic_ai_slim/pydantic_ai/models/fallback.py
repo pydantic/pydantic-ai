@@ -15,9 +15,9 @@ from opentelemetry.util.types import AttributeValue
 from typing_extensions import assert_never
 
 from pydantic_ai._instrumentation import (
-    include_content_ctx,
     model_attributes,
     model_request_parameters_attributes,
+    span_include_content,
 )
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import await_maybe, get_first_param_type
@@ -504,11 +504,12 @@ class FallbackModel(Model):
                             model_request_parameters_attributes(
                                 model_request_parameters,
                                 # The settings aren't reachable from here, so the span carries its
-                                # own `include_content` in a context variable. This refresh
-                                # serializes the *selected* model's parameters, whose instruction
-                                # parts the outer request may not have had at all, so it cannot be
-                                # inferred from what is already recorded.
-                                include_content=include_content_ctx.get() is not False,
+                                # own `include_content` in a context variable, keyed by the span it
+                                # was set for. This refresh serializes the *selected* model's
+                                # parameters, whose instruction parts the outer request may not have
+                                # had at all, so it cannot be inferred from what is already
+                                # recorded. Fails closed on anything but this span's own policy.
+                                include_content=span_include_content(span),
                             )
                         )
                     span.set_attributes(span_attributes)

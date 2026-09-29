@@ -1,0 +1,112 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '606'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Take the country that borders both France and Austria and whose capital is not its largest city. Give me information
+            about its largest city.
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      output_config:
+        effort: high
+        format:
+          schema:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+              population:
+                type: integer
+            required:
+            - city
+            - country
+            - population
+            type: object
+          type: json_schema
+      stream: false
+      thinking:
+        type: adaptive
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '3327'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-c0e805fb1fe286eb44e84f021346724e-3bf05a645d72bb3f-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      container: null
+      content:
+      - signature: EpIKCpIBCBIYAipAcGnQQVDol1n56Fzhqjewl3znMZVUFLbEnr4l8V83Tj4yslg6PPYKpzEYV9zy3CM5UTHr+0Q1uAR8mXbXVhDc3DIRY2xhdWRlLXNvbm5ldC00LTY4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgBuYfc1QYSDJeKYusCJWDJkEIm2BoMPP4f40yy3AZHpDmvIjABHSUaDdSFRku83+LwedGnX9RN7PyfHDXyMyXBW0305g0W6Gz50+2JOvcHF+TuWnAqrAgRSgOsiu07nhhubIq0mRRp1/sl7cASOF7OgSzhVOozhspTAVRao2y+0Qa9Z6lUdW4D5F7rWmir0F5lJlC+kSdUF8ycH8ZIzEF0VDQljvjhlomSG87I/atAWqqIQzgK7dppVNpYz0aIRh+rwWGo2Xc1WVzEvkcc3nFArEyVITEnQiid5/qklx4WiyA83nbTEJKlKPn+UgKde7afP84HwWQPdtviBwe9OPqIDx031fmSsfD1sh3pPVYuS9dWAFdkQyH4svv//ZH7ztrT4VsK+VgS1gn1glzmRGBIhnGyZJGvGikfKLsymc0rqYs7xJFYl6w6tNyr/UGjxWsS4auP6gllM0ntG9QGKp/L7oZBaj2bEURyCsdLr4omLFedB5LWoboH7sWB8nJK6BirpOXTKFJXx38Ya0z75h8SmcVxSKw5M39rkCrhehGlt+JCQp52titheT8BFzmjYfXh6Wrqxs/SCXfoe2JLfB99j76FccvJBCxZ+5OXMcbP5DUeNN396xJk1XEXe2sQtj9gZy61F26vikf6sctG2nvP6LK+2FqhwzRG55S5BlCqyGviXmnXuIXlNz02u44Pyj0BjaW80PPuOnuWGSGWt75lMk0y9arIzQ0fsY3EsofEB6/TcGuHerchooVtTgTnr2ngzzt1/tGGn1lH/xKiGv2qRMNrVMAZvbj1P5jXD9FyXZmmMpJNZNGgqLZUPx4i5tv71QAcQAzOvkC2qmFzDPPR3rh6VpNEYDH3VNQbQCUeW9co2r5w8ddPoAYghXy4TC8W0brBsGzVEOhxC5npDknfV2LQYiCgAXn7RsvcUiZj+knUFCgBhdTI37KIW9iXrIVyOSMIQU5sw+RP6Q7SDsbVFHCQ26fnIZyiLYwugGURiY1uef9XkdkBbWCcweStuUBX+OF7y3E3OpBh8smPbrXmcKE9ywjtrhbpVFVVt/reLEMdsShhObqexiCKuxnqdM0HgWmbANMVuzxyYH2mhwqy1lrAKyy4s0IuknHo+McA+FI9SsNSHnCB5veoGhiZIKm3jufxI09A76gOc7n63fO0yokhss0mLVIeC4ICm4OPiLL4EkEeICh1UzAJEeH/0StJDRiN/9X64SohjMPr1sTvsx3fB7bW6RrVjRZGag6aNTCX74CrEPWzegKWEn2ECIXr2ipymoiIDA1CumXsWkP1GuHgCAxlGNL7++JIV3snHoBkLW9K4N6vCeJefoLF3+eLioYWYIte2MsX/fF3mks2qbDimoLXfNSpe6Op1Jmi/LhgkOO69B5IHrMjdLma7JKZTOJ1Ra4L+BHCOOhFUUCVx6kwVLzVlw551oqOq4IiMMSOYKo5jjSyMEiw6qCq8OSdgsEzBE0WGf300UOMiM+vJe65yPvsXFK932oGHj3G79dI+XXVI5d0LI7UzUMeuEhJi6MYAQ==
+        thinking: |+
+          Let me think about which country borders both France and Austria and whose capital is not its largest city.
+
+          Countries that border France: Spain, Andorra, Monaco, Italy, Switzerland, Germany, Luxembourg, Belgium.
+
+          Countries that border Austria: Germany, Czech Republic, Slovakia, Hungary, Slovenia, Italy, Switzerland, Liechtenstein.
+
+          Countries that border BOTH France and Austria: Germany, Switzerland, Italy.
+
+          Now, which of these has a capital that is not its largest city?
+
+          - Germany: Capital is Berlin, largest city is also Berlin. So Berlin is both capital and largest city.
+          - Switzerland: Capital is Bern, largest city is Zurich. Yes! Bern is the capital but Zurich is the largest city.
+          - Italy also rules itself out since Rome is both capital and largest city, confirming Switzerland fits, with Zurich as the answer, which has a city-proper population around 430,000.
+
+        type: thinking
+      - text: '{"city":"Zurich","country":"Switzerland","population":430000}'
+        type: text
+      diagnostics: null
+      id: msg_011CfR2Te1HVPfwsjkEyu1xC
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 219
+        output_tokens: 284
+        output_tokens_details:
+          thinking_tokens: 262
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1
+...
