@@ -31,7 +31,7 @@ from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_rea
 from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
 
 try:
-    from openai import APIError, AsyncOpenAI, omit
+    from openai import APIConnectionError, APIError, AsyncOpenAI, omit
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
@@ -1246,9 +1246,17 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                     _raise_for_no_completion(chunk_dict, self._model_name, exc)
                     raise
                 yield validated
+        except APIConnectionError:
+            # A transport failure mid-stream (read timeout, connection reset) carries no error body;
+            # `OpenAIStreamedResponse` maps it to `ModelAPIError`.
+            raise
         except APIError as e:
-            error = _OpenRouterError.model_validate(e.body)
-            raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
+            try:
+                error = _OpenRouterError.model_validate(e.body)
+            except ValidationError:
+                # An error object without an integer `code`: there's no status to report.
+                raise ModelAPIError(model_name=self._model_name, message=e.message) from e
+            raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message) from e
 
     @override
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
