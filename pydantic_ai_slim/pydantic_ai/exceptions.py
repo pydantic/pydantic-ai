@@ -563,7 +563,7 @@ class ModelAPIError(AgentRunError):
         self.provider_error_type = provider_error_type
         super().__init__(message)
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
+    def __reduce__(self) -> tuple[Any, ...]:
         return self.__class__, (self.model_name, self.message), self.__getstate__()
 
     def __getstate__(self) -> dict[str, Any]:

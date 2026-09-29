@@ -12,9 +12,8 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 
-import httpx
 import httpx2
 import pytest
 
@@ -34,6 +33,7 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     import grpc
+    import httpx
     from anthropic import AsyncAnthropic
     from botocore.exceptions import (
         BotoCoreError,
@@ -167,9 +167,11 @@ def _sse(*events: tuple[str, dict[str, Any]]) -> Handler:
     return handler
 
 
-def _raise(error_class: type[httpx.TransportError | httpx2.TransportError]) -> Handler:
+def _raise(kind: Literal['connect', 'timeout']) -> Handler:
     def handler(request: Any) -> Any:
-        raise error_class('failed', request=request)
+        if isinstance(request, httpx.Request):
+            raise (httpx.ConnectError if kind == 'connect' else httpx.ReadTimeout)('failed', request=request)
+        raise (httpx2.ConnectError if kind == 'connect' else httpx2.ReadTimeout)('failed', request=request)
 
     return handler
 
@@ -259,13 +261,13 @@ CASES = [
     Case(
         id='openai-connection',
         model=_openai,
-        handler=_raise(httpx2.ConnectError),
+        handler=_raise('connect'),
         categories={ModelConnectionError},
     ),
     Case(
         id='openai-timeout',
         model=_openai,
-        handler=_raise(httpx2.ReadTimeout),
+        handler=_raise('timeout'),
         categories={ModelConnectionError, ModelTimeoutError},
     ),
     Case(
@@ -367,7 +369,7 @@ CASES = [
     Case(
         id='anthropic-timeout',
         model=_anthropic,
-        handler=_raise(httpx2.ReadTimeout),
+        handler=_raise('timeout'),
         categories={ModelConnectionError, ModelTimeoutError},
     ),
     Case(
@@ -414,13 +416,13 @@ CASES = [
     Case(
         id='groq-connection',
         model=_groq,
-        handler=_raise(httpx.ConnectError),
+        handler=_raise('connect'),
         categories={ModelConnectionError},
     ),
     Case(
         id='groq-timeout',
         model=_groq,
-        handler=_raise(httpx.ReadTimeout),
+        handler=_raise('timeout'),
         categories={ModelConnectionError, ModelTimeoutError},
     ),
     Case(
@@ -543,22 +545,22 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
 
 
 @pytest.mark.parametrize(
-    ('error', 'categories', 'attrs'),
+    ('make_error', 'categories', 'attrs'),
     [
         pytest.param(
-            _bedrock_error('ThrottlingException', 'Too many requests, please wait before trying again.', 429),
+            lambda: _bedrock_error('ThrottlingException', 'Too many requests, please wait before trying again.', 429),
             {ModelHTTPError, ModelRateLimitError},
             {'status_code': 429, 'provider_error_code': 'ThrottlingException'},
             id='rate-limit',
         ),
         pytest.param(
-            _bedrock_error('ServiceUnavailableException', 'Service unavailable.', 503),
+            lambda: _bedrock_error('ServiceUnavailableException', 'Service unavailable.', 503),
             {ModelHTTPError, ModelOverloadedError},
             {'status_code': 503, 'provider_error_code': 'ServiceUnavailableException'},
             id='overloaded',
         ),
         pytest.param(
-            _bedrock_error(
+            lambda: _bedrock_error(
                 'ValidationException',
                 'The model returned the following errors: Input is too long for requested model.',
                 400,
@@ -568,31 +570,31 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
             id='context-window',
         ),
         pytest.param(
-            _bedrock_error('ValidationException', 'Malformed input request.', 400),
+            lambda: _bedrock_error('ValidationException', 'Malformed input request.', 400),
             {ModelHTTPError},
             {'status_code': 400, 'provider_error_code': 'ValidationException'},
             id='validation',
         ),
         pytest.param(
-            _bedrock_error('throttlingException', 'Too many tokens, please wait before trying again.', None),
+            lambda: _bedrock_error('throttlingException', 'Too many tokens, please wait before trying again.', None),
             {ModelRateLimitError},
             {'provider_error_code': 'throttlingException', 'retry_after': None},
             id='stream-rate-limit',
         ),
         pytest.param(
-            _bedrock_error('validationException', 'Input is too long for requested model.', None),
+            lambda: _bedrock_error('validationException', 'Input is too long for requested model.', None),
             {ContextWindowExceeded},
             {'provider_error_code': 'validationException'},
             id='stream-context-window',
         ),
         pytest.param(
-            ReadTimeoutError(endpoint_url='https://bedrock.stub'),
+            lambda: ReadTimeoutError(endpoint_url='https://bedrock.stub'),
             {ModelConnectionError, ModelTimeoutError},
             {},
             id='timeout',
         ),
         pytest.param(
-            EndpointConnectionError(endpoint_url='https://bedrock.stub'),
+            lambda: EndpointConnectionError(endpoint_url='https://bedrock.stub'),
             {ModelConnectionError},
             {},
             id='connection',
@@ -601,10 +603,12 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
 )
 async def test_bedrock_error_category(
     allow_model_requests: None,
-    error: ClientError | BotoCoreError,
+    make_error: Callable[[], ClientError | BotoCoreError],
     categories: set[type[ModelAPIError]],
     attrs: dict[str, Any],
 ):
+    """The errors are built in the test, not at collection, so the module can be collected without `boto3`."""
+    error = make_error()
     model = _bedrock_model_with_error(error)
     with pytest.raises(ModelAPIError) as exc_info:
         await Agent(model).run('hello')
@@ -616,44 +620,45 @@ async def test_bedrock_error_category(
     assert exc.__cause__ is error
 
 
-class _RpcError(grpc.RpcError):
-    def __init__(self, status: grpc.StatusCode, details: str):
-        self._status = status
-        self._details = details
+def _rpc_error(status: str, details: str) -> grpc.RpcError:
+    """An `RpcError` with the named `grpc.StatusCode`, looked up in the test so collection doesn't need `grpc`."""
 
-    def code(self) -> grpc.StatusCode:
-        return self._status
+    class RpcError(grpc.RpcError):
+        def code(self) -> grpc.StatusCode:
+            return grpc.StatusCode[status]
 
-    def details(self) -> str:
-        return self._details
+        def details(self) -> str:
+            return details
+
+    return RpcError()
 
 
 @pytest.mark.parametrize(
     ('status', 'details', 'categories', 'attrs'),
     [
         pytest.param(
-            grpc.StatusCode.RESOURCE_EXHAUSTED,
+            'RESOURCE_EXHAUSTED',
             'Rate limit exceeded',
             {ModelHTTPError, ModelRateLimitError},
             {'status_code': 429, 'provider_error_code': 'RESOURCE_EXHAUSTED'},
             id='rate-limit',
         ),
         pytest.param(
-            grpc.StatusCode.UNAVAILABLE,
+            'UNAVAILABLE',
             'Service unavailable',
             {ModelHTTPError, ModelOverloadedError},
             {'status_code': 503, 'provider_error_code': 'UNAVAILABLE'},
             id='overloaded',
         ),
         pytest.param(
-            grpc.StatusCode.INVALID_ARGUMENT,
+            'INVALID_ARGUMENT',
             "This model's maximum prompt length is 131072 but the request contains 150004 tokens.",
             {ContextWindowExceeded},
             {'provider_error_code': 'INVALID_ARGUMENT'},
             id='context-window',
         ),
         pytest.param(
-            grpc.StatusCode.DEADLINE_EXCEEDED,
+            'DEADLINE_EXCEEDED',
             'Deadline Exceeded',
             {ModelHTTPError},
             {'status_code': 504, 'provider_error_code': 'DEADLINE_EXCEEDED'},
@@ -663,14 +668,14 @@ class _RpcError(grpc.RpcError):
 )
 async def test_xai_error_category(
     allow_model_requests: None,
-    status: grpc.StatusCode,
+    status: str,
     details: str,
     categories: set[type[ModelAPIError]],
     attrs: dict[str, Any],
 ):
     model = XaiModel(
         'grok-4-1-fast-non-reasoning',
-        provider=XaiProvider(xai_client=MockXai.create_mock([_RpcError(status, details)])),
+        provider=XaiProvider(xai_client=MockXai.create_mock([_rpc_error(status, details)])),
     )
     with pytest.raises(ModelAPIError) as exc_info:
         await Agent(model).run('hello')
