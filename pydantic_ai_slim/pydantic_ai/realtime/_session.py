@@ -32,7 +32,6 @@ from .._tool_execution import (
     cancelled_sub_agent_return,
 )
 from .._utils import aclose_all, cancel_and_drain, dataclasses_no_defaults_repr, fill_run_metadata
-from .._uuid import uuid7
 from ..conversation import Conversation
 from ..exceptions import (
     ApprovalRequired,
@@ -792,7 +791,7 @@ class RealtimeSession:
         self.usage = usage if usage is not None else RunUsage()
         """Cumulative token usage and tool-call counts for the session, updated as events stream in.
 
-        Pass `usage` to [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] to accumulate
+        Pass `usage` to [`Agent.realtime`][pydantic_ai.agent.AbstractAgent.realtime] to accumulate
         into a shared [`RunUsage`][pydantic_ai.usage.RunUsage]; otherwise a fresh one is used.
         """
         # `ToolManager` increments `tool_calls` on its context's usage as each call succeeds, and the
@@ -1540,14 +1539,21 @@ class RealtimeSession:
         [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] and handed back again, carrying its usage
         rather than restarting the budget each time it changes modality.
 
-        A session opened without a `conversation_id` mints one here and keeps it, so every bundle
-        taken from the session — and every message it records from then on — shares one identity to
-        store the conversation under.
+        A session opened without a `conversation_id` resolves one here the way
+        [`Agent.realtime`][pydantic_ai.agent.AbstractAgent.realtime] does up front — continuing the
+        conversation its seeded history belongs to, or starting a new one — and keeps it, so every
+        bundle taken from the session and every message it records shares one identity to store the
+        conversation under.
         """
         if self._conversation_id is None:
-            self._conversation_id = str(uuid7())
-            # The session span was opened before this id existed, so hand it over: the messages
-            # recorded from here on carry it, and the span has to agree for the two to correlate.
+            self._conversation_id = _agent_graph.resolve_conversation_id(None, self._seeded)
+            # Messages this session recorded before the id existed were stamped with none. Stamp them
+            # now, as they would have been had it been resolved up front, so the bundle agrees with
+            # its own messages. The seeded history is the caller's, and is left as it was given.
+            for message in self._history:
+                message.conversation_id = message.conversation_id or self._conversation_id
+            # The session span was opened before this id existed too, and has to agree for the
+            # session to correlate with the text run that continues it.
             self._session_instrumentation.set_conversation_id(self._conversation_id)
         return Conversation(
             messages=self.all_messages(),
