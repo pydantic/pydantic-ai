@@ -327,7 +327,8 @@ class TestPicker:
         ticks = iter([0.0, 0.1, 0.2, 0.3])
         picker = SpinnerPicker(catalogue(tmp_path), clock=lambda: next(ticks))
         assert picker.build().run().cancelled
-        # The menu paints CRLF rows, and Rich 15's `from_ansi` blanks a line that ends in `\r`.
+        # The menu paints CRLF rows, and Rich 15.0.0's `from_ansi` blanks each one:
+        # https://github.com/Textualize/rich/issues/4090
         painted = Text.from_ansi(output.getvalue().replace('\r\n', '\n')).plain
         assert all(f'Working {glyph} ─' in painted for glyph in '⠋⠙⠹')
 
