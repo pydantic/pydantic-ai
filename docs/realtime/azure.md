@@ -67,8 +67,10 @@ realtime counterpart of [model run settings](../agent.md#model-run-settings) —
 - `openai_turn_detection` for server or semantic VAD (see [turn detection](turns.md#automatic-turn-detection));
 - `openai_truncation` for session context management.
 
-See [OpenAI settings](openai.md#gpt-realtime-settings) for the shared settings. Azure realtime does not
-expose `temperature` through Pydantic AI.
+See [OpenAI settings](openai.md#gpt-realtime-settings) for the shared settings. The GA realtime API has
+no `temperature`; on Voice Live, use
+[`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
+(see [Azure AI Voice Live](#azure-ai-voice-live)).
 
 ### Input transcription deployment
 
@@ -191,8 +193,22 @@ Voice Live defaults input transcription to `whisper-1` when the deployment name 
 `gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
 `input_transcription_model` explicitly when that is not the intended deployment.
 
-Voice Live silently ignores the inherited `openai_*` settings plus `thinking` and
-`parallel_tool_calls`. Use Voice-Live-specific settings where available.
+Voice Live applies the shared settings plus `openai_voice`, `openai_turn_detection`, and
+`openai_input_noise_reduction`:
+
+- [`thinking`](overview.md#shared-settings) becomes Voice Live's `reasoning_effort` on reasoning
+  models: `gpt-realtime-2*` and the reasoning cascade models like `gpt-5`, whose
+  [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking] comes from the
+  chat model's profile. Non-reasoning models like `gpt-4.1` leave it out, since Voice Live would accept
+  it and then fail every response.
+- Semantic VAD (`openai_turn_detection` or `azure_voice_live_turn_detection`) works only with the
+  native-audio `gpt-realtime*` models. The cascade models reject it with
+  `OpenAI Semantic VAD is not supported in cascaded pipeline`, which fails the session as it starts.
+- [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
+  sets the sampling temperature, from 0 to 2. The reasoning cascade models accept only the default
+  of 1: any other value fails each response.
+
+Voice Live silently ignores `openai_output_speed`, `openai_truncation`, and `parallel_tool_calls`.
 
 ### Which models use which API
 
