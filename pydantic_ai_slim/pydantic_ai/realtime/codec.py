@@ -395,10 +395,9 @@ class InputRejected:
     OpenAI protocol echoes the client `event_id`). A connection that can't tell which input an error was
     about yields the error alone. A reconnect whose new session no longer has an input (Gemini resumes
     from a handle that can predate a typed turn) yields it too, ahead of the
-    [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent]. It is also
-    yielded for a request for a response the connection doesn't send, because the provider would ignore
-    it without a word (xAI, once it has answered the latest committed audio). The session uses it to take
-    back what it assumed the input did: a refused request for a response releases the reply
+    [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent]. The session
+    uses it to take back what it assumed the input did: a
+    refused request for a response releases the reply
     [`wait_for_reply()`][pydantic_ai.realtime.RealtimeSession.wait_for_reply] would otherwise wait for
     forever, and refused content is removed from history.
     """
@@ -578,6 +577,18 @@ class RealtimeConnection(ABC):
         `True`; the OpenAI connection overrides it.
         """
         return True
+
+    @property
+    def defers_audio_commit(self) -> bool:
+        """Whether committed audio joins the conversation only once a response is asked for.
+
+        xAI Grok Voice answers audio as soon as it is committed, so with turn detection off its
+        connection holds the commit until the next request for a response, and anything sent in
+        between lands first. [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] then records the
+        spoken turn where the provider places it: after what was sent before that request. Defaults to
+        `False`.
+        """
+        return False
 
 
 __all__ = (

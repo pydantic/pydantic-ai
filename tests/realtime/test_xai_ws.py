@@ -242,9 +242,9 @@ async def test_push_to_talk_replies_only_when_asked(
     """With turn detection off, committed audio gets a reply only when `create_response()` asks for one.
 
     xAI answers a commit of speech by itself, so the commit is held back and sent in place of
-    `response.create`. Text sent in between reaches xAI first. A second `create_response()` with nothing new
-    behind it, which xAI would drop without a word, is refused, so `wait_for_reply()` returns rather than
-    waiting for ever.
+    `response.create`. Text sent in between reaches xAI first, and history follows that order. A second
+    `create_response()` with nothing new behind it is answered again, as on every other provider: xAI would
+    drop it without a word, so it first clears the buffer, which is empty.
     """
     provider, cassette = xai_ws_cassette
     model = XaiRealtimeModel(MODEL, provider=provider, settings=XaiRealtimeModelSettings(turn_detection=False))
@@ -263,7 +263,7 @@ async def test_push_to_talk_replies_only_when_asked(
         with anyio.fail_after(30):
             await session.wait_for_reply()
         await session.create_response()
-        with anyio.fail_after(10):
+        with anyio.fail_after(30):
             await session.wait_for_reply()
 
     interactions = [message for message in cassette.interactions if isinstance(message, CassetteMessage)]
@@ -276,15 +276,16 @@ async def test_push_to_talk_replies_only_when_asked(
     assert not any(message.data['type'] == 'response.created' for message in interactions[:commit_at])
     sent_types = [message.data['type'] for message in interactions if message.direction == 'sent']
     assert sent_types[sent_types.index('conversation.item.create') :] == snapshot(
-        ['conversation.item.create', 'input_audio_buffer.commit', 'input_audio_buffer.clear']
+        ['conversation.item.create', 'input_audio_buffer.commit', 'input_audio_buffer.clear', 'response.create']
     )
-    # History follows what xAI was sent: the text, then the committed speech, then the one reply.
+    # History follows what xAI was sent: the text, then the committed speech, then one reply per request.
     messages = session.all_messages()
     assert [[type(part).__name__ for part in message.parts] for message in messages] == snapshot(
-        [['UserPromptPart'], ['SpeechPart'], ['SpeechPart']]
+        [['UserPromptPart'], ['SpeechPart'], ['SpeechPart'], ['SpeechPart']]
     )
-    assert isinstance(messages[1], ModelRequest)
-    assert isinstance(messages[2], ModelResponse)
+    assert [type(message).__name__ for message in messages] == snapshot(
+        ['ModelRequest', 'ModelRequest', 'ModelResponse', 'ModelResponse']
+    )
 
 
 async def test_tool_call_round(xai_ws_cassette: tuple[XaiProvider, RealtimeCassette]) -> None:

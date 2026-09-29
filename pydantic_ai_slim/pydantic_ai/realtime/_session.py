@@ -871,6 +871,11 @@ class RealtimeSession:
         # In-flight user request being assembled from input-transcript events.
         self._user_turn_active = False
         self._anonymous_user_turns_ended = 0
+        # A spoken turn committed on a connection that `defers_audio_commit`, and the untranscribed turns
+        # recorded for it, placed in history once the next request for a response goes out (see
+        # `_place_deferred_audio_commit`).
+        self._audio_commit_deferred = False
+        self._deferred_audio_requests: list[ModelRequest] = []
         # An id-less final can precede its matching speech-end frame, so remember it until audio or a
         # transcription event begins the next turn instead of letting that trailing frame open a blank one.
         self._anonymous_user_turn_finalized = False
@@ -1380,8 +1385,7 @@ class RealtimeSession:
         called them. Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
         over; it also returns if the session closes, fails (a tool raised, or a usage limit tripped) so
-        the reply can no longer come, or the request for the reply is refused (a refusal the provider
-        explains is reported as a
+        the reply can no longer come, or the provider refuses the request for the reply (reported as a
         [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and
@@ -1859,8 +1863,35 @@ class RealtimeSession:
             # place in history; the committed turn belongs after that answer.
             self._open_user_turn_anchor()
         self._user_turn_active = True
-        for event in self._finalize_untranscribed_user():
+        events = self._finalize_untranscribed_user()
+        if self._connection.defers_audio_commit:
+            self._audio_commit_deferred = True
+            if events:
+                # The untranscribed turn just recorded waits for its place with the commit.
+                request = self._history.pop()
+                assert isinstance(request, ModelRequest)
+                self._deferred_audio_requests.append(request)
+        for event in events:
             self._queue_put(event)
+
+    def _place_deferred_audio_commit(self) -> None:
+        """Place a spoken turn whose commit a connection held until now, after everything sent before it.
+
+        That's where the provider has the audio, so the turn's place in history, reserved when its audio
+        started, moves here, and an untranscribed turn is recorded now.
+        """
+        self._audio_commit_deferred = False
+        anchor = self._user_turn_anchor_here()
+        anonymous = self._pending_anonymous_user_turn_anchors
+        for index in range(len(anonymous)):
+            anonymous[index] = anchor
+        for item_id in self._pending_user_turn_anchors:
+            self._pending_user_turn_anchors[item_id] = (anchor,)
+        for key in self._user_turn_anchors:
+            self._user_turn_anchors[key] = anchor
+        for request in self._deferred_audio_requests:
+            self._record_sent_request(request)
+        self._deferred_audio_requests.clear()
 
     async def clear_audio(self) -> None:
         """Discard buffered, uncommitted input audio."""
@@ -2123,6 +2154,11 @@ class RealtimeSession:
                     if position == 0 and request is not None:
                         self._input_requests[input_index] = request
                     await self._connection.send(content)
+                if self._audio_commit_deferred and any(
+                    isinstance(content, (str, CreateResponse, ToolResult)) for content in contents
+                ):
+                    # This asks for a response, which is when the held commit goes out.
+                    self._place_deferred_audio_commit()
             except self._connection.transport_errors as e:
                 # A send that fails because the link is gone is the same failure the receive side
                 # reports; surface it as the same typed error rather than leaking a `websockets` or
