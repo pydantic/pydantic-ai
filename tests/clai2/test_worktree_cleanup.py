@@ -117,7 +117,7 @@ def test_no_prompt(checkout: Path, monkeypatch: pytest.MonkeyPatch, location: st
         monkeypatch.setattr('sys.stdin.isatty', lambda: False)
 
     def respond(prompt: str) -> str:
-        pytest.fail('Unexpected cleanup prompt')
+        pytest.fail('Unexpected cleanup prompt')  # pragma: no cover
 
     monkeypatch.setattr('builtins.input', respond)
     offer_worktree_cleanup()

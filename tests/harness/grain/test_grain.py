@@ -63,7 +63,6 @@ def per_user_token(ctx: RunContext[str | None]) -> str | None:
 
 
 class TestGrain:
-    @pytest.mark.anyio
     @pytest.mark.parametrize(
         ('read_only', 'expected'),
         [(False, '{"read":"read","write":"written","unmarked":"unmarked"}'), (True, '{"read":"read"}')],
@@ -86,7 +85,6 @@ class TestGrain:
         agent = Agent(TestModel(), capabilities=[Grain(client=server, read_only=read_only)])
         assert (await agent.run('Use the tools')).output == expected
 
-    @pytest.mark.anyio
     @pytest.mark.parametrize('include', [True, False])
     async def test_server_instructions(self, include: bool) -> None:
         server = FastMCP('grain-fake', instructions='Grain instructions.')
@@ -158,14 +156,12 @@ class TestGrain:
 
 
 class TestPerRunAuth:
-    @pytest.mark.anyio
     async def test_each_run_connects_with_its_own_credential(self) -> None:
         capability = Grain[str | None](auth=per_user_token)
         [alice] = await connections_for(capability, 'alice-token')
         [bob] = await connections_for(capability, 'bob-token')
         assert (bearer(alice), bearer(bob)) == ('Bearer alice-token', 'Bearer bob-token')
 
-    @pytest.mark.anyio
     @pytest.mark.parametrize('missing', [None, ''])
     async def test_no_credential_means_no_tools(self, missing: str | None, monkeypatch: pytest.MonkeyPatch) -> None:
         # The environment token is set to show a function never falls back to it.
@@ -173,7 +169,6 @@ class TestPerRunAuth:
         capability = Grain[str | None](auth=per_user_token)
         assert await connections_for(capability, missing) == []
 
-    @pytest.mark.anyio
     async def test_function_returning_oauth_raises(self) -> None:
         capability = Grain[str | None](auth=per_user_token)
         with pytest.raises(UserError, match="must return an API key or token, not 'oauth'"):

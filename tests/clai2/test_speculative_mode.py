@@ -7,19 +7,20 @@ pytest.importorskip('pydantic_monty')
 import io
 import json
 import re
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
 
 import anyio
 from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
-from pydantic_ai.capabilities import DynamicCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, DynamicCapability, LocalWorkspace
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.code_mode import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -41,13 +42,7 @@ from pydantic_clai2.speculative_mode import (
     SpeculativeExecution,
     guidance,
     speculative_capabilities,
-    workspace_mount,
 )
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 def streamed(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) -> FunctionModel:
@@ -65,12 +60,15 @@ def streamed(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) 
 
 
 def fold_agent(model: FunctionModel, counters: SpeculationCounters, root: Path) -> Agent[None, str]:
-    """Coder's own `FileSystem` provides the read tools, as in CLAI, so they may speculate."""
+    """Coder's own `FileSystem` provides the read tools, as in CLAI, so they may speculate.
+
+    `LocalWorkspace` comes last, as CLAI attaches it, so a sandbox plugin earlier in the list wins.
+    """
     for name in ('a.py', 'b.py'):
         (root / name).write_text(f'contents of {name}\n')
-    file_system = FileSystem(root_dir=root)
+    file_system = FileSystem()
     sandbox = speculative_capabilities(counters, (file_system,))
-    return Agent(model, capabilities=[file_system, *sandbox])
+    return Agent(model, capabilities=[file_system, *sandbox, LocalWorkspace(root)])
 
 
 def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
@@ -81,7 +79,7 @@ def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
     switch = Speculation(context=context, console=Console(file=io.StringIO()))
     switch.toggle()
     assert [type(capability).__name__ for capability in switch.capabilities([])] == [
-        'CodeMode',
+        'WorkspaceCodeMode',
         'EagerTiming',
         'SpeculativeExecution',
         'ShowSandboxCalls',
@@ -89,7 +87,7 @@ def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
 
 
 class TestFold:
-    async def test_shipped_tool_names_match_the_allowlists(self) -> None:
+    async def test_shipped_tool_names_match_the_allowlists(self, tmp_path: Path) -> None:
         seen: list[str] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -99,12 +97,12 @@ class TestFold:
         agent: Agent[None, str] = Agent(
             FunctionModel(respond),
             deps_type=type(None),
-            capabilities=[Coder[None](repo_context=False), customization_guide()],
+            capabilities=[Coder[None](repo_context=False), customization_guide(), LocalWorkspace(tmp_path)],
         )
         await agent.run('hi')
         assert {*SPECULATIVE_TOOLS, *NATIVE_TOOLS} <= set(seen)
 
-    async def test_shell_folds_in_but_other_code_tools_stay_native(self) -> None:
+    async def test_shell_folds_in_but_other_code_tools_stay_native(self, tmp_path: Path) -> None:
         seen: list[AgentInfo] = []
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -121,7 +119,7 @@ class TestFold:
         agent: Agent[None, str] = Agent(
             streamed(respond),
             tools=[workflow],
-            capabilities=[coder, *sandbox],
+            capabilities=[coder, *sandbox, LocalWorkspace(tmp_path)],
         )
         await agent.run('hi')
         [info] = seen
@@ -139,7 +137,7 @@ class TestFold:
         await fold_agent(streamed(respond), SpeculationCounters(), tmp_path).run('hi')
         [info] = seen
         assert sorted(tool.name for tool in info.function_tools) == ['edit_file', 'run_code', 'write_file']
-        assert guidance(workspace_mount([FileSystem[None](root_dir=tmp_path)])).strip() in (info.instructions or '')
+        assert guidance('read-only').strip() in (info.instructions or '')
         assert (info.model_settings or {}).get('anthropic_eager_input_streaming') is True
 
     @pytest.mark.parametrize(
@@ -254,58 +252,63 @@ seen
 """
 
 
+def mount(granted: Sequence[AgentCapability[None]]) -> str | None:
+    """The mount the sandbox gets beside `granted`, as its guidance describes it."""
+    [speculative] = [
+        capability
+        for capability in speculative_capabilities(SpeculationCounters(), granted)
+        if isinstance(capability, SpeculativeExecution)
+    ]
+    return speculative.mount
+
+
 class TestWorkspaceMount:
     """The sandbox mount grants `pathlib` no more than the run's `FileSystem` grants its tools (Veria, #1078)."""
 
-    def test_unrestricted_coder_mounts_its_workspace_read_write(self, tmp_path: Path) -> None:
-        mount = workspace_mount([Coder[None](tmp_path, unrestricted_filesystem=True, repo_context=False)])
-        assert mount is not None
-        assert (mount.host_path, mount.virtual_path, mount.mode) == (str(tmp_path.resolve()),) * 2 + ('read-write',)
+    def test_unrestricted_coder_mounts_its_workspace_read_write(self) -> None:
+        assert mount([Coder[None](unrestricted_filesystem=True, repo_context=False)]) == 'read-write'
 
     @pytest.mark.parametrize(
         'file_system',
         [
             FileSystem[None](),
-            FileSystem[None](protected_patterns=[], read_only=True),
-            FileSystem[None](protected_patterns=[], tools=['read_file', 'list_files']),
-            FileSystem[None](protected_patterns=[], tools=['read_file', 'edit_file']),
+            FileSystem[None](read_only_patterns=[], read_only=True),
+            FileSystem[None](read_only_patterns=[], tools=['read_file', 'list_files']),
+            FileSystem[None](read_only_patterns=[], tools=['read_file', 'edit_file']),
         ],
         ids=['protected', 'read_only', 'read_tools', 'no_write_file'],
     )
     def test_write_limits_mount_read_only(self, file_system: FileSystem[None]) -> None:
-        mount = workspace_mount([file_system])
-        assert mount is not None
-        assert mount.mode == 'read-only'
+        assert mount([file_system]) == 'read-only'
 
     def test_patterns_or_ambiguity_leave_nothing_mounted(self, tmp_path: Path) -> None:
         def dynamic(ctx: RunContext[None]) -> FileSystem[None]:
-            return FileSystem[None](root_dir=tmp_path)  # pragma: no cover -- only inspected, never run.
+            return FileSystem[None]()  # pragma: no cover -- only inspected, never run.
 
         for granted in (
             [FileSystem[None](denied_patterns=['.env'])],
             [FileSystem[None](allowed_patterns=['src/*'])],
-            [FileSystem[None](protected_patterns=[], tools=['write_file'])],
+            [FileSystem[None](read_only_patterns=[], tools=['write_file'])],
             [FileSystem[None](tools=['file_info', 'list_directory'])],
             [customization_guide()],
-            [FileSystem[None](), FileSystem[None](root_dir=tmp_path)],
-            [FileSystem[None](protected_patterns=[]), dynamic],
-            [FileSystem[None](protected_patterns=[]), DynamicCapability[None](dynamic)],
+            [FileSystem[None](), FileSystem[None](root_dir='/')],
+            [FileSystem[None](read_only_patterns=[]), dynamic],
+            [FileSystem[None](read_only_patterns=[]), DynamicCapability[None](dynamic)],
         ):
-            assert workspace_mount(granted) is None
+            assert mount(granted) is None
 
     @pytest.mark.parametrize(
         ('file_system', 'seen', 'kept'),
         [
-            (FileSystem(protected_patterns=[]), 'original', False),
+            (FileSystem(read_only_patterns=[]), 'original', False),
             (FileSystem(), 'original PermissionError', True),
             (FileSystem(denied_patterns=['.env']), 'FileNotFoundError FileNotFoundError', True),
         ],
         ids=['unrestricted', 'protected', 'denied'],
     )
     async def test_pathlib_honours_file_system_restrictions(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, file_system: FileSystem[object], seen: str, kept: bool
+        self, tmp_path: Path, file_system: FileSystem[object], seen: str, kept: bool
     ) -> None:
-        monkeypatch.chdir(tmp_path)
         secret = tmp_path.resolve() / '.env'
         secret.write_text('original')
         calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
@@ -321,9 +324,79 @@ class TestWorkspaceMount:
             return ModelResponse(parts=[next(calls, TextPart('done'))])
 
         sandbox = speculative_capabilities(SpeculationCounters(), (file_system,))
-        await Agent(streamed(respond), capabilities=[file_system, *sandbox]).run('go')
+        await Agent(streamed(respond), capabilities=[file_system, *sandbox, LocalWorkspace(tmp_path)]).run('go')
         assert returned == [seen]
         assert secret.read_text() == ('original' if kept else 'overwritten')
+
+    async def test_read_only_workspace_is_mounted_read_only(self, tmp_path: Path) -> None:
+        secret = tmp_path.resolve() / '.env'
+        secret.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
+        returned: list[object] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem[object](read_only_patterns=[])
+        sandbox = speculative_capabilities(SpeculationCounters(), (file_system,))
+        workspace = LocalWorkspace(tmp_path, read_only=True)
+        await Agent(streamed(respond), capabilities=[file_system, *sandbox, workspace]).run('go')
+        assert returned == ['original PermissionError']
+        assert secret.read_text() == 'original'
+
+    async def test_sandbox_workspace_is_not_mounted(self, tmp_path: Path) -> None:
+        """A sandbox plugin's workspace is elsewhere, so the host directory stays out of the sandbox."""
+        secret = tmp_path.resolve() / '.env'
+        secret.write_text('original')
+        calls = iter([ToolCallPart('run_code', {'code': PATHLIB_SNIPPET.format(path=str(secret))})])
+        returned: list[object] = []
+        instructions: list[str | None] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            instructions.append(info.instructions)
+            returned.extend(
+                part.content
+                for message in messages
+                for part in message.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+            )
+            return ModelResponse(parts=[next(calls, TextPart('done'))])
+
+        file_system = FileSystem(read_only_patterns=[])
+        sandbox = speculative_capabilities(SpeculationCounters(), (file_system,))
+        capabilities: list[AbstractCapability[object]] = [
+            SandboxPlugin(tmp_path),
+            file_system,
+            *sandbox,
+        ]
+        await Agent(streamed(respond), capabilities=capabilities).run('go')
+        assert returned == ['FileNotFoundError FileNotFoundError']
+        assert secret.read_text() == 'original'
+        assert guidance('remote').strip() in (instructions[0] or '')
+
+
+class Sandbox(LocalWorkspaceBackend):
+    """A backend that names a provider other than this machine."""
+
+    @property
+    def ref(self) -> WorkspaceRef:
+        return WorkspaceRef(provider='sandbox', id='box-1')
+
+
+class SandboxPlugin(AbstractCapability[object]):
+    """A plugin that supplies the run's workspace in place of CLAI's `LocalWorkspace`."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def get_workspace(self, ctx: RunContext[object], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+        return Sandbox(self.root)
 
 
 def claimed(*, ready: bool, elapsed_ms: float, launch_id: str = 'l') -> SpeculativeCallClaimedEvent:
@@ -428,17 +501,22 @@ class TestSandboxCallDisplay:
         finished = [event.result for event in reports if isinstance(event, SandboxCallFinishedEvent)]
         assert [call.tool_call_id for call in started] == [result.tool_call_id for result in finished]
         assert all(re.fullmatch(r'.+__\d+', call.tool_call_id) for call in started)
-        # A failed speculative launch is still claimed and shown, like a cold failure.
+        # A missing file is a plain result, not a retry; failed speculative launches are
+        # still claimed and shown, like cold failures.
         assert [type(result).__name__ for result in finished] == [
             'ToolReturnPart',
             'ToolReturnPart',
-            'RetryPromptPart',
+            'ToolReturnPart',
             'RetryPromptPart',
             'RetryPromptPart',
         ]
         headers = [line for line in output.getvalue().splitlines() if line.startswith('\u25cf')]
-        assert headers == [
+        # Eager execution can announce `run_code` before its `code` argument has finished streaming.
+        assert headers[0] in (
             '\u25cf run_code',
+            '\u25cf run_code code="text = await read_file(path=\\"a.py\\")\\\u2026',
+        )
+        assert headers[1:] == [
             "\u25cf read_file 'a.py' offset=0 limit=2000 lines",
             "\u25cf read_file 'b.py' offset=0 limit=2000 lines",
             "\u25cf read_file 'missing.py' offset=0 limit=2000 lines",

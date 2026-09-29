@@ -49,14 +49,8 @@ from pydantic_ai_harness.spend import (
 )
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
 ]
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 _EPOCH = datetime(2026, 7, 26, 12, 0, tzinfo=timezone.utc)

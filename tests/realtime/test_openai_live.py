@@ -94,7 +94,6 @@ with try_import() as imports_successful:
     )
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='realtime provider dependencies not installed'),
 ]
 
@@ -145,7 +144,8 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_seeding_images=False,
         supports_seeding_audio=False,
         supports_webrtc=False,
-        supports_async_tool_calls=True,
+        async_tool_call_mode='always',
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_thinking=False,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,
@@ -942,11 +942,24 @@ async def test_delegated_work_holds_the_turn_open() -> None:
     ws = _FakeWebSocket([delegation])
     connection = OpenAILiveConnection(ws, turn_silence_ms=10)  # pyright: ignore[reportArgumentType]
 
-    with pytest.raises(TimeoutError):
-        with anyio.fail_after(0.3):
-            async for event in connection:  # pragma: no branch
-                if isinstance(event, ResponseDone):  # pragma: no cover
-                    break
+    response_done = anyio.Event()
+
+    async def drain() -> None:
+        async for event in connection:  # pragma: no branch
+            if isinstance(event, ResponseDone):  # pragma: no cover
+                response_done.set()  # pragma: no cover
+                return  # pragma: no cover
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(drain)
+        with anyio.fail_after(5):
+            while not connection._delegations:  # pyright: ignore[reportPrivateUsage]
+                await anyio.sleep(0)
+        with anyio.move_on_after(0.2) as scope:
+            await response_done.wait()
+        assert scope.cancelled_caught
+        await connection.aclose()
+        tg.cancel_scope.cancel()
 
     # Once the backend reports it is finished, the clock restarts and the turn can end.
     assert connection._delegations  # pyright: ignore[reportPrivateUsage]

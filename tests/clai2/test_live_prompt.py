@@ -19,7 +19,6 @@ from prompt_toolkit.input import PipeInput, create_pipe_input
 from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 from rich.text import Text
-from surface_terminal import SurfaceTerminal
 from termflow.tui.completion import Completion
 
 from pydantic_ai import PartStartEvent, TextPart, ThinkingPart
@@ -30,11 +29,7 @@ from pydantic_clai2.image_input import ImageInput
 from pydantic_clai2.interrupts import Interrupts
 from pydantic_clai2.live_prompt import LivePrompt
 from pydantic_clai2.prompt_completion import CompletionWorker
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.surface_terminal import SurfaceTerminal
 
 
 @asynccontextmanager
@@ -420,7 +415,7 @@ async def test_completion_iteration_is_bounded_before_materializing() -> None:
         for index in range(100):
             produced.append(index)
             yield f'candidate{index}'
-        raise AssertionError('completion consumed beyond its bound')
+        raise AssertionError('completion consumed beyond its bound')  # pragma: no cover
 
     async with editor(output=Output()) as (live, pipe, _):
         live.commands.register(

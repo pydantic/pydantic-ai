@@ -55,14 +55,6 @@ from pydantic_ai_harness.code_mode import (
 
 from .._recording_durability import RecordingDurability
 
-pytestmark = pytest.mark.anyio
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Run async tests on the asyncio backend (matching upstream pydantic-ai)."""
-    return 'asyncio'
-
 
 @dataclass
 class ToolLog:
@@ -1002,7 +994,7 @@ class TestSpeculationEdgeCases:
         released = asyncio.Event()
 
         # Whether the body starts before eviction cancels it depends on scheduling.
-        async def search(query: str) -> str:  # pragma: no cover
+        async def search(query: str) -> str:  # pragma: lax no cover
             """Block until released, so eviction has to cancel it."""
             await released.wait()
             return f'result:{query}'
@@ -1035,18 +1027,20 @@ class TestSpeculationEdgeCases:
 
     async def test_eviction_abandons_a_tool_that_swallows_cancellation(self, monkeypatch: pytest.MonkeyPatch):
         """A launched tool that refuses to cancel cannot hold the `run_code` result hostage."""
-        monkeypatch.setattr('pydantic_ai_harness.code_mode._speculation.CANCEL_TIMEOUT_SECONDS', 0.05)
+        monkeypatch.setattr('pydantic_ai_harness.code_mode._speculation.CANCEL_TIMEOUT_SECONDS', 0.25)
         stubborn_started = asyncio.Event()
+        cancellation_seen = asyncio.Event()
 
         # The run moves on before the swallowed cancellation unwinds, so the tail is unreachable.
-        async def search(query: str) -> str:  # pragma: no cover
+        async def search(query: str) -> str:  # pragma: lax no cover
             """Ignore cancellation for longer than the eviction budget."""
             stubborn_started.set()
             while True:
                 try:
                     await asyncio.sleep(3600)
                 except asyncio.CancelledError:
-                    await asyncio.sleep(0.2)
+                    cancellation_seen.set()
+                    await asyncio.sleep(1.2)
                     raise
 
         code = 'if False:\n    a = await search(query="never")\nb = 1\nb'
@@ -1065,11 +1059,21 @@ class TestSpeculationEdgeCases:
                     )
                 ],
             )
-            await asyncio.wait_for(stubborn_started.wait(), timeout=1)
+            await asyncio.wait_for(stubborn_started.wait(), timeout=5)
 
-            result = await asyncio.wait_for(
-                toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'c1'), run_code), timeout=1
+            run_code_task = asyncio.create_task(
+                toolset.call_tool('run_code', {'code': code}, run_code_context(ctx, 'c1'), run_code)
             )
+            try:
+                await asyncio.wait_for(cancellation_seen.wait(), timeout=5)
+                done, _ = await asyncio.wait({run_code_task}, timeout=0.75)
+                assert run_code_task in done
+                result = run_code_task.result()
+            finally:
+                # This cleanup only runs after a failed test assertion.
+                if not run_code_task.done():  # pragma: no cover
+                    run_code_task.cancel()
+                    await asyncio.wait({run_code_task}, timeout=0.75)
 
         assert isinstance(result, ToolReturn)
         assert run_capability.speculation_stats.evicted == 1

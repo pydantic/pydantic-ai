@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from menu_script import Script, pick, typed
 from pydantic import HttpUrl
 from rich.console import Console
 from termflow.tui.menu import MenuResult
@@ -32,6 +31,7 @@ from pydantic_clai2.mcp import (
     run_form,
 )
 from pydantic_clai2.plugins import PluginHost
+from tests.clai2.menu_script import Script, pick, typed
 
 ESC = MenuResult(cancelled=True)
 

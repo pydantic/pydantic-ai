@@ -4,17 +4,12 @@ from pathlib import Path
 
 import httpx
 import pytest
-from menu_script import make_context
 from pydantic import SecretStr
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import vllm
 from pydantic_clai2.model_menu import open_add_model_menu
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+from tests.clai2.menu_script import make_context
 
 
 @pytest.mark.parametrize('token', ['', 'test-secret'])

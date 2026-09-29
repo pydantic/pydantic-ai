@@ -32,11 +32,6 @@ from pydantic_clai2.settings_store import SettingsStore
 from pydantic_clai2.splash import Splash
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 @pytest.fixture(autouse=True)
 def no_model_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(models, 'ALLOW_MODEL_REQUESTS', False)
@@ -103,7 +98,7 @@ async def test_cancel_preserves_history_and_rejects_concurrency() -> None:
     async def wait() -> str:
         started.set()
         await release.wait()
-        return 'ok'
+        return 'ok'  # pragma: lax no cover
 
     session = Session(agent, deps=None, message_history=[ModelRequest(parts=[UserPromptPart('first')])])
     prior = session.messages

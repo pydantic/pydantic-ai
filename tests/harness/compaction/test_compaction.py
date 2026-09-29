@@ -102,6 +102,7 @@ try:
 except ImportError:  # pragma: no cover
     logfire_installed = False
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -407,7 +408,6 @@ class TestSlidingWindowCompaction:
         with pytest.raises(ValueError, match='keep_tokens must be non-negative'):
             SlidingWindowCompaction(max_messages=10, keep_tokens=-1)
 
-    @pytest.mark.anyio
     async def test_no_trim_below_threshold(self):
         sw = SlidingWindowCompaction(max_messages=10, keep_messages=5)
         messages: list[ModelMessage] = [_user('a'), _assistant('b')]
@@ -416,7 +416,6 @@ class TestSlidingWindowCompaction:
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 2
 
-    @pytest.mark.anyio
     async def test_trims_when_above_message_threshold(self):
         sw = SlidingWindowCompaction(max_messages=5, keep_messages=3, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user(f'msg-{i}') for i in range(8)]
@@ -425,7 +424,6 @@ class TestSlidingWindowCompaction:
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) <= 3
 
-    @pytest.mark.anyio
     async def test_trims_by_token_threshold(self):
         sw = SlidingWindowCompaction(max_tokens=10, keep_messages=2)
         messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
@@ -434,7 +432,6 @@ class TestSlidingWindowCompaction:
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) < 5
 
-    @pytest.mark.anyio
     async def test_preserves_tool_pairs(self):
         sw = SlidingWindowCompaction(max_messages=4, keep_messages=2)
         messages: list[ModelMessage] = [
@@ -450,7 +447,6 @@ class TestSlidingWindowCompaction:
         # Should not split the tool pair.
         assert _orphan_free(result.messages)
 
-    @pytest.mark.anyio
     async def test_keep_tokens_mode(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_tokens=10, preserve_first_user_message=False)
         # Each message = 20 chars = 5 tokens.  Total = 50 tokens.
@@ -483,7 +479,6 @@ class TestFallbackCompaction:
                 fallback_on=(asyncio.CancelledError,),  # pyright: ignore[reportArgumentType]
             )
 
-    @pytest.mark.anyio
     async def test_returns_first_success(self):
         first = AsyncMock()
         first.compact.return_value = [_user('summary')]
@@ -495,7 +490,6 @@ class TestFallbackCompaction:
         assert result == first.compact.return_value
         second.compact.assert_not_called()
 
-    @pytest.mark.anyio
     async def test_fallback_receives_fresh_original_list(self):
         class MutateThenFail:
             async def compact(self, messages: list[ModelMessage], ctx: RunContext[None]) -> list[ModelMessage]:
@@ -512,7 +506,6 @@ class TestFallbackCompaction:
         assert result == messages
         assert second.compact.call_args.args[0] == messages
 
-    @pytest.mark.anyio
     async def test_reraises_last_failure(self):
         first = AsyncMock()
         first.compact.side_effect = ValueError('first')
@@ -523,7 +516,6 @@ class TestFallbackCompaction:
         with pytest.raises(RuntimeError, match='last'):
             await fallback.compact([_user('original')], _make_ctx())
 
-    @pytest.mark.anyio
     async def test_non_matching_error_does_not_fallback(self):
         first = AsyncMock()
         first.compact.side_effect = ValueError('programming error')
@@ -534,7 +526,6 @@ class TestFallbackCompaction:
             await fallback.compact([_user('original')], _make_ctx())
         second.compact.assert_not_called()
 
-    @pytest.mark.anyio
     async def test_cancellation_does_not_fallback(self):
         first = AsyncMock()
         first.compact.side_effect = asyncio.CancelledError
@@ -545,7 +536,6 @@ class TestFallbackCompaction:
             await fallback.compact([_user('original')], _make_ctx())
         second.compact.assert_not_called()
 
-    @pytest.mark.anyio
     async def test_fallback_model_exhaustion_uses_next_strategy(self):
         def fail(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             raise ModelAPIError('summarizer', 'rejected history')
@@ -616,7 +606,6 @@ class TestWarnNearLimits:
         with pytest.raises(ValueError, match="'total_tokens' requires"):
             WarnNearLimits(max_iterations=10, warn_on=['total_tokens'])
 
-    @pytest.mark.anyio
     async def test_no_warning_below_threshold(self):
         lw = WarnNearLimits(max_iterations=100)
         messages: list[ModelMessage] = [_user('hi')]
@@ -626,7 +615,6 @@ class TestWarnNearLimits:
         # No warning appended.
         assert len(result.messages) == 1
 
-    @pytest.mark.anyio
     async def test_iteration_warning_urgent(self):
         lw = WarnNearLimits(max_iterations=20, warning_threshold=0.7, critical_remaining_iterations=3)
         messages: list[ModelMessage] = [_user('hi')]
@@ -643,7 +631,6 @@ class TestWarnNearLimits:
         assert 'URGENT' in text.content
         assert '[WarnNearLimits]' in text.content
 
-    @pytest.mark.anyio
     async def test_iteration_warning_critical(self):
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7, critical_remaining_iterations=3)
         messages: list[ModelMessage] = [_user('hi')]
@@ -657,7 +644,6 @@ class TestWarnNearLimits:
         assert isinstance(text.content, str)
         assert 'CRITICAL' in text.content
 
-    @pytest.mark.anyio
     async def test_context_window_warning(self):
         lw = WarnNearLimits(max_context_tokens=10)
         # Create a message that exceeds 70% of 10 tokens.
@@ -667,7 +653,6 @@ class TestWarnNearLimits:
         result = await lw.before_model_request(ctx, rc)
         assert len(result.messages) == 2
 
-    @pytest.mark.anyio
     async def test_total_tokens_warning(self):
         lw = WarnNearLimits(max_total_tokens=100)
         messages: list[ModelMessage] = [_user('hi')]
@@ -676,7 +661,6 @@ class TestWarnNearLimits:
         result = await lw.before_model_request(ctx, rc)
         assert len(result.messages) == 2
 
-    @pytest.mark.anyio
     async def test_strips_old_warnings(self):
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7)
         old_warning = ModelRequest(parts=[UserPromptPart(content='[WarnNearLimits]\nOld warning')])
@@ -687,7 +671,6 @@ class TestWarnNearLimits:
         # Old warning removed, no new warning added (below threshold).
         assert len(result.messages) == 1
 
-    @pytest.mark.anyio
     async def test_strips_legacy_limit_warner_markers(self):
         lw = WarnNearLimits(max_iterations=10, warning_threshold=0.7)
         legacy_warning = ModelRequest(parts=[UserPromptPart(content='[LimitWarner]\nOld warning')])
@@ -698,7 +681,6 @@ class TestWarnNearLimits:
         # Warnings injected before the rename are still recognized and stripped.
         assert len(result.messages) == 1
 
-    @pytest.mark.anyio
     async def test_multiple_warnings_ordered(self):
         lw = WarnNearLimits(max_iterations=10, max_total_tokens=100)
         messages: list[ModelMessage] = [_user('hi')]
@@ -748,7 +730,6 @@ class TestCompaction:
         comp = SummarizingCompaction(model='test', max_messages=10, tool_return_max_chars=None)
         assert comp.tool_return_max_chars is None
 
-    @pytest.mark.anyio
     async def test_no_compaction_below_threshold(self):
         comp = SummarizingCompaction(model='test', max_messages=100)
         messages: list[ModelMessage] = [_user('hi')]
@@ -757,9 +738,8 @@ class TestCompaction:
         result = await comp.before_model_request(ctx, rc)
         assert result.messages == messages
 
-    @pytest.mark.anyio
     async def test_summary_model_settings_override_model_defaults_without_mutation(self, anyio_backend: str):
-        if anyio_backend != 'asyncio':
+        if anyio_backend != 'asyncio':  # pragma: no cover -- only asyncio runs here
             pytest.skip('pydantic-ai Agent execution uses asyncio')
         observed_settings: list[ModelSettings | None] = []
 
@@ -788,7 +768,6 @@ class TestCompaction:
         assert summary_settings == original_summary_settings
         assert model_defaults == original_model_defaults
 
-    @pytest.mark.anyio
     async def test_compaction_replaces_old_messages(self):
         comp = SummarizingCompaction(model='test:m', max_messages=3, keep_messages=1, preserve_first_user_message=False)
         messages: list[ModelMessage] = [
@@ -820,7 +799,6 @@ class TestCompaction:
         assert len(sys_parts) >= 1
         assert 'Summary of conversation.' in sys_parts[-1].content
 
-    @pytest.mark.anyio
     async def test_compaction_preserves_system_prompts(self):
         comp = SummarizingCompaction(model='test:m', max_messages=3, keep_messages=1)
         messages: list[ModelMessage] = [
@@ -849,7 +827,6 @@ class TestCompaction:
         sys_contents = [p.content for p in first_msg.parts if isinstance(p, SystemPromptPart)]
         assert 'You are a helpful assistant.' in sys_contents
 
-    @pytest.mark.anyio
     async def test_compaction_preserves_tool_pairs(self):
         comp = SummarizingCompaction(model='test:m', max_messages=4, keep_messages=2)
         messages: list[ModelMessage] = [
@@ -875,7 +852,6 @@ class TestCompaction:
         # Tool pairs in remaining messages should be intact.
         assert _orphan_free(result.messages)
 
-    @pytest.mark.anyio
     async def test_compaction_token_trigger(self):
         comp = SummarizingCompaction(model='test:m', max_tokens=5, keep_messages=1)
         messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
@@ -897,7 +873,6 @@ class TestCompaction:
         first_msg = result.messages[0]
         assert isinstance(first_msg, ModelRequest)
 
-    @pytest.mark.anyio
     async def test_compaction_keep_tokens_mode(self):
         comp = SummarizingCompaction(model='test:m', max_messages=3, keep_tokens=5)
         messages: list[ModelMessage] = [_user('x' * 40) for _ in range(5)]
@@ -1060,7 +1035,6 @@ class TestUserPromptMultiModal:
 class TestWarnNearLimitsEdgeCases:
     """Cover WarnNearLimits edge cases for marker detection and stripping."""
 
-    @pytest.mark.anyio
     async def test_strip_warning_with_only_marker_message(self):
         """A message composed entirely of a marker part should be removed."""
         lw = WarnNearLimits(max_iterations=100)
@@ -1072,7 +1046,6 @@ class TestWarnNearLimitsEdgeCases:
         # Marker message should be stripped; only the real message remains.
         assert len(result.messages) == 1
 
-    @pytest.mark.anyio
     async def test_strip_warning_system_prompt_marker(self):
         """Marker in a SystemPromptPart should also be detected."""
         lw = WarnNearLimits(max_iterations=100)
@@ -1083,7 +1056,6 @@ class TestWarnNearLimitsEdgeCases:
         result = await lw.before_model_request(ctx, rc)
         assert len(result.messages) == 1
 
-    @pytest.mark.anyio
     async def test_strip_mixed_parts_keeps_non_marker(self):
         """A message with both marker and non-marker parts should keep the non-marker parts."""
         lw = WarnNearLimits(max_iterations=100)
@@ -1102,7 +1074,6 @@ class TestWarnNearLimitsEdgeCases:
         assert isinstance(first, ModelRequest)
         assert len(first.parts) == 1
 
-    @pytest.mark.anyio
     async def test_keeps_already_empty_request(self):
         """An already-empty ModelRequest must survive stripping so history still ends with a
         ModelRequest. pydantic-ai's empty-response retry appends an empty ModelRequest;
@@ -1116,7 +1087,6 @@ class TestWarnNearLimitsEdgeCases:
         assert len(result.messages) == 3
         assert isinstance(result.messages[-1], ModelRequest)
 
-    @pytest.mark.anyio
     async def test_context_warning_below_threshold(self):
         """Context window should not warn when below threshold."""
         lw = WarnNearLimits(max_context_tokens=1000)
@@ -1126,7 +1096,6 @@ class TestWarnNearLimitsEdgeCases:
         result = await lw.before_model_request(ctx, rc)
         assert len(result.messages) == 1
 
-    @pytest.mark.anyio
     async def test_total_tokens_warning_critical(self):
         """Total tokens at or above limit should produce CRITICAL."""
         lw = WarnNearLimits(max_total_tokens=100)
@@ -1141,7 +1110,6 @@ class TestWarnNearLimitsEdgeCases:
         assert isinstance(text.content, str)
         assert 'CRITICAL' in text.content
 
-    @pytest.mark.anyio
     async def test_context_window_critical(self):
         """Context window at or above limit should produce CRITICAL."""
         lw = WarnNearLimits(max_context_tokens=5)
@@ -1165,7 +1133,6 @@ class TestWarnNearLimitsEdgeCases:
 class TestCompactionEdgeCases:
     """Cover Compaction edge cases."""
 
-    @pytest.mark.anyio
     async def test_compaction_cutoff_zero_no_change(self):
         """When cutoff is 0, no compaction should occur (messages all kept)."""
         comp = SummarizingCompaction(model='test:m', max_messages=2, keep_messages=10)
@@ -1180,7 +1147,6 @@ class TestCompactionEdgeCases:
 class TestSlidingWindowCompactionEdgeCases:
     """Cover SlidingWindowCompaction edge cases."""
 
-    @pytest.mark.anyio
     async def test_cutoff_zero_no_trim(self):
         """When the cutoff resolves to 0, messages should not be trimmed."""
         sw = SlidingWindowCompaction(max_messages=2, keep_messages=10)
@@ -1191,7 +1157,6 @@ class TestSlidingWindowCompactionEdgeCases:
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 3
 
-    @pytest.mark.anyio
     async def test_token_not_triggered_when_below(self):
         """Token trigger should not fire below threshold."""
         sw = SlidingWindowCompaction(max_tokens=999999, keep_messages=2)
@@ -1205,7 +1170,6 @@ class TestSlidingWindowCompactionEdgeCases:
 class TestWarnNearLimitsMarkerDetection:
     """Cover _is_marker_part return False for non-text parts."""
 
-    @pytest.mark.anyio
     async def test_non_string_user_prompt_not_detected_as_marker(self):
         """UserPromptPart with non-string content should not match marker."""
         lw = WarnNearLimits(max_iterations=100)
@@ -1219,7 +1183,6 @@ class TestWarnNearLimitsMarkerDetection:
         result = await lw.before_model_request(ctx, rc)
         assert len(result.messages) == 2
 
-    @pytest.mark.anyio
     async def test_strip_preserves_model_responses(self):
         """ModelResponse messages pass through strip unchanged."""
         lw = WarnNearLimits(max_iterations=100)
@@ -1239,7 +1202,6 @@ class TestWarnNearLimitsMarkerDetection:
 class TestWarnNearLimitsTotalTokensBelowThreshold:
     """Cover _build_total_tokens_warning returning None when below threshold."""
 
-    @pytest.mark.anyio
     async def test_total_tokens_below_threshold(self):
         lw = WarnNearLimits(max_total_tokens=1000)
         messages: list[ModelMessage] = [_user('hi')]
@@ -1279,7 +1241,6 @@ class TestTokenizerParameter:
         assert result == 20
         assert len(calls) == 2
 
-    @pytest.mark.anyio
     async def test_sliding_window_with_tokenizer(self):
         """SlidingWindowCompaction should use the tokenizer for token-based triggers."""
         # Custom tokenizer: 1 token per character.
@@ -1298,7 +1259,6 @@ class TestTokenizerParameter:
         remaining_tokens = estimate_token_count(result.messages, tokenizer=lambda s: len(s))
         assert remaining_tokens <= 5
 
-    @pytest.mark.anyio
     async def test_sliding_window_tokenizer_threshold_check(self):
         """SlidingWindowCompaction tokenizer should be used for the trigger check."""
         # Tokenizer that inflates counts: 100 tokens per char.
@@ -1315,7 +1275,6 @@ class TestTokenizerParameter:
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 1
 
-    @pytest.mark.anyio
     async def test_compaction_with_tokenizer(self):
         """Compaction should use the tokenizer for token-based triggers."""
         # Tokenizer: 1 token per char.
@@ -1384,7 +1343,6 @@ class TestPreserveFirstUserMessage:
         ]
         assert find_first_user_message(msgs) is None
 
-    @pytest.mark.anyio
     async def test_sliding_window_preserves_first_user(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=2, preserve_first_user_message=True)
         messages: list[ModelMessage] = [
@@ -1401,7 +1359,6 @@ class TestPreserveFirstUserMessage:
         # it was outside the keep window.
         assert 'original task' in _user_texts(result.messages)
 
-    @pytest.mark.anyio
     async def test_sliding_window_no_duplicate_when_in_window(self):
         """First user message should not be duplicated if already in the kept window."""
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=5, preserve_first_user_message=True)
@@ -1416,7 +1373,6 @@ class TestPreserveFirstUserMessage:
         result = await sw.before_model_request(ctx, rc)
         assert len(result.messages) == 4  # Not triggered since 4 < 5 keep.
 
-    @pytest.mark.anyio
     async def test_sliding_window_disabled_preserve(self):
         """When preserve_first_user_message=False, first user message is not kept."""
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, preserve_first_user_message=False)
@@ -1433,7 +1389,6 @@ class TestPreserveFirstUserMessage:
         assert len(result.messages) == 1
         assert 'original' not in _user_texts(result.messages)
 
-    @pytest.mark.anyio
     async def test_compaction_preserves_first_user(self):
         comp = SummarizingCompaction(model='test:m', max_messages=3, keep_messages=1, preserve_first_user_message=True)
         messages: list[ModelMessage] = [
@@ -1468,7 +1423,6 @@ class TestPreserveFirstUserMessage:
         assert len(user_parts) == 1
         assert user_parts[0].content == 'build a web app'
 
-    @pytest.mark.anyio
     async def test_compaction_no_duplicate_first_user_when_in_window(self):
         """First user message already in kept window should not be duplicated."""
         comp = SummarizingCompaction(model='test:m', max_messages=3, keep_messages=5, preserve_first_user_message=True)
@@ -1484,7 +1438,6 @@ class TestPreserveFirstUserMessage:
         # Not triggered since keep_messages > len(messages).
         assert len(result.messages) == 4
 
-    @pytest.mark.anyio
     async def test_sliding_window_no_user_messages(self):
         """When there are no user messages, preservation is a no-op."""
         sw = SlidingWindowCompaction(max_messages=2, keep_messages=1, preserve_first_user_message=True)
@@ -1531,7 +1484,6 @@ class TestIncrementalSummarization:
         ]
         assert _extract_previous_summary(msgs) is None
 
-    @pytest.mark.anyio
     async def test_incremental_includes_previous_summary(self):
         """When incremental=True and a prior summary exists, it should be included in the prompt."""
         comp = SummarizingCompaction(
@@ -1568,7 +1520,6 @@ class TestIncrementalSummarization:
         assert '<previous-summary>' in prompt_text
         assert 'Previous context here.' in prompt_text
 
-    @pytest.mark.anyio
     async def test_incremental_no_previous_summary(self):
         """When incremental=True but no prior summary exists, prompt should be plain."""
         comp = SummarizingCompaction(
@@ -1601,7 +1552,6 @@ class TestIncrementalSummarization:
         prompt_text = call_args[0][0]
         assert '<previous-summary>' not in prompt_text
 
-    @pytest.mark.anyio
     async def test_incremental_disabled(self):
         """When incremental=False, the previous summary should not be included."""
         comp = SummarizingCompaction(
@@ -1635,7 +1585,6 @@ class TestIncrementalSummarization:
         prompt_text = call_args[0][0]
         assert '<previous-summary>' not in prompt_text
 
-    @pytest.mark.anyio
     async def test_incremental_output_contains_summary(self):
         """The output after incremental compaction should contain the new summary."""
         comp = SummarizingCompaction(
@@ -1793,7 +1742,6 @@ class TestClearToolResults:
         with pytest.raises(ValueError, match='min_clear_tokens must be non-negative'):
             ClearToolResults(max_messages=1, min_clear_tokens=-1)
 
-    @pytest.mark.anyio
     async def test_no_clear_below_threshold(self):
         cap = ClearToolResults(max_messages=100, keep_pairs=0)
         messages: list[ModelMessage] = [*_pair('fn', 'tc1'), *_pair('fn', 'tc2')]
@@ -1801,7 +1749,6 @@ class TestClearToolResults:
         result = await cap.before_model_request(_make_ctx(), rc)
         assert result.messages == messages
 
-    @pytest.mark.anyio
     async def test_clears_old_keeps_recent_pairs(self):
         cap = ClearToolResults(max_messages=1, keep_pairs=1)
         messages: list[ModelMessage] = [
@@ -1814,7 +1761,6 @@ class TestClearToolResults:
         contents = _return_contents(result.messages)
         assert contents == ['[tool result cleared]', '[tool result cleared]', 'result content here']
 
-    @pytest.mark.anyio
     async def test_token_trigger(self):
         cap = ClearToolResults(max_tokens=5, keep_pairs=0)
         messages: list[ModelMessage] = [*_pair('fn', 'tc1', 'x' * 80)]
@@ -1822,7 +1768,6 @@ class TestClearToolResults:
         result = await cap.before_model_request(_make_ctx(), rc)
         assert _return_contents(result.messages) == ['[tool result cleared]']
 
-    @pytest.mark.anyio
     async def test_exclude_tools(self):
         cap = ClearToolResults(max_messages=1, keep_pairs=0, exclude_tools=frozenset({'keep'}))
         messages: list[ModelMessage] = [*_pair('drop', 'tc1'), *_pair('keep', 'tc2')]
@@ -1830,7 +1775,6 @@ class TestClearToolResults:
         result = await cap.before_model_request(_make_ctx(), rc)
         assert _return_contents(result.messages) == ['[tool result cleared]', 'result content here']
 
-    @pytest.mark.anyio
     async def test_clear_tool_inputs(self):
         cap = ClearToolResults(max_messages=1, keep_pairs=0, clear_tool_inputs=True)
         call = ModelResponse(parts=[ToolCallPart(tool_name='fn', args='{"q": "x"}', tool_call_id='tc1')])
@@ -1840,7 +1784,6 @@ class TestClearToolResults:
         # Cleared args stay JSON-valid so they don't reach a provider as malformed function-args.
         assert _call_args(result.messages) == ['{}']
 
-    @pytest.mark.anyio
     async def test_min_clear_tokens_skips_small_gain(self):
         cap = ClearToolResults(max_messages=1, keep_pairs=0, min_clear_tokens=10_000)
         messages: list[ModelMessage] = [*_pair('fn', 'tc1', 'tiny')]
@@ -1849,7 +1792,6 @@ class TestClearToolResults:
         # Reclaim is far below min_clear_tokens, so nothing is cleared.
         assert _return_contents(result.messages) == ['tiny']
 
-    @pytest.mark.anyio
     async def test_min_clear_tokens_proceeds_on_large_gain(self):
         cap = ClearToolResults(max_messages=1, keep_pairs=0, min_clear_tokens=1)
         messages: list[ModelMessage] = [*_pair('fn', 'tc1', 'x' * 400)]
@@ -1857,7 +1799,6 @@ class TestClearToolResults:
         result = await cap.before_model_request(_make_ctx(), rc)
         assert _return_contents(result.messages) == ['[tool result cleared]']
 
-    @pytest.mark.anyio
     async def test_no_tool_pairs_is_noop(self):
         cap = ClearToolResults(max_messages=1, keep_pairs=0)
         messages: list[ModelMessage] = [_user('a'), _assistant('b')]
@@ -1865,7 +1806,6 @@ class TestClearToolResults:
         result = await cap.before_model_request(_make_ctx(), rc)
         assert result.messages == messages
 
-    @pytest.mark.anyio
     async def test_idempotent(self):
         cap = ClearToolResults(max_messages=1, keep_pairs=0, clear_tool_inputs=True)
         call = ModelResponse(parts=[ToolCallPart(tool_name='fn', args='{"q": "x"}', tool_call_id='tc1')])
@@ -1876,7 +1816,6 @@ class TestClearToolResults:
         assert _return_contents(twice) == ['[tool result cleared]']
         assert _call_args(twice) == ['{}']
 
-    @pytest.mark.anyio
     async def test_preserves_typed_tool_search_return(self):
         # `ToolSearchReturnPart` subclasses `ToolReturnPart` but carries structured content that
         # core's `parse_discovered_tools` re-reads on the next request. Blanking it to a string
@@ -1939,7 +1878,6 @@ class TestDeduplicateFileReads:
         with pytest.raises(ValueError, match='max_tokens must be positive'):
             DeduplicateFileReads(file_key=_file_key, max_tokens=-1)
 
-    @pytest.mark.anyio
     async def test_keeps_latest_read(self):
         cap = DeduplicateFileReads(file_key=_file_key)
         messages: list[ModelMessage] = [
@@ -1954,7 +1892,6 @@ class TestDeduplicateFileReads:
         result = await cap.before_model_request(_make_ctx(), rc)
         assert _return_contents(result.messages) == ['[superseded file read]', 'b body', 'second a']
 
-    @pytest.mark.anyio
     async def test_non_file_read_ignored(self):
         cap = DeduplicateFileReads(file_key=_file_key)
         messages: list[ModelMessage] = [
@@ -1966,7 +1903,6 @@ class TestDeduplicateFileReads:
         # search is not a file read -> file_key returns None -> nothing cleared.
         assert _return_contents(result.messages) == ['result content here', 'result content here']
 
-    @pytest.mark.anyio
     async def test_no_duplicates_is_noop(self):
         cap = DeduplicateFileReads(file_key=_file_key)
         messages: list[ModelMessage] = [
@@ -1979,7 +1915,6 @@ class TestDeduplicateFileReads:
         result = await cap.before_model_request(_make_ctx(), rc)
         assert result.messages == messages
 
-    @pytest.mark.anyio
     async def test_runs_always_without_trigger(self):
         cap = DeduplicateFileReads(file_key=_file_key)
         messages: list[ModelMessage] = [
@@ -1992,7 +1927,6 @@ class TestDeduplicateFileReads:
         result = await cap.before_model_request(_make_ctx(), rc)
         assert _return_contents(result.messages) == ['[superseded file read]', 'second']
 
-    @pytest.mark.anyio
     async def test_trigger_gate_not_exceeded(self):
         cap = DeduplicateFileReads(file_key=_file_key, max_messages=100)
         messages: list[ModelMessage] = [
@@ -2006,7 +1940,6 @@ class TestDeduplicateFileReads:
         # Below the trigger threshold, so no dedup despite the duplicate.
         assert result.messages == messages
 
-    @pytest.mark.anyio
     async def test_trigger_gate_exceeded(self):
         cap = DeduplicateFileReads(file_key=_file_key, max_messages=1)
         messages: list[ModelMessage] = [
@@ -2045,7 +1978,6 @@ class TestTieredCompaction:
         with pytest.raises(ValueError, match='target_tokens must be positive'):
             TieredCompaction(tiers=[ClearToolResults(max_messages=1)], target_tokens=0)
 
-    @pytest.mark.anyio
     async def test_noop_under_target(self):
         calls: list[str] = []
         tier = _RecordingTier('t1', calls)
@@ -2056,7 +1988,6 @@ class TestTieredCompaction:
         assert result.messages == messages
         assert calls == []
 
-    @pytest.mark.anyio
     async def test_short_circuit_first_tier_suffices(self):
         calls: list[str] = []
         # Each message ~10 tokens; 5 messages = 50 tokens. Target 15.
@@ -2069,7 +2000,6 @@ class TestTieredCompaction:
         assert calls == ['t1']  # t2 never reached
         assert len(result.messages) == 1
 
-    @pytest.mark.anyio
     async def test_triggers_on_anchored_usage_the_heuristic_cannot_see(self):
         # ~101 tokens by the heuristic, but the provider reported the request at 90K:
         # dense content the character estimate is blind to. The anchored gate must fire.
@@ -2082,7 +2012,6 @@ class TestTieredCompaction:
         assert calls == ['t1']
         assert len(result.messages) == 1
 
-    @pytest.mark.anyio
     async def test_escalation_subtracts_tier_reclaim_from_anchored_baseline(self):
         # The anchor predates any tier rewrite, so re-anchoring would show no reclaim and
         # always escalate to the last tier. Subtracting the removed text's estimate must
@@ -2099,7 +2028,6 @@ class TestTieredCompaction:
         assert calls == ['t1']
         assert len(result.messages) == 5
 
-    @pytest.mark.anyio
     async def test_escalation_never_counts_fixed_overhead_as_reclaimed(self):
         # 100K of the baseline is anchored overhead (tool definitions, instructions) that no
         # tier can touch. Halving the 4K of message text must leave the estimate at ~102K,
@@ -2115,7 +2043,6 @@ class TestTieredCompaction:
         await cap.before_model_request(_make_ctx(), rc)
         assert calls == ['t1', 't2']
 
-    @pytest.mark.anyio
     async def test_full_escalation(self):
         calls: list[str] = []
         t1 = _RecordingTier('t1', calls, drop=1)  # 5 -> 4 messages (~40 tokens) still > 15
@@ -2127,7 +2054,6 @@ class TestTieredCompaction:
         assert calls == ['t1', 't2']
         assert len(result.messages) == 1
 
-    @pytest.mark.anyio
     async def test_reinjects_pins_before_deciding_to_stop(self):
         calls: list[str] = []
         t1 = _RecordingTier('t1', calls, drop=1)
@@ -2138,7 +2064,6 @@ class TestTieredCompaction:
         assert calls == ['t1', 't2']
         assert _pinned_texts(result.messages) == ['x' * 40]
 
-    @pytest.mark.anyio
     async def test_composes_real_strategies(self):
         # ClearToolResults then SummarizingCompaction, driven by the orchestrator.
         clear = ClearToolResults(max_messages=1, keep_pairs=0)
@@ -2169,7 +2094,6 @@ class TestTieredCompaction:
 
 
 class TestSummarizingCompactionModel:
-    @pytest.mark.anyio
     async def test_model_inherits_from_the_request_when_none(self):
         comp = SummarizingCompaction(
             max_messages=3, keep_messages=1, preserve_first_user_message=False, incremental=False
@@ -2194,7 +2118,6 @@ class TestSummarizingCompactionModel:
         assert mock_agent_instance.run.call_args.kwargs['usage'] is ctx.usage
         assert mock_agent_instance.run.call_args.kwargs['event_stream_handler'] is None
 
-    @pytest.mark.anyio
     async def test_nested_summary_reserves_parent_usage_limits(self):
         comp = SummarizingCompaction(max_messages=3, keep_messages=1, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
@@ -2212,7 +2135,6 @@ class TestSummarizingCompactionModel:
             request_limit=4, tool_calls_limit=2
         )
 
-    @pytest.mark.anyio
     async def test_summarizer_agent_gets_the_default_instructions(self):
         comp = SummarizingCompaction(max_messages=3, keep_messages=1, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
@@ -2228,7 +2150,6 @@ class TestSummarizingCompactionModel:
         assert MockAgent.call_args.kwargs['instructions'] == comp.instructions
         assert 'context summarization assistant' in MockAgent.call_args.kwargs['instructions']
 
-    @pytest.mark.anyio
     async def test_instructions_override_reaches_the_summarizer_agent(self):
         required = 'Required endpoint instruction.'
         comp = SummarizingCompaction(
@@ -2283,7 +2204,6 @@ class TestClampOversizedMessages:
         with pytest.raises(ValueError, match='keep_tail_chars must be non-negative'):
             ClampOversizedMessages(max_part_chars=10, keep_tail_chars=-1)
 
-    @pytest.mark.anyio
     async def test_clamps_oversized_response_text(self):
         text = 'H' * 50 + ' ' * 5_000 + 'T' * 50
         cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=50, keep_tail_chars=50)
@@ -2299,7 +2219,6 @@ class TestClampOversizedMessages:
         assert '[clamped: removed' in part.content
         assert len(part.content) < len(text)
 
-    @pytest.mark.anyio
     async def test_token_trigger_uses_heuristic(self):
         text = 'x' * 4_000  # ~1000 tokens at the 4-chars heuristic.
         cap = ClampOversizedMessages(max_part_tokens=100, keep_head_chars=20, keep_tail_chars=20)
@@ -2308,7 +2227,6 @@ class TestClampOversizedMessages:
         assert isinstance(part, TextPart)
         assert '[clamped: removed' in part.content
 
-    @pytest.mark.anyio
     async def test_token_trigger_uses_tokenizer(self):
         text = 'word ' * 1_000
         cap = ClampOversizedMessages(
@@ -2322,7 +2240,6 @@ class TestClampOversizedMessages:
         assert isinstance(part, TextPart)
         assert '[clamped: removed' in part.content
 
-    @pytest.mark.anyio
     async def test_small_text_untouched(self):
         cap = ClampOversizedMessages(max_part_chars=100_000, max_part_tokens=100_000)
         messages: list[ModelMessage] = [_assistant('short')]
@@ -2330,7 +2247,6 @@ class TestClampOversizedMessages:
         # Nothing oversized -> the message object is returned unchanged.
         assert result[0] is messages[0]
 
-    @pytest.mark.anyio
     async def test_keep_tail_zero(self):
         text = 'A' * 5_000
         cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=100, keep_tail_chars=0)
@@ -2340,7 +2256,6 @@ class TestClampOversizedMessages:
         assert part.content.startswith('A' * 100)
         assert part.content.endswith(']\n')
 
-    @pytest.mark.anyio
     async def test_clamp_skipped_when_not_smaller(self):
         # Oversized by the token trigger, but keep slices exceed the text length, so
         # clamping would not shrink it -- leave it untouched.
@@ -2350,7 +2265,6 @@ class TestClampOversizedMessages:
         result = await cap.compact(messages, _make_ctx())
         assert result[0] is messages[0]
 
-    @pytest.mark.anyio
     async def test_clamps_oversized_tool_call_args(self):
         big = 'p' * 5_000
         call = ModelResponse(parts=[ToolCallPart(tool_name='write_plan', args=big, tool_call_id='c1')])
@@ -2364,7 +2278,6 @@ class TestClampOversizedMessages:
         assert '[clamped: removed' in part.args[_CLAMP_ARGS_KEY]
         assert part.tool_call_id == 'c1'
 
-    @pytest.mark.anyio
     async def test_preserves_typed_tool_call_subclasses(self):
         # `ToolSearchCallPart` and `LoadCapabilityCallPart` subclass `ToolCallPart` but narrow
         # `args` to a typed shape that `ModelMessagesTypeAdapter` validates when persisted
@@ -2389,7 +2302,6 @@ class TestClampOversizedMessages:
         # that the typed parts come back typed with their structured args intact.
         assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(result)) == result
 
-    @pytest.mark.anyio
     async def test_small_tool_call_args_untouched(self):
         call = ModelResponse(parts=[ToolCallPart(tool_name='t', args='{"a": 1}', tool_call_id='c1')])
         cap = ClampOversizedMessages(max_part_chars=1_000)
@@ -2397,7 +2309,6 @@ class TestClampOversizedMessages:
         result = await cap.compact(messages, _make_ctx())
         assert result[0] is messages[0]
 
-    @pytest.mark.anyio
     async def test_tool_call_args_not_clamped_when_disabled(self):
         big = 'p' * 5_000
         call = ModelResponse(parts=[ToolCallPart(tool_name='write_plan', args=big, tool_call_id='c1')])
@@ -2406,7 +2317,6 @@ class TestClampOversizedMessages:
         result = await cap.compact(messages, _make_ctx())
         assert result[0] is messages[0]
 
-    @pytest.mark.anyio
     async def test_request_messages_and_other_parts_untouched(self):
 
         big_user = _user('u' * 5_000)
@@ -2425,7 +2335,6 @@ class TestClampOversizedMessages:
         assert isinstance(text, TextPart)
         assert '[clamped: removed' in text.content
 
-    @pytest.mark.anyio
     async def test_before_model_request(self):
         text = 'q' * 5_000
         cap = ClampOversizedMessages(max_part_chars=1_000, keep_head_chars=50, keep_tail_chars=50)
@@ -2451,7 +2360,6 @@ class TestPublicPath:
         # TestModel event-loop quirk in core unrelated to compaction.
         return 'asyncio'
 
-    @pytest.mark.anyio
     async def test_summary_run_belongs_to_the_compacted_conversation(self):
         summary_conversations: set[str | None] = set()
 
@@ -2476,7 +2384,6 @@ class TestPublicPath:
         assert result.conversation_id == 'conversation-1'
         assert summary_conversations == {'conversation-1'}
 
-    @pytest.mark.anyio
     async def test_summarization_capabilities_run_on_the_summary_run(self):
         @dataclasses.dataclass
         class RecordModels(AbstractCapability[None]):
@@ -2518,7 +2425,6 @@ class TestPublicPath:
         assert summary.models == ['summarizer']
         assert outer.models == ['test']
 
-    @pytest.mark.anyio
     async def test_capabilities_wired_into_agent(self):
 
         agent = Agent(
@@ -2528,7 +2434,6 @@ class TestPublicPath:
         result = await agent.run('hello')
         assert result.output is not None
 
-    @pytest.mark.anyio
     async def test_clamp_oversized_wired_into_agent(self):
 
         agent = Agent(
@@ -2538,7 +2443,6 @@ class TestPublicPath:
         result = await agent.run('hello')
         assert result.output is not None
 
-    @pytest.mark.anyio
     async def test_clear_does_not_break_tool_search_on_next_request(self):
         # Regression for #380 through the real agent graph. Core re-reads a
         # `ToolSearchReturnPart`'s structured content on every request via
@@ -2656,7 +2560,6 @@ class TestHelperBranchCoverage:
 
 
 class TestSummarizingCompactionPreserveBranches:
-    @pytest.mark.anyio
     async def test_preserve_with_no_user_messages(self):
         comp = SummarizingCompaction(
             model='test:m', max_messages=2, keep_messages=1, preserve_first_user_message=True, incremental=False
@@ -2678,7 +2581,6 @@ class TestSummarizingCompactionPreserveBranches:
         assert isinstance(first_msg, ModelRequest)
         assert any(isinstance(p, SystemPromptPart) and 'No-user summary.' in p.content for p in first_msg.parts)
 
-    @pytest.mark.anyio
     async def test_preserve_when_first_user_already_in_tail(self):
         comp = SummarizingCompaction(
             model='test:m', max_messages=2, keep_messages=2, preserve_first_user_message=True, incremental=False
@@ -2736,7 +2638,6 @@ class TestCompactionSpan:
         # event-loop quirk in core unrelated to compaction.
         return 'asyncio'
 
-    @pytest.mark.anyio
     @pytest.mark.usefixtures('instrument_all_agents')
     async def test_summary_run_spans_carry_the_parent_conversation_id(self, capfire: CaptureLogfire) -> None:
         history: list[ModelMessage] = []
@@ -2758,7 +2659,6 @@ class TestCompactionSpan:
         assert summary_run['attributes']['gen_ai.conversation.id'] == 'conversation-1'
         assert 'baggage_conflict.gen_ai.conversation.id' not in summary_run['attributes']
 
-    @pytest.mark.anyio
     async def test_span_emitted_when_threshold_exceeded(self, capfire: CaptureLogfire) -> None:
 
         agent: Agent[None, str] = Agent(
@@ -2780,7 +2680,6 @@ class TestCompactionSpan:
         assert attrs['compaction.messages_before'] > attrs['compaction.messages_after']
         assert attrs['compaction.tokens_before'] > attrs['compaction.tokens_after']
 
-    @pytest.mark.anyio
     async def test_no_span_when_threshold_not_exceeded(self, capfire: CaptureLogfire) -> None:
 
         agent: Agent[None, str] = Agent(
@@ -2792,7 +2691,6 @@ class TestCompactionSpan:
 
         assert _compact_spans(capfire) == []
 
-    @pytest.mark.anyio
     async def test_summarizing_compaction_emits_span(self, capfire: CaptureLogfire) -> None:
         comp = SummarizingCompaction(model='test:m', max_messages=2, keep_messages=1, incremental=False)
         messages: list[ModelMessage] = [_user('first'), _assistant('a'), _user('b'), _assistant('c')]
@@ -2811,7 +2709,6 @@ class TestCompactionSpan:
         assert len(spans) == 1
         assert spans[0]['attributes']['compaction.strategy'] == 'SummarizingCompaction'
 
-    @pytest.mark.anyio
     @pytest.mark.usefixtures('instrument_all_agents')
     async def test_summarizer_run_is_named_after_the_capability(self, capfire: CaptureLogfire) -> None:
         agent = Agent(
@@ -2823,7 +2720,6 @@ class TestCompactionSpan:
 
         assert 'summarizing_compaction' in agent_run_names(capfire)
 
-    @pytest.mark.anyio
     async def test_clamp_emits_span_only_when_a_part_is_clamped(self, capfire: CaptureLogfire) -> None:
         comp = ClampOversizedMessages(max_part_chars=4, keep_head_chars=1, keep_tail_chars=1)
 
@@ -2837,7 +2733,6 @@ class TestCompactionSpan:
         assert len(spans) == 1
         assert spans[0]['attributes']['compaction.strategy'] == 'ClampOversizedMessages'
 
-    @pytest.mark.anyio
     async def test_clamp_emits_span_for_oversized_tool_call_args(self, capfire: CaptureLogfire) -> None:
         comp = ClampOversizedMessages(max_part_chars=4, keep_head_chars=1, keep_tail_chars=1, clamp_tool_call_args=True)
         messages: list[ModelMessage] = [
@@ -2849,7 +2744,6 @@ class TestCompactionSpan:
         assert len(spans) == 1
         assert spans[0]['attributes']['compaction.strategy'] == 'ClampOversizedMessages'
 
-    @pytest.mark.anyio
     async def test_clamp_no_span_for_non_oversized_or_skipped_parts(self, capfire: CaptureLogfire) -> None:
 
         comp = ClampOversizedMessages(max_part_chars=1_000, clamp_tool_call_args=True)
@@ -2865,7 +2759,6 @@ class TestCompactionSpan:
 
         assert _compact_spans(capfire) == []
 
-    @pytest.mark.anyio
     async def test_tiered_emits_single_span_not_one_per_tier(self, capfire: CaptureLogfire) -> None:
         comp: TieredCompaction[None] = TieredCompaction(
             tiers=[
@@ -2887,7 +2780,6 @@ class TestCompactionSpan:
         assert len(spans) == 1
         assert spans[0]['attributes']['compaction.strategy'] == 'TieredCompaction'
 
-    @pytest.mark.anyio
     async def test_no_span_when_compaction_is_noop(self, capfire: CaptureLogfire) -> None:
         # DeduplicateFileReads has no threshold, so its trigger always fires, but with no
         # superseded reads `compact` returns the history unchanged and no span should be emitted.
@@ -2902,7 +2794,6 @@ class TestCompactionSpan:
 
         assert _compact_spans(capfire) == []
 
-    @pytest.mark.anyio
     async def test_span_emitted_when_dedup_changes_history(self, capfire: CaptureLogfire) -> None:
         comp = DeduplicateFileReads(file_key=_file_key)
         messages: list[ModelMessage] = [
@@ -2917,7 +2808,6 @@ class TestCompactionSpan:
         assert len(spans) == 1
         assert spans[0]['attributes']['compaction.strategy'] == 'DeduplicateFileReads'
 
-    @pytest.mark.anyio
     async def test_clear_tool_results_emits_span(self, capfire: CaptureLogfire) -> None:
         # ClearToolResults is otherwise only exercised inside TieredCompaction, which reports the
         # orchestrator's name -- so this is the only check on its own `strategy` literal.
@@ -2966,7 +2856,6 @@ class TestHistoryChanged:
 
 
 class TestCompactWithSpan:
-    @pytest.mark.anyio
     async def test_no_op_returns_without_starting_span(self):
         # A NoOpTracer would never record anyway; this guards that `compact` runs and the
         # unchanged result is returned without attempting to start a span.
@@ -2978,7 +2867,6 @@ class TestCompactWithSpan:
         result = await compact_with_span(_make_ctx(), strategy='Strat', messages=messages, compact=_compact)
         assert result is messages
 
-    @pytest.mark.anyio
     @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
     async def test_recording_span_sets_attributes(self, capfire: CaptureLogfire) -> None:
         # Distinct text lengths plus a character-counting tokenizer pin the exact attribute values.
@@ -3013,7 +2901,6 @@ class TestCompactWithSpan:
         assert attrs['compaction.tokens_before'] > attrs['compaction.tokens_after']
         assert seen  # the strategy tokenizer reached the span attributes, not the default heuristic
 
-    @pytest.mark.anyio
     async def test_non_recording_tracer_skips_attributes(self):
         # A no-op tracer returns a non-recording span, so attribute computation is skipped.
         before: list[ModelMessage] = [_user('a'), _user('b')]
@@ -3098,7 +2985,6 @@ class TestPinning:
         assert not is_pinned(UserPromptPart(content=['list', 'content']))
         assert not is_pinned(TextPart(content='<pinned>'))
 
-    @pytest.mark.anyio
     async def test_every_dropped_pin_is_reinjected_in_order(self):
         sw = SlidingWindowCompaction(max_messages=4, keep_messages=1, preserve_first_user_message=False)
         messages: list[ModelMessage] = [
@@ -3114,7 +3000,6 @@ class TestPinning:
             'second pin',
         ]
 
-    @pytest.mark.anyio
     async def test_reinjected_pin_lands_after_leading_context(self):
         # The summary message is system-only, so pins are placed after it, not above it.
         comp = SummarizingCompaction(
@@ -3129,7 +3014,6 @@ class TestPinning:
         assert isinstance(second, ModelRequest)
         assert is_pinned(second.parts[0])
 
-    @pytest.mark.anyio
     async def test_reinjected_pin_leads_when_no_system_context(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_pinned_msg('durable'), _assistant('a'), _user('b'), _assistant('c')]
@@ -3138,7 +3022,6 @@ class TestPinning:
         assert isinstance(head, ModelRequest)
         assert is_pinned(head.parts[0])
 
-    @pytest.mark.anyio
     async def test_reinjection_appends_when_tail_is_all_system(self):
         # Every surviving message is system-only, so the placement scan runs to the end.
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=2, preserve_first_user_message=False)
@@ -3154,21 +3037,18 @@ class TestPinning:
         assert isinstance(last, ModelRequest)
         assert is_pinned(last.parts[0])
 
-    @pytest.mark.anyio
     async def test_history_without_pins_is_untouched(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
         result = await sw.compact(messages, _make_ctx())
         assert _pinned_texts(result) == []
 
-    @pytest.mark.anyio
     async def test_surviving_pin_is_not_duplicated(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=2, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('old'), _assistant('a'), _pinned_msg('durable'), _assistant('c')]
         result = await sw.compact(messages, _make_ctx())
         assert _pinned_texts(result) == ['durable']
 
-    @pytest.mark.anyio
     async def test_duplicate_pin_is_reinjected_when_only_one_survives(self):
         sw = SlidingWindowCompaction(max_messages=4, keep_messages=2, preserve_first_user_message=False)
         messages: list[ModelMessage] = [
@@ -3199,7 +3079,6 @@ class _NotAStore:
 
 
 class TestReceipts:
-    @pytest.mark.anyio
     async def test_only_receipt_shaped_parts_are_de_accumulated(self):
         # A prior receipt is replaced; look-alike and non-user parts in the same history survive.
         sw = SlidingWindowCompaction(max_messages=4, keep_messages=4, receipts=True)
@@ -3229,19 +3108,15 @@ async def _receipt_for(ctx: Any) -> str:
 
 
 class TestTranscriptHandleDiscovery:
-    @pytest.mark.anyio
     async def test_no_capabilities_attr(self):
         assert 'Persisted run handle' not in await _receipt_for(_make_ctx())
 
-    @pytest.mark.anyio
     async def test_empty_capabilities(self):
         assert 'Persisted run handle' not in await _receipt_for(_CtxWith.capabilities())
 
-    @pytest.mark.anyio
     async def test_capability_without_method_skipped(self):
         assert 'Persisted run handle' not in await _receipt_for(_CtxWith.capabilities(x=_NotAStore()))
 
-    @pytest.mark.anyio
     async def test_capability_returning_none_continues(self):
         ctx = _CtxWith.capabilities(a=_FakeTranscriptStore(None), b=_FakeTranscriptStore('found'))
         assert 'Persisted run handle: found.' in await _receipt_for(ctx)
@@ -3265,7 +3140,6 @@ def _patched_summary_agent(output: str) -> Any:
 
 
 class TestSummarizingReceipts:
-    @pytest.mark.anyio
     async def test_receipt_present_and_after_summary(self):
         comp = SummarizingCompaction(
             model='openai:gpt-4o-mini',
@@ -3285,7 +3159,6 @@ class TestSummarizingReceipts:
         assert 'was summarized by gpt' in receipts[0]
         assert 'Persisted run handle' not in receipts[0]
 
-    @pytest.mark.anyio
     async def test_receipt_is_byte_deterministic(self):
         def _run() -> str:
             return 'SUMMARY'
@@ -3310,7 +3183,6 @@ class TestSummarizingReceipts:
         assert first == second
         assert first.encode('utf-8') == second.encode('utf-8')
 
-    @pytest.mark.anyio
     async def test_receipt_handle_when_transcript_store_attached(self):
         comp = SummarizingCompaction(
             model='openai:gpt-4o-mini',
@@ -3328,7 +3200,6 @@ class TestSummarizingReceipts:
             result = await comp.before_model_request(ctx, rc)
         assert 'Persisted run handle: librarian-42.' in _receipt_parts(result.messages)[0]
 
-    @pytest.mark.anyio
     async def test_receipts_do_not_accumulate(self):
         comp = SummarizingCompaction(
             model='openai:gpt-4o-mini',
@@ -3347,7 +3218,6 @@ class TestSummarizingReceipts:
             second = await comp.compact(extended, _make_ctx())
         assert len(_receipt_parts(second)) == 1
 
-    @pytest.mark.anyio
     async def test_marker_before_system_prompt_does_not_drop_the_system_prompt(self):
         comp = SummarizingCompaction(
             model='test:m', max_messages=3, keep_messages=1, receipts=True, bridge_prefix=False
@@ -3368,7 +3238,6 @@ class TestSummarizingReceipts:
 
 
 class TestSlidingWindowCompactionReceipts:
-    @pytest.mark.anyio
     async def test_receipt_prepended_with_drop_wording(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
@@ -3381,7 +3250,6 @@ class TestSlidingWindowCompactionReceipts:
         assert _part_text(receipt).startswith('[History before this point')
         assert 'was dropped by the harness' in _part_text(receipt)
 
-    @pytest.mark.anyio
     async def test_receipt_reserves_a_message_slot(self):
         sw = SlidingWindowCompaction(max_messages=4, keep_messages=3, receipts=True, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d'), _user('e')]
@@ -3389,7 +3257,6 @@ class TestSlidingWindowCompactionReceipts:
         assert len(result.messages) == 3
         assert len(_receipt_parts(result.messages)) == 1
 
-    @pytest.mark.anyio
     async def test_receipt_reserves_tokens(self):
         sw = SlidingWindowCompaction(
             max_tokens=10, keep_tokens=5, receipts=True, preserve_first_user_message=False, tokenizer=len
@@ -3398,7 +3265,6 @@ class TestSlidingWindowCompactionReceipts:
         result = await sw.before_model_request(_make_ctx(), _make_request_context(messages))
         assert len(_receipt_parts(result.messages)) == 1
 
-    @pytest.mark.anyio
     async def test_receipt_does_not_displace_the_original_first_user_turn(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)
         messages: list[ModelMessage] = [_user('original task'), _assistant('a'), _user('later'), _assistant('b')]
@@ -3406,7 +3272,6 @@ class TestSlidingWindowCompactionReceipts:
         second = await sw.compact([*first, _user('next'), _assistant('c')], _make_ctx())
         assert 'original task' in _user_texts(second)
 
-    @pytest.mark.anyio
     async def test_receipt_excludes_restored_messages_from_drop_count(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)
         messages: list[ModelMessage] = [_user('original task'), _assistant('a'), _user('later'), _assistant('b')]
@@ -3420,7 +3285,6 @@ class TestReceiptSpanEvent:
     def anyio_backend(self) -> str:
         return 'asyncio'
 
-    @pytest.mark.anyio
     async def test_sliding_window_emits_receipt_event(self, capfire: CaptureLogfire) -> None:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_user('a'), _assistant('b'), _user('c'), _assistant('d')]
@@ -3435,7 +3299,6 @@ class TestReceiptSpanEvent:
         assert attrs['compaction.receipt.by'] == 'the harness'
         assert 'compaction.receipt.handle' not in attrs
 
-    @pytest.mark.anyio
     async def test_receipt_event_carries_handle(self, capfire: CaptureLogfire) -> None:
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True, preserve_first_user_message=False)
         ctx = _make_ctx_with_tracer()
@@ -3457,7 +3320,6 @@ class TestKeepUserMessages:
         with pytest.raises(ValueError, match='keep_user_messages_max_chars must be positive'):
             SummarizingCompaction(model='test', max_messages=10, keep_user_messages_max_chars=0)
 
-    @pytest.mark.anyio
     async def test_newest_summarized_user_message_is_preserved_and_truncated(self):
         comp = SummarizingCompaction(
             model='test:m',
@@ -3481,7 +3343,6 @@ class TestKeepUserMessages:
         kept = _user_texts(result.messages)
         assert any(t.endswith('[...]') and len(t) == 10 for t in kept)
 
-    @pytest.mark.anyio
     async def test_keeps_non_string_user_content_and_skips_non_user(self):
         comp = SummarizingCompaction(
             model='test:m',
@@ -3507,7 +3368,6 @@ class TestKeepUserMessages:
         assert len(kept) == 1
         assert kept[0].content == [TextContent(content='multimodal')]
 
-    @pytest.mark.anyio
     async def test_bounds_text_inside_sequence_content(self):
 
         comp = SummarizingCompaction(
@@ -3543,7 +3403,6 @@ class TestKeepUserMessages:
         # Non-text items ride along untouched.
         assert passthrough is cache_point
 
-    @pytest.mark.anyio
     async def test_retained_messages_do_not_reenter_later_compactions(self):
         comp = SummarizingCompaction(
             model='test:m',
@@ -3567,7 +3426,6 @@ class TestKeepUserMessages:
             second = await comp.compact([*first, _user('third'), _assistant('c')], _make_ctx())
         assert sum('first' in text for text in _user_texts(second)) == 1
 
-    @pytest.mark.anyio
     async def test_retained_user_messages_converge_within_the_tail_budget(self):
         comp = SummarizingCompaction(
             model='test:m',
@@ -3586,7 +3444,6 @@ class TestKeepUserMessages:
         assert len(first.messages) <= comp.max_messages
         assert second.messages == first.messages
 
-    @pytest.mark.anyio
     async def test_retained_users_and_tail_share_the_token_budget(self):
         comp = SummarizingCompaction(
             model='test:m',
@@ -3605,7 +3462,6 @@ class TestKeepUserMessages:
         assert comp.keep_tokens is not None
         assert estimate_token_count(result[1:], len) <= comp.keep_tokens
 
-    @pytest.mark.anyio
     async def test_retained_user_can_consume_the_token_budget(self):
         comp = SummarizingCompaction(
             model='test:m',
@@ -3623,7 +3479,6 @@ class TestKeepUserMessages:
         assert comp.keep_tokens is not None
         assert estimate_token_count(result[1:], len) <= comp.keep_tokens
 
-    @pytest.mark.anyio
     async def test_older_user_is_not_retained_when_the_newest_does_not_fit(self):
         comp = SummarizingCompaction(
             model='test:m',
@@ -3640,7 +3495,6 @@ class TestKeepUserMessages:
         assert _user_texts(result) == []
         assert result[-1] == messages[-1]
 
-    @pytest.mark.anyio
     async def test_pin_is_not_rebuilt_as_a_kept_user_message(self):
         comp = SummarizingCompaction(
             model='test:m',
@@ -3654,7 +3508,6 @@ class TestKeepUserMessages:
             result = await comp.compact(messages, _make_ctx())
         assert _pinned_texts(result) == ['durable']
 
-    @pytest.mark.anyio
     async def test_tiny_user_message_budget_stays_bounded(self):
         comp = SummarizingCompaction(
             model='test:m',
@@ -3682,7 +3535,6 @@ class TestAnchoredIncremental:
         # unrelated to compaction (same reason as TestCompactionSpan).
         return 'asyncio'
 
-    @pytest.mark.anyio
     async def test_previous_summary_fed_as_anchor_with_update_instruction(self):
 
         captured: list[str] = []
@@ -3760,20 +3612,16 @@ class TestBridgePrefix:
             p.content for p in first.parts if isinstance(p, SystemPromptPart) and p.content.startswith(_SUMMARY_PREFIX)
         )
 
-    @pytest.mark.anyio
     async def test_prefix_added_on_family_mismatch(self):
         assert _BRIDGE_ANCHOR in await self._compact_with()
 
-    @pytest.mark.anyio
     async def test_no_prefix_same_family(self):
         summary = await self._compact_with(run_model='openai:gpt-4o', summarizer='openai:gpt-4o-mini')
         assert _BRIDGE_ANCHOR not in summary
 
-    @pytest.mark.anyio
     async def test_no_prefix_when_disabled(self):
         assert _BRIDGE_ANCHOR not in await self._compact_with(bridge_prefix=False)
 
-    @pytest.mark.anyio
     async def test_disabled_by_default(self):
         comp = SummarizingCompaction(model='openai:gpt-4o-mini', max_messages=3, keep_messages=1)
         messages: list[ModelMessage] = [
@@ -3793,7 +3641,6 @@ class TestBridgePrefix:
         )
         assert _BRIDGE_ANCHOR not in summary
 
-    @pytest.mark.anyio
     async def test_same_fallback_model_does_not_add_a_bridge(self):
 
         fallback = FallbackModel(TestModel(), TestModel())
@@ -3801,7 +3648,6 @@ class TestBridgePrefix:
         ctx.model = fallback
         assert _BRIDGE_ANCHOR not in await self._compact_with(run_model=None, summarizer=None, ctx=ctx)
 
-    @pytest.mark.anyio
     async def test_run_family_falls_back_to_the_running_model(self):
         # `TestModel.model_name` is `test`, which differs from the summarizer's family.
         assert _BRIDGE_ANCHOR in await self._compact_with(run_model=None)
@@ -3813,14 +3659,12 @@ class TestBridgePrefix:
 
 
 class TestPinsSurviveStrategies:
-    @pytest.mark.anyio
     async def test_sliding_window(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=1, preserve_first_user_message=False)
         messages: list[ModelMessage] = [_pinned_msg('PINNED STATE'), _assistant('a'), _user('b'), _assistant('c')]
         result = await sw.compact(messages, _make_ctx())
         assert any(is_pinned(p) for m in result if isinstance(m, ModelRequest) for p in m.parts)
 
-    @pytest.mark.anyio
     async def test_summarizing(self):
         comp = SummarizingCompaction(
             model='test:m', max_messages=3, keep_messages=1, bridge_prefix=False, preserve_first_user_message=False
@@ -3830,14 +3674,12 @@ class TestPinsSurviveStrategies:
             result = await comp.compact(messages, _make_ctx())
         assert any(is_pinned(p) for m in result if isinstance(m, ModelRequest) for p in m.parts)
 
-    @pytest.mark.anyio
     async def test_clear_tool_results(self):
         ctr = ClearToolResults(max_tokens=1, keep_pairs=0)
         messages: list[ModelMessage] = [_pinned_msg('PINNED STATE'), *_pair('fn', 'c1', 'big result')]
         result = await ctr.compact(messages, _make_ctx())
         assert any(is_pinned(p) for m in result if isinstance(m, ModelRequest) for p in m.parts)
 
-    @pytest.mark.anyio
     async def test_deduplicate_file_reads(self):
         dfr = DeduplicateFileReads(file_key=_file_key)
         messages: list[ModelMessage] = [
@@ -3848,7 +3690,6 @@ class TestPinsSurviveStrategies:
         result = await dfr.compact(messages, _make_ctx())
         assert any(is_pinned(p) for m in result if isinstance(m, ModelRequest) for p in m.parts)
 
-    @pytest.mark.anyio
     async def test_clamp_oversized(self):
         clamp = ClampOversizedMessages(max_part_chars=4, keep_head_chars=1, keep_tail_chars=1)
         messages: list[ModelMessage] = [_pinned_msg('PINNED STATE'), _assistant('y' * 40)]
@@ -3862,7 +3703,6 @@ class TestPinsSurviveStrategies:
 
 
 class TestStepPersistenceHandle:
-    @pytest.mark.anyio
     async def test_handle_is_run_id_and_reaches_the_receipt(self):
 
         sp: StepPersistence[None] = StepPersistence(store=InMemoryStepStore(), run_id='libr-1')
@@ -3942,7 +3782,6 @@ class TestStructuralFeaturesThroughAgent:
         # that has nothing to do with compaction.
         return 'asyncio'
 
-    @pytest.mark.anyio
     async def test_receipt_reaches_the_model_and_does_not_accumulate(self):
         seen: list[list[ModelMessage]] = []
         agent = Agent(
@@ -3960,7 +3799,6 @@ class TestStructuralFeaturesThroughAgent:
         await agent.run('two', message_history=first.all_messages())
         assert len(_receipt_parts(seen[1])) == 1
 
-    @pytest.mark.anyio
     async def test_receipt_is_not_mistaken_for_the_first_user_turn(self):
         seen: list[list[ModelMessage]] = []
         agent = Agent(
@@ -3975,7 +3813,6 @@ class TestStructuralFeaturesThroughAgent:
         # receipt that now sits ahead of it -- is what gets carried forward.
         assert 'FIRST' in _user_texts(seen[1])
 
-    @pytest.mark.anyio
     async def test_pin_survives_compaction_in_a_run(self):
         seen: list[list[ModelMessage]] = []
         agent = Agent(
@@ -3995,7 +3832,6 @@ class TestStructuralFeaturesThroughAgent:
             if isinstance(part, UserPromptPart) and is_pinned(part)
         ] == ['DURABLE STATE']
 
-    @pytest.mark.anyio
     async def test_stream_only_summarizer_completes_parent_run(self):
         seen: list[list[ModelMessage]] = []
         prompts: list[str] = []
@@ -4027,7 +3863,6 @@ class TestStructuralFeaturesThroughAgent:
             for part in message.parts
         )
 
-    @pytest.mark.anyio
     async def test_tool_return_max_chars_threads_through_summarize(self):
         """The field reaches `_format_messages` via `_summarize` in a real run."""
         prompts: list[str] = []
@@ -4054,7 +3889,6 @@ class TestStructuralFeaturesThroughAgent:
         assert len(prompts) == 1
         assert f'Tool [read]: {"z" * 5}[...]' in prompts[0]
 
-    @pytest.mark.anyio
     async def test_tool_return_max_chars_none_renders_whole_return(self):
         prompts: list[str] = []
         agent = Agent(
@@ -4080,7 +3914,6 @@ class TestStructuralFeaturesThroughAgent:
         assert len(prompts) == 1
         assert f'Tool [read]: {"z" * 600}' in prompts[0]
 
-    @pytest.mark.anyio
     async def test_summary_events_reach_a_caller_supplied_handler(self):
         seen: list[list[ModelMessage]] = []
         prompts: list[str] = []
@@ -4122,7 +3955,6 @@ class TestStructuralFeaturesThroughAgent:
             for part in message.parts
         )
 
-    @pytest.mark.anyio
     @pytest.mark.parametrize(
         'max_chars,expected',
         [(3, '[..'), (5, '[...]'), (10, 'v' * 5 + '[...]'), (200, 'v' * 195 + '[...]'), (1000, 'v' * 1000)],
@@ -4148,7 +3980,6 @@ class TestStructuralFeaturesThroughAgent:
         texts = _user_texts(seen[0])
         assert expected in texts
 
-    @pytest.mark.anyio
     async def test_retained_user_turns_arrive_as_a_single_request(self):
         # `keep_user_messages` leaves the summary, the receipt, and the retained turns as
         # adjacent `ModelRequest`s. Core normalizes that into one turn after the hooks run, so
@@ -4178,7 +4009,6 @@ class TestStructuralFeaturesThroughAgent:
             for earlier, later in zip(sent, sent[1:])
         )
 
-    @pytest.mark.anyio
     async def test_incremental_anchors_the_next_summary_on_the_previous_one(self):
         seen: list[list[ModelMessage]] = []
         prompts: list[str] = []

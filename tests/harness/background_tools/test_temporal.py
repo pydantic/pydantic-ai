@@ -26,8 +26,9 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import BackgroundTools
+from tests.harness.conftest import ignore_source_reads_left_open
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7253
 TASK_QUEUE = 'pydantic-ai-harness-background-tools'
@@ -94,11 +95,6 @@ def _workflow_runner() -> SandboxedWorkflowRunner:
 
 
 @pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
-@pytest.fixture(scope='module')
 async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
     async with await WorkflowEnvironment.start_local(  # pyright: ignore[reportUnknownMemberType]
         port=TEMPORAL_PORT,
@@ -116,12 +112,20 @@ async def test_background_result_survives_temporal_history_replay(client: Client
     global _tool_calls
     _tool_calls = 0
     workflow_id = 'test_background_tools_temporal_replay'
+    # `debug_mode=True` disables Temporal's 2-second workflow-task deadlock detector. Since
+    # `temporalio` 1.29 it also runs each activation inline on the test's event loop instead of in
+    # an executor thread, and lifts the sandbox's `breakpoint()` restriction on the runner passed
+    # here. Under `coverage`'s `sys.monitoring` core on Python 3.14, the first activation pays for
+    # lazily parsing every traced source file, which can exceed 2 seconds on a busy CI runner and
+    # fail the run with a spurious `_DeadlockError` (TMPRL1101). The test asserts replay
+    # determinism, not timing.
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
         workflows=[BackgroundToolsWorkflow],
         plugins=[AgentPlugin(_agent)],
         workflow_runner=_workflow_runner(),
+        debug_mode=True,
     ):
         output = await client.execute_workflow(
             BackgroundToolsWorkflow.run,
@@ -138,6 +142,7 @@ async def test_background_result_survives_temporal_history_replay(client: Client
         workflows=[BackgroundToolsWorkflow],
         plugins=[PydanticAIPlugin()],
         workflow_runner=_workflow_runner(),
+        debug_mode=True,
     ).replay_workflow(history)
 
     assert replay.replay_failure is None

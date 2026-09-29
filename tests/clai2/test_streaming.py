@@ -15,11 +15,6 @@ from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.config import Settings
 
 
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
-
-
 async def test_intermediate_text_flushes_before_tool_arguments() -> None:
     output = io.StringIO()
     renderer = StreamRenderer(Console(file=output), stop_loading=lambda: None)
@@ -136,7 +131,7 @@ async def test_cancel_during_drain_stops_writer() -> None:
 
     class ObservedOutput(io.StringIO):
         def write(self, text: str) -> int:
-            if 'x' in text:
+            if 'x' in text:  # pragma: no branch
                 writing.set()
             return super().write(text)
 

@@ -4,7 +4,6 @@ import io
 from pathlib import Path
 
 import anyio
-import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
 from prompt_toolkit.output import DummyOutput
@@ -14,11 +13,6 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.settings_store import SettingsStore
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 async def test_completion_control_bytes_are_not_executed_by_preview_or_echo(tmp_path: Path) -> None:

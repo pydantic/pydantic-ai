@@ -10,20 +10,15 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.tool_output_limits import (
     Band,
-    LocalFileStore,
     Spill,
     ToolOutputLimits,
     Truncate,
     TruncationStrategy,
 )
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
 
 
 @pytest.mark.parametrize('output_chars', [6_000, 25_000, 120_000], ids=['truncate', 'spill', 'native-cap-then-spill'])
@@ -36,14 +31,12 @@ async def test_shell_stacking_recipe(tmp_path: Path, output_chars: int):
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart('run_command', {'command': command})])
 
-    store = LocalFileStore(base_dir=tmp_path / 'results')
     tail = Truncate(max_chars=4_000, strategy=TruncationStrategy.tail)
     agent = Agent(
         FunctionModel(respond),
         capabilities=[
-            Shell(cwd=tmp_path, allowed_commands=[executable], max_output_chars=100_000),
+            Shell(allowed_commands=[executable], max_output_chars=100_000),
             ToolOutputLimits(
-                store=store,
                 bands=[],
                 per_tool={
                     'run_command': [
@@ -54,7 +47,7 @@ async def test_shell_stacking_recipe(tmp_path: Path, output_chars: int):
             ),
         ],
     )
-    result = await agent.run('run the command')
+    result = await agent.run('run the command', workspace=LocalWorkspaceBackend(tmp_path))
     returns = [part for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)]
     assert len(returns) == 1
     part = returns[0]
@@ -67,7 +60,9 @@ async def test_shell_stacking_recipe(tmp_path: Path, output_chars: int):
     else:
         assert 'read_tool_result' in part.content
         assert part.metadata is not None
-        stored = (await store.read(part.metadata['overflow_handle'])).decode('utf-8')
+        handle = part.metadata['overflow_handle']
+        assert handle.startswith(f'{tmp_path}/.pydantic-ai-harness/tool-output/')
+        stored = Path(handle).read_text(encoding='utf-8')
         original = f'[stdout]\n{"x" * output_chars}\n[exit code: 7]'
         if output_chars == 25_000:
             assert stored == original

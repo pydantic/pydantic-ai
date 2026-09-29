@@ -47,7 +47,7 @@ async def run_acp_stdio(
         deps: Dependencies passed to every agent run.
         name: Name advertised to the client. Defaults to the agent's name, then `'pydantic-ai-agent'`.
         version: Version advertised to the client.
-        session_config: Per-session factory deriving deps/toolsets from the client's workspace setup.
+        session_config: Per-session factory deriving deps, toolsets, and an optional workspace from the client's setup.
             See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].
         permission_policy: Scopes how "always allow"/"always reject" decisions are remembered.
             See [`PydanticAIACPAgent`][pydantic_ai_harness.experimental.acp.PydanticAIACPAgent].

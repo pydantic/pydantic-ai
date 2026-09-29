@@ -38,8 +38,9 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.spend import Budget, SpendLimitExceeded, SpendLimits
+from tests.harness.conftest import ignore_source_reads_left_open
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7245  # avoid conflict with the code_mode suite
 TASK_QUEUE = 'pydantic-ai-harness-spend-queue'
@@ -56,12 +57,6 @@ BASE_ACTIVITY_CONFIG = ActivityConfig(
 # only variable between the runners.
 _SANDBOXED = SandboxRestrictions.default.with_passthrough_modules('coverage', 'annotated_types')
 _PASSTHROUGH = _SANDBOXED.with_passthrough_modules('pydantic_ai_harness')
-
-
-@pytest.fixture(scope='module')
-def anyio_backend() -> str:
-    """Temporal's Python SDK runs on asyncio."""
-    return 'asyncio'
 
 
 @pytest.fixture(scope='module')

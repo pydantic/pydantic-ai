@@ -22,14 +22,11 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
 
 # MCP's test server leaves its lifespan annotation unresolved with pydantic-settings 2.15.
-pytestmark = pytest.mark.filterwarnings(
-    "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
-)
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    return 'asyncio'
+pytestmark = [
+    pytest.mark.filterwarnings(
+        "ignore:Field 'lifespan' has an incomplete definition:UserWarning:pydantic_settings.sources.utils"
+    ),
+]
 
 
 @pytest.fixture

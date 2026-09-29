@@ -7,25 +7,23 @@ without R2 / AWS credentials. Recording is opt-in via
 
 Sanitisation policy: every recorded cassette is rewritten on disk to
 swap the real R2 account-id subdomain and bucket name for fixed
-placeholders, and drop the `Authorization` header. The test setup uses
-the placeholder endpoint + bucket so request matching still succeeds on
-replay. See `_rewrite_request` / `_rewrite_response` below.
+placeholders; the repo-wide hooks drop the `Authorization` header. The
+test setup uses the placeholder endpoint + bucket so request matching
+still succeeds on replay. See `_rewrite_request` / `_rewrite_response` below.
 """
 
-# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false, reportMissingTypeStubs=false
 from __future__ import annotations
 
 import importlib.util
 import os
 import re
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import pytest
+from cassetter import RawRequest, RawResponse
 
 from pydantic_ai_harness.media import S3MediaStore
-
-if TYPE_CHECKING:
-    from vcr.request import Request as VcrRequest
+from tests import cassette_hooks
 
 # `pymongo` is gated on the `mongodb` extra, so an install without it can't import
 # the Mongo store tests. Ignore them at collection then. A conditional expression
@@ -42,7 +40,7 @@ SANITIZED_ENDPOINT = f'https://{SANITIZED_HOST}'
 SANITIZED_REGION = 'auto'
 
 
-def _real_account_host_pattern() -> re.Pattern[str] | None:  # pragma: no cover
+def _real_account_host_pattern() -> re.Pattern[str] | None:  # pragma: lax no cover
     """Build a regex that matches the real R2 host so we can scrub it."""
     endpoint = os.environ.get('S3_ENDPOINT')
     if not endpoint:
@@ -53,115 +51,75 @@ def _real_account_host_pattern() -> re.Pattern[str] | None:  # pragma: no cover
     return re.compile(re.escape(match.group(1)))
 
 
-def _real_bucket_pattern() -> re.Pattern[str] | None:  # pragma: no cover
+def _real_bucket_pattern() -> re.Pattern[str] | None:  # pragma: lax no cover
     bucket = os.environ.get('S3_BUCKET_NAME')
     if not bucket:
         return None
     return re.compile(r'/' + re.escape(bucket) + r'/')
 
 
-def _rewrite_request(request: VcrRequest) -> VcrRequest:  # pragma: no cover
+def _rewrite_request(request: RawRequest) -> RawRequest:  # pragma: lax no cover
     """Strip account-id, bucket name, and credentials from recorded request."""
+    request = cassette_hooks.before_record_request(request)
     host_pat = _real_account_host_pattern()
     if host_pat is not None:
         request.uri = host_pat.sub(SANITIZED_HOST, request.uri)
     bucket_pat = _real_bucket_pattern()
     if bucket_pat is not None:
         request.uri = bucket_pat.sub(f'/{SANITIZED_BUCKET}/', request.uri)
-    # VCR already drops Authorization via `filter_headers`, but Host is set
-    # by httpx independently — overwrite it so cassettes never carry the
-    # real account subdomain.
+    # The repo-wide hooks drop `authorization` and `x-amz-date`, but `host` is set by httpx
+    # independently — overwrite it so cassettes never carry the real account subdomain.
     if 'host' in request.headers:
-        request.headers['host'] = SANITIZED_HOST
+        request.headers['host'] = [SANITIZED_HOST]
     return request
 
 
-_DROP_RESPONSE_HEADERS = frozenset(
-    {
-        'cf-ray',
-        'cf-cache-status',
-        'x-amz-version-id',
-        'x-amz-request-id',
-        'x-amz-id-2',
-        'x-amz-checksum-crc64nvme',
-        'x-amz-checksum-crc32',
-        'x-amz-checksum-crc32c',
-        'x-amz-checksum-sha1',
-        'x-amz-checksum-sha256',
-    }
-)
-
-
-def _rewrite_response(response: dict[str, Any]) -> dict[str, Any]:  # pragma: no cover
+def _rewrite_response(response: RawResponse) -> RawResponse:  # pragma: lax no cover
     """Sanitise the response: drop noisy / identifying headers and any error body.
 
-    For non-2xx responses (typically the gzipped XML R2/AWS error envelope,
-    which can mention the bucket) we blank the body entirely and strip
-    `Content-Encoding`. Our `S3MediaStore` only inspects `status_code` for
-    4xx and `response.text[:200]` for 5xx — no test in this module relies
-    on the error body shape.
+    The repo-wide hooks already drop the `cf-*` and `x-amz-*` request ids and checksums. For non-2xx
+    responses (typically the gzipped XML R2/AWS error envelope, which can mention the bucket) we blank
+    the body entirely and strip `Content-Encoding`. Our `S3MediaStore` only inspects `status_code` for
+    4xx and `response.text[:200]` for 5xx — no test in this module relies on the error body shape.
     """
+    response = cassette_hooks.before_record_response(response)
     host_pat = _real_account_host_pattern()
     bucket_pat = _real_bucket_pattern()
-    headers = response.get('headers', {})
-    for header_name in list(headers.keys()):
-        if header_name.lower() in _DROP_RESPONSE_HEADERS:
-            del headers[header_name]
-            continue
-        values = headers[header_name]
-        if not isinstance(values, list):
-            continue
+    for header_name, values in response.headers.items():
         new_values: list[str] = []
         for v in values:
-            if not isinstance(v, str):
-                new_values.append(v)
-                continue
             if host_pat is not None:
                 v = host_pat.sub(SANITIZED_HOST, v)
             if bucket_pat is not None:
                 v = bucket_pat.sub(f'/{SANITIZED_BUCKET}/', v)
             new_values.append(v)
-        headers[header_name] = new_values
+        response.headers[header_name] = new_values
 
-    status = response.get('status', {})
-    code = status.get('code') if isinstance(status, dict) else None
-    is_success = isinstance(code, int) and 200 <= code < 300
-    body = response.get('body', {})
-    if not is_success and isinstance(body, dict):
+    if not 200 <= response.status < 300:
         # Drop any provider error envelope — it can name the bucket inside
         # the gzipped XML. Tests only read the status code on this path.
-        body['string'] = b''
-        for header_name in list(headers.keys()):
-            if header_name.lower() in ('content-encoding', 'content-length', 'transfer-encoding'):
-                del headers[header_name]
+        response.body = b''
+        for header_name in ('content-encoding', 'content-length', 'transfer-encoding'):
+            response.headers.pop(header_name, None)
     return response
 
 
 @pytest.fixture(scope='module')
-def vcr_config() -> dict[str, Any]:
-    """Per-module VCR configuration. Cassettes live next to the tests.
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
+    """Per-module cassette configuration. Cassettes live next to the tests.
 
-    Matching: method + scheme + host + path + body. Headers (including
-    SigV4 `authorization` and `x-amz-date`) are NOT part of matching —
-    they regenerate per replay and would otherwise miss every time.
+    Matching: method + URI + body. Headers (including SigV4 `authorization`
+    and `x-amz-date`) are NOT part of matching — they regenerate per replay
+    and would otherwise miss every time.
 
     Record mode is whatever `--record-mode` says (default `none`).
     """
     return {
-        'filter_headers': [
-            ('authorization', 'REDACTED'),
-            ('x-amz-date', 'REDACTED'),
-        ],
+        **vcr_config,
         'before_record_request': _rewrite_request,
         'before_record_response': _rewrite_response,
-        'match_on': ['method', 'scheme', 'host', 'path', 'body'],
+        'match_on': ['method', 'uri', 'body'],
     }
-
-
-@pytest.fixture
-def anyio_backend() -> str:
-    """Restrict the S3 cassette tests to asyncio — we don't need trio cassettes."""
-    return 'asyncio'
 
 
 @pytest.fixture

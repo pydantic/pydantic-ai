@@ -29,7 +29,7 @@ class RecordingClientBase(Client):
         self.updates.append(update)
 
     def on_connect(self, conn: object) -> None:
-        return None  # pragma: no cover - unused
+        return None  # pragma: lax no cover - unused
 
     async def request_permission(
         self,
