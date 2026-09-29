@@ -150,7 +150,7 @@ and quirks:
 | Provider | Audio output | Image input | Text output | [Browser WebRTC](deployment.md#browser-webrtc-server-sideband) | Async tool calls | [Thinking](../capabilities/thinking.md) | State-restoring reconnect |
 | --- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | [OpenAI](openai.md) | ✓ | ✓ (GPT-Live: [backend only](openai.md#images-go-to-the-backend)) | ✓ (GPT-Live: ✗) | ✓ | ✓ | `gpt-realtime-2*` models (GPT-Live: ✗, set the [backend](openai.md#reasoning) effort) | Replays local history (GPT-Live: ✗, open a new session) |
-| [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*` models | Replays local history |
+| [Azure OpenAI](azure.md) | ✓ | ✓ | ✓ | ✓ | ✓ | `gpt-realtime-2*`, and `gpt-5`-class models on Voice Live | Replays local history |
 | [Google Gemini](gemini.md) | ✓ | ✓ | Vertex `gemini-live-2.5-flash` only | ✗ | [Opt-in](tools.md#concurrent-tool-execution) on native-audio and `gemini-3.8-live`; always on for extended thinking | Native-audio and most 3.x models | ✓, with a `reconnect` policy |
 | [xAI](xai.md) | ✓ | ✗ | ✗ | ✗ | ✓ | `grok-voice-latest` and `-think-` models | ✓, with a `reconnect` policy |
 
