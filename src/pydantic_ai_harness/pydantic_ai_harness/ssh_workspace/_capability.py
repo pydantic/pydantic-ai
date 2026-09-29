@@ -1,24 +1,25 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 
-from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai.workspaces import ReadOnlyWorkspace, SSHWorkspaceBackend, Workspace, WorkspaceBackend, WorkspaceRef
-
-from .abstract import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.workspaces import ReadOnlyWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness.ssh_workspace._backend import SSHWorkspaceBackend
 
 
 @dataclass
 class SSHWorkspace(AbstractCapability[AgentDepsT]):
-    """Gives runs a [workspace](../workspace.md) on a remote host over SSH, using your `ssh` client and its configuration.
+    """Gives runs a [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) on a remote host over SSH, using your `ssh` client and its configuration.
 
     Commands run as the remote user, with that user's full authority on the host. Wrap it in
-    [`BubblewrapSandbox`][pydantic_ai.capabilities.BubblewrapSandbox] to sandbox them there.
+    [`BubblewrapSandbox`][pydantic_ai_harness.bubblewrap_sandbox.BubblewrapSandbox] to sandbox them there.
 
     ```python
     from pydantic_ai import Agent
-    from pydantic_ai.capabilities import SSHWorkspace
+    from pydantic_ai_harness import SSHWorkspace
 
     agent = Agent('anthropic:claude-opus-5-5', capabilities=[SSHWorkspace('dev@build-box', working_dir='/srv/app')])
     ```
@@ -37,7 +38,7 @@ class SSHWorkspace(AbstractCapability[AgentDepsT]):
     read_only: bool = False
     """Whether to wrap the workspace in a [`ReadOnlyWorkspace`][pydantic_ai.workspaces.ReadOnlyWorkspace]."""
 
-    env: Mapping[str, str] | None = None
+    env: Mapping[str, str] | None = field(default=None, repr=False)
     """Environment variables for every command, on top of the remote login environment."""
 
     ssh_args: Sequence[str] = ()
@@ -47,6 +48,11 @@ class SSHWorkspace(AbstractCapability[AgentDepsT]):
     """Fixed, so a later `SSHWorkspace` replaces an earlier one whole; pass distinct ids to keep both."""
 
     def __post_init__(self) -> None:
+        if self.defer_loading:
+            raise UserError(
+                '`SSHWorkspace` does not support `defer_loading=True`: '
+                'the workspace is selected before deferred capabilities load.'
+            )
         # Surface an invalid destination, `env` or platform where the capability is written, not on the first run.
         self._configured()
 

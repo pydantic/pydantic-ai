@@ -1,6 +1,5 @@
 """Workspace API, backend protocols, and implementations."""
 
-from .bubblewrap import BubblewrapWorkspace
 from .local import LocalWorkspaceBackend
 from .protocol import (
     CommandResult,
@@ -18,17 +17,14 @@ from .protocol import (
     WorkspaceUnavailableError,
 )
 from .readonly import ReadOnlyWorkspace
-from .ssh import SSHWorkspaceBackend
 from .unavailable import UnavailableWorkspace
 from .workspace import Workspace, WrapperWorkspace
 
 __all__ = (
-    'BubblewrapWorkspace',
     'CommandResult',
     'FileEntry',
     'LocalWorkspaceBackend',
     'ReadOnlyWorkspace',
-    'SSHWorkspaceBackend',
     'Workspace',
     'WrapperWorkspace',
     'WorkspaceBackend',

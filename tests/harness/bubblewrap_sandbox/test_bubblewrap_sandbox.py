@@ -12,22 +12,22 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import BubblewrapSandbox, LocalWorkspace, SSHWorkspace
+from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
-    BubblewrapWorkspace,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
-    SSHWorkspaceBackend,
     Workspace,
     WorkspaceReadOnlyError,
     WorkspaceRef,
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
+from pydantic_ai_harness.bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
+from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
 
-from .fake_remote_tools import BWRAP_WORKS, FakeRemoteTools, install_fake_remote_tools
+from .._fake_remote_tools import BWRAP_WORKS, FakeRemoteTools, install_fake_remote_tools
 
 pytestmark = [
     pytest.mark.anyio,

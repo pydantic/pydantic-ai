@@ -35,7 +35,6 @@ from .abstract import (
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
 )
-from .bubblewrap_sandbox import BubblewrapSandbox
 from .capability import Capability
 from .combined import CombinedCapability
 from .content_filter import RaiseContentFilterError
@@ -57,7 +56,6 @@ from .reinject_system_prompt import ReinjectSystemPrompt
 from .resolve_model_id import ModelIdResolver, ResolveModelId
 from .select_model import SelectModel
 from .set_tool_metadata import SetToolMetadata
-from .ssh_workspace import SSHWorkspace
 from .thinking import Thinking
 from .thread_executor import UseThreadExecutor
 from .toolset import Toolset
@@ -89,7 +87,6 @@ CAPABILITY_TYPES: dict[str, type[AbstractCapability[Any]]] = {
         ProcessHistory,
         ReinjectSystemPrompt,
         SetToolMetadata,
-        SSHWorkspace,
         Thinking,
         ToolSearch,
         Toolset,
@@ -130,7 +127,6 @@ __all__ = [
     'WrapOutputProcessHandler',
     'NativeTool',
     'on_event',
-    'BubblewrapSandbox',
     'NativeOrLocalTool',
     'RaiseContentFilterError',
     'Capability',
@@ -149,7 +145,6 @@ __all__ = [
     'ResolveModelId',
     'SelectModel',
     'SetToolMetadata',
-    'SSHWorkspace',
     'Thinking',
     'ToolSearch',
     'ToolSearchFunc',

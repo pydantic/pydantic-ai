@@ -33,18 +33,6 @@ configured one). For a single run, pass the backend instead:
 `agent.run(..., workspace=LocalWorkspaceBackend('.'))`, or
 `workspace=ReadOnlyWorkspace(Workspace(LocalWorkspaceBackend('.')))` for a read-only run (outside
 durable execution; see below).
-`SSHWorkspace(destination, *, working_dir=None, read_only=False, env=None, ssh_args=())` (backend
-`SSHWorkspaceBackend`) runs the same operations on a remote host through the system `ssh` client
-(`BatchMode=yes`, so keys and ports come from `~/.ssh/config` and the agent); file operations use the
-shell fallback there. Its ref is `WorkspaceRef(provider='ssh', id='<destination>[:<working_dir>]')`
-from construction, and the capability claims only that ref. An unreachable host, missing directory or
-dropped connection raises `WorkspaceUnavailableError`. `BubblewrapSandbox(wrapped_capability, *,
-network=False, bwrap_args=())` wraps another workspace capability's workspace in `BubblewrapWorkspace`,
-a `WrapperWorkspace` that prefixes every command with `bwrap` (read-only host, empty `/run`, private
-`/tmp`, no network, writable working dir, shared host PID namespace so detached `Shell` jobs survive the call)
-and runs it through the wrapped workspace, so
-`BubblewrapSandbox(SSHWorkspace(...))` sandboxes commands on the remote host. File methods are not
-sandboxed; they go to the wrapped workspace.
 Without an attached workspace, operations raise `WorkspaceUnavailableError`; a capability that needs one checks
 `ctx.workspace.attached` in `before_run` and raises a `UserError` naming what to attach. `Workspace` offers the same run
 and file methods for every backend; `WrapperWorkspace` is the base for policy wrappers (override
@@ -93,7 +81,8 @@ in it; after `workspace='new'` nothing is carried forward.
 The core does not create or destroy environments at run boundaries; the application owns
 SDK retries (outside durable execution), cleanup, TTL and pause/stop through the provider's SDK or run hooks. `Workspace.backend` reaches
 the concrete backend for provider-specific methods (not from workflow code under durable
-execution). Sandbox providers (Modal, E2B, Sprites) ship as capabilities in the
+execution). Sandbox providers (Modal, E2B, Sprites), `SSHWorkspace` for a remote host, and `BubblewrapSandbox`
+for sandboxing another workspace's commands ship as capabilities in the
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/). Check a custom backend by
 subclassing `pydantic_ai.workspaces.conformance.WorkspaceBackendSuite` and providing its `backend`
 fixture.

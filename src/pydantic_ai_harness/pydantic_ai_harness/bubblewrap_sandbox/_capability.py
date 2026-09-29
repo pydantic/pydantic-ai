@@ -3,21 +3,21 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass
 
-from pydantic_ai._run_context import AgentDepsT, RunContext
-from pydantic_ai.workspaces import BubblewrapWorkspace, Workspace, WorkspaceBackend, WorkspaceRef
-
-from .wrapper import WrapperCapability
+from pydantic_ai.capabilities import WrapperCapability
+from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness.bubblewrap_sandbox._workspace import BubblewrapWorkspace
 
 
 @dataclass
 class BubblewrapSandbox(WrapperCapability[AgentDepsT]):
     """Runs the commands of the wrapped capability's workspace in a bubblewrap sandbox, on that workspace's host.
 
-    See [`BubblewrapWorkspace`][pydantic_ai.workspaces.BubblewrapWorkspace] for what the sandbox allows.
+    See [`BubblewrapWorkspace`][pydantic_ai_harness.bubblewrap_sandbox.BubblewrapWorkspace] for what the sandbox allows.
 
     ```python
     from pydantic_ai import Agent
-    from pydantic_ai.capabilities import BubblewrapSandbox, SSHWorkspace
+    from pydantic_ai_harness import BubblewrapSandbox, SSHWorkspace
 
     agent = Agent(
         'anthropic:claude-opus-5-5',

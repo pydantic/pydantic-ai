@@ -11,9 +11,9 @@ from collections.abc import Mapping, Sequence
 
 import anyio
 
-from .local import LocalWorkspaceBackend
-from .protocol import (
+from pydantic_ai.workspaces import (
     CommandResult,
+    LocalWorkspaceBackend,
     SupportsCommands,
     WorkspaceBackend,
     WorkspaceCommand,
@@ -22,8 +22,8 @@ from .protocol import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
-    validate_timeout,
 )
+from pydantic_ai_harness._workspace_provider import check_timeout
 
 __all__ = ('SSHWorkspaceBackend',)
 
@@ -74,7 +74,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
 
     Authentication, host keys, ports and jump hosts come from your SSH configuration (`~/.ssh/config`)
     and agent; `ssh` never prompts, so a missing key fails instead of waiting for a password. File
-    operations run as shell commands on the host (see [Writing a backend](../workspace.md#writing-a-backend)),
+    operations run as shell commands on the host (see [Writing a backend](https://pydantic.dev/docs/ai/core-concepts/workspace/#writing-a-backend)),
     which needs a POSIX `sh` there.
     The remote directory is the environment: the first operation raises
     [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError] if it is missing or
@@ -151,7 +151,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        validate_timeout(timeout)
+        check_timeout(timeout)
         if isinstance(command, str):
             if not shell:
                 raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')

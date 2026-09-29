@@ -32,7 +32,6 @@ from pydantic_ai.capabilities import (
     LocalWorkspace,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
-    SSHWorkspace,
     Thinking,
     ToolSearch,
     UseThreadExecutor,
@@ -138,10 +137,6 @@ def _check_local_workspace(merged: LocalWorkspace[Any]) -> None:
     assert (merged.working_dir, merged.env, merged.read_only) == ('/second', None, False)
 
 
-def _check_ssh_workspace(merged: SSHWorkspace[Any]) -> None:
-    assert (merged.destination, merged.env, merged.read_only) == ('second', None, False)
-
-
 def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
@@ -206,11 +201,6 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda: (LocalWorkspace('/first', env={'FIRST_SECRET': 'x'}, read_only=True), LocalWorkspace('/second')),
         _check_local_workspace,
     ),
-    'SSHWorkspace': Combines(
-        'the later configuration replaces the earlier one whole',
-        lambda: (SSHWorkspace('first', env={'FIRST_SECRET': 'x'}, read_only=True), SSHWorkspace('second')),
-        _check_ssh_workspace,
-    ),
     'ToolSearch': Combines(
         'one tool-discovery configuration per agent',
         lambda: (ToolSearch(max_results=5), ToolSearch(max_results=20)),
@@ -226,7 +216,6 @@ COMBINE_POLICY: dict[str, Policy] = {
     'CombinedCapability': Anonymous('structural container; nesting is the semantic'),
     'WrapperCapability': Anonymous('structural wrapper; nesting is the semantic'),
     'PrefixTools': Anonymous('structural wrapper, applied once per wrapped capability'),
-    'BubblewrapSandbox': Anonymous('structural wrapper, applied once per wrapped capability'),
     'DynamicCapability': Anonymous('one per capability function'),
     'ResolvedDynamicCapability': Anonymous('the resolved form of a `DynamicCapability`'),
     'NativeTool': Anonymous('one per native tool'),

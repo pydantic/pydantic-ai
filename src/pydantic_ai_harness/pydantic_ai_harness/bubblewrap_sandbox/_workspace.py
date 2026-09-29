@@ -4,8 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from .protocol import CommandResult, WorkspaceCommand, WorkspaceUnavailableError, validate_timeout
-from .workspace import Workspace, WrapperWorkspace
+from pydantic_ai.workspaces import (
+    CommandResult,
+    Workspace,
+    WorkspaceCommand,
+    WorkspaceUnavailableError,
+    WrapperWorkspace,
+)
+from pydantic_ai_harness._workspace_provider import check_timeout
 
 __all__ = ('BubblewrapWorkspace',)
 
@@ -17,7 +23,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
     """A [`Workspace`][pydantic_ai.workspaces.Workspace] that runs commands in a bubblewrap (`bwrap`) sandbox.
 
     The wrapped workspace runs `bwrap`, so the sandbox is on its host: wrap an
-    [`SSHWorkspaceBackend`][pydantic_ai.workspaces.SSHWorkspaceBackend] to sandbox commands on the
+    [`SSHWorkspaceBackend`][pydantic_ai_harness.ssh_workspace.SSHWorkspaceBackend] to sandbox commands on the
     remote host. `bwrap` must be installed there (Linux only).
 
     Commands see the host read-only, with an empty `/run` (so no host daemon sockets), a private
@@ -75,7 +81,7 @@ class BubblewrapWorkspace(WrapperWorkspace):
         env: Mapping[str, str] | None = None,
         timeout: float | None = None,
     ) -> CommandResult:
-        validate_timeout(timeout)
+        check_timeout(timeout)
         if isinstance(command, str):
             if not shell:
                 raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')

@@ -11,21 +11,20 @@ import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import SSHWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
     ReadOnlyWorkspace,
-    SSHWorkspaceBackend,
     Workspace,
     WorkspaceOutputLimitError,
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai.workspaces.ssh import _STOP  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
+from pydantic_ai_harness.ssh_workspace._backend import _STOP  # pyright: ignore[reportPrivateUsage]
 
-from .fake_remote_tools import FakeRemoteTools, install_fake_remote_tools
+from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools
 
 pytestmark = [
     pytest.mark.anyio,
@@ -95,6 +94,8 @@ async def test_a_missing_working_dir_is_unavailable(tools: FakeRemoteTools, tmp_
 
 async def test_timeouts_and_output_limits_keep_only_the_commands_stderr(tools: FakeRemoteTools) -> None:
     backend = SSHWorkspaceBackend('box')
+    # Connect first: the first command also resolves the working directory within its timeout.
+    await backend.working_dir()
 
     with pytest.raises(WorkspaceTimeoutError) as timeout:
         await backend.run('printf partial >&2; sleep 30', shell=True, timeout=1)
@@ -257,7 +258,8 @@ async def test_a_repeated_ssh_workspace_resolves_to_the_later_one(tools: FakeRem
 
 async def test_agent_spec_builds_a_read_only_ssh_workspace(tools: FakeRemoteTools) -> None:
     agent = Agent.from_spec(
-        {'model': 'test', 'capabilities': [{'SSHWorkspace': {'destination': 'box', 'read_only': True}}]}
+        {'model': 'test', 'capabilities': [{'SSHWorkspace': {'destination': 'box', 'read_only': True}}]},
+        custom_capability_types=[SSHWorkspace],
     )
 
     result = await agent.run('go')

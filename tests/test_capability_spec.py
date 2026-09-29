@@ -33,7 +33,6 @@ from pydantic_ai.capabilities import (
     RaiseContentFilterError,
     ReinjectSystemPrompt,
     SetToolMetadata,
-    SSHWorkspace,
     Thinking,
     ToolSearch,
     WebFetch,
@@ -100,7 +99,6 @@ def test_capability_types() -> None:
             'MCP': MCP,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
-            'SSHWorkspace': SSHWorkspace,
             'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'ToolSearch': ToolSearch,
@@ -1887,13 +1885,6 @@ def test_model_json_schema_with_capabilities():
                     'title': 'short_spec_MCP',
                     'type': 'object',
                 },
-                'short_spec_SSHWorkspace': {
-                    'additionalProperties': False,
-                    'properties': {'SSHWorkspace': {'title': 'Sshworkspace', 'type': 'string'}},
-                    'required': ['SSHWorkspace'],
-                    'title': 'short_spec_SSHWorkspace',
-                    'type': 'object',
-                },
                 'spec_IncludeToolReturnSchemas': {
                     'additionalProperties': False,
                     'properties': {
@@ -1965,13 +1956,6 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'MCP': {'$ref': '#/$defs/spec_params_MCP'}},
                     'required': ['MCP'],
                     'title': 'spec_MCP',
-                    'type': 'object',
-                },
-                'spec_SSHWorkspace': {
-                    'additionalProperties': False,
-                    'properties': {'SSHWorkspace': {'$ref': '#/$defs/spec_params_SSHWorkspace'}},
-                    'required': ['SSHWorkspace'],
-                    'title': 'spec_SSHWorkspace',
                     'type': 'object',
                 },
                 'spec_PrefixTools': {
@@ -2257,25 +2241,6 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_params_MCP',
                     'type': 'object',
                 },
-                'spec_params_SSHWorkspace': {
-                    'additionalProperties': False,
-                    'properties': {
-                        'destination': {'title': 'Destination', 'type': 'string'},
-                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
-                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
-                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
-                        'working_dir': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Working Dir'},
-                        'read_only': {'title': 'Read Only', 'type': 'boolean'},
-                        'env': {
-                            'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
-                            'title': 'Env',
-                        },
-                        'ssh_args': {'items': {'type': 'string'}, 'title': 'Ssh Args', 'type': 'array'},
-                    },
-                    'required': ['destination'],
-                    'title': 'spec_params_SSHWorkspace',
-                    'type': 'object',
-                },
                 'spec_params_PrefixTools': {
                     'additionalProperties': False,
                     'properties': {
@@ -2301,8 +2266,6 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
                                 {'const': 'SetToolMetadata', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
-                                {'$ref': '#/$defs/short_spec_SSHWorkspace'},
-                                {'$ref': '#/$defs/spec_SSHWorkspace'},
                                 {'const': 'Thinking', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_Thinking'},
                                 {'const': 'ToolSearch', 'type': 'string'},
@@ -2530,8 +2493,6 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
-                            {'$ref': '#/$defs/short_spec_SSHWorkspace'},
-                            {'$ref': '#/$defs/spec_SSHWorkspace'},
                             {'const': 'Thinking', 'type': 'string'},
                             {'$ref': '#/$defs/spec_Thinking'},
                             {'const': 'ToolSearch', 'type': 'string'},
