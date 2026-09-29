@@ -1476,62 +1476,65 @@ class GoogleRealtimeConnection(RealtimeConnection):
             if not self._text_turns_see_video_frames:
                 self._recent_image = (content, time.monotonic())
         elif isinstance(content, ToolResult):
-            # Forgotten once sent, or once refused below. A send that fails on a dropped connection leaves
-            # the call for the reconnect, which cancels it and answers the resumed session for it.
-            name, gemini_id = self._tool_calls.get(content.tool_call_id, ('', None))
-            # Text attachments are folded into the JSON `response`. Media goes in `FunctionResponse.parts`
-            # on a model that reads it there, the analog of the standard Gemini 3 multimodal function
-            # response; any other media raises, with the tool result unsent, never a silent
-            # placeholder. Every other live channel was probed and fails: content in a
-            # `send_client_content(turn_complete=False)` turn or a `send_realtime_input` frame is
-            # invisible to the generation `send_tool_response` triggers (the model guesses), and a
-            # `turn_complete=True` turn is seen but first triggers a spurious extra spoken response.
-            output = content.output
-            media: list[genai_types.FunctionResponsePart] = []
-            if content.content:
-                text_content: list[str] = []
-                for item in content.content:
-                    if isinstance(item, str):
-                        text_content.append(item)
-                    elif isinstance(item, TextContent):
-                        text_content.append(item.content)
-                    elif isinstance(item, CachePoint):
-                        continue
-                    elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
-                        media.append(await self._tool_result_media(item, tool_call_id=content.tool_call_id))
-                    else:
-                        assert_never(item)
-                output = '\n\n'.join(part for part in (output, *text_content) if part)
-            function_response = genai_types.FunctionResponse(
-                id=gemini_id,
-                name=name,
-                response={'output': output},
-                parts=media or None,
-                # `INTERRUPT`, not `WHEN_IDLE`: a non-blocking model keeps talking while the
-                # tool runs, and `WHEN_IDLE` holds the result until it stops — by which point it
-                # has usually answered from its own knowledge, so the tool's answer contradicts
-                # what was already said. (Recorded live: a tool returning "foggy and 12 degrees"
-                # while the model said "15 degrees with clouds".) A model calls a tool because it
-                # needs the result, so cut in with it.
-                scheduling=genai_types.FunctionResponseScheduling.INTERRUPT
-                if self._async_tool_calls_enabled and self._async_tool_call_scheduling_enabled
-                else None,
-            )
-            if media:
-                # `google-genai`'s `send_tool_response` (as of 2.25) hands the parts' raw bytes to
-                # `json.dumps`, which can't encode them, so the message is serialized with the SDK's own
-                # types, which base64-encode bytes, and sent over the session's socket as it would be.
-                message = genai_types.LiveClientMessage(
-                    tool_response=genai_types.LiveClientToolResponse(function_responses=[function_response])
-                )
-                await self._session._ws.send(  # pyright: ignore[reportPrivateUsage]
-                    message.model_dump_json(by_alias=True, exclude_none=True)
-                )
-            else:
-                await self._session.send_tool_response(function_responses=function_response)
-            self._tool_calls.pop(content.tool_call_id, None)
+            await self._send_tool_result(content)
         else:
             raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
+
+    async def _send_tool_result(self, content: ToolResult) -> None:
+        # Forgotten once sent, or once refused below. A send that fails on a dropped connection leaves
+        # the call for the reconnect, which cancels it and answers the resumed session for it.
+        name, gemini_id = self._tool_calls.get(content.tool_call_id, ('', None))
+        # Text attachments are folded into the JSON `response`. Media goes in `FunctionResponse.parts`
+        # on a model that reads it there, the analog of the standard Gemini 3 multimodal function
+        # response; any other media raises, with the tool result unsent, never a silent
+        # placeholder. Every other live channel was probed and fails: content in a
+        # `send_client_content(turn_complete=False)` turn or a `send_realtime_input` frame is
+        # invisible to the generation `send_tool_response` triggers (the model guesses), and a
+        # `turn_complete=True` turn is seen but first triggers a spurious extra spoken response.
+        output = content.output
+        media: list[genai_types.FunctionResponsePart] = []
+        if content.content:
+            text_content: list[str] = []
+            for item in content.content:
+                if isinstance(item, str):
+                    text_content.append(item)
+                elif isinstance(item, TextContent):
+                    text_content.append(item.content)
+                elif isinstance(item, CachePoint):
+                    continue
+                elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
+                    media.append(await self._tool_result_media(item, tool_call_id=content.tool_call_id))
+                else:
+                    assert_never(item)
+            output = '\n\n'.join(part for part in (output, *text_content) if part)
+        function_response = genai_types.FunctionResponse(
+            id=gemini_id,
+            name=name,
+            response={'output': output},
+            parts=media or None,
+            # `INTERRUPT`, not `WHEN_IDLE`: a non-blocking model keeps talking while the
+            # tool runs, and `WHEN_IDLE` holds the result until it stops — by which point it
+            # has usually answered from its own knowledge, so the tool's answer contradicts
+            # what was already said. (Recorded live: a tool returning "foggy and 12 degrees"
+            # while the model said "15 degrees with clouds".) A model calls a tool because it
+            # needs the result, so cut in with it.
+            scheduling=genai_types.FunctionResponseScheduling.INTERRUPT
+            if self._async_tool_calls_enabled and self._async_tool_call_scheduling_enabled
+            else None,
+        )
+        if media:
+            # `google-genai`'s `send_tool_response` (as of 2.25) hands the parts' raw bytes to
+            # `json.dumps`, which can't encode them, so the message is serialized with the SDK's own
+            # types, which base64-encode bytes, and sent over the session's socket as it would be.
+            message = genai_types.LiveClientMessage(
+                tool_response=genai_types.LiveClientToolResponse(function_responses=[function_response])
+            )
+            await self._session._ws.send(  # pyright: ignore[reportPrivateUsage]
+                message.model_dump_json(by_alias=True, exclude_none=True)
+            )
+        else:
+            await self._session.send_tool_response(function_responses=function_response)
+        self._tool_calls.pop(content.tool_call_id, None)
 
     async def _tool_result_media(
         self, item: ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile, *, tool_call_id: str

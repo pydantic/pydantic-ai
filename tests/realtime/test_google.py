@@ -1302,7 +1302,9 @@ async def test_send_tool_result_binary_content_raises_with_nothing_sent() -> Non
     session = _RecordingSession()
     conn = _conn(session)
     _register_call(conn)
-    with pytest.raises(UserError, match='cannot carry `BinaryContent` content of type .image/png., only text'):
+    with pytest.raises(
+        UserError, match=re.escape("cannot carry `BinaryContent` content of type 'image/png', only text")
+    ):
         await conn.send(
             ToolResult(
                 tool_call_id='c1',
