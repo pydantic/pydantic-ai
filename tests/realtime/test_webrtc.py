@@ -30,6 +30,7 @@ from pydantic_ai.realtime import (
     RealtimeClientSecret,
     RealtimeModel,
     RealtimeModelSettings,
+    RealtimeSession,
     WebRTCAnswer,
     WebRTCSession,
 )
@@ -703,7 +704,7 @@ async def test_base_model_rejects_webrtc() -> None:
         await model.answer_webrtc_offer(SAMPLE_SDP_OFFER)
     with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
         await model.create_client_secret()
-    with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
+    with pytest.raises(UserError, match=r"Realtime model 'ws-only' cannot end a call from the server"):
         await model.hang_up(WebRTCSession(provider_name='ws-only', session_id='x'))
     with pytest.raises(UserError, match=r"Realtime model 'ws-only' does not support WebRTC.*connect over WebSockets"):
         async with model.connect_webrtc(
@@ -839,11 +840,17 @@ async def test_a_tool_can_hang_up() -> None:
     assert model.hung_up == ['rtc_call']
 
 
-async def test_a_refused_hang_up_is_raised() -> None:
+async def test_a_refused_hang_up_is_raised_and_can_be_retried() -> None:
+    """A hangup that failed leaves the call up, so the caller hears about it and can ask again."""
     model = _CallModel(hang_up_error=ModelHTTPError(status_code=500, model_name='call-model', body='boom'))
+    sessions: list[RealtimeSession] = []
     with pytest.raises(ModelHTTPError, match='boom'):
         async with Agent().realtime(model).session(provider_session=_CALL) as session:
+            sessions.append(session)
             await session.hang_up()
+    model._hang_up_error = None  # pyright: ignore[reportPrivateUsage]
+    await sessions[0].hang_up()
+    assert model.hung_up == ['rtc_call', 'rtc_call']
 
 
 async def test_hang_up_on_a_websocket_session_closes_it() -> None:

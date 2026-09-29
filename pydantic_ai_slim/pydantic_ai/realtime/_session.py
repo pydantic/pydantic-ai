@@ -1132,8 +1132,9 @@ class RealtimeSession:
     async def _hang_up_call(self) -> None:
         provider_session, model = self._provider_session, self._model
         assert provider_session is not None and model is not None
-        self._hung_up = True
         await model.hang_up(provider_session)
+        # Only once it worked: a hangup that failed leaves the call up, so asking again tries again.
+        self._hung_up = True
 
     async def _finish_teardown(self) -> None:
         # A session closed without ever sending, subscribing, or iterating started no pump, so there
@@ -1178,7 +1179,10 @@ class RealtimeSession:
         if self._closing_error is None and (error := self._first_undelivered_error()) is not None:
             self._delivered_errors.append(error)
             self._close_error = error
-        elif self._close_error is None and hang_up_error is not None:
+        if hang_up_error is not None:
+            # A call left up is what matters most to the caller, so it wins; anything that ended the
+            # session first stays attached to it.
+            hang_up_error.__context__ = hang_up_error.__context__ or self._close_error
             self._close_error = hang_up_error
 
     def _queue_put(self, item: RealtimeEvent | object) -> None:

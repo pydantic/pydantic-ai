@@ -361,7 +361,10 @@ class RealtimeModel(AbstractModel):
         call from the server (OpenAI gpt-realtime and GPT-Live); the default raises
         [`UserError`][pydantic_ai.exceptions.UserError].
         """
-        self._raise_unsupported_webrtc('hang_up')
+        raise UserError(
+            f'Realtime model {self.model_name!r} cannot end a call from the server, so `hang_up()` is unavailable. '
+            'The call ends when the client hangs up.'
+        )
 
     def _check_webrtc_session_provider(self, session: RealtimeProviderSession) -> None:
         """Refuse a call negotiated through another provider, which this model can't address."""
