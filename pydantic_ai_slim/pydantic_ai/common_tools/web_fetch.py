@@ -205,8 +205,13 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     text_scan_cost = 0
     nodes: list[PageElement] = []
     contentful: set[int] = set()
+    text_metrics: dict[int, tuple[int, int]] = {}
+    direct_link_text: dict[int, str] = {}
     anchors: list[tuple[Tag, int, bool]] = []
     videos: list[tuple[Tag, int, bool]] = []
+    code_tags: list[tuple[Tag, int, bool]] = []
+    headings: list[tuple[Tag, int, bool]] = []
+    rows: list[Tag] = []
     pending: list[tuple[PageElement, int, int, int, bool, bool, bool]] = [(soup, 0, 0, 0, False, False, False)]
     while pending:
         node, depth, indent_depth, indent_width, inline, noformat, in_pre = pending.pop()
@@ -242,6 +247,12 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 anchors.append((node, depth, noformat))
             elif node.name == 'video':
                 videos.append((node, depth, inline))
+            if node.name in ('code', 'kbd', 'samp') and depth > 16:
+                code_tags.append((node, depth, noformat))
+            elif node.name in ('h1', 'h2') and depth > 16:
+                headings.append((node, depth, inline))
+            if node.name == 'tr':
+                rows.append(node)
             if node.contents:
                 child_inline = inline or node.name in ('td', 'th') or _HTML_HEADING_RE.match(node.name) is not None
                 child_noformat = noformat or node.name in ('pre', 'code', 'kbd', 'samp')
@@ -254,6 +265,9 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             assert isinstance(node, NavigableString)
             parent_tags: set[str] = {'pre', '_noformat'} if in_pre else {'_noformat'} if noformat else set()
             converted_text = converter.process_text(node, parent_tags)
+            text_metrics[id(node)] = (len(converted_text), converted_text.count('`'))
+            if isinstance(node.parent, Tag) and node.parent.name == 'a':
+                direct_link_text[id(node)] = converted_text
             if converted_text.strip():
                 contentful.add(id(node))
             # Only converted lines need indentation; collapsed whitespace and escaped characters
@@ -265,20 +279,30 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
 
     subtree_sizes: dict[int, int] = {}
     first_sources: dict[int, str] = {}
+    descendant_td: set[int] = set()
     video_inline = {id(node): inline for node, _, inline in videos}
     for node in reversed(nodes):
         if isinstance(node, Tag):
             node_id = id(node)
             subtree_sizes[node_id] = 1
+            text_length = backticks = 0
+            if node.name == 'td':
+                descendant_td.add(node_id)
             if node.name == 'source' and node.has_attr('src'):
                 first_sources[node_id] = str(node.get('src') or '')
             for child in node.contents:
                 child_id = id(child)
                 subtree_sizes[node_id] += subtree_sizes.get(child_id, 1)
+                child_length, child_backticks = text_metrics.get(child_id, (0, 0))
+                text_length += child_length
+                backticks += child_backticks
                 if child_id in contentful:
                     contentful.add(node_id)
+                if child_id in descendant_td:
+                    descendant_td.add(node_id)
                 if node_id not in first_sources and child_id in first_sources:
                     first_sources[node_id] = first_sources[child_id]
+            text_metrics[node_id] = (text_length, backticks)
             if node.name in ('hr', 'q', 'td', 'th', 'tr') or (
                 node.name == 'video'
                 and not video_inline[node_id]
@@ -289,9 +313,30 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     for node, depth, noformat in anchors:
         href = node.get('href')
         if href and not noformat and any(id(child) in contentful for child in node.contents):
-            text_scan_cost += (depth - 16) * (len(str(href)) + len(str(node.get('title') or '')))
+            title = str(node.get('title') or '')
+            child = node.contents[0] if len(node.contents) == 1 else None
+            autolink = not title and direct_link_text.get(id(child), '').replace(r'\_', '_') == href
+            if not autolink:
+                text_scan_cost += (depth - 16) * (len(str(href)) + len(title) + title.count('"'))
             if text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
                 raise ModelRetry('the document is too complex')
+
+    for node, depth, noformat in code_tags:
+        if not noformat:
+            text_scan_cost += (depth - 16) * 2 * text_metrics[id(node)][1]
+    for node, depth, inline in headings:
+        if not inline:
+            text_scan_cost += (depth - 16) * text_metrics[id(node)][0]
+    if text_scan_cost > _MAX_HTML_TEXT_SCAN_COST:
+        raise ModelRetry('the document is too complex')
+
+    for row in rows:
+        cost += 8 * subtree_sizes[id(row)]
+        parent = row.parent
+        if isinstance(parent, Tag) and parent.name == 'thead' and id(row) in descendant_td:
+            cost += 8 * subtree_sizes[id(parent)]
+        if cost > _MAX_HTML_CONVERSION_COST:
+            raise ModelRetry('the document is too complex')
 
     for node, depth, inline in videos:
         if not inline:
