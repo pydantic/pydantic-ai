@@ -116,7 +116,7 @@ class TestRealExecution:
     @pytest.mark.xfail(reason='envd waits for inherited output pipes to close', strict=True)
     async def test_background_child_does_not_delay_main_process_exit(self, sandbox: E2BSandboxBackend) -> None:
         """The fake does not model a background child holding the SDK output stream open."""
-        with anyio.fail_after(4):
+        with anyio.fail_after(5):
             result = await sandbox.run('sleep 7 & echo ready', shell=True, timeout=10)
         assert result.stdout.startswith('ready')
 

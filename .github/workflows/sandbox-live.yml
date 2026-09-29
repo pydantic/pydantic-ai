@@ -1,16 +1,11 @@
 name: Sandbox live tests
 
 # Runs each `pydantic-ai-harness` sandbox provider's live tier against the provider's real
-# service. Every test starts a billed sandbox, so callers choose which providers run:
+# service. Every test starts a billed sandbox, so `sandbox-live-nightly.yml` calls this only
+# on its daily schedule or when a maintainer explicitly dispatches it.
 #
-# - `ci.yml` passes the providers `.github/scripts/sandbox_live_changes.py` selected for a
-#   pull request or push, and `all` on a tag.
-# - `sandbox-live-nightly.yml` passes `all` on a schedule, and whatever a maintainer picks on
-#   a manual run.
-#
-# A provider follows the layout described in `.github/scripts/sandbox_live_changes.py`, so
-# this file has no per-provider step. Adding a provider adds its secret below and in the two
-# callers.
+# This file has no per-provider step. Adding a provider adds its name to `PRESENT` and its
+# secret below.
 #
 # There is deliberately no `ref` input: a scheduled or manual caller runs with the cache of
 # the branch it started from (usually `main`), and checking out another ref there would run
@@ -44,18 +39,14 @@ jobs:
     outputs:
       providers: ${{ steps.plan.outputs.providers }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
       # Resolves `all`, drops repeated names, and rejects a name that is not a provider in
-      # this tree, so the matrix below starts each known provider once.
+      # the workflow, so the matrix below starts each known provider once.
       - id: plan
         env:
+          PRESENT: '["modal", "e2b", "sprites"]'
           REQUESTED: ${{ inputs.providers }}
         run: |
-          present="$(python3 .github/scripts/sandbox_live_changes.py all)"
-          providers="$(REQUESTED="$REQUESTED" PRESENT="$present" python3 -c '
+          providers="$(python3 -c '
           import json, os, sys
           present = json.loads(os.environ["PRESENT"])
           requested = os.environ["REQUESTED"]
