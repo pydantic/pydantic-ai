@@ -126,6 +126,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
     except APIConnectionError as e:
         error_class = ModelTimeoutError if isinstance(e, APITimeoutError) else ModelConnectionError
         raise error_class(model_name=model_name, message=e.message) from e
+    except APIError as e:
+        # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
+        # been received, so there is no status code to report.
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
 
 
 ProductionGroqModelNames = Literal[

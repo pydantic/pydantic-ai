@@ -386,8 +386,8 @@ def seed_input_items(messages: Sequence[ModelMessage], *, provider_name: str) ->
     """Map prior history to Live's startup `input` list.
 
     Live seeds from text only: user and assistant messages with one text part each. Tool
-    rounds are rendered as readable text — as Gemini Live does for the same reason — because the
-    protocol has no place to put function parts in seeded history. Audio, images, and other media
+    rounds are rendered as readable text because the protocol has no place to put function parts in
+    seeded history. Audio, images, and other media
     cannot be seeded at all, and the profile says so, which is what makes the session reject them
     before we get here.
     """

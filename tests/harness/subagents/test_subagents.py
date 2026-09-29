@@ -37,6 +37,7 @@ from pydantic_ai.workspaces import (
     WorkspaceReadOnlyError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents import ModelOption, SubAgent, SubAgents, SubAgentToolset
 
 
@@ -364,10 +365,9 @@ class TestDelegation:
             return ModelResponse(parts=[TextPart('sub done')])
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
-        parent: Agent[object, str] = Agent(
-            _delegate_then_finish('worker'),
-            capabilities=[SubAgents(agents=[SubAgent(worker)], inherit_tools=True)],
-        )
+        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
+            capability: SubAgents[object] = SubAgents(agents=[SubAgent(worker)], inherit_tools=True)
+        parent: Agent[object, str] = Agent(_delegate_then_finish('worker'), capabilities=[capability])
 
         @parent.tool_plain
         def parent_tool() -> str:
@@ -436,9 +436,10 @@ class TestDelegation:
             return ModelResponse(parts=[TextPart('sub done')])
 
         worker = Agent(FunctionModel(worker_fn), name='worker')
+        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
+            capability: SubAgents[object] = SubAgents(agents=[SubAgent(worker)], inherit_tools=True)
         parent: Agent[object, str] = Agent(
-            _delegate_then_finish('worker'),
-            capabilities=[SubAgents(agents=[SubAgent(worker)], inherit_tools=True), _ToolCapability()],
+            _delegate_then_finish('worker'), capabilities=[capability, _ToolCapability()]
         )
 
         @parent.tool_plain
@@ -918,7 +919,9 @@ class TestIncludeSelf:
 
         # `inherit_tools=True` would register the parent's tools a second time on a delegate
         # that already has them, which fails on the duplicate name; it does not apply to `self`.
-        agent = Agent(capabilities=[SubAgents(include_self=True, agent_folders=None, inherit_tools=True)])
+        with pytest.warns(HarnessDeprecationWarning, match='inherit_tools'):
+            capability: SubAgents[object] = SubAgents(include_self=True, inherit_tools=True)
+        agent: Agent[object, str] = Agent(capabilities=[capability])
 
         @agent.tool_plain
         def parent_tool() -> str:
@@ -1046,7 +1049,7 @@ class TestIncludeSelf:
     async def test_disk_agent_named_self_is_shadowed(self, tmp_path: Path) -> None:
         (tmp_path / '.agents' / 'agents').mkdir(parents=True)
         (tmp_path / '.agents' / 'agents' / 'self.md').write_text('---\nname: self\n---\n\nBody.\n', encoding='utf-8')
-        agent = Agent(TestModel(call_tools=[]), capabilities=[SubAgents(include_self=True)])
+        agent = Agent(TestModel(call_tools=[]), capabilities=[SubAgents(include_self=True, agent_folders='agents')])
         with pytest.warns(UserWarning, match="Disk sub-agent 'self' is shadowed"):
             result = await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         request = result.all_messages()[0]

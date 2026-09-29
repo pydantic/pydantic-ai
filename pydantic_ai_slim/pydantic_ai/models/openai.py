@@ -140,6 +140,7 @@ try:
     from openai import (
         NOT_GIVEN,
         APIConnectionError,
+        APIError,
         APIStatusError,
         APITimeoutError,
         AsyncAzureOpenAI,
@@ -238,6 +239,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise _map_connection_error(e, model_name) from e
+    except APIError as e:
+        # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
+        # been received, so there is no status code to report.
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
 
 
 def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: str = 'openai') -> ModelHTTPError:
