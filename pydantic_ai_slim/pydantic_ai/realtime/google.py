@@ -1547,7 +1547,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
             message = genai_types.LiveClientMessage(
                 tool_response=genai_types.LiveClientToolResponse(function_responses=[function_response])
             )
-            await self._session._ws.send(  # pyright: ignore[reportPrivateUsage]
+            # `_ws` is typed as a union with the legacy `websockets` client the SDK falls back to on
+            # older versions, whose `send` pyright can't resolve; both take a text frame.
+            await self._session._ws.send(  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType, reportAttributeAccessIssue]
                 message.model_dump_json(by_alias=True, exclude_none=True)
             )
         else:
