@@ -25,6 +25,7 @@ from typing_extensions import TypeAliasType
 try:
     import websockets
     from openai.types.realtime import (
+        InputAudioBufferTimeoutTriggered,
         RealtimeErrorEvent,
         RealtimeResponseUsage,
         RealtimeSessionCreateRequest,
@@ -75,6 +76,8 @@ from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
     INPUT_AUDIO_BUFFER_COMMIT_EVENT,
+    INPUT_AUDIO_BUFFER_COMMITTED_EVENT,
+    INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED_EVENT,
     INPUT_TRANSCRIPT_DONE_TYPES,
     RESPONSE_CANCEL_EVENT,
     RESPONSE_CREATE_EVENT,
@@ -496,6 +499,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._output_items: dict[str, tuple[int, int]] = {}
         self._output_audio_playing = False
         self._output_speech_clear_sent = False
+        # Input items server VAD committed because its `idle_timeout_ms` ran out with nobody speaking. The
+        # server commits the silent buffer and starts a follow-up response to it, but no user turn happened,
+        # so the commit and its empty transcript are not surfaced as one. Kept until that transcript arrives.
+        self._idle_timeout_items: set[str] = set()
 
     @property
     def model_name(self) -> str | None:
@@ -926,11 +933,18 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # response, emit usage, and clear the suppression.
         if self._is_cancelled_straggler(event_type, data):
             return _DecodedFrame()
+        if event_type == INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED_EVENT:
+            self._idle_timeout_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
+            return _DecodedFrame()
         # A frame about a response that has already ended repeats or trails its terminal.
         stale = self._lifecycle.is_ended(frame_response_id(event_type, data))
         self._lifecycle.before_frame(event_type, data)
         try:
-            after = self._lifecycle.frame(event_type, data)
+            after = (
+                []
+                if event_type == INPUT_AUDIO_BUFFER_COMMITTED_EVENT and data.get('item_id') in self._idle_timeout_items
+                else self._lifecycle.frame(event_type, data)
+            )
         except ValueError:
             # Only the lifecycle reads these frames, and the codec events never depended on them.
             after = []
@@ -995,7 +1009,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                     self._generated_audio_bytes += len(event.data)
                 self._track_output_item(event.item_id, content_index, self._generated_audio_bytes)
         if event is not None and not (event_type == 'response.done' and superseded):
-            events.append(event)
+            if not (isinstance(event, InputTranscript) and event.item_id in self._idle_timeout_items):
+                events.append(event)
+            elif event.is_final:
+                self._idle_timeout_items.discard(event.item_id)
             if isinstance(event, InputTranscript) and event.is_final and event_type in INPUT_TRANSCRIPT_DONE_TYPES:
                 # The transcript is already recorded, so a malformed `usage` payload costs the usage
                 # event, not the user's words: report it as the same recoverable frame error `__aiter__`
