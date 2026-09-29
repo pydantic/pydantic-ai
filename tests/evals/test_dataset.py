@@ -1525,7 +1525,7 @@ async def test_dataset_evaluate_with_non_finite_evaluator_result(
 
 
 async def test_nonfinite_metric_renders_in_report():
-    """Non-finite metric values render in the report, and against a finite baseline, instead of raising."""
+    """Non-finite metric values render in the report, and against a finite baseline show `old → new` with no diff text."""
     dataset = Dataset[str, str, None](
         name='non_finite',
         cases=[Case(name=name, inputs=name) for name in ('inf', '-inf', 'nan')],

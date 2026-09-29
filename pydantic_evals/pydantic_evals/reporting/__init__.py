@@ -883,7 +883,7 @@ class _NumberRenderer:
                 # If there is a diff, make the name bold and compute the diff_str
                 name = name and f'[bold]{name}[/]'
                 diff_str = self._get_diff_str(old, new)
-                if diff_str:  # pragma: no branch
+                if diff_str:
                     result += f' ({diff_str})'
                 result = f'[{diff_style}]{result}[/]'
 
