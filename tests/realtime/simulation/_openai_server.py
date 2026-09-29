@@ -77,6 +77,7 @@ class _ActiveResponse:
     output: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
     message_words: list[str] = field(default_factory=list[str])
     cancel_requested: bool = False
+    metadata: dict[str, str] | None = None
 
 
 @dataclass
@@ -323,6 +324,7 @@ class OpenAIServer:
                 # The call was never made on this conversation (or was abandoned): the real API refuses it.
                 self._emit(session, _error('invalid_value', f'No tool call found with call_id {call_id!r}.'))
                 return
+            self._item_added(session, item)
             if call.output_received:
                 # Replayed with the rest of the history on a re-dial: already part of the conversation.
                 return
@@ -332,6 +334,7 @@ class OpenAIServer:
             return
         if item.get('type') != 'message' or item.get('role') != 'user' or event_id is None:
             # Replayed history on a re-dial, or seeded history: already part of the conversation.
+            self._item_added(session, item)
             return
         content: list[dict[str, str]] = item['content']
         part = content[0]
@@ -349,6 +352,7 @@ class OpenAIServer:
             self._refuse(session, _error('string_above_max_length', 'Invalid content: refused.', event_id), [key])
             return
         self.truth.add_input(key, kind, client_index=client_index)
+        self._item_added(session, item)
         if kind == 'text':
             self._finished_items.append(('user', key))
         assert client_index is not None
@@ -394,7 +398,10 @@ class OpenAIServer:
             input_.solicits = True
         if not answers:
             answers.append(self.truth.add_input(f'create{len(self.truth.inputs)}', 'create', solicits=True).key)
-        self._start_response(session, trigger='create', answers=answers)
+        # The request's `metadata` comes back on the response it starts, as it does live on every dialect.
+        request: dict[str, Any] = frame.get('response') or {}
+        metadata: dict[str, str] | None = request.get('metadata')
+        self._start_response(session, trigger='create', answers=answers, metadata=metadata)
 
     def _on_response_cancel(self, session: ServerSession, frame: dict[str, Any]) -> None:
         del frame
@@ -423,6 +430,24 @@ class OpenAIServer:
         self.truth.truncations.append((item_id, audio_end_ms))
         self._emit(session, {'type': 'conversation.item.truncated', 'item_id': item_id, 'audio_end_ms': audio_end_ms})
 
+    def _item_added(self, session: ServerSession, item: dict[str, Any], item_id: str | None = None) -> None:
+        """Acknowledge an item joining the conversation, as the real API does for every item, whoever made it."""
+        self._emit(
+            session,
+            {
+                'type': 'conversation.item.added',
+                'previous_item_id': None,
+                'item': {**item, 'id': item_id or self._new_item(), 'object': 'realtime.item', 'status': 'completed'},
+            },
+        )
+
+    def _audio_item_added(self, session: ServerSession, item_id: str) -> None:
+        self._item_added(
+            session,
+            {'type': 'message', 'role': 'user', 'content': [{'type': 'input_audio', 'transcript': None}]},
+            item_id,
+        )
+
     def _client_index(self, event_id: str | None) -> int | None:
         indexes = self._client_indexes(event_id)
         return indexes[0] if len(indexes) == 1 else None
@@ -442,15 +467,22 @@ class OpenAIServer:
         trigger: Literal['create', 'vad'],
         answers: list[str],
         user_turn: str | None = None,
+        metadata: dict[str, str] | None = None,
     ) -> None:
         truth = self.truth.new_response(trigger=trigger, answers=answers)
         truth.user_turn = user_turn
-        session.active = _ActiveResponse(truth=truth)
+        session.active = _ActiveResponse(truth=truth, metadata=metadata)
         self._emit(
             session,
             {
                 'type': 'response.created',
-                'response': {'id': truth.key, 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+                'response': {
+                    'id': truth.key,
+                    'object': 'realtime.response',
+                    'status': 'in_progress',
+                    'output': [],
+                    'metadata': metadata,
+                },
             },
         )
 
@@ -493,6 +525,7 @@ class OpenAIServer:
                 'status': status,
                 'status_details': status_details,
                 'output': active.output,
+                'metadata': active.metadata,
                 # xAI reports the usage on the frame itself, and an empty `response.usage`.
                 'usage': {} if self.dialect == 'xai' else usage,
             },
@@ -539,6 +572,7 @@ class OpenAIServer:
         session.audio_ms = 0
         self.truth.add_input(key, 'speech', solicits=solicits)
         self._emit(session, {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None})
+        self._audio_item_added(session, item_id)
         if session.transcription:
             session.pending_transcripts.append(key)
         return key
@@ -671,6 +705,10 @@ class OpenAIServer:
         self._emit(
             session, {'type': 'input_audio_buffer.speech_started', 'item_id': f'item_{key}', 'audio_start_ms': 0}
         )
+        if self.dialect == 'xai':
+            # xAI adds the spoken turn's item as soon as it hears speech, not when it commits it (recorded:
+            # `test_xai_ws/test_audio_in_server_vad_turn`).
+            self._audio_item_added(session, f'item_{key}')
         if session.active is not None:
             self._finish_active(session, 'cancelled', reason='turn_detected', late=late)
         return key
@@ -685,6 +723,8 @@ class OpenAIServer:
         session.audio_ms = 0
         self.truth.add_input(key, 'speech', solicits=True)
         self._emit(session, {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None})
+        if self.dialect != 'xai':
+            self._audio_item_added(session, item_id)
         if session.transcription:
             session.pending_transcripts.append(key)
         if session.active is None:
