@@ -231,10 +231,10 @@ model = AzureRealtimeModel(
 !!! note "Browser WebRTC is WebSocket-only for Voice Live"
     The [browser WebRTC](#browser-webrtc-and-microsoft-entra-id) flow above is for the GA Azure OpenAI
     realtime path. Voice Live negotiates WebRTC over its own WebSocket control channel instead, which
-    isn't implemented yet, so `answer_webrtc_offer` / `create_client_secret` raise `UserError` whenever
-    the session resolves to Voice Live — set with `azure_voice_live=True`, or auto-routed because the
-    model is only served by Voice Live (e.g. `gpt-5`). Use a WebSocket session with Voice Live for now
-    ([issue #6702](https://github.com/pydantic/pydantic-ai/issues/6702)).
+    Pydantic AI doesn't implement yet, so `answer_webrtc_offer` / `create_client_secret` raise
+    `UserError` whenever the session resolves to Voice Live — set with `azure_voice_live=True`, or
+    auto-routed because the model is only served by Voice Live (e.g. `gpt-5`). Use a WebSocket session
+    with Voice Live for now.
 
     [`supports_webrtc`][pydantic_ai.realtime.RealtimeModelProfile.supports_webrtc] reports `False`
     whenever the **model** resolves to Voice Live — forced by `azure_voice_live=True` at construction, or
@@ -248,13 +248,13 @@ model = AzureRealtimeModel(
 
 | Feature | Support | Notes |
 | --- | --- | --- |
-| Audio format | Full feature support | Mono PCM16, 24 kHz input and output |
+| Audio format | Full feature support | Mono PCM16, 24 kHz input and output; the API also offers 8 kHz G.711, which Pydantic AI does not expose |
 | Text output | Full feature support | Select with `output_modality='text'` |
 | Image input | Full feature support | [Images](audio.md#images) provide context for the next turn |
 | Manual turns | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk) |
 | Interruption/truncation | Full feature support | [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
 | Input transcription | Limited parameter support | Requires a [compatible transcription deployment](#input-transcription-deployment) in the Azure resource |
-| Native tools | Unsupported | Configure [local fallbacks](tools.md#native-tools) for web capabilities |
+| Native tools | Unsupported | The API offers remote MCP servers, which Pydantic AI does not expose yet; configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
 | Reconnection | Full feature support | Pydantic AI [replays completed local history](lifecycle.md#state-restoration); in-flight media is lost |
 
