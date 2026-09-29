@@ -47,5 +47,5 @@ async def test_anthropic_vertex_count_tokens_sends_persisted_binding_on_the_wire
     assert request.url.path.endswith('/publishers/anthropic/models/count-tokens:rawPredict')
     assert _THINKING_BINDING_BETA in request.headers['anthropic-beta']
     assert json.loads(request.content)['thinking'] == snapshot(
-        {'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
+        {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}
     )

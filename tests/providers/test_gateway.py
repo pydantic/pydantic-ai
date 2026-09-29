@@ -293,13 +293,9 @@ def gateway_api_key():
 
 
 @pytest.fixture(scope='module')
-def vcr_config():
-    return {
-        'ignore_localhost': False,
-        # Note: additional header filtering is done inside the serializer
-        'filter_headers': ['authorization', 'x-api-key'],
-        'decode_compressed_response': True,
-    }
+def vcr_config(vcr_config: dict[str, Any]) -> dict[str, Any]:
+    """The gateway cassettes were recorded against a local gateway, so localhost traffic must replay."""
+    return {**vcr_config, 'ignore_localhost': False}
 
 
 @patch.dict(

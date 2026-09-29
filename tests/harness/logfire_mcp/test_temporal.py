@@ -33,8 +33,9 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
+from tests.harness.conftest import ignore_source_reads_left_open
 
-pytestmark = [pytest.mark.xdist_group(name='harness-temporal')]
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7246  # avoid conflict with the code_mode and spend suites
 TASK_QUEUE = 'pydantic-ai-harness-logfire-mcp-queue'

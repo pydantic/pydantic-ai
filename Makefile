@@ -51,7 +51,7 @@ typecheck-pyright:
 
 .PHONY: typecheck-changed
 typecheck-changed: ## Run static type checking on the files reached by changes since it last passed
-	@# The pre-commit hook's entry point. Whenever the narrowed set is not provably the same answer, it
+	@# CI's Pyright entry point. Locally, whenever the narrowed set is not provably the same answer, it
 	@# runs pyright over every tracked file it reports on, minus the unchanged `tests/` files. Only `CI`, an
 	@# interpreter older than 3.11 and a pyright configuration it cannot reproduce hand the whole project to
 	@# `typecheck-pyright`; see scripts/typecheck_changed.py

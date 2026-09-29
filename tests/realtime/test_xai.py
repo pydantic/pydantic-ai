@@ -283,7 +283,9 @@ def test_profile() -> None:
         supports_seeding_images=False,
         supports_seeding_audio=False,
         supports_thinking=True,
-        supports_async_tool_calls=False,
+        # Grok Voice answers the user while a tool call is outstanding (verified live).
+        async_tool_call_mode='always',
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_tool_return_schema=False,
         emits_input_speech_events=True,
         synthesizes_turn_boundary=False,
@@ -1125,3 +1127,50 @@ async def test_billable_audio_seconds_restart_with_a_new_conversation() -> None:
 
     assert first is not None and second is not None
     assert (first.audio_seconds, second.audio_seconds) == (4, 1)
+
+
+@pytest.mark.anyio
+async def test_reconnect_keeps_a_tool_call_batch_the_server_restores() -> None:
+    """xAI resumes the response and its tool calls on reconnect, so an early result still gets its answer."""
+    call = {
+        'id': 'item-c1',
+        'type': 'function_call',
+        'call_id': 'c1',
+        'name': 'w',
+        'arguments': '{}',
+        'status': 'completed',
+    }
+    first = _DropAfterFrames(
+        [
+            json.dumps({'type': 'response.created', 'response': {'id': 'r1', 'status': 'in_progress', 'output': []}}),
+            json.dumps(
+                {
+                    'type': 'response.function_call_arguments.done',
+                    'response_id': 'r1',
+                    'item_id': 'item-c1',
+                    'output_index': 0,
+                    'call_id': 'c1',
+                    'name': 'w',
+                    'arguments': '{}',
+                }
+            ),
+        ]
+    )
+    replacement = FakeWebSocket(
+        [json.dumps({'type': 'response.done', 'response': {'id': 'r1', 'status': 'completed', 'output': [call]}})]
+    )
+    replacements = iter([replacement])
+
+    async def dial() -> Any:
+        try:
+            return next(replacements)
+        except StopIteration:
+            raise OSError('server is down')
+
+    conn = XaiRealtimeConnection(first, dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 1})  # type: ignore[arg-type]
+    events = conn.__aiter__()
+    await events.__anext__()  # the tool call
+    await conn.send(ToolResult(tool_call_id='c1', output='sunny'))  # out before r1 is done
+    _ = [event async for event in events]
+
+    assert [json.loads(frame)['type'] for frame in replacement.sent] == ['response.create']

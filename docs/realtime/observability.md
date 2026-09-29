@@ -61,16 +61,16 @@ tool result. With server-side VAD, the provider can begin a response without a c
 limit is checked at the first response event. On a model whose profile reports
 `responses_are_requests=False` (OpenAI GPT-Live), requests are the delegated backend's responses
 instead, counted and checked as each one's usage arrives: see
-[GPT-Live usage](openai-live.md#usage-is-measured-in-seconds). Breaches raise
+[GPT-Live usage](openai.md#usage-is-measured-in-seconds). Breaches raise
 [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] from iteration, or when the
 session context exits if only an audio or transcript view is consumed.
 
 Provider-specific usage fields belong on the
 [OpenAI](openai.md#feature-support-and-limitations),
-[OpenAI GPT-Live](openai-live.md#usage-is-measured-in-seconds),
 [Azure OpenAI](azure.md#feature-support-and-limitations),
 [Google Gemini](gemini.md#feature-support-and-limitations), and
-[xAI](xai.md#feature-support-and-limitations) pages. GPT-Live is the one that reports no tokens for
+[xAI](xai.md#feature-support-and-limitations) pages. OpenAI's
+[GPT-Live](openai.md#usage-is-measured-in-seconds) is the one that reports no tokens for
 itself: it meters the spoken call in seconds, recorded as `audio_seconds` and priced, so a
 `cost_limit` bounds the call once its rate is known. The backend it delegates to is billed per token
 as usual, so token limits bound only that part of a session.
@@ -102,7 +102,7 @@ interrupted response still draws a boundary, displayed as `model turn complete (
 | `pydantic_ai.realtime` | Spans the session emits itself (session, response, boundary, and `user speech` spans) | Always `True`; marks spans that belong to a realtime session. `execute_tool` spans come from the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability and don't carry it. |
 | `gen_ai.output.type` | Session and response spans | `speech` or `text`. |
 | `pydantic_ai.response.state` | Interrupted response spans | `'interrupted'`. |
-| Response-level usage | OpenAI, Azure OpenAI, xAI, and OpenAI GPT-Live response spans | Tokens attributed to that response. On GPT-Live, those are the delegated backend's; the Live call itself is metered in seconds at the session level. |
+| Response-level usage | OpenAI (both families), Azure OpenAI, and xAI response spans | Tokens attributed to that response. On GPT-Live, those are the delegated backend's; the Live call itself is metered in seconds at the session level. |
 
 Gemini can report usage only on a later completed turn after a function-call response; cumulative
 session usage remains authoritative.
