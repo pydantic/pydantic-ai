@@ -1118,3 +1118,15 @@ def test_scenario_gemini_async_speech_in_flight_at_the_result_is_accepted() -> N
 def test_every_finding_is_pinned() -> None:
     """Every known bug has a scenario that fails with it until the fix lands; accepted limitations have none."""
     assert {finding.id for finding in KNOWN_FINDINGS if not finding.accepted} == PINNED
+
+
+def test_gemini_tool_call_abandoned_by_a_drop_ends_the_wait() -> None:
+    """A call the resumed session doesn't know is abandoned (#8763), so nothing more is owed to the turn that made it."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools()
+        sim.drop()
+        sim.wait_for_reply()
+
+    run_clean(GeminiSimulation(), scenario)

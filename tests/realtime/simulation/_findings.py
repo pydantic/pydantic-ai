@@ -719,24 +719,27 @@ LOST_REFUSAL = Finding(
 
 
 def _terminal_read_as_the_connection_dropped(sim: Simulation, violation: InvariantViolation) -> bool:
-    # Read off the socket right before the drop (within a few clock ticks), so the session hadn't handled it yet.
+    # Read off its connection right before that connection dropped (within a few clock ticks), or after, from what
+    # it had already received: either way the session handles it on a connection it already gave up on.
     truth = sim.truth
+    losses = truth.connection_losses  # One per connection, in order: connection `n` dropped at `losses[n - 1]`.
     return any(
-        response.terminal_read is not None and 0 < loss - response.terminal_read <= 3
+        response.terminal_read is not None
+        and len(losses) >= response.connection
+        and response.terminal_read > losses[response.connection - 1] - 4
         for response in truth.responses.values()
-        for loss in truth.connection_losses
     )
 
 
 TERMINAL_DISCARDED_WITH_THE_CONNECTION = Finding(
     id='SIM-22',
     title=(
-        "a `response.done` the connection had read just before the socket dropped is discarded with it: the response's "
-        'usage never reaches `session.usage`, though the provider billed it'
+        'a `response.done` read from a connection as it drops (just before, or from what it had already received) is '
+        "discarded with it: the response's usage never reaches `session.usage`, though the provider billed it"
     ),
     tracked_by='a reconnect that drains what the dropped connection already read; found by exploration on the refactor branch',
     evidence='simulated',
-    codes=frozenset({'usage.total'}),
+    codes=frozenset({'usage.total', 'usage.attribution'}),
     providers=OPENAI_PROTOCOL,
     matches=_terminal_read_as_the_connection_dropped,
 )
