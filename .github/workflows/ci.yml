@@ -460,9 +460,11 @@ jobs:
       # 3.10, the other version endpoint, whose version-specific branches nothing else reaches.
       # 3.10 collects here rather than in `test-all-extras` because the legacy tracer costs ~250s
       # per shard there (645s against 392s for the same shard without it) on the matrix's slowest
-      # cells, while these lighter shapes have the slack to absorb it. Between them they run the
-      # whole suite, and the `sys.version_info` branches are all in core modules that need no
-      # extras. The versions in between still run every applicable test without duplicate coverage.
+      # cells, while these lighter shapes have the slack to absorb it. They do not run the
+      # extras-gated suites -- `tests/test_examples.py` skips at module level without
+      # `pydantic_ai_examples`, for one -- but every file with a `sys.version_info` branch is a
+      # core module these shapes do reach, and everything else is covered on 3.14. The versions
+      # in between still run every applicable test without duplicate coverage.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.10' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
       CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
