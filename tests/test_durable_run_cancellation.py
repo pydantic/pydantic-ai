@@ -6,7 +6,7 @@ The capability captures the run's cancellation controller in `before_run` and tr
 `@workflow.signal`, a DBOS/Prefect equivalent) to that one method; the engine-agnostic binding is
 exercised here without any durable runtime, since the behavior under test is pure control flow
 around injected `asyncio` cancellation that no recorded provider response can trigger. The Temporal
-signal wiring itself is covered end-to-end in `test_temporal.py`.
+signal wiring itself is covered end-to-end in `tests/durable_exec/temporal/test_agent.py`.
 """
 
 from __future__ import annotations as _annotations
