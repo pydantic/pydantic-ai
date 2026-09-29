@@ -41,7 +41,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-87f9a461a05e6e5014dbce2c8e74e849-0209b68714b4ea06-01
+      - 00-4f2144e6766ad87f94f8ac42cfbb51db-4a3fc4d54a1bcec0-01
       transfer-encoding:
       - chunked
       vary:
@@ -50,7 +50,7 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfWk47TGnif5wGArAu4J3","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":22,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}     }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY8k6pVYwhs1w1WSvLun","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":22,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}             }
 
         event: content_block_start
         data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
@@ -59,7 +59,7 @@ interactions:
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"391"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"391"}   }
 
         event: content_block_stop
         data: {"type":"content_block_stop","index":0              }
@@ -68,6 +68,6 @@ interactions:
         data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":22,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}      }
 
         event: message_stop
-        data: {"type":"message_stop"      }
+        data: {"type":"message_stop"        }
 
-  recorded_at: 2026-09-28T23:57:15.368317+00:00
+  recorded_at: 2026-09-29T17:35:23.582827+00:00
