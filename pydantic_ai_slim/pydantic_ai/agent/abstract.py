@@ -39,6 +39,7 @@ from .. import (
 from .._cancel import CancellationToken, RunBinding, provide_run_binding
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
+from .._run_context import set_current_run_context
 from ..capabilities import AgentCapability
 from ..exceptions import RunCancelled
 from ..output import OutputDataT, OutputSpec
@@ -2231,12 +2232,15 @@ class AgentRealtime(Generic[AgentDepsT]):
             run_id=self._run_id,
             message_history=self._message_history,
         ) as resolved:
-            return await resolved.model.answer_webrtc_offer(
-                sdp_offer,
-                instructions=resolved.instructions,
-                tools=resolved.model_request_parameters.function_tools,
-                model_settings=resolved.model_settings,
-            )
+            # Current while the offer is answered, as while a session connects: a model can consult the
+            # agent it belongs to (GPT-Live delegates to the agent's own model by default).
+            with set_current_run_context(resolved.run_context):
+                return await resolved.model.answer_webrtc_offer(
+                    sdp_offer,
+                    instructions=resolved.instructions,
+                    tools=resolved.model_request_parameters.function_tools,
+                    model_settings=resolved.model_settings,
+                )
 
     async def create_client_secret(self, *, expires_after_seconds: int | None = None) -> RealtimeClientSecret:
         """Resolve this agent's realtime configuration and mint a browser client secret.
