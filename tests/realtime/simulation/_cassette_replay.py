@@ -73,7 +73,7 @@ def websocket_cassettes() -> list[Path]:
     return sorted(
         path
         for path in CASSETTES_DIR.glob('*/*.yaml')
-        if cassette_protocol(path) is not None and path.read_text(encoding='utf-8').startswith('version:')
+        if cassette_protocol(path) is not None and '\n- request:' not in path.read_text(encoding='utf-8')
     )
 
 
