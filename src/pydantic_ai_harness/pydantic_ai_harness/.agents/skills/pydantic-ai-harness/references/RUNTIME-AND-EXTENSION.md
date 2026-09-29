@@ -1,7 +1,7 @@
 # Runtime and Extension
 
 How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
-resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), harness
+resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), Render Workflows, harness
 capabilities under core durable execution, Logfire-managed instructions (`ManagedPrompt`), agent-written
 capabilities (`CapabilityCreation`), loading harness capabilities from YAML/JSON specs, serving an agent
 to editors over ACP, and running one as a GitHub Agentic Workflow.
@@ -13,6 +13,7 @@ to editors over ACP, and running one as a GitHub Agentic Workflow.
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
+| Run background agent jobs with separate model/tool retries, timeouts, and compute | `RenderWorkflows`; see the [Render Workflows skill](../../pydantic-ai-render-workflows/SKILL.md) |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
@@ -172,6 +173,17 @@ Rules that apply to every harness capability:
 
 The per-engine feature matrix for workspace tools (commands, background jobs, live events, delegation,
 timeouts) is in `CODING-AND-WORKSPACES.md` and the durable execution docs page.
+
+## RenderWorkflows
+
+`RenderWorkflows` registers supported agent operations as Render tasks. Attach it at agent construction and call
+`agent.run(...)` inside its `@workflows.task` wrapper using the same `Workflows` app. A plain `@app.task` leaves
+agent operations inline. Child tasks can retry independently; retrying the entry task starts the agent again and
+can repeat completed work. There is no checkpoint resume.
+
+Use the [Render Workflows skill](../../pydantic-ai-render-workflows/SKILL.md) for setup and the limits on toolsets,
+JSON transport, task access, and shared storage. The capability requires a live `Workflows` app, so construct it
+in Python rather than listing it in a JSON or YAML agent spec.
 
 ## AWSLambdaDurability
 

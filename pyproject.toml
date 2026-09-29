@@ -192,6 +192,9 @@ build-constraint-dependencies = [
 ]
 
 [tool.uv.exclude-newer-package]
+# Render 1.2.0 is the SDK version verified for the Render Workflows integration.
+# Remove after 2026-09-30 21:46 UTC, when 1.2.0 clears the seven-day window.
+render = "2026-09-23T21:46:00Z"
 # These are our own packages, not worth defending from supply chain attacks on them.
 # `listentome` and `cassetter` are maintained by a Pydantic team member and count as ours.
 listentome = false

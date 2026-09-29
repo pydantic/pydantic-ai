@@ -314,6 +314,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'WarnNearLimits': Anonymous('a passive observer; several thresholds compose'),
     'WarnOnCacheBusts': Anonymous('a passive observer; several thresholds compose'),
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
+    'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'

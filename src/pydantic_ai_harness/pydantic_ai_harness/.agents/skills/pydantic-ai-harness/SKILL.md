@@ -1,6 +1,6 @@
 ---
 name: pydantic-ai-harness
-description: Extend Pydantic AI agents with capabilities from pydantic-ai-harness -- the Coder coding agent, file and shell tools in local or sandboxed workspaces (Modal, E2B, Sprites), Code Mode, sub-agents and planning, memory and skills, context compaction, guardrails and spend limits, web research and browsers, hosted SaaS integrations, and step persistence. Use when the user mentions pydantic-ai-harness or pydantic_ai_harness, imports a harness capability such as Coder, CodeMode, FileSystem, Shell, SubAgents, Memory, or ToolGuardrail, or wants a Pydantic AI agent that edits files, runs commands or agent-written Python, delegates, remembers, manages long context, or stays within limits.
+description: Extend Pydantic AI agents with capabilities from pydantic-ai-harness -- the Coder coding agent, file and shell tools in local or sandboxed workspaces (Modal, E2B, Sprites), Code Mode, sub-agents and planning, memory and skills, context compaction, guardrails and spend limits, web research and browsers, hosted SaaS integrations, step persistence, and background agents on Render Workflows. Use when the user mentions pydantic-ai-harness or pydantic_ai_harness, imports a harness capability such as Coder, CodeMode, FileSystem, Shell, SubAgents, Memory, or ToolGuardrail, or wants a Pydantic AI agent that edits files, runs commands or agent-written Python, delegates, remembers, manages long context, stays within limits, or runs model and tool operations as Render tasks.
 license: MIT
 compatibility: Requires Python 3.10+
 metadata:
@@ -31,6 +31,7 @@ Invoke this skill when:
 - The user wants guardrails, prompt-injection screening, spend limits, human questions mid-run, or a second model reviewing the run
 - The user wants web research beyond core web search (Exa, You.com), a real browser, or a hosted integration such as GitHub, Linear, Notion, Slack, or Google Workspace
 - A run must be saved, resumed, or forked, or an agent should be served over ACP
+- An agent should run on Render Workflows with separate retries, timeouts, and compute settings for model requests and tool calls
 
 Do **not** use this skill for:
 - Core Pydantic AI usage -- agents, tools, output types, streaming, hooks, core capabilities, or testing basics (use `building-pydantic-ai-agents`)
@@ -208,6 +209,7 @@ Load the references for the capabilities the task uses; each is self-contained.
 | Add guardrails, prompt-injection screening, spend limits, questions to the user, reminders, or a trajectory judge; repair malformed tool arguments | [Control and Safety](./references/CONTROL-AND-SAFETY.md) |
 | Research the web with Exa or You.com, use the `Researcher` stack, or drive a browser | [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) |
 | Connect GitHub, Linear, Notion, Slack, Google Workspace, PostHog, Logfire, or another hosted service | [Hosted Integrations](./references/HOSTED-INTEGRATIONS.md) |
+| Run background agent jobs on Render Workflows with separately configured model and tool tasks | [Render Workflows](../pydantic-ai-render-workflows/SKILL.md) |
 | Save, resume, or fork runs; run under AWS Lambda; use managed prompts, runtime-created capabilities, ACP, GitHub Agentic Workflows, or agent specs | [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) |
 | Test an agent that uses harness capabilities, or debug a failing one | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 
@@ -273,7 +275,7 @@ any:
 | [Control and Safety](./references/CONTROL-AND-SAFETY.md) | `RepairToolArguments` (`.repair_tool_arguments`); `InputGuardrail`, `OutputGuardrail`, `ToolGuardrail` (`.guardrails`); `PromptInjectionDefender` (`.prompt_injection_defender`, `[prompt-injection-defender]`); `SpendLimits` (`.spend`); `AskUser` (`.ask_user`); `SystemReminders` (`.system_reminders`); `TrajectoryJudge` (`.trajectory_judge`) |
 | [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) | `Researcher` (`.researcher`, `[researcher]`); `ExaSearch`, `ExaAgent` (`.exa`, `[exa]`); `YouSearch`, `YouResearch` (`.youdotcom`, `[youdotcom]`); `BrowserUse` (`.browser_use`, `[browser-use]`); `PlaywrightBrowser` (`.playwright`, `[playwright]`) |
 | [Hosted Integrations](./references/HOSTED-INTEGRATIONS.md) | `GitHub` (`.github`, `[github]`); `Linear` (`.linear`, `[linear]`); `Notion` (`.notion`, `[notion]`); `GoogleWorkspace` (`.google_workspace`, `[google-workspace]`); `Slack` (`.slack`, `[slack]`); `StackOne` (`.stackone`, `[stackone]`); `Ordinal` (`.ordinal`, `[ordinal]`); `Grain` (`.grain`, `[grain]`); `DayAI` (`.day_ai`, `[day-ai]`); `PostHog` (`.posthog`, `[posthog]`); `Pylon` (`.pylon`, `[pylon]`); `LogfireMCP` (`.logfire_mcp`, `[logfire-mcp]`) |
-| [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) | `StepPersistence` (`.step_persistence`, `[mongodb]` for MongoDB); `AWSLambdaDurability` (`.aws_lambda`, `[aws-lambda]`); `ManagedPrompt` (`.logfire`, `[logfire]`); `CapabilityCreation` (`.capability_creation`); experimental ACP server `run_acp_stdio` (`.experimental.acp`, `[acp]`) |
+| [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) | `StepPersistence` (`.step_persistence`, `[mongodb]` for MongoDB); `AWSLambdaDurability` (`.aws_lambda`, `[aws-lambda]`); `RenderWorkflows` (`.render`, `[render]`); `ManagedPrompt` (`.logfire`, `[logfire]`); `CapabilityCreation` (`.capability_creation`); experimental ACP server `run_acp_stdio` (`.experimental.acp`, `[acp]`) |
 
 For offline tests and debugging of any of these, load [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md).
 
