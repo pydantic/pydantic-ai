@@ -61,7 +61,12 @@ from pydantic_ai.ui._adapter import retry_feedback_from_payload, retry_feedback_
 
 from ._inline_snapshot import snapshot
 from .cassette_utils import request_json
-from .conftest import IsDatetime, IsStr, legacy_retry_prompt_part, message_part, try_import
+from .conftest import IsDatetime, IsStr, RequestCapture, legacy_retry_prompt_part, message_part, try_import
+from .models.conftest import json_objects
+
+with try_import() as openai_imports_successful:
+    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -75,6 +80,7 @@ with try_import() as bedrock_imports_successful:
     from pydantic_ai.models.bedrock import BedrockConverseModel
     from pydantic_ai.providers.bedrock import BedrockProvider
 
+openai_installed = pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
 anthropic_installed = pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 google_installed = pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
 bedrock_installed = pytest.mark.skipif(not bedrock_imports_successful(), reason='boto3 not installed')
@@ -1055,9 +1061,9 @@ async def test_the_direct_helpers_prepare_only_a_history_that_carries_a_retry(st
     )
 
 
-@pytest.mark.vcr(additional_matchers=['body'])
+@pytest.mark.vcr
 @pytest.mark.parametrize(
-    ('model', 'expected_turns'),
+    ('provider', 'expected_turns'),
     [
         pytest.param(
             'openai',
@@ -1072,6 +1078,7 @@ async def test_the_direct_helpers_prepare_only_a_history_that_carries_a_retry(st
                 ]
             ),
             id='openai-inline-system',
+            marks=openai_installed,
         ),
         pytest.param(
             'anthropic',
@@ -1091,12 +1098,17 @@ async def test_the_direct_helpers_prepare_only_a_history_that_carries_a_retry(st
                 ]
             ),
             id='anthropic-system-wrapped',
+            marks=anthropic_installed,
         ),
     ],
-    indirect=['model'],
 )
 async def test_retry_feedback_reaches_the_provider(
-    allow_model_requests: None, model: Model, expected_turns: Any, vcr: Cassette
+    allow_model_requests: None,
+    provider: str,
+    expected_turns: Any,
+    request_capture: RequestCapture,
+    openai_api_key: str,
+    anthropic_api_key: str,
 ):
     """The rendering is not just internal bookkeeping: each provider accepts the voice its profile
     allows, and answers the feedback.
@@ -1105,12 +1117,19 @@ async def test_retry_feedback_reaches_the_provider(
     `claude-sonnet-4-5` does not, so it degrades to `<system>`-tagged user text. Both sides of that
     profile flag are pinned, because a rendering that stopped honoring it would still be a rendering.
 
-    The turns below are read off the recording, which the default matchers reach on method, path and
-    host alone — so a run that stopped rendering the feedback would replay this cassette and pass.
-    `additional_matchers=['body']` is what closes that: the request has to still carry these turns to
-    match its recording at all, and every field of it is deterministic (no sampling parameters, no
-    ids of our own), so matching the whole body costs nothing.
+    The turns below are read off the request as it went out, through `request_capture`: the cassette
+    matches on method and path alone, so a run that stopped rendering the feedback would still replay it.
     """
+    model: Model
+    if provider == 'openai':
+        model = OpenAIChatModel(
+            'o3-mini', provider=OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+        )
+    else:
+        model = AnthropicModel(
+            'claude-sonnet-4-5',
+            provider=AnthropicProvider(api_key=anthropic_api_key, http_client=request_capture.client),
+        )
     rejected = False
 
     agent = Agent(model)
@@ -1129,8 +1148,8 @@ async def test_retry_feedback_reaches_the_provider(
     feedback = message_part(result.all_messages(), RetryFeedbackPart, message_index=2)
     assert feedback.cause == 'model_retry'
 
-    second_request = request_json(vcr.requests[1])
-    assert [(turn['role'], turn['content']) for turn in second_request['messages']] == expected_turns
+    second_request = request_capture.body(index=1)
+    assert [(turn['role'], turn['content']) for turn in json_objects(second_request['messages'])] == expected_turns
 
 
 def test_the_metadata_channel_discloses_no_more_than_the_text_beside_it():
