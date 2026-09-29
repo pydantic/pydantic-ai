@@ -742,6 +742,11 @@ shows `(editing)` meanwhile. Clearing the draft and pressing Enter removes the
 message from the queue. If the run takes the message before you press Enter,
 the edit is queued as a new follow-up. With nothing queued, Up/down only walk
 history.
+While you walk history, Up/down stay on history even when a recalled slash
+command shows completion suggestions. Press Tab to pick a suggestion; Up/down
+then move through the suggestions. Editing the recalled text ends the walk, so
+suggestions for a prefix you type take Up/down as before. Esc closes the
+suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
 To steer instead, first queue the message with Enter, then press Alt+Enter
 (Option+Enter). This sends the oldest queued follow-up to the active run at its
