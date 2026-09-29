@@ -8,6 +8,12 @@ per-response stream. These record the real frames so the default suite runs offl
 
 from __future__ import annotations as _annotations
 
+import asyncio
+import fractions
+import importlib
+import time
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +23,7 @@ from genai_prices import calc_price
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryImage,
     FunctionToolCallEvent,
@@ -32,6 +39,7 @@ from pydantic_ai.providers import Provider
 from pydantic_ai.realtime import RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
+from .conftest import REAL_SDP_OFFER
 from .ws_cassettes import RealtimeCassette
 
 with try_import() as imports_successful:
@@ -268,3 +276,150 @@ async def test_an_image_is_described_by_the_backend(
         if isinstance(part, SpeechPart)
     )
     assert 'kiwi' in spoken.lower()
+
+
+# `(offer_sdp, connect(answer_sdp), speak())`: the browser side of a WebRTC call.
+_BrowserPeer = tuple[str, Callable[[str], Awaitable[None]], Callable[[], None]]
+
+
+@asynccontextmanager
+async def _speaking_browser(pcm: bytes) -> AsyncGenerator[_BrowserPeer]:  # pragma: no cover
+    """Negotiate a real WebRTC call with `aiortc`, standing in for a browser whose user asks a question.
+
+    Recording only. Live's timeline moves with the audio it receives, and on a WebRTC call that audio
+    comes from the browser, so a canned offer that never connects records a session in which nothing
+    happens. The track sends silence until `speak()`, then the clip, then silence again, so the question
+    is asked only once the sideband is attached to hear the answer. `aiortc` is not a project dependency:
+    record with `uv run --with aiortc --env-file .env pytest ... --record-mode=rewrite`.
+    """
+    aiortc = importlib.import_module('aiortc')
+    av = importlib.import_module('av')
+    rate, frame_samples = 24000, 480  # 20 ms frames of the 24 kHz clip
+    state = {'position': -1}
+
+    class _Microphone(aiortc.MediaStreamTrack):
+        kind = 'audio'
+
+        def __init__(self) -> None:
+            super().__init__()  # pyright: ignore[reportUnknownMemberType]
+            self._start: float | None = None
+            self._timestamp = 0
+
+        async def recv(self) -> Any:
+            if self._start is None:
+                self._start = time.monotonic()
+            else:
+                await asyncio.sleep(max(0.0, self._start + self._timestamp / rate - time.monotonic()))
+            chunk = b''
+            if state['position'] >= 0:
+                chunk = pcm[state['position'] : state['position'] + frame_samples * 2]
+                state['position'] += frame_samples * 2
+            frame = av.AudioFrame(format='s16', layout='mono', samples=frame_samples)
+            frame.planes[0].update(chunk.ljust(frame_samples * 2, b'\x00'))
+            frame.sample_rate = rate
+            frame.pts = self._timestamp
+            frame.time_base = fractions.Fraction(1, rate)
+            self._timestamp += frame_samples
+            return frame
+
+    # No STUN server, as in `test_openai_ws.py`: host candidates reach OpenAI's ICE-lite endpoint.
+    pc = aiortc.RTCPeerConnection(aiortc.RTCConfiguration(iceServers=[]))
+    pc.addTrack(_Microphone())
+
+    @pc.on('track')
+    def _drain_inbound_audio(track: Any) -> None:
+        async def pump() -> None:
+            while True:
+                try:
+                    await track.recv()
+                except Exception:
+                    return
+
+        asyncio.ensure_future(pump())
+
+    await pc.setLocalDescription(await pc.createOffer())
+    while pc.iceGatheringState != 'complete':
+        await anyio.sleep(0.1)
+
+    async def connect(answer_sdp: str) -> None:
+        await pc.setRemoteDescription(aiortc.RTCSessionDescription(sdp=answer_sdp, type='answer'))
+
+    def speak() -> None:
+        state['position'] = 0
+
+    try:
+        yield pc.localDescription.sdp, connect, speak
+    finally:
+        await pc.close()
+
+
+async def _no_browser_to_connect(answer_sdp: str) -> None:
+    """Replay has no browser: the recorded sideband frames are the whole call."""
+
+
+@pytest.mark.vcr
+async def test_webrtc_sideband_runs_the_delegated_tool_round(
+    openai_live_ws_sideband_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    realtime_recording: bool,
+) -> None:
+    """A browser WebRTC call, negotiated by the server, with the agent run over a sideband.
+
+    The server starts the session from the browser's offer, with the agent's instructions and tools
+    already on the backend; the browser holds the audio; the sideband runs the backend's tool call and
+    records the conversation. The offer is an HTTP VCR cassette, the sideband a WebSocket cassette.
+    """
+    provider, _ = openai_live_ws_sideband_cassette
+    model = OpenAILiveModel('gpt-live-1', provider=provider, settings=_FAST_TURN)
+    agent = Agent(_BACKEND, instructions='You answer weather questions. Use the `lookup_forecast` tool.')
+
+    @agent.tool_plain
+    async def lookup_forecast(city: str) -> str:
+        """Look up tomorrow's forecast for a city."""
+        return f'{city}: 14 degrees Celsius, light rain.'
+
+    realtime = agent.realtime(model)
+    pcm = assets_path.joinpath('weather_question_24khz.pcm').read_bytes()
+
+    @asynccontextmanager
+    async def browser() -> AsyncGenerator[_BrowserPeer]:
+        if realtime_recording:  # pragma: no cover
+            async with _speaking_browser(pcm) as peer:
+                yield peer
+            return
+        yield REAL_SDP_OFFER, _no_browser_to_connect, lambda: None
+
+    async with browser() as (offer, connect, speak):
+        answer = await realtime.answer_webrtc_offer(offer)
+        assert answer.sdp.startswith('v=0')
+        assert answer.session.provider_name == 'openai'
+        assert answer.session.session_id.startswith('live_')
+        await connect(answer.sdp)
+
+        async with realtime.session(provider_session=answer.session) as session:
+            with pytest.raises(UserError, match='does not own the audio transport'):
+                await session.send_audio(b'\x00\x00')
+            speak()
+            events: list[Any] = []
+            with anyio.fail_after(60):
+                async for event in session:  # pragma: no branch
+                    events.append(event)
+                    if isinstance(event, RealtimeTurnCompleteEvent) and any(
+                        isinstance(e, FunctionToolResultEvent) for e in events
+                    ):
+                        break
+
+    messages = session.all_messages()
+    assert [type(message).__name__ for message in messages] == snapshot(
+        ['ModelRequest', 'ModelResponse', 'ModelRequest', 'ModelResponse']
+    )
+    user_speech = [part for part in messages[0].parts if isinstance(part, SpeechPart)]
+    assert 'Amsterdam' in (user_speech[0].transcript or '')
+    assert any(isinstance(part, ToolCallPart) for part in messages[1].parts)
+    assert any(isinstance(part, ToolReturnPart) for part in messages[2].parts)
+    answer_part = messages[3].parts[-1]
+    assert isinstance(answer_part, SpeechPart)
+    assert '14' in (answer_part.transcript or '') or 'fourteen' in (answer_part.transcript or '').lower()
+    # The browser plays the audio, so the sideband records the reply without its bytes.
+    assert answer_part.audio is None
+    assert session.usage.input_tokens > 0
