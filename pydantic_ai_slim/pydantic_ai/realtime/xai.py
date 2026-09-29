@@ -64,6 +64,7 @@ from ..models import ModelRequestParameters
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
+from ._lifecycle import TaggedEvent
 from ._openai_protocol import (
     RealtimeHandshakeError,
     config_interrupts_response_on_speech,
@@ -83,7 +84,6 @@ from .codec import (
     ConversationItemCreated,
     InputTranscript,
     RealtimeCodecEvent,
-    TaggedEvent,
     ToolCall,
 )
 from .model import RealtimeModel

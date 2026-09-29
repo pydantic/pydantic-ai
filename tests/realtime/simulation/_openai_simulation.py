@@ -14,8 +14,8 @@ from pydantic_ai.providers.azure import AzureProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.providers.xai import XaiProvider
 from pydantic_ai.realtime import RealtimeModel
+from pydantic_ai.realtime._lifecycle import TaggedEvent
 from pydantic_ai.realtime.azure import AzureRealtimeModel
-from pydantic_ai.realtime.codec import TaggedEvent
 from pydantic_ai.realtime.openai import OpenAIRealtimeConnection, OpenAIRealtimeModel, OpenAIRealtimeModelSettings
 from pydantic_ai.realtime.settings import RealtimeModelSettings
 from pydantic_ai.realtime.xai import XaiRealtimeModel

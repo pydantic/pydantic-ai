@@ -14,7 +14,7 @@ from __future__ import annotations as _annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, ClassVar, Literal
 
 from typing_extensions import TypeAliasType
 
@@ -38,7 +38,7 @@ from ..messages import (
     UserContent,
 )
 from ..usage import RequestUsage
-from ._lifecycle import LifecycleEvent
+from ._lifecycle import LifecycleEvent, TaggedEvent
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, DEFAULT_REALTIME_PROFILE, merge_realtime_profile
 
 # Input content types (fed into the connection via `send`). Session content reuses the shared message
@@ -442,10 +442,6 @@ This is the provider-facing vocabulary: providers translate their wire protocol 
 [`RealtimeEvent`][pydantic_ai.realtime.RealtimeEvent] vocabulary while building
 [`ModelMessage`][pydantic_ai.messages.ModelMessage] history.
 """
-
-
-TaggedEvent: TypeAlias = 'tuple[RealtimeCodecEvent | LifecycleEvent, bool]'
-"""An event of a connection's `_tagged_frames()`, with whether it is stale."""
 
 
 class RealtimeConnection(ABC):

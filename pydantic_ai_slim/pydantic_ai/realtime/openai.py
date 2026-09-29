@@ -66,7 +66,7 @@ from ..profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from ..providers import Provider, infer_provider
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._lifecycle import LIFECYCLE_EVENT_TYPES, InputId, LifecycleEvent, ResponseStatus
+from ._lifecycle import LIFECYCLE_EVENT_TYPES, InputId, LifecycleEvent, ResponseStatus, TaggedEvent
 from ._openai_lifecycle import OpenAILifecycle, frame_response_id
 from ._openai_protocol import (
     AUDIO_DELTA_TYPES,
@@ -131,7 +131,6 @@ from .codec import (
     RealtimeConnection,
     RealtimeInput,
     SessionUsage,
-    TaggedEvent,
     TextContext,
     ToolCall,
     ToolResult,
