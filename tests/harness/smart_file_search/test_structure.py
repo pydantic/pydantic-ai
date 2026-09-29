@@ -11,7 +11,7 @@ from pydantic_ai_harness.smart_file_search._chunks import (
     source_chunks,
     windows,
 )
-from pydantic_ai_harness.smart_file_search._structure import Range, structure_ranges
+from pydantic_ai_harness.smart_file_search._structure import SPLIT_LINES, Range, structure_ranges
 
 
 @dataclass
@@ -47,6 +47,14 @@ def _spans(nodes: list[Node]) -> list[tuple[int, int, str | None]]:
 def test_long_body_groups_short_statements_and_isolates_blocks() -> None:
     body = [Node(2, 2), Node(3, 3), Node(4, 9), Node(10, 10), Node(11, 40)]
     assert _spans([Node(1, 40, 'f', body)]) == [(1, 3, 'f'), (4, 9, 'f'), (10, 10, 'f'), (11, 40, 'f')]
+
+
+def test_declarations_of_split_lines_or_more_are_split() -> None:
+    def spans(lines: int) -> list[tuple[int, int, str | None]]:
+        return _spans([Node(1, lines, 'f', [Node(2, 2), Node(3, lines)])])
+
+    assert spans(SPLIT_LINES - 1) == [(1, SPLIT_LINES - 1, 'f')]
+    assert spans(SPLIT_LINES) == [(1, 2, 'f'), (3, SPLIT_LINES, 'f')]
 
 
 def test_body_whose_block_ends_on_the_last_line_stays_whole() -> None:

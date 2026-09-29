@@ -69,7 +69,7 @@ def _partition(
 ) -> list[Range] | None:
     """Split a long body into its blocks, covering every line of `[start, end]`."""
     body = syntax.statements(node)
-    if not body or end - start < SPLIT_LINES:
+    if not body or end - start + 1 < SPLIT_LINES:  # `[start, end]` is inclusive
         return None
     if len(body) == 1:
         if depth >= _MAX_DEPTH:
