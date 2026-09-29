@@ -474,7 +474,10 @@ REFUSED_CONTEXT_MISFILES_SPEECH = Finding(
         'context sent while the user is speaking (before the session read `speech_started`) and refused by the '
         'provider takes the spoken turn with it: the turn is filed after its own reply'
     ),
-    tracked_by='history ordered by what the provider saw, not by the send a turn was anchored to; found by this simulator',
+    tracked_by=(
+        'history ordered by what the provider saw, not by the send a turn was anchored to: the session falls back '
+        'to appending a turn whose anchor was withdrawn; found by this simulator'
+    ),
     codes=frozenset({'history.order'}),
     providers=OPENAI_PROTOCOL,
     matches=_refused_while_speaking,
