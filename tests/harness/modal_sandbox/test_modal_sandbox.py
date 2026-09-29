@@ -452,7 +452,7 @@ def test_removed_names_raise_import_error_naming_the_replacement(name: str, repl
 
 def test_removed_name_fails_a_from_import_with_the_guidance() -> None:
     with pytest.raises(ImportError, match='ModalSandboxBackend'):
-        from pydantic_ai_harness.modal_sandbox import ModalSandboxSession  # noqa: F401, I001  # pyright: ignore[reportUnusedImport]
+        from pydantic_ai_harness.modal_sandbox import ModalSandboxSession  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
 
 def test_other_missing_names_are_attribute_errors() -> None:
