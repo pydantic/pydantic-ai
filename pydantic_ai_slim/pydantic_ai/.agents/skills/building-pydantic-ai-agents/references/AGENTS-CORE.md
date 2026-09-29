@@ -15,7 +15,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    'anthropic:claude-fable-5-1',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
@@ -140,8 +140,8 @@ Examples:
 
 Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/), one `PYDANTIC_AI_GATEWAY_API_KEY` reaches models from several providers, with spending limits and cost monitoring in Logfire. Prefix the model string with `gateway/`, using the provider's API format:
 
-- `gateway/anthropic:claude-fable-5`
-- `gateway/openai:gpt-5.6-sol`
+- `gateway/anthropic:claude-fable-5-1`
+- `gateway/openai:gpt-6-sol`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 

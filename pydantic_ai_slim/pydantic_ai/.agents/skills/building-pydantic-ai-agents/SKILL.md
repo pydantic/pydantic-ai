@@ -46,7 +46,7 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    'anthropic:claude-fable-5-1',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
@@ -65,7 +65,7 @@ When you create a new Pydantic AI application, set up observability as part of t
 - **Logfire credentials**: the user runs `uvx logfire auth` once (it opens a browser), then `uvx logfire projects new` (or `uvx logfire projects use` for an existing project), which writes a `.logfire/` directory that `logfire.configure()` reads. In CI, containers, and deployments, set `LOGFIRE_TOKEN` to a project write token instead. Never print, log, or commit a token. Without either, `logfire.configure()` raises an error (or prompts, in a terminal), so before the first run check for `.logfire/` or `LOGFIRE_TOKEN`, and if neither exists ask the user to run `uvx logfire auth` and `uvx logfire projects new`. Do not silence it with `send_to_logfire=False` or `'if-token-present'` unless the user chose not to use Logfire: once instrumentation is configured, Pydantic AI no longer prints its first-run hint about observability, so nothing would tell the user their runs are not being recorded.
 - **Guided setup**: for the full Logfire setup flow (authentication, project selection, instrumenting the rest of the app, verifying the first trace), fetch and follow the Logfire setup skill at [pydantic.dev/ai-setup.md](https://pydantic.dev/ai-setup.md).
 - **Other backends**: if the user already runs another OpenTelemetry backend or does not want a hosted service, respect that. Pydantic AI emits standard OpenTelemetry, and the Logfire SDK can [send to any OTel backend](https://pydantic.dev/docs/ai/integrations/logfire/#otel).
-- **Model access**: with the Gateway, the starter's model string becomes `gateway/anthropic:claude-fable-5`. The [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/) is one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring, managed in Logfire. Use `gateway/<api_format>:<model>` model strings and set `PYDANTIC_AI_GATEWAY_API_KEY`; the key is created in the organization's Gateway settings in Logfire. Suggest it when the user has no provider key yet or wants to compare providers. If the user already has a provider key, the direct `provider:model` string (for example `openai:gpt-5.6-sol`) works with no Gateway.
+- **Model access**: with the Gateway, the starter's model string becomes `gateway/anthropic:claude-fable-5-1`. The [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/) is one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring, managed in Logfire. Use `gateway/<api_format>:<model>` model strings and set `PYDANTIC_AI_GATEWAY_API_KEY`; the key is created in the organization's Gateway settings in Logfire. Suggest it when the user has no provider key yet or wants to compare providers. If the user already has a provider key, the direct `provider:model` string (for example `openai:gpt-6-sol`) works with no Gateway.
 
 ### Add Tools to an Agent
 
@@ -424,7 +424,7 @@ Load [Architecture and Decision Guide](./references/ARCHITECTURE.md) only when t
 | Comparison Tables | Output modes, model provider prefixes, tool decorators, built-in capabilities, agent methods |
 | Architecture Overview | Execution flow, generic types, construction patterns, lifecycle hooks, model string format |
 
-**Quick reference (model string format):** `"provider:model-name"` (e.g., `"openai:gpt-5.6-sol"`, `"anthropic:claude-fable-5"`, `"google:gemini-3-pro-preview"`), or `"gateway/provider:model-name"` through the Pydantic AI Gateway (e.g., `"gateway/openai:gpt-5.6-sol"`)
+**Quick reference (model string format):** `"provider:model-name"` (e.g., `"openai:gpt-6-sol"`, `"anthropic:claude-fable-5-1"`, `"google:gemini-3-pro-preview"`), or `"gateway/provider:model-name"` through the Pydantic AI Gateway (e.g., `"gateway/openai:gpt-6-sol"`)
 
 **Quick reference (key agent methods):** `run()`, `run_sync()`, `run_stream()`, `run_stream_sync()`, `run_stream_events()`, `iter()`
 
