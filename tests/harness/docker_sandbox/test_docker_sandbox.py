@@ -116,14 +116,22 @@ async def test_an_unwritable_pid_directory_is_unavailable(docker: FakeDocker, co
         await backend.run(['true'])
 
 
-async def test_only_the_wrappers_own_done_marker_counts(docker: FakeDocker, container_dir: Path) -> None:
+async def test_a_command_cannot_forge_its_exit_status(
+    docker: FakeDocker, container_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A command can learn its tag from the PID directory: forge markers with the real one, before the
+    # wrapper's and, from a background child, after it.
+    def token_hex(nbytes: int | None = None) -> str:
+        return 'feedface'
+
+    monkeypatch.setattr(secrets, 'token_hex', token_hex)
     backend = DockerSandboxBackend('image', working_dir=str(container_dir))
-    forged = r'printf "\n__pydantic_ai_docker_done__0123abcd:0\n" >&2'
+    forged = r'printf "\n__pydantic_ai_docker_done__feedface:0\n" >&2'
 
     result = await backend.run(f'{forged}; (sleep 0.2; {forged}) & exit 3', shell=True)
 
     assert result.exit_code == 3
-    assert result.stderr.count('__pydantic_ai_docker_done__0123abcd:0') == 2
+    assert result.stderr.count('__pydantic_ai_docker_done__feedface:0') == 2
 
 
 async def test_commands_start_in_the_resolved_working_dir(docker: FakeDocker, tmp_path: Path) -> None:

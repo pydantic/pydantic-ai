@@ -333,8 +333,16 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         if not ready:
             reason = before.strip() or f'`{self._executable} exec` exited with code {result.exit_code}'
             raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: {reason}')
-        # A background child that kept stderr open can write around the marker, so match this command's tag.
-        done = next((marker for marker in _DONE.finditer(stderr) if marker[1] == tag), None)
+        # The command can learn its tag from the PID directory and print a marker of its own, so the wrapper's is
+        # the last one with the tag whose status is also `docker exec`'s exit code, which the wrapper exits with.
+        done = next(
+            (
+                marker
+                for marker in reversed(list(_DONE.finditer(stderr)))
+                if marker[1] == tag and int(marker[2]) == result.exit_code
+            ),
+            None,
+        )
         if done is None:
             raise WorkspaceUnavailableError(f'Docker workspace {self._name}: the container stopped during the command')
         return CommandResult(
