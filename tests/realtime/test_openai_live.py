@@ -2104,3 +2104,24 @@ async def test_idle_audio_starts_only_when_asked_for(model: OpenAILiveModel) -> 
             task = connection._idle_audio_task  # pyright: ignore[reportPrivateUsage]
             assert task is not None and not task.done()
     assert task.done()
+
+
+async def test_audio_sent_as_the_pump_wakes_holds_its_frame_back() -> None:
+    """Application audio that lands between the pump's wait and its send wins: the pump waits again."""
+    connection = _AudioSink()
+    waits = 0
+
+    async def wait_for_idle_frame() -> None:
+        nonlocal waits
+        waits += 1
+        if waits == 1:
+            await connection.send(BinaryAudio(data=b'\x01\x00' * 10, media_type='audio/pcm'))
+
+    connection._wait_for_idle_frame = wait_for_idle_frame  # pyright: ignore[reportPrivateUsage]
+    connection.start_idle_audio()
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await connection.silence_sent.wait()
+    await connection.aclose()
+
+    assert waits >= 2
+    assert any(base64.b64decode(connection.sent[0]['audio']))

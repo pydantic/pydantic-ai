@@ -39,6 +39,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppres
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, ClassVar, Literal, cast
 
+import anyio
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import TypedDict
@@ -490,6 +491,10 @@ class OpenAILiveConnection(RealtimeConnection):
         self._idle_audio_task: asyncio.Task[None] | None = None
         self._last_input_audio = 0.0
         self._next_idle_frame = 0.0
+        # Counts the application's audio sends. Held with the lock around every audio send, it is how the
+        # pump tells that the application spoke between its wait ending and its frame going out.
+        self._input_audio_sends = 0
+        self._audio_send_lock = anyio.Lock()
 
     @property
     def model_name(self) -> str | None:
@@ -548,9 +553,10 @@ class OpenAILiveConnection(RealtimeConnection):
                 }
             )
             return
-        # Noted before the send, so the idle pump can't slip a frame of silence in ahead of this audio.
-        self._last_input_audio = _pump_clock()
-        await self._send_event({'type': 'session.input_audio.append', 'audio': _b64(content.data)})
+        async with self._audio_send_lock:
+            self._input_audio_sends += 1
+            self._last_input_audio = _pump_clock()
+            await self._send_event({'type': 'session.input_audio.append', 'audio': _b64(content.data)})
 
     def start_idle_audio(self) -> None:
         """Stream silence whenever the application sends no audio, until the connection closes.
@@ -565,8 +571,13 @@ class OpenAILiveConnection(RealtimeConnection):
         frame = _b64(bytes(int(self._audio_bytes_per_ms * _IDLE_AUDIO_FRAME * 1000) // 2 * 2))
         with suppress(*self.transport_errors):
             while True:
+                sends = self._input_audio_sends
                 await self._wait_for_idle_frame()
-                await self._send_event({'type': 'session.input_audio.append', 'audio': frame})
+                async with self._audio_send_lock:
+                    if self._input_audio_sends != sends:
+                        # The application sent audio after the wait ended: wait out a fresh quiet gap.
+                        continue
+                    await self._send_event({'type': 'session.input_audio.append', 'audio': frame})
 
     async def _wait_for_idle_frame(self) -> None:
         """Wait until the next frame of silence is due.
@@ -576,7 +587,9 @@ class OpenAILiveConnection(RealtimeConnection):
         """
         while (delay := self._idle_frame_due() - _pump_clock()) > 0:
             await asyncio.sleep(delay)
-        self._next_idle_frame = self._idle_frame_due() + _IDLE_AUDIO_FRAME
+        # Booked from now rather than from when it was due, so a stalled loop doesn't catch up with a
+        # burst of frames that would run Live's timeline ahead of the clock.
+        self._next_idle_frame = max(self._idle_frame_due(), _pump_clock()) + _IDLE_AUDIO_FRAME
 
     def _idle_frame_due(self) -> float:
         return max(self._next_idle_frame, self._last_input_audio + _IDLE_AUDIO_GAP)

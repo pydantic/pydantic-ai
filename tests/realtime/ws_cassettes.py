@@ -362,7 +362,9 @@ class ReplayWebSocket:
         self._condition = asyncio.Condition()
         self._readers = 0
         # Whether the connection streams its own idle audio (see `_patched_idle_audio`), whose recorded
-        # frames other sends must wait behind rather than claim.
+        # frames other sends must wait behind rather than claim. Set once the pump starts. A recording in
+        # which the application also streams audio can't tell its frames from the pump's, so replay only
+        # supports the pump in sessions that send no audio of their own.
         self.pumps_audio = False
         self._closed = False
         self._now = 0.0
@@ -680,11 +682,20 @@ def _patched_idle_audio(provider: ProviderName, replay: ReplayWebSocket | None) 
         return
     from pydantic_ai.realtime import openai_live as rt_openai_live
 
+    connection = rt_openai_live.OpenAILiveConnection
+    start_idle_audio = connection.start_idle_audio
+
+    def start_pumping(self: rt_openai_live.OpenAILiveConnection) -> None:
+        replay.pumps_audio = True
+        start_idle_audio(self)
+
     async def wait_for_recorded_frame(self: rt_openai_live.OpenAILiveConnection) -> None:
         await replay.wait_for_pumped_audio_turn()
 
-    replay.pumps_audio = True
-    with mock.patch.object(rt_openai_live.OpenAILiveConnection, '_wait_for_idle_frame', wait_for_recorded_frame):
+    with (
+        mock.patch.object(connection, 'start_idle_audio', start_pumping),
+        mock.patch.object(connection, '_wait_for_idle_frame', wait_for_recorded_frame),
+    ):
         yield
 
 
