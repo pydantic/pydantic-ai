@@ -5,8 +5,9 @@ Python 3.11+ is required by Termflow. Tracking issue: https://github.com/pydanti
 
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
-Relative paths use the launch workspace. Use a custom agent with `Coder()` to
-retain workspace-scoped file tools. Shell output is displayed dimly.
+CLAI attaches the launch directory as the agent's workspace, so relative paths
+and commands start there. Commands get CLAI's environment minus LLM provider API
+keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools. Shell output is displayed dimly.
 
 ## Word deletion
 
@@ -229,6 +230,20 @@ makes it the model for the next prompt. `Ctrl+S` opens that model's settings:
 penalties, `parallel_tool_calls`, `thinking`, and `service_tier`. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
+
+CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
+missing from the Python CLAI runs on fails right away, naming the install command, instead
+of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+
+```bash
+pip/uv-add "pydantic-clai2[typesafe]"
+```
+
+From a pydantic-ai checkout, run CLAI with the extra instead:
+
+```bash
+uv run --package pydantic-clai2 --extra typesafe clai2
+```
 
 Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,

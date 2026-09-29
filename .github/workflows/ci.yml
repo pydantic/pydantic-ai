@@ -43,6 +43,7 @@ jobs:
       pull-requests: read
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      clai2_only: ${{ steps.classify.outputs.clai2_only }}
       pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
     steps:
       - name: Classify pull request changes
@@ -53,6 +54,7 @@ jobs:
         run: |
           run_all_checks() {
             echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
             echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
           }
 
@@ -90,16 +92,28 @@ jobs:
             esac
           }
 
+          # Nothing outside `pydantic-clai2` imports it, so a change confined to these paths cannot
+          # break another package's suite: it runs only the `pydantic-clai2` test cells, and skips
+          # the jobs that exercise the rest of the workspace. Shared inputs (`pyproject.toml`,
+          # `uv.lock`, `tests/conftest.py`, ...) are outside them and still run everything.
+          is_clai2() {
+            case "$1" in
+              src/pydantic_clai2/*|tests/clai2/*) ;;
+              *) return 1 ;;
+            esac
+          }
+
           is_pyright_input() {
             # All Python/stub files conservatively cover Pyright's include and import graph;
             # the remaining paths change its command, configuration, dependencies, or this gate.
             case "$1" in
-              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|*/pyrightconfig*.json|Makefile|.pre-commit-config.yaml|.github/workflows/ci.yml) ;;
+              *.py|*.pyi|*/py.typed|py.typed|pyproject.toml|*/pyproject.toml|uv.lock|uv.toml|*/uv.toml|pyrightconfig*.json|*/pyrightconfig*.json|Makefile|.github/workflows/ci.yml) ;;
               *) return 1 ;;
             esac
           }
 
           docs_only=true
+          clai2_only=true
           pyright_changed=false
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
@@ -107,12 +121,17 @@ jobs:
               { [ -n "$previous_filename" ] && ! is_docs_markdown "$previous_filename"; }; then
               docs_only=false
             fi
+            if ! is_clai2 "$filename" || \
+              { [ -n "$previous_filename" ] && ! is_clai2 "$previous_filename"; }; then
+              clai2_only=false
+            fi
             if is_pyright_input "$filename" || \
               { [ -n "$previous_filename" ] && is_pyright_input "$previous_filename"; }; then
               pyright_changed=true
             fi
           done
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
           echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
 
   quality:
@@ -141,6 +160,7 @@ jobs:
       # FastMCP 4 / MCP SDK v2 lock fork, which `tool.uv.conflicts` bars from co-installing
       # with the FastMCP 3 dev environment (the `test-fastmcp-4` job covers that universe).
       - name: Install dependencies
+        id: install
         run: uv sync --all-extras --no-extra mcp-tasks --all-packages --group lint
 
       - name: Test GitHub agentic workflow policy
@@ -160,8 +180,8 @@ jobs:
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
 
-      # The pre-commit `typecheck` hook narrows Pyright to the files a change reaches, so
-      # a wrong answer here silently stops type errors reaching a developer's terminal.
+      # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
+      # answer here silently stops type errors reaching a developer's terminal.
       # It lives outside `testpaths`, in the job that installs Pyright, because one of its
       # tests runs Pyright for real.
       - name: Test the incremental typecheck script
@@ -246,26 +266,36 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: ${{ needs.classify.outputs.pyright_changed == 'true' && 'no-commit-to-branch' || 'no-commit-to-branch,typecheck' }}
+          SKIP: no-commit-to-branch
+          # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
+          # down to the root package and drop the `--all-packages` install above.
+          UV_NO_SYNC: "1"
+
+      # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
+      # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
+      # that script enforces. It runs whenever the install succeeded, so a failing pre-commit hook or
+      # policy check does not hide type errors.
+      - name: Type-check with Pyright
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && needs.classify.outputs.pyright_changed == 'true' }}
+        env:
           # The `Makefile` leaves pyright single-process by default, for laptops where a worker
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
           # CI opts back in.
           PYRIGHT_THREADS: auto
           # Fail a passing pyright run that outlasts this many seconds, so a change that makes
           # pyright itself slow fails its own PR instead of `main`. #8077 made pyright slow and
-          # nothing caught it (see #8177): the hook ran 328 to 490 s over the five `main` runs
+          # nothing caught it (see #8177): pyright ran 328 to 490 s over the five `main` runs
           # between those two. The budget was 110 (1.1x the p99 of 60 main runs, derived in
           # https://github.com/pydantic/pydantic-ai/issues/8182#issuecomment-5575016259), but by
-          # 2026-09-23 the hook ran 66 to 111 s on the same day's main runs (runner variance alone
+          # 2026-09-23 pyright ran 66 to 111 s on the same day's main runs (runner variance alone
           # spans about 30 s); the pyright 1.1.414 bump (#8690) and type-checking docs examples (#8646)
           # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
           # 150 leaves room for that variance while still failing a regression like #8077's 328 to
           # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-clai2` took a passing run to
           # 156 s, so 200 keeps the same headroom.
           PYRIGHT_TIME_BUDGET: "200"
-          # pre-commit hooks shell out via `uv run`; without this they would re-sync the venv
-          # down to the root package and drop the `--all-packages` install above.
           UV_NO_SYNC: "1"
+        run: make typecheck-changed
 
       # Run inside `quality checks`, which finishes several minutes before the test/coverage critical path.
       - name: Check public API compatibility with the latest release
@@ -299,7 +329,7 @@ jobs:
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -375,7 +405,7 @@ jobs:
         with:
           extra_args: --all-files --verbose
         env:
-          SKIP: no-commit-to-branch,format,lint,typecheck,check-cassettes
+          SKIP: no-commit-to-branch,format,lint,check-cassettes
           UV_NO_SYNC: "1"
 
       - name: Test documentation snippets
@@ -411,13 +441,27 @@ jobs:
             paths: tests/clai2
           - name: standard
             command: ""
+        # A single-value dimension, so the `exclude` below can drop every cell but
+        # `pydantic-clai2` when `classify` found a change confined to it.
+        clai2_only: ["${{ needs.classify.outputs.clai2_only }}"]
+        exclude:
+          - clai2_only: "true"
+            install: { name: pydantic-ai-slim }
+          - clai2_only: "true"
+            install: { name: pydantic-evals }
+          - clai2_only: "true"
+            install: { name: pydantic-ai-harness }
+          - clai2_only: "true"
+            install: { name: standard }
     env:
       CI: true
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
       # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
-      # every applicable test without duplicate coverage.
-      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
+      # every applicable test without duplicate coverage. A `pydantic-clai2`-only change also
+      # collects it on 3.10: `tests/clai2` has 3.10-only branches that `all-extras` covers otherwise.
+      COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.10' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
+      CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -446,6 +490,10 @@ jobs:
       - name: run tests
         shell: bash
         run: |
+          extra=()
+          if [[ -n "$CLAI2_EXTRA" ]]; then
+            extra=(--extra "$CLAI2_EXTRA")
+          fi
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
             runner=(coverage run -m pytest)
@@ -453,7 +501,7 @@ jobs:
             unset COVERAGE_PROCESS_START
             runner=(pytest)
           fi
-          uv run ${{ matrix.install.command }} "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run ${{ matrix.install.command }} "${extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec ${{ matrix.install.paths }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
@@ -463,7 +511,13 @@ jobs:
       # job, which would otherwise merge hundreds of files on the critical path.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
-        run: uv run ${{ matrix.install.command }} coverage combine
+        shell: bash
+        run: |
+          extra=()
+          if [[ -n "$CLAI2_EXTRA" ]]; then
+            extra=(--extra "$CLAI2_EXTRA")
+          fi
+          uv run ${{ matrix.install.command }} "${extra[@]}" coverage combine
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
@@ -481,7 +535,7 @@ jobs:
   test-all-extras:
     name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/2)
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -620,7 +674,7 @@ jobs:
   test-durable-exec:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -716,7 +770,7 @@ jobs:
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/2)
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -824,7 +878,7 @@ jobs:
   test-temporal-latest:
     name: test Temporal latest on Python 3.10
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -850,7 +904,7 @@ jobs:
   test-examples:
     name: test examples on ${{ matrix.python-version }}
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -879,7 +933,7 @@ jobs:
   test-harness-browser-use:
     name: test harness browser-use
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -908,7 +962,7 @@ jobs:
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1130,7 +1184,9 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4]
-    if: needs.classify.outputs.docs_only != 'true'
+    # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
+    # otherwise skip this job too.
+    if: ${{ !failure() && !cancelled() && needs.classify.outputs.docs_only != 'true' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1150,7 +1206,17 @@ jobs:
 
       - run: uv sync --group dev --group coverage
       - run: uv run --no-sync coverage combine
-      - run: uv run --no-sync coverage report
+      # Only the `pydantic-clai2` cells ran for a change confined to it, so they can only vouch
+      # for its own tests: the rest of the workspace is covered on the full path.
+      - name: coverage report
+        env:
+          CLAI2_ONLY: ${{ needs.classify.outputs.clai2_only }}
+        run: |
+          if [ "$CLAI2_ONLY" = true ]; then
+            uv run --no-sync coverage report --include='tests/clai2/*'
+          else
+            uv run --no-sync coverage report
+          fi
 
       - run: uv run --no-sync strict-no-cover
         env:
@@ -1187,7 +1253,8 @@ jobs:
         with:
           # The canary is advisory because it tests dependency versions we do not lock; its failures
           # signal upstream drift rather than release blockers. It runs on tag refs only, and
-          # `docs-only` runs only for Markdown-only PRs.
+          # `docs-only` runs only for Markdown-only PRs, and a PR confined to `pydantic-clai2` skips the
+          # jobs that exercise the rest of the workspace.
           # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
           # The harness integration jobs run only when their paths change (always on tags), and
           # LocalStack also skips where its secret is unreadable.
@@ -1196,6 +1263,8 @@ jobs:
             ${{
               needs.classify.outputs.docs_only == 'true'
               && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage'
+              || needs.classify.outputs.clai2_only == 'true'
+              && 'docs-only,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || github.ref_type == 'tag'
               && 'docs-only,harness-integration-changes,harness-localstack-integration'
               || 'docs-only,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'

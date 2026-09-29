@@ -6,8 +6,7 @@ from pathlib import Path
 
 import httpx2
 import pytest
-from vcr.cassette import Cassette
-from vcr.record_mode import RecordMode
+from cassetter import Cassette, RecordMode
 
 from pydantic_ai import (
     Agent,

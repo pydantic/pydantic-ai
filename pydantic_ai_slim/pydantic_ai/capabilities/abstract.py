@@ -36,6 +36,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
 )
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._merge import merge_capability_fields
 from ._on_event import collect_on_event_methods, marked_listens_to
@@ -535,6 +536,9 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         """
         return None
 
+    def _default_run_id(self) -> str | None:
+        return None
+
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         """Return a static model, a per-step model selector, or `None` to make no selection.
 
@@ -578,6 +582,30 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     def get_native_tools(self) -> Sequence[AgentNativeTool[AgentDepsT]]:
         """Return native tools to register with the agent."""
         return []
+
+    @property
+    def _has_get_workspace(self) -> bool:
+        """Whether this capability or a wrapped capability overrides `get_workspace`."""
+        return type(self).get_workspace is not AbstractCapability.get_workspace
+
+    def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        """Return the run's workspace backend for `ref`, or `None` to leave it to another capability.
+
+        `ref` names an environment to continue in (from `workspace=` or the message history); `None`
+        asks for a fresh one. Build the backend only, without I/O or side effects: it creates or
+        attaches on first use. Capabilities passed to the run are asked before the agent's, each list in
+        order, before `for_run`; the first answer wins. Return `None` for a `ref` you don't own. A
+        workspace is chosen when the run starts, so a capability that supplies one can't be deferred.
+        Return a `Workspace` around the backend, such as `ReadOnlyWorkspace(Workspace(backend))`, to apply a policy.
+        """
+        return None
+
+    def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+        """Prepare the run's selected workspace for the run; called once per selection.
+
+        Private: durability capabilities use it to route workspace calls through durable units.
+        """
+        return workspace
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, or return None to leave it unchanged.
@@ -1336,6 +1364,31 @@ def _combination_roots(capability: AbstractCapability[AgentDepsT]) -> Sequence[A
     from .combined import CombinedCapability
 
     return capability.capabilities if isinstance(capability, CombinedCapability) else [capability]
+
+
+def select_workspace(
+    capability: AbstractCapability[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    *,
+    ref: WorkspaceRef | None,
+    run_layer: AbstractCapability[AgentDepsT] | None = None,
+) -> Workspace | None:
+    """The workspace the capabilities supply for `ref`, as a `Workspace`, or `None` if none does.
+
+    The run's own capabilities (`run_layer`, part of `capability`) are asked first, as every other run
+    argument overrides the agent's; then `capability`, where the first to return one wins.
+    """
+    selected = run_layer.get_workspace(ctx, ref=ref) if run_layer is not None else None
+    if selected is None:
+        selected = capability.get_workspace(ctx, ref=ref)
+    if ref is not None and selected is not None and selected.ref != ref:
+        # A resolver must not replace an expired or unauthorized environment with a fresh one; a backend
+        # without a ref would create one on first use.
+        raise UserError(
+            "A workspace capability's `get_workspace` returned a different workspace than requested: "
+            f'asked for {ref!r}, got {selected.ref!r}'
+        )
+    return selected if selected is None or isinstance(selected, Workspace) else Workspace(selected)
 
 
 @dataclass(frozen=True)

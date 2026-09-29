@@ -9,7 +9,9 @@ callable, then add the `(name, callable, description)` row in
 `_BASE_TOOLS`.
 
 To replace a tool: edit the matching `<tool>.py` file. The signature is
-what gh-aw / Claude pass; the docstring becomes the tool's description.
+what gh-aw / Claude pass; the docstring becomes the tool's description. Tools
+that touch the workspace take a leading `RunContext` (injected by pydantic-ai,
+never shown to the model) and act on its `ctx.workspace`.
 
 Two tools are *not* in this package:
 

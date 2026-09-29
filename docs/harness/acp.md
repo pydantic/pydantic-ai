@@ -58,7 +58,7 @@ from pydantic_ai_harness.experimental.acp import run_acp_stdio_sync
 
 
 def build_agent() -> Agent[None, str]:
-    return Agent('anthropic:claude-sonnet-4-6', instructions='You are a coding assistant.')
+    return Agent('anthropic:claude-sonnet-5', instructions='You are a coding assistant.')
 
 
 if __name__ == '__main__':
@@ -94,37 +94,34 @@ A coding agent should read and write files in the workspace the editor opened, n
 
 ```python
 from pydantic_ai import Agent
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.experimental.acp import AcpSession, AcpSessionConfig, run_acp_stdio_sync
 
-agent = Agent('anthropic:claude-sonnet-4-6')
+agent = Agent('anthropic:claude-sonnet-5')
 
 
 def session_config(session: AcpSession) -> AcpSessionConfig[None]:
-    # Root file and shell tools at the workspace the client opened.
-    return AcpSessionConfig(
-        deps=None,
-        capabilities=[
-            FileSystem[None](root_dir=session.cwd),
-            Shell[None](cwd=session.cwd),
-        ],
-    )
+    # Run file and shell tools in the directory the client opened.
+    workspace = LocalWorkspaceBackend(session.cwd)
+    return AcpSessionConfig(deps=None, capabilities=[FileSystem[None](), Shell[None]()], workspace=workspace)
 
 
 if __name__ == '__main__':
     run_acp_stdio_sync(agent, session_config=session_config)
 ```
 
-The factory runs once per session with the client's `AcpSession` setup (its `cwd`, `mcp_servers`, and capabilities) and returns an `AcpSessionConfig` whose `deps`, `capabilities`, and `toolsets` apply to every run in that session. This is correct across multiple concurrent sessions in one process, where a single static `FileSystem` could not be.
+The factory runs once per session with the client's `AcpSession` setup (its `cwd`, `mcp_servers`, and capabilities) and returns an `AcpSessionConfig` whose `deps`, `capabilities`, `toolsets`, and optional `workspace` apply to every run in that session. This is correct across multiple concurrent sessions in one process, where a single static `FileSystem` could not be.
 
 Use `capabilities` for session behavior so hooks, instructions, ordering constraints, and capability event ownership are preserved. Keep `toolsets` for bare toolsets such as MCP servers. Session capabilities and toolsets are added to the agent's own configuration.
 
 ## Editor-native filesystem and shell (optional)
 
-The local [`FileSystem`](filesystem.md) and [`Shell`](shell.md) above operate on the agent process's own disk and subprocesses. An editor's source of truth is different: unsaved buffers, its own idea of the workspace layout, and -- for a remote or containerized editor -- the machine the code actually lives on. When the client advertises support, `acp_filesystem` and `acp_terminal` give the agent `read_file`/`write_file`/`run_command` tools that route through the client, so it acts where the user is:
+The local [`FileSystem`](filesystem.md) and [`Shell`](shell.md) above operate on the session's workspace -- with `LocalWorkspaceBackend`, the agent machine's own disk and subprocesses. An editor's source of truth is different: unsaved buffers, its own idea of the workspace layout, and -- for a remote or containerized editor -- the machine the code actually lives on. When the client advertises support, `acp_filesystem` and `acp_terminal` give the agent `read_file`/`write_file`/`run_command` tools that route through the client, so it acts where the user is:
 
 ```python
+from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.experimental.acp import AcpSession, AcpSessionConfig, acp_filesystem, acp_terminal
@@ -132,16 +129,17 @@ from pydantic_ai_harness.experimental.acp import AcpSession, AcpSessionConfig, a
 
 def session_config(session: AcpSession) -> AcpSessionConfig[None]:
     # Use the editor's filesystem/terminal when offered; otherwise fall back to local.
-    fs = acp_filesystem(session) or FileSystem[None](root_dir=session.cwd)
-    shell = acp_terminal(session) or Shell[None](cwd=session.cwd)
-    return AcpSessionConfig(deps=None, capabilities=[fs, shell])
+    fs = acp_filesystem(session) or FileSystem[None]()
+    shell = acp_terminal(session) or Shell[None]()
+    workspace = LocalWorkspaceBackend(session.cwd)
+    return AcpSessionConfig(deps=None, capabilities=[fs, shell], workspace=workspace)
 ```
 
 Each helper returns a core `Toolset` capability wrapping the client-backed toolset. Pass it in `capabilities`, not `toolsets`. To use a bare toolset directly, construct `AcpFileSystemToolset` or `AcpTerminalToolset` instead. These wrappers add no telemetry spans; core already traces their tool calls.
 
 Each helper returns `None` when the client did not advertise the capability, so the `or` falls back to local and the agent works either way. The tool names match the local `FileSystem`/`Shell`, so rich rendering stays identical.
 
-If a client advertises filesystem reads but not writes, `acp_filesystem` keeps editor-native reads and writes to the local workspace at `session.cwd`. Use this only when the agent shares the editor's workspace disk; for a remote editor, those writes land on the agent's disk.
+If a client advertises filesystem reads but not writes, `acp_filesystem` keeps editor-native reads and sends writes through the session's workspace (`AcpSessionConfig.workspace`), bounded by `session.cwd`; without one, they go to this machine at `session.cwd`. Use this only when that workspace shares the editor's disk; for a remote editor, those writes land on the agent's side.
 
 ## Tool approval
 
@@ -201,7 +199,7 @@ run_acp_stdio_sync(agent, session_store=InMemorySessionStore())
 Pass `models` to advertise a stable ACP session config option named `model` (using Pydantic AI [model names](../models/overview.md)). The first is each session's default. A selection is applied as a per-run override -- the shared agent is never mutated -- and is persisted with the session when a `session_store` is set.
 
 ```python
-run_acp_stdio_sync(agent, models=['anthropic:claude-sonnet-4-6', 'anthropic:claude-opus-4-8', 'openai:gpt-4o'])
+run_acp_stdio_sync(agent, models=['anthropic:claude-sonnet-5', 'anthropic:claude-opus-4-8', 'openai:gpt-4o'])
 ```
 
 A model id is any string a Pydantic AI model accepts, so newer models not yet in `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows. To advertise ids `infer_model` does not understand (OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`.
@@ -224,7 +222,7 @@ run_acp_stdio(            # async; serve until the client disconnects
     deps=None,
     name=None,            # advertised name; defaults to the agent's name
     version='0.1.0',
-    session_config=None,  # per-session deps/toolsets from the client's setup
+    session_config=None,  # per-session deps/capabilities/toolsets/workspace from the client's setup
     permission_policy=None,   # scope of remembered "always" approval decisions
     prompt_capabilities=None, # defaults to text-only
     mcp_capabilities=None,    # MCP transports to advertise; needs a session_config to connect them

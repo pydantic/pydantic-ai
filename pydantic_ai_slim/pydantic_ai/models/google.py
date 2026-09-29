@@ -1113,6 +1113,13 @@ class GoogleModel(Model[Client]):
             provider_details['avg_logprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
+        web_search_queries, returned_web_source = _grounding_searches(response)
+        _set_web_search_usage(
+            usage,
+            web_search_queries,
+            returned_web_source,
+            billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
+        )
         grounding_metadata = candidate.grounding_metadata if candidate else None
         url_context_metadata = candidate.url_context_metadata if candidate else None
 
@@ -1154,6 +1161,7 @@ class GoogleModel(Model[Client]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
+            _web_search_billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
         )
 
     async def _map_messages(  # noqa: C901
@@ -1434,6 +1442,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
+    _web_search_billed_per_prompt: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
@@ -1455,6 +1464,13 @@ class GeminiStreamedResponse(StreamedResponse):
         try:
             async for chunk in self._response:
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
+                web_search_queries, returned_web_source = _grounding_searches(chunk)
+                _set_web_search_usage(
+                    self._usage,
+                    web_search_queries,
+                    returned_web_source,
+                    billed_per_prompt=self._web_search_billed_per_prompt,
+                )
 
                 if (
                     chunk.sdk_http_response
@@ -2061,17 +2077,6 @@ def _metadata_as_usage(
     metadata = response.usage_metadata
     if metadata is None:
         return existing_usage or usage.RequestUsage()
-    grounding = [c.grounding_metadata for c in response.candidates or [] if c.grounding_metadata is not None]
-    # Gemini 3 bills each unique non-empty query, see https://ai.google.dev/gemini-api/docs/google-search#pricing.
-    web_search_requests = len({query for g in grounding for query in g.web_search_queries or [] if query.strip()})
-    # Gemini 2.x and older bill once per grounded prompt, and only when it returned a web source,
-    # see https://cloud.google.com/vertex-ai/generative-ai/pricing.
-    model_version = response.model_version or ''
-    if 'gemini-1' in model_version or 'gemini-2.' in model_version:
-        returned_sources = any(chunk.web and chunk.web.uri for g in grounding for chunk in g.grounding_chunks or [])
-        web_searches = 1 if web_search_requests and returned_sources else 0
-    else:
-        web_searches = web_search_requests
     return _usage_metadata_as_usage(
         prompt_token_count=metadata.prompt_token_count,
         output_token_count=metadata.candidates_token_count,
@@ -2083,13 +2088,40 @@ def _metadata_as_usage(
         output_tokens_details=metadata.candidates_tokens_details,
         tool_use_prompt_tokens_details=metadata.tool_use_prompt_tokens_details,
         output_details_prefix='candidates',
-        web_searches=web_searches,
-        web_search_requests=web_search_requests,
         extract_data=response.model_dump(include={'model_version', 'usage_metadata'}, by_alias=True),
         provider=provider,
         provider_url=provider_url,
         existing_usage=existing_usage,
     )
+
+
+def _grounding_searches(response: GenerateContentResponse) -> tuple[set[str], bool]:
+    """Return the unique non-empty Google Search grounding queries and whether any web source came back."""
+    grounding = [c.grounding_metadata for c in response.candidates or [] if c.grounding_metadata is not None]
+    queries = {query for g in grounding for query in g.web_search_queries or [] if query.strip()}
+    returned_web_source = any(chunk.web and chunk.web.uri for g in grounding for chunk in g.grounding_chunks or [])
+    return queries, returned_web_source
+
+
+def _set_web_search_usage(
+    request_usage: usage.RequestUsage, queries: set[str], returned_web_source: bool, *, billed_per_prompt: bool
+) -> None:
+    """Record Google Search grounding on `request_usage` as the count Google bills.
+
+    Gemini 3 bills each unique non-empty query; Gemini 2.5 and older bill once per grounded prompt, and only when it
+    returned a web source. See https://ai.google.dev/gemini-api/docs/google-search#pricing and
+    https://cloud.google.com/vertex-ai/generative-ai/pricing. genai-prices can't extract either from the raw payload,
+    so the billed count is set as first-class `web_searches` and the query count as a `web_search_requests` detail.
+    """
+    if not queries:
+        return
+    request_usage.details['web_search_requests'] = len(queries)
+    if billed_per_prompt:
+        web_searches = 1 if returned_web_source else 0
+    else:
+        web_searches = len(queries)
+    if web_searches:
+        request_usage.web_searches = web_searches  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def _usage_metadata_as_usage(
@@ -2104,8 +2136,6 @@ def _usage_metadata_as_usage(
     output_tokens_details: Sequence[ModalityTokenCount] | None,
     tool_use_prompt_tokens_details: Sequence[ModalityTokenCount] | None,
     output_details_prefix: Literal['candidates', 'response'],
-    web_searches: int | None = None,
-    web_search_requests: int | None = None,
     extract_data: dict[str, Any],
     provider: str,
     provider_url: str,
@@ -2118,11 +2148,6 @@ def _usage_metadata_as_usage(
     detail keys with `output_details_prefix`. `extract_data` is the raw response payload
     [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
     speaks the generate-content field names, so a Live caller translates before handing it over.
-
-    `web_searches` is the billed Google Search grounding count and `web_search_requests` the number of queries the
-    model ran; they differ on Gemini 2.5 and older, which bill per grounded prompt. genai-prices can't yet extract
-    either from the raw payload, so the caller counts them from the candidates and passes them in; they are surfaced
-    as first-class `web_searches` and an informational `web_search_requests` detail.
     """
     details: dict[str, int] = {}
     if cached_content_token_count:
@@ -2147,9 +2172,6 @@ def _usage_metadata_as_usage(
                 continue
             details[f'{detail.modality.lower()}_{prefix}_tokens'] = detail.token_count
 
-    if web_search_requests:
-        details['web_search_requests'] = web_search_requests
-
     # Gemini streams usage as cumulative snapshots, but a field reported on an earlier chunk can be
     # absent from a later one (e.g. `cached_content_token_count` when streamed through a gateway, see https://github.com/pydantic/pydantic-ai/issues/5205).
     # Merge with the usage accumulated so far so those values survive instead of being overwritten with 0.
@@ -2163,13 +2185,6 @@ def _usage_metadata_as_usage(
         provider_fallback='google',
         details=details,
     )
-
-    # genai-prices can't map Google grounding searches from the raw payload, so the count computed from the
-    # response candidates is set first-class here. An earlier streamed chunk can report queries that a later
-    # cumulative chunk's candidates no longer carry, so carry the value forward like the token fields below.
-    web_searches = web_searches or getattr(existing_usage, 'web_searches', None)
-    if web_searches:
-        new_usage.web_searches = web_searches  # pyright: ignore[reportAttributeAccessIssue]
 
     # `extract` derives the typed token fields from the raw `usage_metadata`, not from the merged
     # `details`, so a field a later cumulative chunk dropped stays zeroed; backfill it from the usage
