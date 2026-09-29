@@ -19,25 +19,32 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, ClassVar, Literal, TypeAlias
 
 from . import _utils
+from .messages import CompactionPart, ModelResponse
 from .profiles import ModelProfile, _expected_cache_retention  # pyright: ignore[reportPrivateUsage]
 
 if TYPE_CHECKING:
-    from .messages import ModelResponse
     from .models import ModelRequestContext
 
-CollapseReason: TypeAlias = Literal['unexpected', 'ttl-expired', 'unknown', 'unreported']
-"""Why a cached prefix collapsed, as far as the provider's usage and retention window can tell.
+CollapseReason: TypeAlias = Literal['unexpected', 'ttl_expired', 'compacted', 'unknown', 'unreported']
+"""Why a cached prefix collapsed, as far as the history, the provider's usage, and its retention window can tell.
 
 - `'unexpected'`: the retention window should still have been active, so the prefix moved.
-- `'ttl-expired'`: the gap since the last request for the same cache exceeded the retention window.
+- `'ttl_expired'`: the gap since the last request for the same cache exceeded the retention window.
+- `'compacted'`: a [`CompactionPart`][pydantic_ai.messages.CompactionPart] replaced the history since the
+  last request, which shrinks the prefix by design.
 - `'unknown'`: the provider publishes no retention window, so the collapse can't be attributed.
 - `'unreported'`: the response reported no cache usage at all, so the cause can't be determined.
 """
 
-COLLAPSE_RATIO = 0.5
-"""A request reading back less than this fraction of the established prefix counts as a collapse."""
-MIN_PREFIX_TOKENS = 1024
-"""Only judge collapse once the established prefix reaches this size (Anthropic's minimum cacheable prefix)."""
+MIN_MISSED_RATIO = 0.05
+"""A request collapsed when it falls short of the established prefix by more than this fraction of it..."""
+MIN_MISSED_TOKENS = 2000
+"""...and by at least this many tokens: the thresholds Claude Code uses for a prompt-cache miss.
+
+Message history is append-only, so any real shortfall means the prefix moved or the cache expired. The
+thresholds only keep provider rounding and small partial misses out; the classification is what keeps
+expiries from alerting.
+"""
 
 CacheKey: TypeAlias = tuple[str | None, str | None, str | None]
 """A response's `(provider_name, provider_url, model_name)`: which provider cache its tokens came from."""
@@ -53,6 +60,8 @@ class CacheMark:
     """When the provider last reported cache usage for this key, which starts its retention clock."""
     run_id: str | None
     """The run that made that request."""
+    compactions: int = 0
+    """How many `CompactionPart`s the history had as of that request, to tell a compaction since."""
     alerted: bool = False
     """Whether a collapse was alerted on and the cache hasn't re-stabilized since, so a sustained collapse
     alerts once rather than on every request."""
@@ -114,7 +123,7 @@ class CacheCollapse:
     previous: CacheMark
     """The mark the request was judged against."""
     cache_read_tokens: int
-    wasted_tokens: int
+    missed_tokens: int
     """Previously established tokens that were not read back."""
     idle: timedelta
     """Time since `previous` was recorded."""
@@ -138,6 +147,16 @@ class CacheHealth:
 
 def cache_hit_ratio(cache_read_tokens: int, input_tokens: int) -> float:
     return cache_read_tokens / input_tokens if input_tokens else 0.0
+
+
+def _count_compactions(request_context: ModelRequestContext, response: ModelResponse) -> int:
+    """How many `CompactionPart`s the request's history and its response carry.
+
+    Anthropic and OpenAI's server-side compaction return the part in the response that compacted; OpenAI's
+    stateless compaction adds it to the history before the request. Either way the count grows.
+    """
+    responses = [message for message in request_context.messages if isinstance(message, ModelResponse)]
+    return sum(isinstance(part, CompactionPart) for message in [*responses, response] for part in message.parts)
 
 
 def _cache_retention(request_context: ModelRequestContext) -> timedelta | None:
@@ -177,8 +196,10 @@ class CacheHealthDetector:
     _: KW_ONLY
     alert_on: AbstractSet[CollapseReason]
     """The collapse reasons worth surfacing. Every collapse is classified and reported either way."""
-    collapse_ratio: float = COLLAPSE_RATIO
-    min_prefix_tokens: int = MIN_PREFIX_TOKENS
+    min_missed_ratio: float = MIN_MISSED_RATIO
+    min_missed_tokens: int = MIN_MISSED_TOKENS
+    min_prefix_tokens: int = 0
+    """Only judge an established prefix at least this large (kept for harness's deprecated `min_prefix_tokens`)."""
     marks: CacheMarks = field(init=False)
 
     def __post_init__(self) -> None:
@@ -202,9 +223,16 @@ class CacheHealthDetector:
             return None
 
         now = _utils.now_utc()
+        compactions = _count_compactions(request_context, response)
+        missed = established - read
         collapse: CacheCollapse | None = None
-        if mark is not None and established >= self.min_prefix_tokens and read < established * self.collapse_ratio:
-            collapse = self._classify(request_context, mark, read, now, unreported=unreported)
+        if (
+            mark is not None
+            and established >= self.min_prefix_tokens
+            and missed >= self.min_missed_tokens
+            and missed > established * self.min_missed_ratio
+        ):
+            collapse = self._classify(request_context, mark, read, now, unreported=unreported, compactions=compactions)
 
         updated_established = established
         if not unreported:
@@ -216,7 +244,7 @@ class CacheHealthDetector:
                 # deliberate bust (compaction, a rewritten prompt) is judged once rather than against
                 # a stale high-water mark on every later request.
                 updated_established, alerted = read + write, collapse.previous.alerted or collapse.alert
-            self.marks[key] = CacheMark(updated_established, now, self.run_id, alerted)
+            self.marks[key] = CacheMark(updated_established, now, self.run_id, compactions, alerted)
             self.store.update(self.conversation_id, self.marks, now)
         # An unreported response tells us nothing about the provider's copy of the prefix -- it may
         # still be sitting there, aging toward its TTL -- so the mark, its idle clock, and its alert
@@ -229,7 +257,14 @@ class CacheHealthDetector:
         )
 
     def _classify(
-        self, request_context: ModelRequestContext, mark: CacheMark, read: int, now: datetime, *, unreported: bool
+        self,
+        request_context: ModelRequestContext,
+        mark: CacheMark,
+        read: int,
+        now: datetime,
+        *,
+        unreported: bool,
+        compactions: int,
     ) -> CacheCollapse:
         idle = now - mark.last_seen
         retention: timedelta | None = None
@@ -239,18 +274,22 @@ class CacheHealthDetector:
             # `0/0` when the cache wasn't engaged at all -- caching disabled for this request, or a
             # prompt below the minimum cacheable size -- while providers that only report reads
             # (OpenAI's implicit caching) show `0/0` for a full cache miss. The established prefix was
-            # re-sent uncached either way, so the waste is real, but the cause isn't knowable from
+            # re-sent uncached either way, so the miss is real, but the cause isn't knowable from
             # usage alone.
             reason = 'unreported'
+        elif compactions > mark.compactions:
+            # Provider-native compaction (Anthropic's, OpenAI's) replaces the history before the
+            # `CompactionPart` with the compacted summary, so the prefix shrinks by design.
+            reason = 'compacted'
         elif (retention := _cache_retention(request_context)) is None:
             reason = 'unknown'
         else:
-            reason = 'ttl-expired' if idle > retention else 'unexpected'
+            reason = 'ttl_expired' if idle > retention else 'unexpected'
         return CacheCollapse(
             reason=reason,
             previous=mark,
             cache_read_tokens=read,
-            wasted_tokens=mark.established_tokens - read,
+            missed_tokens=mark.established_tokens - read,
             idle=idle,
             retention=retention,
             alert=reason in self.alert_on and not mark.alerted,

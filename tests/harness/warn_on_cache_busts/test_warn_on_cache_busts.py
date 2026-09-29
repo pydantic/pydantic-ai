@@ -25,7 +25,14 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -154,19 +161,31 @@ async def test_stable_prefix_is_silent() -> None:
     assert result.output == 'done'
 
 
-async def test_below_min_prefix_never_warns() -> None:
-    """A prefix under `min_prefix_tokens` is too small to judge, so a drop is ignored."""
-    usages = [_usage(read=0, write=500), _usage(read=500), _usage(read=10)]
+async def test_small_shortfall_never_warns() -> None:
+    """A miss has to be more than 5% of the established prefix and at least 2,000 tokens.
+
+    1,800 tokens short of a 1,900-token prefix is under the absolute floor; 4,000 tokens short of a
+    100,000-token prefix is under the relative one.
+    """
+    usages = [_usage(read=0, write=1900), _usage(read=100), _usage(read=0, write=100000), _usage(read=96000)]
     agent = _agent(usages, WarnOnCacheBusts())
     with warnings.catch_warnings():
         warnings.simplefilter('error', CacheBustWarning)
         await agent.run('hi')
 
 
+async def test_partial_prefix_move_warns() -> None:
+    """A change deep in the history moves only the tail of the prefix, so 90% still reads back: that warns."""
+    agent = _agent([_usage(read=0, write=100000), _usage(read=90000)], WarnOnCacheBusts())
+    with pytest.warns(CacheBustWarning) as record:
+        await agent.run('hi')
+    assert [bust.missed_tokens for bust in _busts(record)] == [10000]
+
+
 async def test_tunable_thresholds_catch_smaller_regression() -> None:
-    """Lowering the floor and raising the ratio flags a regression the defaults ignore."""
+    """Lowering both floors flags a regression the defaults ignore."""
     usages = [_usage(read=0, write=200), _usage(read=150)]
-    monitor = WarnOnCacheBusts[None](collapse_ratio=1.0, min_prefix_tokens=100)
+    monitor = WarnOnCacheBusts[None](min_missed_ratio=0.0, min_missed_tokens=10)
     agent = _agent(usages, monitor)
     with pytest.warns(CacheBustWarning):
         await agent.run('hi')
@@ -291,7 +310,7 @@ async def test_collapse_within_retention_warns_as_unexpected(monkeypatch: pytest
     with pytest.warns(CacheBustWarning) as record:
         await agent.run('second', message_history=first.all_messages())
     (bust,) = _busts(record)
-    assert (bust.reason, bust.established_tokens, bust.cache_read_tokens, bust.wasted_tokens) == (
+    assert (bust.reason, bust.established_tokens, bust.cache_read_tokens, bust.missed_tokens) == (
         'unexpected',
         8000,
         100,
@@ -304,7 +323,7 @@ async def test_collapse_after_retention_elapsed_is_silent(monkeypatch: pytest.Mo
     """A collapse once the retention window has elapsed is the provider's cache expiring, not a bust.
 
     This is what replaced the old `cache_ttl_seconds` guess: the window comes from the model, and
-    an expiry it explains (`ttl-expired`) doesn't warn, so a user coming back to a conversation
+    an expiry it explains (`ttl_expired`) doesn't warn, so a user coming back to a conversation
     after a break isn't told their prefix moved.
     """
     clock = _Clock(monkeypatch)
@@ -436,7 +455,7 @@ async def test_unknown_retention_warns_and_names_both_causes() -> None:
     with pytest.warns(CacheBustWarning) as record:
         await agent.run('hi')
     (bust,) = _busts(record)
-    assert (bust.reason, bust.established_tokens, bust.cache_read_tokens, bust.wasted_tokens) == (
+    assert (bust.reason, bust.established_tokens, bust.cache_read_tokens, bust.missed_tokens) == (
         'unknown',
         8000,
         100,
@@ -477,6 +496,20 @@ async def test_retention_is_timed_per_key_after_switch_away_and_back(monkeypatch
         capabilities=[WarnOnCacheBusts()],
         tools=[noop],
     )
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheBustWarning)
+        await agent.run('hi')
+
+
+async def test_compaction_does_not_warn() -> None:
+    """Provider-native compaction replaces the history before its `CompactionPart` with a summary, so the
+    request that compacted reads back far less than the old prefix by design: classified `compacted`, silent.
+    """
+    responses = [
+        ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000)),
+        ModelResponse(parts=[CompactionPart(content='summary'), TextPart('done')], usage=_usage(read=0, write=1500)),
+    ]
+    agent = _agent_from_responses(responses, WarnOnCacheBusts())
     with warnings.catch_warnings():
         warnings.simplefilter('error', CacheBustWarning)
         await agent.run('hi')
@@ -555,20 +588,54 @@ async def test_collapse_latch_carries_across_runs() -> None:
 
 def test_invalid_config_rejected() -> None:
     """Out-of-range thresholds fail fast at construction rather than distorting detection."""
+    with pytest.raises(ValueError, match='min_missed_ratio'):
+        WarnOnCacheBusts[None](min_missed_ratio=-0.1)
+    with pytest.raises(ValueError, match='min_missed_tokens'):
+        WarnOnCacheBusts[None](min_missed_tokens=-1)
     with pytest.raises(ValueError, match='collapse_ratio'):
         WarnOnCacheBusts[None](collapse_ratio=1.5)
-    with pytest.raises(ValueError, match='collapse_ratio'):
-        WarnOnCacheBusts[None](collapse_ratio=-0.1)
     with pytest.raises(ValueError, match='min_prefix_tokens'):
         WarnOnCacheBusts[None](min_prefix_tokens=-1)
 
 
 def test_config_boundaries() -> None:
-    """`collapse_ratio=0.0` (never warns) is rejected; `1.0` is accepted."""
-    with pytest.raises(ValueError, match='collapse_ratio'):
-        WarnOnCacheBusts[None](collapse_ratio=0.0)
-    # The upper bound is inclusive: 1.0 warns on any regression at all.
-    WarnOnCacheBusts[None](collapse_ratio=1.0)
+    """`min_missed_ratio=1.0` (a request can't miss more than the whole prefix) is rejected; `0.0` is accepted."""
+    with pytest.raises(ValueError, match='min_missed_ratio'):
+        WarnOnCacheBusts[None](min_missed_ratio=1.0)
+    # The lower bound is inclusive: 0.0 leaves only `min_missed_tokens` to decide.
+    WarnOnCacheBusts[None](min_missed_ratio=0.0)
+
+
+async def test_collapse_ratio_is_deprecated_and_converted() -> None:
+    """`collapse_ratio` still works, as its `min_missed_ratio` inverse, and warns once at construction.
+
+    With `collapse_ratio=0.5`, reading back 5,000 of 8,000 tokens (37.5% missed) stays quiet where the
+    5% default would warn, and reading back 3,000 (62.5% missed) warns. A positional first argument is
+    still `collapse_ratio`.
+    """
+    with pytest.warns(HarnessDeprecationWarning, match=r'pass `min_missed_ratio=0.5`'):
+        monitor = WarnOnCacheBusts[None](collapse_ratio=0.5)
+    assert monitor.min_missed_ratio == 0.5
+    agent = _agent([_usage(read=0, write=8000), _usage(read=5000), _usage(read=3000)], monitor)
+    with pytest.warns(CacheBustWarning) as record:
+        await agent.run('hi')
+    assert [type(w.message) for w in record] == [CacheBustWarning]
+    assert 'request 3' in str(record[0].message)
+
+    with pytest.warns(HarnessDeprecationWarning, match='collapse_ratio'):
+        assert WarnOnCacheBusts[None](0.25).min_missed_ratio == 0.75
+    with pytest.raises(TypeError, match='`collapse_ratio` is its deprecated inverse'):
+        WarnOnCacheBusts[None](collapse_ratio=0.5, min_missed_ratio=0.1)
+
+
+async def test_min_prefix_tokens_is_deprecated_and_still_honored() -> None:
+    """`min_prefix_tokens` warns once at construction and still keeps smaller prefixes from being judged."""
+    with pytest.warns(HarnessDeprecationWarning, match='min_missed_tokens'):
+        monitor = WarnOnCacheBusts[None](min_prefix_tokens=50000)
+    agent = _agent([_usage(read=0, write=40000), _usage(read=100)], monitor)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        await agent.run('hi')
 
 
 async def test_cache_ttl_seconds_is_deprecated_and_ignored() -> None:
@@ -610,7 +677,7 @@ def _instrumentation() -> tuple[Instrumentation, InMemorySpanExporter]:
     ('retention', 'gap', 'second', 'reason'),
     [
         (timedelta(minutes=5), timedelta(minutes=4), _usage(read=100), 'unexpected'),
-        (timedelta(minutes=5), timedelta(minutes=6), _usage(read=100), 'ttl-expired'),
+        (timedelta(minutes=5), timedelta(minutes=6), _usage(read=100), 'ttl_expired'),
         (None, timedelta(minutes=4), _usage(read=100), 'unknown'),
         (timedelta(minutes=5), timedelta(minutes=4), _usage(read=0, write=0), 'unreported'),
     ],

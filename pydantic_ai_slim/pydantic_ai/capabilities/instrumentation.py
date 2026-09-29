@@ -13,12 +13,7 @@ from opentelemetry.trace import StatusCode, get_current_span
 from pydantic_core import ValidationError, to_json
 
 from pydantic_ai import _usage_attribution
-from pydantic_ai._cache_health import (
-    CacheHealthDetector,
-    CollapseReason,
-    ConversationCacheMarkStore,
-    cache_hit_ratio,
-)
+from pydantic_ai._cache_health import CacheHealthDetector, CollapseReason, ConversationCacheMarkStore
 from pydantic_ai._instrumentation import (
     DEFAULT_INSTRUMENTATION_VERSION,
     InstrumentationNames,
@@ -94,9 +89,9 @@ class Instrumentation(AbstractCapability[Any]):
 
     Prompt-cache health is recorded on model-request spans using the
     `pydantic_ai.cache.hit_ratio`, `pydantic_ai.cache.established_tokens`,
-    `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.wasted_tokens`, and
+    `pydantic_ai.cache.collapsed`, `pydantic_ai.cache.missed_tokens`, and
     `pydantic_ai.cache.collapse_reason` attributes. Collapses are classified as
-    `unexpected`, `ttl-expired`, `unknown`, or `unreported`; only `unexpected` collapses
+    `unexpected`, `ttl_expired`, `compacted`, `unknown`, or `unreported`; only `unexpected` collapses
     emit a `pydantic_ai.cache.collapse` span event, so the event means the cacheable
     prefix moved while it should still have been warm. A sustained collapse emits the event
     once, until a healthy read-back re-stabilizes the cache. The established prefix is tracked
@@ -358,11 +353,7 @@ class Instrumentation(AbstractCapability[Any]):
         # that is the object the caller passed in, accumulated into in place, so it holds the whole
         # conversation when usage is carried across runs and a delegate's tokens when it is shared.
         # The per-request `chat` spans are unaffected either way.
-        usage_attrs: dict[str, int | float] = {**settings.aggregated_usage_attributes(self._run_usage)}
-        if self._run_usage.cache_read_tokens > 0:
-            usage_attrs['pydantic_ai.cache.hit_ratio'] = cache_hit_ratio(
-                self._run_usage.cache_read_tokens, self._run_usage.input_tokens
-            )
+        usage_attrs = settings.aggregated_usage_attributes(self._run_usage)
 
         return {
             **usage_attrs,
@@ -440,14 +431,14 @@ class Instrumentation(AbstractCapability[Any]):
         if collapse is None:
             return
         span.set_attribute('pydantic_ai.cache.collapsed', True)
-        span.set_attribute('pydantic_ai.cache.wasted_tokens', collapse.wasted_tokens)
+        span.set_attribute('pydantic_ai.cache.missed_tokens', collapse.missed_tokens)
         span.set_attribute('pydantic_ai.cache.collapse_reason', collapse.reason)
 
         if collapse.alert:
             event_attributes: dict[str, str | int] = {
                 'established_tokens': collapse.previous.established_tokens,
                 'cache_read_tokens': collapse.cache_read_tokens,
-                'wasted_tokens': collapse.wasted_tokens,
+                'missed_tokens': collapse.missed_tokens,
             }
             if response.provider_name is not None:
                 event_attributes['provider_name'] = response.provider_name

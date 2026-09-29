@@ -265,26 +265,29 @@ Instrumented agent runs report prompt-cache health without additional configurat
 
 | Attribute | Description |
 |-----------|-------------|
-| `pydantic_ai.cache.hit_ratio` | Fraction of input tokens read from the prompt cache, on model-request spans and on agent-run spans with cache reads. |
+| `pydantic_ai.cache.hit_ratio` | Fraction of the request's input tokens read from the prompt cache: `cache_read_tokens / input_tokens`, where input tokens include cache reads and writes. |
 | `pydantic_ai.cache.established_tokens` | The cached-prefix size later requests are judged against, for the conversation and the response's provider, endpoint (`provider_url`), and model. It grows as the prefix does, and drops to whatever the current request established after a collapse, so an intentional bust is reported once rather than against a stale high-water mark. |
-| `pydantic_ai.cache.collapsed` | `true` when a sufficiently large established prefix falls below half its previous size. |
-| `pydantic_ai.cache.wasted_tokens` | Previously established tokens that were not read after a collapse. |
-| `pydantic_ai.cache.collapse_reason` | Collapse classification: `unexpected`, `ttl-expired`, `unknown`, or `unreported`. |
+| `pydantic_ai.cache.collapsed` | `true` when the request read back less of the established prefix than it could have: more than 5% and at least 2,000 tokens short, the thresholds Claude Code uses for a prompt-cache miss. Message history is append-only, so any real shortfall means the prefix moved or the cache expired, including a partial move deep in the history. |
+| `pydantic_ai.cache.missed_tokens` | Previously established tokens that were not read after a collapse. |
+| `pydantic_ai.cache.collapse_reason` | Collapse classification: `unexpected`, `ttl_expired`, `compacted`, `unknown`, or `unreported`. More values may be added. |
 
-Only an `unexpected` collapse — one that happens while the provider's documented retention window should still have been active — emits a `pydantic_ai.cache.collapse` span event for alerting and investigation, carrying `established_tokens`, `cache_read_tokens` and `wasted_tokens` along with the `provider_name` and `model_name` that served the request. Every other classification is recorded on the span but stays silent, so the event means "the cacheable prefix moved when it shouldn't have" rather than "something about caching happened":
+These attributes are on model-request spans only. The agent-run span carries no cache ratio, since one aggregated across requests to different models isn't interpretable (the OpenTelemetry GenAI conventions dropped cache attributes from `invoke_agent` spans for the same reason); compute a run-level figure from its `gen_ai.aggregated_usage.*` token counts if you need one.
+
+Only an `unexpected` collapse — one that happens while the provider's documented retention window should still have been active — emits a `pydantic_ai.cache.collapse` span event for alerting and investigation, carrying `established_tokens`, `cache_read_tokens` and `missed_tokens` along with the `provider_name` and `model_name` that served the request. Every other classification is recorded on the span but stays silent, so the event means "the cacheable prefix moved when it shouldn't have" rather than "something about caching happened":
 
 | `collapse_reason` | Meaning | Emits the event |
 |-------------------|---------|-----------------|
 | `unexpected` | The retention window should still have been active, so the prefix moved. | Yes |
-| `ttl-expired` | The gap since the last request exceeded the provider's retention window. | No |
+| `ttl_expired` | The gap since the last request exceeded the provider's retention window. | No |
+| `compacted` | Provider-native compaction replaced the history before a [`CompactionPart`][pydantic_ai.messages.CompactionPart] with its summary, which shrinks the prefix by design. | No |
 | `unknown` | The provider publishes no retention window, so the collapse can't be attributed. | No |
 | `unreported` | The response reported no cache usage at all (see below). | No |
 
 A sustained collapse, such as a prefix that moves on every request so the provider keeps writing a cache nothing reads back, is recorded on every request's span, but emits the event once: it only fires again after a healthy read-back has re-stabilized the cache.
 
-A response reporting neither cache reads nor writes is ambiguous: on providers that report cache writes (Anthropic, Bedrock) it means the cache wasn't engaged for that request — caching disabled, or a prompt below the provider's minimum cacheable size — while on providers that only report reads (OpenAI's implicit caching) it is what a full cache miss looks like. The established prefix was re-sent uncached either way, so the collapse and its wasted tokens are recorded as `unreported`, but the cause can't be determined from usage alone, so no event is emitted. Before anything has been cached, such responses are ignored entirely.
+A response reporting neither cache reads nor writes is ambiguous: on providers that report cache writes (Anthropic, Bedrock) it means the cache wasn't engaged for that request — caching disabled, or a prompt below the provider's minimum cacheable size — while on providers that only report reads (OpenAI's implicit caching) it is what a full cache miss looks like. The established prefix was re-sent uncached either way, so the collapse and its missed tokens are recorded as `unreported`, but the cause can't be determined from usage alone, so no event is emitted. Before anything has been cached, such responses are ignored entirely.
 
-The established prefix is tracked per [conversation](message-history.md#correlating-runs-with-run_id-and-conversation_id), not per run, so a run that continues a conversation via `message_history` (including history that was serialized and loaded back) is judged against what the previous run cached. That is where a moved prefix most often shows: the first request of the next turn re-sends the prefix the previous turn cached, and anything that rewrote history in between — a compaction, a memory or todo write — makes it miss. The marks are kept in the process's memory: a conversation's are forgotten once it has been idle for longer than any provider keeps a cache (24 hours), or when more than 4,096 conversations have been active more recently.
+The established prefix is tracked per [conversation](message-history.md#correlating-runs-with-run_id-and-conversation_id), not per run, so a run that continues a conversation via `message_history` (including history that was serialized and loaded back) is judged against what the previous run cached. That is where a moved prefix most often shows: the first request of the next turn re-sends the prefix the previous turn cached, and anything that rewrote history in between — a history processor that compacts or clears tool results, a memory or todo write — makes it miss. (Provider-native compaction is recognized by its `CompactionPart` and classified `compacted`.) The marks are kept in the process's memory: a conversation's are forgotten once it has been idle for longer than any provider keeps a cache (24 hours), or when more than 4,096 conversations have been active more recently.
 
 Model switches never register as collapses: the established prefix is tracked per provider, endpoint, and model, so a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] failover starts a fresh mark, and switching back is judged against the original one.
 

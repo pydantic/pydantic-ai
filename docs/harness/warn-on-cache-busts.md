@@ -13,9 +13,9 @@ Warn when a conversation's prompt cache hit collapses between model requests, wi
 
 Prompt caching pays off only while the cacheable prefix (tools, then system instructions, then message history) stays byte-stable across a run's consecutive requests. When something moves that prefix -- reordered tools, a timestamp injected into instructions, a serialization-level block hop -- the provider re-charges tokens it could have served from cache.
 
-This is the **observe** signal: it reads the provider's own verdict rather than guessing from the structured request. On each response it reads `usage.cache_read_tokens` and tracks the largest cacheable prefix the conversation has established (`cache_read_tokens + cache_write_tokens`, a high-water mark), keyed by the response's `(provider_name, provider_url, model_name)`. Because message history is append-only, a stable prefix means each request for that model reads back at least what the previous one cached; a large drop is the observable signature of a collapse.
+This is the **observe** signal: it reads the provider's own verdict rather than guessing from the structured request. On each response it reads `usage.cache_read_tokens` and tracks the largest cacheable prefix the conversation has established (`cache_read_tokens + cache_write_tokens`, a high-water mark), keyed by the response's `(provider_name, provider_url, model_name)`. Because message history is append-only, a stable prefix means each request for that model reads back at least what the previous one cached, so any real shortfall is the observable signature of a collapse -- including a partial one, where a change deep in the history moves only the tail of the prefix.
 
-When a request reads back less than `collapse_ratio` of the established prefix, the monitor classifies the collapse against the provider's cache retention window (see below) and emits a `CacheBustWarning` unless the window explains it. The mark then re-baselines to what the collapsing request established, so an intentional bust is judged once rather than against a stale high-water mark, and the monitor stays quiet about the collapse until a healthy read-back re-stabilizes the cache. A prefix that moves on every request, so the provider keeps writing a cache nothing reads back, therefore warns once, not on every request.
+When a request falls short of the established prefix by more than `min_missed_ratio` of it (5%) and by at least `min_missed_tokens` (2,000), the thresholds Claude Code uses for a prompt-cache miss, the monitor classifies the collapse against the provider's cache retention window (see below) and emits a `CacheBustWarning` unless the window explains it. The mark then re-baselines to what the collapsing request established, so an intentional bust is judged once rather than against a stale high-water mark, and the monitor stays quiet about the collapse until a healthy read-back re-stabilizes the cache. A prefix that moves on every request, so the provider keeps writing a cache nothing reads back, therefore warns once, not on every request.
 
 ```python
 from pydantic_ai import Agent
@@ -37,10 +37,11 @@ A collapse has two shapes the token counts can't tell apart: the cacheable prefi
 |----------|---------|-------|
 | `unexpected` | The retention window should still have been active, so the prefix moved. | Yes |
 | `unknown` | The provider publishes no retention window, so a cache expiry can't be ruled out. | Yes |
-| `ttl-expired` | The gap since the same model's previous request exceeded the retention window. | No |
+| `ttl_expired` | The gap since the same model's previous request exceeded the retention window. | No |
+| `compacted` | Provider-native compaction replaced the history before a `CompactionPart` with its summary, which shrinks the prefix by design. | No |
 | `unreported` | The response reported no cache usage at all: caching was off for that request, or (on providers that only report reads) the cache fully missed. | No |
 
-The warning carries the classification as `CacheBustWarning.reason`, alongside `established_tokens`, `cache_read_tokens`, and `wasted_tokens`, and its message says how long ago the previous request for that model was.
+The warning carries the classification as `CacheBustWarning.reason`, alongside `established_tokens`, `cache_read_tokens`, and `missed_tokens`, and its message says how long ago the previous request for that model was.
 
 This is the detector Pydantic AI's instrumentation uses for its [prompt-cache health](../logfire.md#prompt-cache-health) span attributes, so the two classify every collapse the same way. Instrumentation's `pydantic_ai.cache.collapse` span event fires only for `unexpected` collapses; this warning also fires for `unknown` ones, so it still catches a moved prefix on providers that publish no retention window (Google and DeepSeek, for example) and under a `FallbackModel`, whose serving model's profile isn't known when the response arrives. Instrumentation and this capability each keep their own marks, so with both on one agent a collapse is reported through both, and neither misses one because the other already updated a shared mark.
 
@@ -52,12 +53,14 @@ Keying per provider, endpoint, and model means a mid-run model switch does not w
 
 Marks are kept per conversation (`RunContext.conversation_id`), not per run. A run that continues an earlier one via `message_history` -- including history that was serialized and loaded back, which carries the conversation id with it -- is judged against the prefix the earlier run established, so the first request of the next turn is checked against what the previous turn cached. That is where a moved prefix most often hides: history rewritten between turns, or a tool or instruction that differs from one turn to the next. A run that starts a new conversation (no history, or `conversation_id='new'`) starts from a clean mark. The warning says whether the mark it compared against came from this run or from an earlier run of the conversation.
 
-A continuation that comes back after the retention window has elapsed is classified `ttl-expired` and doesn't warn. A conversation's marks are forgotten once it has been idle for 24 hours, longer than any provider documents keeping a cache, or when more than 4,096 conversations on the same instance have been active more recently.
+A continuation that comes back after the retention window has elapsed is classified `ttl_expired` and doesn't warn. A conversation's marks are forgotten once it has been idle for 24 hours, longer than any provider documents keeping a cache, or when more than 4,096 conversations on the same instance have been active more recently.
 
 ## Options
 
-- `collapse_ratio` (default `0.5`): warn when a request reads back less than this fraction of the established prefix. Conservative by default so ordinary rounding or a partial miss does not fire; raise toward `1.0` to warn on smaller regressions. It must be greater than `0.0` -- a ratio of `0.0` could never warn, so it is rejected rather than treated as a silent disable switch.
-- `min_prefix_tokens` (default `1024`): only judge collapse once the established prefix reaches this many tokens. Below a provider's minimum cacheable size (Anthropic's is 1024) `cache_read_tokens` is noisy or zero.
+- `min_missed_ratio` (default `0.05`): only warn when a request falls short of the established prefix by more than this fraction of it. The default only keeps provider rounding out. It must be at least `0.0` and less than `1.0` -- a request can't miss more than the whole prefix.
+- `min_missed_tokens` (default `2000`): only warn when a request falls short of the established prefix by at least this many tokens, which keeps small partial misses on small prefixes out. Lower both to catch smaller regressions, such as in a test with a small prompt.
+- `collapse_ratio`: deprecated, with a `HarnessDeprecationWarning`. It warned when a request read back less than this fraction of the established prefix, and is still honored as `min_missed_ratio=1 - collapse_ratio`; pass that instead.
+- `min_prefix_tokens`: deprecated, with a `HarnessDeprecationWarning`, and still honored as a floor on the established prefix. `min_missed_tokens` implies a prefix at least that large; pass it instead.
 - `cache_ttl_seconds`: deprecated and ignored, with a `HarnessDeprecationWarning`. The retention window now comes from the model, as described above; remove the argument. To classify against a longer window, request it through the model's settings (such as `anthropic_cache='1h'`) or a `CachePoint(ttl='1h')`.
 
 ## Silencing and escalation
@@ -104,6 +107,7 @@ The monitor's signal is the `CacheBustWarning`; routing it through `logging` is 
 
 - **Observational only.** It reports that a cached prefix collapsed and whether the provider's retention window explains it, not what moved the prefix. The structural explanation ("what moved the prefix this turn") is a separate job.
 - **Fires only when caching is enabled and reported.** A run that never establishes a cache never warns.
+- **History rewritten by a history processor can warn.** Harness compaction strategies (such as `ClearToolResults` or `SummarizingCompaction`) rewrite messages the provider already cached, which moves the prefix like any other rewrite; only provider-native compaction, recognized by its `CompactionPart`, is classified `compacted`. Silence the warning around the runs where compaction is expected, as shown above.
 - **A mid-run model switch does not warn.** Marks are per `(provider_name, provider_url, model_name)`, so a `FallbackModel` failover starts a fresh mark rather than collapsing the previous model's.
 - **Marks are in-process memory.** They are held on the capability instance, so a conversation continued through a different instance, a different process, or a different worker starts from a clean mark; nothing is persisted or shared.
 
