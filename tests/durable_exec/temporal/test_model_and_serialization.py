@@ -77,7 +77,7 @@ try:
     from temporalio import workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client
-    from temporalio.contrib.opentelemetry import TracingInterceptor, create_tracer_provider
+    from temporalio.contrib.opentelemetry import TracingInterceptor
     from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
     from temporalio.converter import (
         DataConverter,
@@ -114,6 +114,7 @@ try:
         TemporalModel,
         _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
     )
+    from pydantic_ai.durable_exec.temporal._replay_safe_tracer_provider import ReplaySafeSDKTracerProvider
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 
     from .sandbox_workflow import PydanticAIPluginSandboxWorkflow
@@ -138,7 +139,9 @@ try:
     from logfire._internal.tracer import _ProxyTracer  # pyright: ignore[reportPrivateUsage]
     from logfire.testing import CaptureLogfire
     from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
-    from opentelemetry.trace import ProxyTracer, TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+    from opentelemetry.trace import ProxyTracer
 except ImportError:  # pragma: lax no cover
     pytest.skip('logfire not installed', allow_module_level=True)
 
@@ -463,25 +466,25 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
     configured_instance = instance if already_configured else logfire.configure(local=True, send_to_logfire=False)
     assert instance.config._initialized is already_configured  # pyright: ignore[reportPrivateUsage]
     monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', instance)
+    logfire_provider = configured_instance.config.get_tracer_provider().provider
+    assert isinstance(logfire_provider, SDKTracerProvider)
 
     configure_calls: list[dict[str, Any]] = []
     instrumented: list[tuple[Logfire, dict[str, Any]]] = []
-    tracer_provider_kwargs: list[dict[str, Any]] = []
 
+    # Like the real calls, the stand-ins leave Logfire configured and Pydantic AI instrumented, so the plugin
+    # (which sets up at every client, connect and worker hook) configures and instruments only once.
     def configure(**kwargs: Any) -> Logfire:
         configure_calls.append(kwargs)
+        monkeypatch.setattr(logfire, 'DEFAULT_LOGFIRE_INSTANCE', configured_instance)
         return configured_instance
 
     def instrument_pydantic_ai(self: Logfire, *args: Any, **kwargs: Any) -> None:
         instrumented.append((self, kwargs))
-
-    def create_replay_safe_tracer_provider(**kwargs: Any) -> TracerProvider:
-        tracer_provider_kwargs.append(kwargs)
-        return create_tracer_provider(**kwargs)
+        monkeypatch.setattr(Agent, '_instrument_default', True)
 
     monkeypatch.setattr(logfire, 'configure', configure)
     monkeypatch.setattr(Logfire, 'instrument_pydantic_ai', instrument_pydantic_ai)
-    monkeypatch.setattr('temporalio.contrib.opentelemetry.create_tracer_provider', create_replay_safe_tracer_provider)
     monkeypatch.setattr(Agent, '_instrument_default', False)
 
     plugin = LogfirePlugin()
@@ -491,21 +494,17 @@ async def test_logfire_plugin_default_setup(client: Client, monkeypatch: pytest.
     assert isinstance(worker_config['interceptors'][0], TracingInterceptor)
 
     assert configure_calls == ([] if already_configured else [{}])
-    assert len(instrumented) == 1
-    instrumented_instance, instrumentation_kwargs = instrumented[0]
-    assert instrumented_instance is configured_instance
-    tracer_provider = instrumentation_kwargs['tracer_provider']
-    configured_tracer_provider = configured_instance.config.get_tracer_provider().provider
-    assert tracer_provider is not configured_tracer_provider
-    assert isinstance(configured_tracer_provider, SDKTracerProvider)
-    assert tracer_provider_kwargs == [
-        {
-            'resource': configured_tracer_provider.resource,
-            'sampler': configured_tracer_provider.sampler,
-            'active_span_processor': configured_tracer_provider._active_span_processor,  # pyright: ignore[reportPrivateUsage]
-            'shutdown_on_exit': False,
-        }
-    ]
+    # Pydantic AI is instrumented through Logfire's own proxy, whose provider is now replay-safe and shares
+    # the configured provider's resource, sampler and span processor.
+    assert instrumented == [(configured_instance, {})]
+    replay_safe_provider = configured_instance.config.get_tracer_provider().provider
+    assert isinstance(replay_safe_provider, ReplaySafeSDKTracerProvider)
+    assert replay_safe_provider.resource is logfire_provider.resource
+    assert replay_safe_provider.sampler is logfire_provider.sampler
+    assert (
+        replay_safe_provider._active_span_processor  # pyright: ignore[reportPrivateUsage]
+        is logfire_provider._active_span_processor  # pyright: ignore[reportPrivateUsage]
+    )
 
 
 @pytest.fixture
@@ -515,44 +514,110 @@ def configured_logfire(monkeypatch: pytest.MonkeyPatch) -> Logfire:
     return instance
 
 
+def _is_replay_safe(tracer: Any) -> bool:
+    """Whether a tracer handed out by Logfire's proxy currently resolves to a replay-safe tracer."""
+    provider = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_tracer_provider().provider
+    return isinstance(provider, ReplaySafeSDKTracerProvider) and type(tracer.tracer) is type(provider.get_tracer('x'))
+
+
 def test_replay_safe_logfire_preserves_instrumentation_settings(
     monkeypatch: pytest.MonkeyPatch, configured_logfire: Logfire
 ):
-    """A host's own Pydantic AI instrumentation settings survive; only the tracer becomes replay-safe.
+    """A host's own Pydantic AI instrumentation settings survive and become replay-safe in place.
 
     `instrument_pydantic_ai()` replaces rather than merges `Agent._instrument_default`, so calling it
     unconditionally would turn a deliberate `include_content=False` back on, putting prompts,
     completions and tool call results on exported spans.
     """
-    global_tracer_provider = configured_logfire.config.get_tracer_provider().provider
-    assert isinstance(global_tracer_provider, SDKTracerProvider)
-    host_settings = InstrumentationSettings(include_content=False, include_binary_content=False)
+    host_settings = InstrumentationSettings(
+        tracer_provider=configured_logfire.config.get_tracer_provider(),
+        include_content=False,
+        include_binary_content=False,
+    )
     monkeypatch.setattr(Agent, '_instrument_default', host_settings)
+    assert not _is_replay_safe(host_settings.tracer)
 
-    _, replay_safe_tracer_provider = _setup_replay_safe_logfire()
+    _setup_replay_safe_logfire()
 
-    settings = Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
-    assert isinstance(settings, InstrumentationSettings)
-    assert settings is not host_settings
-    assert settings.include_content is False
-    assert settings.include_binary_content is False
-    assert type(settings.tracer) is type(replay_safe_tracer_provider.get_tracer('test'))
-    assert type(settings.tracer) is not type(global_tracer_provider.get_tracer('test'))
+    assert Agent._instrument_default is host_settings  # pyright: ignore[reportPrivateUsage]
+    assert host_settings.include_content is False
+    assert host_settings.include_binary_content is False
+    assert _is_replay_safe(host_settings.tracer)
 
 
 def test_replay_safe_logfire_instruments_uninstrumented_host(
     monkeypatch: pytest.MonkeyPatch, configured_logfire: Logfire
 ):
-    global_tracer_provider = configured_logfire.config.get_tracer_provider().provider
-    assert isinstance(global_tracer_provider, SDKTracerProvider)
     monkeypatch.setattr(Agent, '_instrument_default', False)
 
-    _, replay_safe_tracer_provider = _setup_replay_safe_logfire()
+    _setup_replay_safe_logfire()
 
     settings = Agent._instrument_default  # pyright: ignore[reportPrivateUsage]
     assert isinstance(settings, InstrumentationSettings)
-    assert type(settings.tracer) is type(replay_safe_tracer_provider.get_tracer('test'))
-    assert type(settings.tracer) is not type(global_tracer_provider.get_tracer('test'))
+    assert _is_replay_safe(settings.tracer)
+
+
+def test_replay_safe_logfire_honors_suppressed_scopes(monkeypatch: pytest.MonkeyPatch, capfire: CaptureLogfire):
+    """`logfire.suppress_scopes('pydantic-ai')` keeps prompts off exported spans under replay-safe tracing too.
+
+    Logfire enforces suppression in its tracer proxy, so the replay-safe provider has to sit behind the proxy
+    rather than hand out tracers directly.
+    """
+    proxy = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_tracer_provider()
+    # `suppress_scopes()` is process-wide; start from an empty set that `monkeypatch` restores afterwards.
+    monkeypatch.setattr(proxy, 'suppressed_scopes', set[str]())
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+    _setup_replay_safe_logfire()
+    logfire.suppress_scopes('pydantic-ai')
+
+    Agent(TestModel()).run_sync('A prompt the host does not want exported')
+
+    assert capfire.exporter.exported_spans_as_dict() == []
+
+
+def test_replay_safe_sdk_tracer_provider_forwards_flush_to_shared_processor():
+    """Logfire only forwards `force_flush()` to an SDK provider, so the replay-safe provider must be one."""
+    exporter = InMemorySpanExporter()
+    provider = SDKTracerProvider(shutdown_on_exit=False)
+    provider.add_span_processor(BatchSpanProcessor(exporter, schedule_delay_millis=60_000))
+    replay_safe_provider = ReplaySafeSDKTracerProvider(provider)
+    assert isinstance(replay_safe_provider, SDKTracerProvider)
+
+    with replay_safe_provider.get_tracer('test').start_as_current_span('batched'):
+        pass
+    assert exporter.get_finished_spans() == ()
+
+    assert replay_safe_provider.force_flush()
+    assert [span.name for span in exporter.get_finished_spans()] == ['batched']
+    replay_safe_provider.shutdown()
+
+
+def test_logfire_plugin_restores_replay_safety_after_reconfigure(
+    client: Client, monkeypatch: pytest.MonkeyPatch, capfire: CaptureLogfire
+):
+    """`logfire.configure()` swaps a fresh provider into Logfire's proxy; the next worker reinstalls replay-safety."""
+    monkeypatch.setattr(Agent, '_instrument_default', False)
+    proxy = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_tracer_provider()
+    plugin = LogfirePlugin()
+    worker_config = plugin.configure_worker({'client': client})
+    assert 'interceptors' in worker_config
+    interceptor = worker_config['interceptors'][0]
+    assert isinstance(interceptor, TracingInterceptor)
+    replay_safe_provider = proxy.provider
+    assert isinstance(replay_safe_provider, ReplaySafeSDKTracerProvider)
+    assert _is_replay_safe(interceptor.tracer)
+
+    # Setting up again without a reconfigure keeps the installed provider rather than wrapping it twice.
+    plugin.configure_worker({'client': client})
+    assert proxy.provider is replay_safe_provider
+
+    logfire.configure(send_to_logfire=False, console=False)
+    assert not _is_replay_safe(interceptor.tracer)
+
+    worker_config = plugin.configure_worker({'client': client})
+    assert 'interceptors' in worker_config
+    assert worker_config['interceptors'][0] is interceptor
+    assert _is_replay_safe(interceptor.tracer)
 
 
 replay_safe_logfire_agent = Agent(
@@ -605,6 +670,13 @@ async def test_logfire_plugin_does_not_emit_spans_during_replay(
     replayed_spans = capfire.exporter.exported_spans_as_dict()
     assert len(replayed_spans) == span_count
     assert sum(span['name'].startswith('StartActivity:') for span in replayed_spans) == initial_start_activity_count
+
+    # Control: without replay-safe tracing the same replay does emit duplicate spans. The replay-safe provider is
+    # installed in Logfire's process-wide proxy, so opting out means running with Logfire's plain provider again.
+    proxy = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_tracer_provider()
+    replay_safe_provider = proxy.provider
+    assert isinstance(replay_safe_provider, ReplaySafeSDKTracerProvider)
+    proxy.set_provider(SDKTracerProvider(active_span_processor=replay_safe_provider._active_span_processor))  # pyright: ignore[reportPrivateUsage]
 
     def setup_logfire() -> Logfire:
         instance = logfire.DEFAULT_LOGFIRE_INSTANCE
