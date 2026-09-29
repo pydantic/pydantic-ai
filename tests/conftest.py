@@ -53,6 +53,10 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from . import cassette_hooks
 from ._inline_snapshot import Builder, Custom, customize
 from .cassette_utils import check_cache_prefix_stability
+from .cassetter_recording import install_cassetter_recording_workaround
+
+# Remove this workaround when cassetter#136 no longer replays newly recorded turns.
+install_cassetter_recording_workaround()
 
 # `logfire` builds its JSON schema lookup table on first use with a lazy `import pandas`
 # (`logfire/_internal/json_schema.py`), and importing pandas reads timezone data from disk. When
