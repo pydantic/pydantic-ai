@@ -1,3 +1,7 @@
+---
+description: "Build typed workflow graphs with the pydantic-graph GraphBuilder API: async steps, conditional branching, parallel fan-out, joins and Mermaid diagrams."
+---
+
 # Graph Builder API
 
 The graph builder API provides a powerful builder pattern for constructing parallel execution graphs. The original [`BaseNode`][pydantic_graph.basenode.BaseNode]-based graph API is still available (and interoperable with the builder API) and is documented in the [main graph documentation](../../graph.md).
@@ -321,4 +325,4 @@ Both APIs are fully supported and can even be integrated together when needed.
 ## Persistence and Resumability
 
 !!! info "Graph state is not snapshotted"
-    Neither the graph builder API nor the [original Graph API](../../graph.md) snapshots graph state; `pydantic_graph.persistence` was removed in V2, because of the [complexity of achieving consistent snapshotting with parallel execution](https://github.com/pydantic/pydantic-ai/issues/530#issuecomment-3504609992). To save, resume, and fork **agent run** state, use the Harness's [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) capability, covered in [Storage](../../storage.md). To keep a whole run alive across crashes and restarts, use a [durable execution](../../durable_execution/overview.md) engine.
+    Neither the graph builder API nor the [original Graph API](../../graph.md) snapshots graph state; `pydantic_graph.persistence` was removed in V2, because of the [complexity of achieving consistent snapshotting with parallel execution](https://github.com/pydantic/pydantic-ai/issues/530#issuecomment-3504609992). To save, resume, and fork **agent run** state, use the Harness's [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) capability, covered in [Persistence](../../persistence.md). To keep a whole run alive across crashes and restarts, use a [durable execution](../../durable_execution/overview.md) engine.

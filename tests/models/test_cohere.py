@@ -59,7 +59,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='cohere not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -760,6 +759,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 5, 22, 7, 17, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68bb5f153efc81a2b3958ddb1f257ff30886f4f20524f3b9',
                 finish_reason='stop',

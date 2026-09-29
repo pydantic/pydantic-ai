@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
@@ -22,6 +23,7 @@ from pydantic_ai import (
     Tool,
     ToolsetTool,
 )
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     JournalCallableOperationBackend,
@@ -95,6 +97,9 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import Workspace
+
+from ..workspace_fakes import FakeWorkspace
 
 JOURNAL_OPERATION_NAMES = {
     'compat__model.request',
@@ -231,6 +236,51 @@ def test_prepare_run_context_without_agent() -> None:
     durability._prepare_run_context(ctx)  # pyright: ignore[reportPrivateUsage]
 
     assert ctx._durable_operations == {}  # pyright: ignore[reportPrivateUsage]
+
+
+@dataclass
+class _RecordInDurableContext(AbstractCapability[Any]):
+    seen: list[bool]
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        self.seen.append(ctx.in_durable_context)
+
+
+@pytest.mark.parametrize('in_durable_context', [True, False])
+async def test_run_context_in_durable_context_follows_durability(in_durable_context: bool) -> None:
+    class ToggledJournalDurability(JournalDurability):
+        @property
+        def in_durable_context(self) -> bool:
+            return in_durable_context
+
+    seen: list[bool] = []
+    agent = Agent(
+        TestModel(), name='in_durable', capabilities=[_RecordInDurableContext(seen), ToggledJournalDurability()]
+    )
+
+    await agent.run('Hello')
+
+    assert seen == [in_durable_context]
+
+
+async def test_run_context_in_durable_context_without_durability() -> None:
+    seen: list[bool] = []
+    agent = Agent(TestModel(), capabilities=[_RecordInDurableContext(seen)])
+
+    await agent.run('Hello')
+
+    assert seen == [False]
+
+
+def test_run_context_in_durable_context_without_agent_or_durable_exec(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = Agent(TestModel(), name='in_durable', capabilities=[JournalDurability()])
+    assert RunContext[None](deps=None, model=TestModel(), usage=RunUsage()).in_durable_context is False
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    assert ctx.in_durable_context is True
+
+    monkeypatch.delitem(sys.modules, 'pydantic_ai.durable_exec._base')
+
+    assert ctx.in_durable_context is False
 
 
 def test_durability_without_tool_config_key_ignores_tool_metadata() -> None:
@@ -1435,6 +1485,39 @@ async def test_dynamic_validator_without_durable_unit_is_a_hard_error() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     with pytest.raises(UserError, match=r"Tool 'guarded'.*has an `args_validator`"):
         await durable.get_tools(ctx)
+
+
+@pytest.mark.parametrize('lifecycle', ['enter-outside-durable', 'enter-always'])
+async def test_durable_toolset_keeps_registration_when_leaf_replaces_itself(lifecycle: Lifecycle) -> None:
+    class ReplacingToolset(FunctionToolset[None]):
+        async def for_run(self, ctx: RunContext[None]) -> FunctionToolset[None]:
+            return FunctionToolset(id=self.id)
+
+        async def for_run_step(self, ctx: RunContext[None]) -> FunctionToolset[None]:
+            return FunctionToolset(id=self.id)
+
+    async def unused_operation(
+        name: str, tool_args: dict[str, Any], ctx: RunContext[Any], tool: ToolsetTool[Any], config: Mapping[str, Any]
+    ) -> Any: ...  # pragma: no branch
+
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    ctx.workspace = Workspace(FakeWorkspace('attached'))
+    leaf = ReplacingToolset(id='replacing')
+    durable = DurableFunctionToolset(
+        leaf,
+        in_durable_context=lambda: False,
+        call_tool_operation=unused_operation,
+        resolve_tool_config=lambda tool, name: {},
+        lifecycle=lifecycle,
+    )
+    # Temporal activities resolve tools on the registered toolset, so even with a workspace attached
+    # the run must list that toolset's tools, not a per-run replacement's.
+    replaced = lifecycle != 'enter-outside-durable'
+    for method in ('for_run', 'for_run_step'):
+        replacement = await getattr(durable, method)(ctx)
+        assert (replacement is not durable) is replaced
+        assert replacement.durable_registrations is durable.durable_registrations
+        assert (replacement.wrapped is not leaf) is replaced
 
 
 async def test_legacy_validation_fallbacks_remain_inline() -> None:

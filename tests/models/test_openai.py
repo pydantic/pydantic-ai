@@ -93,6 +93,7 @@ with try_import() as imports_successful:
         ChoiceDelta,
         ChoiceDeltaToolCall,
         ChoiceDeltaToolCallFunction,
+        ChoiceLogprobs as ChunkChoiceLogprobs,
     )
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
     from openai.types.chat.chat_completion_message_function_tool_call import ChatCompletionMessageFunctionToolCall
@@ -120,7 +121,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -606,6 +606,21 @@ async def test_stream_text(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+def test_service_tier_comes_from_response(allow_model_requests: None) -> None:
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c.model_copy(update={'service_tier': 'default'}))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    result = agent.run_sync('hello', model_settings=OpenAIChatModelSettings(openai_service_tier='priority'))
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['service_tier'] == 'priority'
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.provider_details == snapshot(
+        {'finish_reason': 'stop', 'timestamp': IsDatetime(), 'service_tier': 'default'}
+    )
 
 
 def test_run_stream_sync_streams_real_model(allow_model_requests: None, openai_api_key: str):
@@ -1489,6 +1504,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 4, 29, 21, 7, 59, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BRmTHlrARTzAHK1na9s80xDlQGYPX',
@@ -1531,6 +1547,7 @@ async def test_image_url_tool_response(allow_model_requests: None, openai_api_ke
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 4, 29, 21, 8, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BRmTI0Y2zmkGw27kLarhsmiFQTGxR',
@@ -1666,7 +1683,7 @@ async def test_yaml_document_as_binary_content_input(allow_model_requests: None,
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-D1Fb52cAhS0I5T514KLWFLTvsJHYv',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1741,7 +1758,7 @@ Each of these interpretations would depend on the broader context in which this 
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-D1Hu5C2mqc2CPw07SQa6U7Ki9PF7X',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1795,7 +1812,7 @@ async def test_yaml_document_url_input(
                 timestamp=IsDatetime(),
                 provider_name='openai',
                 provider_url='https://api.openai.com/v1/',
-                provider_details={'finish_reason': 'stop', 'timestamp': IsDatetime()},
+                provider_details={'finish_reason': 'stop', 'service_tier': 'default', 'timestamp': IsDatetime()},
                 provider_response_id='chatcmpl-D9Y2SGcIahjmc95USEBhPxjrIEW8c',
                 finish_reason='stop',
                 run_id=IsStr(),
@@ -1813,10 +1830,48 @@ def test_is_text_like_media_type():
     assert _is_text_like_media_type('application/xml') is True
     assert _is_text_like_media_type('application/yaml') is True
     assert _is_text_like_media_type('application/x-yaml') is True
+    assert _is_text_like_media_type('application/toml') is True
     assert _is_text_like_media_type('application/ld+json') is True
     assert _is_text_like_media_type('application/soap+xml') is True
     assert _is_text_like_media_type('application/pdf') is False
     assert _is_text_like_media_type('image/png') is False
+
+
+async def test_toml_document_as_binary_content_input(allow_model_requests: None):
+    """TOML `BinaryContent` is inlined as text, like YAML is.
+
+    Unit test, not VCR: `BinaryContent.from_path` infers `application/toml` (RFC 9519) for `.toml`
+    files, and before it counted as text-like the mapping raised `Unsupported binary content type`
+    before any request was made, so this pins the request shape the mock client receives.
+    """
+    toml_content = BinaryContent(data=b'[project]\nname = "demo"', media_type='application/toml')
+
+    c = completion_message(ChatCompletionMessage(content='A pyproject file.', role='assistant'))
+    mock_client = MockOpenAI.create_mock(c)
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(m)
+
+    result = await agent.run(['What is this file?', toml_content])
+    assert result.output == snapshot('A pyproject file.')
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'text': 'What is this file?', 'type': 'text'},
+                    {
+                        'text': """\
+-----BEGIN FILE id="312a73" type="application/toml"-----
+[project]
+name = "demo"
+-----END FILE id="312a73"-----\
+""",
+                        'type': 'text',
+                    },
+                ],
+            }
+        ]
+    )
 
 
 async def test_video_url_not_supported(allow_model_requests: None):
@@ -2152,6 +2207,7 @@ async def test_message_history_can_start_with_model_response(allow_model_request
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 11, 22, 10, 1, 40, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Ceeiy4ivEE0hcL1EX5ZfLuW5xNUXB',
@@ -2220,6 +2276,7 @@ async def test_openai_moderation(allow_model_requests: None, openai_api_key: str
     assert response.provider_details == snapshot(
         {
             'finish_reason': 'stop',
+            'service_tier': 'default',
             'moderation': {
                 'input': {
                     'model': 'omni-moderation-latest',
@@ -2352,6 +2409,7 @@ async def test_openai_moderation_stream(allow_model_requests: None, openai_api_k
     assert response.provider_details == snapshot(
         {
             'timestamp': IsDatetime(),
+            'service_tier': 'default',
             'finish_reason': 'stop',
             'moderation': {
                 'input': {
@@ -2487,6 +2545,7 @@ async def test_openai_moderation_flagged(allow_model_requests: None, openai_api_
     assert response.provider_details == snapshot(
         {
             'finish_reason': 'stop',
+            'service_tier': 'default',
             'moderation': {
                 'input': {
                     'model': 'omni-moderation-latest',
@@ -2629,6 +2688,7 @@ async def test_openai_moderation_block_policy(allow_model_requests: None, openai
     assert response.provider_details == snapshot(
         {
             'finish_reason': 'stop',
+            'service_tier': 'default',
             'moderation': {
                 'input': {
                     'model': 'omni-moderation-latest',
@@ -3586,6 +3646,7 @@ async def test_openai_instructions(allow_model_requests: None, openai_api_key: s
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 4, 7, 16, 30, 56, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BJjf61mLb9z5H45ClJzbx0UWKwjo1',
@@ -3644,6 +3705,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 4, 16, 13, 37, 14, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BMxEwRA0p0gJ52oKS7806KAlfMhqq',
@@ -3682,6 +3744,7 @@ async def test_openai_instructions_with_tool_calls_keep_instructions(allow_model
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 4, 16, 13, 37, 15, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BMxEx6B8JEj6oDC45MOWKp0phg8UP',
@@ -3741,6 +3804,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 10, 22, 21, 57, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68c1fa0523248197888681b898567bde093f57e27128848a',
                 finish_reason='stop',
@@ -3788,6 +3852,7 @@ async def test_openai_model_thinking_part(allow_model_requests: None, openai_api
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 9, 10, 22, 22, 24, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-CENUmtwDD0HdvTUYL6lUeijDtxrZL',
@@ -3833,6 +3898,44 @@ async def test_openai_instructions_with_logprobs(allow_model_requests: None):
             'top_logprobs': [],
         }
     ]
+
+
+async def test_openai_logprobs_streaming(allow_model_requests: None):
+    """Each streamed chunk carries only its own tokens' logprobs, so they must accumulate across chunks.
+
+    Mock stream rather than VCR: the test pins how per-chunk logprobs are combined, independent of what a recording holds.
+    """
+
+    def logprob_chunk(token: str) -> chat.ChatCompletionChunk:
+        c = text_chunk(token)
+        c.choices[0].logprobs = ChunkChoiceLogprobs(
+            content=[ChatCompletionTokenLogprob(token=token, logprob=-0.5, top_logprobs=[], bytes=list(token.encode()))]
+        )
+        return c
+
+    stream = [
+        logprob_chunk('Hello'),
+        logprob_chunk(' world'),
+        logprob_chunk('!'),
+        chunk([ChoiceDelta()], finish_reason='stop'),
+    ]
+    mock_client = MockOpenAI.create_mock_stream(stream)
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    async with agent.run_stream('', model_settings=OpenAIChatModelSettings(openai_logprobs=True)) as result:
+        await result.get_output()
+
+    assert result.response.provider_details == snapshot(
+        {
+            'timestamp': IsDatetime(),
+            'logprobs': [
+                {'token': 'Hello', 'logprob': -0.5, 'bytes': [72, 101, 108, 108, 111], 'top_logprobs': []},
+                {'token': ' world', 'logprob': -0.5, 'bytes': [32, 119, 111, 114, 108, 100], 'top_logprobs': []},
+                {'token': '!', 'logprob': -0.5, 'bytes': [33], 'top_logprobs': []},
+            ],
+            'finish_reason': 'stop',
+        }
+    )
 
 
 async def test_openai_instructions_with_responses_logprobs(allow_model_requests: None, openai_api_key: str):
@@ -4160,6 +4263,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 24, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BSXk0dWkG4hfPt0lph4oFO35iT73I',
@@ -4206,6 +4310,7 @@ async def test_openai_tool_output(allow_model_requests: None, openai_api_key: st
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 25, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BSXk1xGHYzbhXgUkSutK08bdoNv5s',
@@ -4280,6 +4385,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 9, 21, 20, 53, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BgeDFS85bfHosRFEEAvq8reaCPCZ8',
@@ -4320,6 +4426,7 @@ async def test_openai_text_output_function(allow_model_requests: None, openai_ap
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 9, 21, 20, 54, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BgeDGX9eDyVrEI56aP2vtIHahBzFH',
@@ -4384,6 +4491,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 22, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BSXjyBwGuZrtuuSzNCeaWMpGv2MZ3',
@@ -4424,6 +4532,7 @@ async def test_openai_native_output(allow_model_requests: None, openai_api_key: 
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 5, 1, 23, 36, 23, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-BSXjzYGu67dhTy5r8KmjJvQ4HhDVO',
@@ -4502,6 +4611,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 9, 23, 21, 26, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgg5utuCSXMQ38j0n2qgfdQKcR9VD',
@@ -4546,6 +4656,7 @@ async def test_openai_native_output_multiple(allow_model_requests: None, openai_
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 9, 23, 21, 27, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgg5vrxUtCDlvgMreoxYxPaKxANmd',
@@ -4608,6 +4719,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 35, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgh27PeOaFW6qmF04qC5uI2H9mviw',
@@ -4648,6 +4760,7 @@ async def test_openai_prompted_output(allow_model_requests: None, openai_api_key
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 36, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgh28advCSFhGHPnzUevVS6g6Uwg0',
@@ -4714,6 +4827,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'tool_calls',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 38, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgh2AW2NXGgMc7iS639MJXNRgtatR',
@@ -4758,6 +4872,7 @@ async def test_openai_prompted_output_multiple(allow_model_requests: None, opena
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'stop',
+                    'service_tier': 'default',
                     'timestamp': datetime(2025, 6, 10, 0, 21, 39, tzinfo=timezone.utc),
                 },
                 provider_response_id='chatcmpl-Bgh2BthuopRnSqCuUgMbBnOqgkDHC',
@@ -4980,9 +5095,7 @@ async def test_service_tier_non_standard_value(allow_model_requests: None):
 
 
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
-    profile = merge_profile(
-        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
-    )
+    profile = merge_profile(OpenAIModelProfile(supports_forced_tool_choice=False), openai_model_profile('stub'))
 
     mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
     model = OpenAIChatModel('stub', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -5001,9 +5114,7 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
 
 async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
     """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
-    profile = merge_profile(
-        OpenAIModelProfile(openai_supports_tool_choice_required=False), openai_model_profile('stub')
-    )
+    profile = merge_profile(OpenAIModelProfile(supports_forced_tool_choice=False), openai_model_profile('stub'))
 
     mock_client = MockOpenAIResponses.create_mock(response_message([]))
     model = OpenAIResponsesModel('openai/gpt-oss', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
@@ -5604,6 +5715,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': '0.000',
                 },
@@ -5629,6 +5741,7 @@ def test_azure_prompt_filter_error(allow_model_requests: None) -> None:
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -6111,7 +6224,7 @@ async def test_openai_tool_choice_required_unsupported_raises_error(allow_model_
     c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
 
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    profile = OpenAIModelProfile(supports_forced_tool_choice=False)
     model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
     tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object', 'properties': {}})
@@ -6136,13 +6249,13 @@ async def test_openai_chat_tool_choice_list_unsupported_raises_error(allow_model
     Regression for https://github.com/pydantic/pydantic-ai/pull/3611#discussion_r3127128012 — the tuple
     branch in `_get_tool_choice` previously sent the forced tool choice without consulting the model
     profile, which would push an unsupported parameter to the API for models that have
-    `openai_supports_tool_choice_required=False`. Registers two tools so `resolve_tool_choice` returns
+    `supports_forced_tool_choice=False`. Registers two tools so `resolve_tool_choice` returns
     `('required', {chosen})` rather than collapsing to scalar `'required'`.
     """
     c = completion_message(ChatCompletionMessage(content='result', role='assistant'))
     mock_client = MockOpenAI.create_mock(c)
 
-    profile = OpenAIModelProfile(openai_supports_tool_choice_required=False)
+    profile = OpenAIModelProfile(supports_forced_tool_choice=False)
     model = OpenAIChatModel('custom-model', provider=OpenAIProvider(openai_client=mock_client), profile=profile)
 
     tools = [
@@ -6560,3 +6673,51 @@ async def test_openai_enum_member_docstrings_reach_the_wire(
             },
         }
     )
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('stream', 'content', 'content_type', 'cause'),
+    [
+        pytest.param(False, b'   ', 'application/json', json.JSONDecodeError, id='response'),
+        pytest.param(False, b'{"a":"\xe2\x82', 'application/json', UnicodeDecodeError, id='non-utf8'),
+        pytest.param(
+            True,
+            b'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"gpt-4o",'
+            b'"choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}\n\n'
+            b'data: {not json\n\n',
+            'text/event-stream',
+            json.JSONDecodeError,
+            id='stream',
+        ),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, stream: bool, content: bytes, content_type: str, cause: type[ValueError]
+) -> None:
+    """A 200 response body, or a streamed chunk, that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': content_type})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(model)
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('Hello')
+
+    assert isinstance(exc_info.value.__cause__, cause)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

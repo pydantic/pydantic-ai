@@ -1,5 +1,7 @@
 import json
+import logging
 import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -8,6 +10,7 @@ from typing import Annotated, Any, Literal, cast
 
 import pydantic_core
 import pytest
+from griffe import Docstring
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, WithJsonSchema
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
 from pydantic_core import PydanticSerializationError, core_schema
@@ -1088,6 +1091,94 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
     assert caplog.messages == snapshot([])
 
 
+def google_docstring_griffe_warns_about(x: int) -> str:  # pragma: no cover
+    """Do the thing.
+
+    Args:
+        x: The x.
+        y: Not a parameter.
+
+    Returns:
+        The result.
+    """
+    return ''
+
+
+def numpy_docstring_griffe_warns_about(x: int) -> str:  # pragma: no cover
+    """Do the thing.
+
+    Parameters
+    ----------
+    x
+        The x, with no type.
+    y : int
+        Not a parameter.
+    """
+    return ''
+
+
+def sphinx_docstring_griffe_warns_about(x: int) -> str:  # pragma: no cover
+    """Do the thing.
+
+    :param x: The x.
+    :param y: Not a parameter.
+    :returns: The result.
+    """
+    return ''
+
+
+@pytest.mark.parametrize(
+    'func, style',
+    [
+        (google_docstring_griffe_warns_about, 'google'),
+        (numpy_docstring_griffe_warns_about, 'numpy'),
+        (sphinx_docstring_griffe_warns_about, 'sphinx'),
+    ],
+)
+def test_griffe_docstring_warnings_are_not_logged(
+    caplog: LogCaptureFixture, func: Callable[..., Any], style: Literal['google', 'numpy', 'sphinx']
+):
+    # Some installed packages (e.g. fastmcp) raise griffe's logger to ERROR on import; undo that so
+    # this test sees whatever griffe would log.
+    caplog.set_level(logging.WARNING, logger='griffe')
+    Docstring(func.__doc__ or '', parser=style).parse()
+    assert caplog.messages, 'griffe should warn about this docstring on its own'
+    caplog.clear()
+
+    tool = Tool(func, docstring_format=style)
+
+    assert 'Do the thing.' in (tool.description or '')
+    assert caplog.messages == []
+
+
+def test_parsing_a_tool_docstring_leaves_logging_alone(caplog: LogCaptureFixture, monkeypatch: pytest.MonkeyPatch):
+    # Tools can be built on several threads at once (e.g. Temporal workflows). Parsing must not change
+    # logging config, or other threads lose their warnings mid-parse and the change can outlive the parse.
+    caplog.set_level(logging.WARNING, logger='griffe')
+    parse = Docstring.parse
+    entered = threading.Event()
+    release = threading.Event()
+
+    def held_parse(self: Docstring, *args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        assert release.wait(30)
+        return parse(self, *args, **kwargs)
+
+    monkeypatch.setattr(Docstring, 'parse', held_parse)
+    root_level = logging.root.level
+    thread = threading.Thread(target=Tool, args=(google_docstring_griffe_warns_about,))
+    thread.start()
+    assert entered.wait(30)
+    logging.getLogger('tests.test_tools').warning('logged while another thread parses')
+    logging.getLogger('griffe').warning('griffe logged while another thread parses')
+    release.set()
+    thread.join(30)
+    assert not thread.is_alive()
+
+    assert caplog.messages == ['logged while another thread parses', 'griffe logged while another thread parses']
+    assert logging.root.level == root_level
+
+
 async def missing_parameter_descriptions_docstring(foo: int, bar: str) -> str:  # pragma: no cover
     """Describes function ops, but missing parameter descriptions."""
     return f'{foo} {bar}'
@@ -1526,7 +1617,6 @@ def test_async_function_tool_consistent_with_schema():
     assert agent._function_toolset.tools['foobar'].max_retries is None
 
 
-@pytest.mark.anyio
 async def test_positional_or_keyword_with_var_args():
     """A POSITIONAL_OR_KEYWORD param followed by *args must not be double-bound.
 
@@ -3210,7 +3300,6 @@ def test_retry_tool_until_last_attempt():
     )
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_triggers_retry():
     """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
     import asyncio
@@ -3246,7 +3335,6 @@ async def test_tool_timeout_triggers_retry():
     assert retry_parts[0].tool_name == 'slow_tool'
 
 
-@pytest.mark.anyio
 async def test_sync_tool_timeout_triggers_retry():
     """A blocking `def` tool times out too: its worker thread is abandoned when the deadline expires."""
     call_count = 0
@@ -3278,7 +3366,6 @@ async def test_sync_tool_timeout_triggers_retry():
     assert retry_parts[0].tool_name == 'slow_sync_tool'
 
 
-@pytest.mark.anyio
 async def test_tool_with_timeout_completes_successfully():
     """Test that a tool completes successfully when within its timeout."""
     import asyncio
@@ -3318,7 +3405,6 @@ async def test_tool_with_timeout_completes_successfully():
     assert 'completed successfully' in result.output
 
 
-@pytest.mark.anyio
 async def test_no_timeout_by_default():
     """Test that tools run without timeout by default (backward compatible)."""
     import asyncio
@@ -3336,7 +3422,6 @@ async def test_no_timeout_by_default():
     assert 'completed' in result.output
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
     import asyncio
@@ -3359,7 +3444,6 @@ async def test_tool_timeout_retry_counts_as_failed():
     assert call_count == 3
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_message_format():
     """Test the format of the retry prompt message on timeout."""
     import asyncio
@@ -3420,7 +3504,6 @@ def test_tool_timeout_default_none():
     assert tool.tool_def.timeout is None
 
 
-@pytest.mark.anyio
 async def test_tool_timeout_exceeds_retry_limit():
     """Test that UnexpectedModelBehavior is raised when timeout exceeds retry limit."""
     import asyncio
@@ -3444,7 +3527,6 @@ async def test_tool_timeout_exceeds_retry_limit():
         await agent.run('call always_slow_tool')
 
 
-@pytest.mark.anyio
 async def test_agent_level_tool_timeout():
     """Test that agent-level tool_timeout applies to all tools."""
     import asyncio
@@ -3478,7 +3560,6 @@ async def test_agent_level_tool_timeout():
     assert 'Timed out after 0.1 seconds' in retry_parts[0].content
 
 
-@pytest.mark.anyio
 async def test_per_tool_timeout_overrides_agent_timeout():
     """Test that per-tool timeout overrides agent-level timeout."""
     import asyncio
@@ -3520,7 +3601,6 @@ def test_agent_tool_timeout_passed_to_toolset():
     assert agent._function_toolset.timeout == 30.0
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('is_stream', [True, False])
 async def test_tool_cancelled_when_agent_cancelled(is_stream: bool):
     """Test that tools are cancelled when agent is cancelled."""
@@ -3813,7 +3893,6 @@ def test_args_validator_not_configured():
     agent.run_sync('call add_numbers with x=1 and y=2', deps=42)
 
 
-@pytest.mark.anyio
 async def test_args_validator_async():
     """Test async validator functions work correctly."""
     validator_called = False

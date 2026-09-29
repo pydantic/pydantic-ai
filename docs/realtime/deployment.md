@@ -1,3 +1,7 @@
+---
+description: "Connect browsers and phone calls to a Pydantic AI realtime voice agent via WebRTC, a WebSocket relay or a Twilio bridge, with keys and tools on your server."
+---
+
 # Connecting a frontend
 
 Keep provider keys, tools, and business logic on the server; connect user devices to your backend,
