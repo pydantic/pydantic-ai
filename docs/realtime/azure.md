@@ -193,8 +193,8 @@ Voice Live defaults input transcription to `whisper-1` when the deployment name 
 `gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
 `input_transcription_model` explicitly when that is not the intended deployment.
 
-Voice Live applies the shared settings except `parallel_tool_calls`, plus `openai_voice`,
-`openai_turn_detection`, and `openai_input_noise_reduction`:
+Besides `openai_voice`, Voice Live applies `openai_turn_detection` and `openai_input_noise_reduction`,
+and maps `thinking` and a Voice-Live-only temperature:
 
 - [`thinking`](overview.md#shared-settings) becomes Voice Live's `reasoning_effort` on models whose
   profile reports [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking],
