@@ -136,7 +136,10 @@ def _comparable_details(part: ModelResponsePart) -> dict[str, Any]:
     if isinstance(part, ThinkingPart):
         return {'signature': part.signature is not None}
     if isinstance(part, CompactionPart) and part.provider_details:
-        return {'provider_details': part.provider_details | {'encrypted_content': True}}
+        return {
+            'provider_details': part.provider_details
+            | {'encrypted_content': 'encrypted_content' in part.provider_details}
+        }
     if isinstance(part, TextPart) and part.provider_details and 'logprobs' in part.provider_details:
         # The `output_text.done` event keeps the logprobs of the deltas where the terminal response rounds them
         # (`-1.9e-07` vs `-0.0`).
