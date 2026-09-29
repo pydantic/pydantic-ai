@@ -245,22 +245,23 @@ class _LiveErrorFrame(TypedDict):
 _live_error_adapter: TypeAdapter[_LiveErrorFrame] = TypeAdapter(_LiveErrorFrame)
 
 
+class _LiveSessionClosedFrame(TypedDict):
+    reason: str
+
+
 class _LiveSessionUsage(TypedDict):
     seconds: float
 
 
-class _LiveSessionClosedFrame(TypedDict):
-    reason: str
-    usage: _LiveSessionUsage
-
-
-# The two fields of `session.closed` the connection reads, so a frame whose other fields have drifted from
-# the SDK's shape still records the final usage and says why the session ended.
+# The two fields of `session.closed` the connection reads, each validated on its own, so a frame whose
+# other fields have drifted from the SDK's shape still says why the session ended and, while its usage
+# still parses, records the final usage.
 _live_session_closed_adapter: TypeAdapter[_LiveSessionClosedFrame] = TypeAdapter(_LiveSessionClosedFrame)
+_live_session_usage_adapter: TypeAdapter[_LiveSessionUsage] = TypeAdapter(_LiveSessionUsage)
 
-#: Why a session can end without anyone asking. The others, `close_requested` and `remote_hangup`, are
-#: an ordinary end of the call.
-_ABNORMAL_CLOSE_REASONS = frozenset({'expired', 'content', 'connection_lost'})
+#: Why a session ends as an ordinary end of the call. Any other reason, `expired`, `content` and
+#: `connection_lost` or one this version doesn't know, means it ended without anyone asking.
+_NORMAL_CLOSE_REASONS = frozenset({'close_requested', 'remote_hangup'})
 
 #: What a WebRTC browser may do over its data channel unless `openai_live_data_channel` says otherwise:
 #: nothing, since the sideband runs the session.
@@ -767,6 +768,9 @@ class OpenAILiveConnection(RealtimeConnection):
         the session ended, and a drifted `response.event` the delegated work. Any other type is ignored,
         known or not, so an event this version of the SDK doesn't know is not a reason to end the session.
         """
+        if not isinstance(raw, str):
+            # Live sends only text frames; skip anything else, as the Realtime connection does.
+            return []
         try:
             data = _json_object_adapter.validate_json(raw)
             event_type = data.get('type')
@@ -775,34 +779,39 @@ class OpenAILiveConnection(RealtimeConnection):
             try:
                 event = _acted_on_event_adapter.validate_python(data)
             except ValidationError as e:
-                return self._map_drifted_event(data, e)
+                return self._map_drifted_event(event_type, data, e)
             return self._map_event(event)
         except ValueError as e:
-            # A frame that isn't a JSON object, or a well-formed event with a payload we can't decode (bad
+            # Text that isn't a JSON object, or a well-formed event with a payload we can't decode (bad
             # base64 audio, say), costs that frame, not the call: report it as recoverable and keep
             # reading, as the Realtime connection does.
             return [RealtimeSessionErrorEvent(message=f'Failed to parse OpenAI GPT-Live event: {e}', recoverable=True)]
 
-    def _map_drifted_event(self, data: dict[str, Any], error: ValidationError) -> list[RealtimeCodecEvent]:
+    def _map_drifted_event(
+        self, event_type: str, data: dict[str, Any], error: ValidationError
+    ) -> list[RealtimeCodecEvent]:
         """Salvage what the connection reads from an event that no longer matches the SDK's shape.
 
         OpenAI's guide says to expect `error` frames whose `code` is null, which the SDK's `Error.code`
-        refuses, and a `session.closed` is read for two fields only; anything else that fails to validate is
-        reported as a recoverable error naming its type.
+        refuses. A `session.closed` is read for its reason and usage only, so it still ends the session
+        the way its reason says, and is reported as well only if its usage is what drifted. Anything else
+        that fails to validate is reported as a recoverable error naming its type.
         """
-        event_type = data['type']
+        parse_error = RealtimeSessionErrorEvent(
+            message=f'Failed to parse OpenAI GPT-Live event: `{event_type}` {error}', recoverable=True
+        )
         with suppress(ValidationError):
             if event_type == 'error':
                 details = _live_error_adapter.validate_python(data)['error']
                 return self._map_error(details['message'], code=details['code'])
             if event_type == 'session.closed':
-                closed = _live_session_closed_adapter.validate_python(data)
-                return self._map_session_closed(closed['usage']['seconds'], reason=closed['reason'])
-        return [
-            RealtimeSessionErrorEvent(
-                message=f'Failed to parse OpenAI GPT-Live event: `{event_type}` {error}', recoverable=True
-            )
-        ]
+                reason = _live_session_closed_adapter.validate_python(data)['reason']
+                try:
+                    seconds = _live_session_usage_adapter.validate_python(data.get('usage'))['seconds']
+                except ValidationError:
+                    return [parse_error, *self._map_session_closed(None, reason=reason)]
+                return self._map_session_closed(seconds, reason=reason)
+        return [parse_error]
 
     def _map_event(self, event: _ActedOnEvent) -> list[RealtimeCodecEvent]:
         """Translate one Live server event the connection acts on.
@@ -898,14 +907,14 @@ class OpenAILiveConnection(RealtimeConnection):
         )
         return events
 
-    def _map_session_closed(self, cumulative_seconds: float, *, reason: str) -> list[RealtimeCodecEvent]:
+    def _map_session_closed(self, cumulative_seconds: float | None, *, reason: str) -> list[RealtimeCodecEvent]:
         """Record the final usage, and say so when the session ended without anyone asking.
 
         The WebSocket close that follows is clean either way, so without this a reply cut off by the
         safety filter or the duration limit would be settled as though the model had finished it.
         """
-        events = self._map_usage(cumulative_seconds)
-        if reason not in _ABNORMAL_CLOSE_REASONS:
+        events: list[RealtimeCodecEvent] = [] if cumulative_seconds is None else self._map_usage(cumulative_seconds)
+        if reason in _NORMAL_CLOSE_REASONS:
             return events
         events.extend(self._settle_open_turns(interrupted=True))
         events.append(

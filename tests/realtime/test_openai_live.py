@@ -943,7 +943,7 @@ def test_events_the_connection_does_not_act_on_are_ignored_even_if_malformed() -
         pytest.param({'type': 'session.delegation.created', 'event_id': 'e'}, id='delegation'),
         pytest.param({'type': 'response.event', 'event_id': 'e'}, id='backend-event'),
         pytest.param({'type': 'error', 'event_id': 'e', 'error': 'boom'}, id='error'),
-        pytest.param({'type': 'session.closed', 'event_id': 'e', 'reason': 'expired'}, id='closed-without-usage'),
+        pytest.param({'type': 'session.closed', 'event_id': 'e'}, id='closed-without-reason'),
     ],
 )
 def test_a_malformed_event_the_connection_acts_on_is_a_recoverable_error(frame: dict[str, Any]) -> None:
@@ -962,6 +962,11 @@ def test_a_frame_that_is_not_a_json_object_is_a_recoverable_error() -> None:
     assert isinstance(event, RealtimeSessionErrorEvent) and event.recoverable is True
 
 
+def test_a_binary_frame_is_skipped() -> None:
+    """Live sends only text frames, so a binary one is skipped, as on the Realtime connection."""
+    assert _connection()._map_frame(b'{"type": "session.closed"}') == []  # pyright: ignore[reportPrivateUsage]
+
+
 def test_a_drifted_session_closed_still_records_usage_and_why_it_ended() -> None:
     """`session.closed` is read for its usage and reason, so a change to its other fields loses neither."""
     connection = _connection()
@@ -973,6 +978,33 @@ def test_a_drifted_session_closed_still_records_usage_and_why_it_ended() -> None
     usage, error = events
     assert isinstance(usage, SessionUsage) and usage.usage.audio_seconds == 12
     assert isinstance(error, RealtimeSessionErrorEvent) and error.code == 'live_session_expired'
+
+
+@pytest.mark.parametrize(
+    'usage', [pytest.param({}, id='missing'), pytest.param({'usage': {'seconds': 'many'}}, id='drifted')]
+)
+def test_a_session_closed_whose_usage_drifted_still_ends_the_session_as_its_reason_says(
+    usage: dict[str, Any],
+) -> None:
+    """Losing the usage is reported, but must not also cost the reason the session ended."""
+    frame = {'type': 'session.closed', 'event_id': 'e', 'reason': 'expired', **usage}
+
+    parse_error, ended = _connection()._map_frame(json.dumps(frame))  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(parse_error, RealtimeSessionErrorEvent) and parse_error.recoverable is True
+    assert 'session.closed' in parse_error.message
+    assert isinstance(ended, RealtimeSessionErrorEvent) and ended.code == 'live_session_expired'
+    assert ended.recoverable is False
+
+
+def test_a_session_closed_with_an_unknown_reason_is_an_abnormal_end() -> None:
+    """Only a close someone asked for is ordinary; a reason this version doesn't know is not assumed to be."""
+    events = _connection()._map_frame(json.dumps(_session_closed('server_error', seconds=3)))  # pyright: ignore[reportPrivateUsage]
+
+    assert [type(event).__name__ for event in events] == snapshot(['SessionUsage', 'RealtimeSessionErrorEvent'])
+    error = events[-1]
+    assert isinstance(error, RealtimeSessionErrorEvent)
+    assert error.code == 'live_session_server_error' and error.recoverable is False
 
 
 async def test_agent_rejects_text_output(model: OpenAILiveModel) -> None:
