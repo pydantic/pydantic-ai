@@ -308,6 +308,13 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         self._refused_response_inputs: list[int] = []
 
     async def send(self, content: RealtimeInput) -> None:
+        if not isinstance(
+            content, (BinaryAudio, CommitAudio, ClearAudio, CreateResponse, CancelResponse, TruncateOutput)
+        ):
+            # Before sending, since a text turn or tool result asks for its response as it goes out.
+            self._audio_is_latest_input = False
+        await super().send(content)
+        # Audio verbs count only once sent: one that raised (audio that isn't PCM, a dead socket) did nothing.
         if isinstance(content, BinaryAudio):
             self._audio_is_latest_input = self._audio_uncommitted = True
         elif isinstance(content, CommitAudio):
@@ -320,9 +327,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             self._audio_uncommitted = False
         elif isinstance(content, ClearAudio):
             self._audio_is_latest_input = self._audio_uncommitted = False
-        elif not isinstance(content, (CreateResponse, CancelResponse, TruncateOutput)):
-            self._audio_is_latest_input = False
-        await super().send(content)
 
     @property
     def _response_request_dropped(self) -> bool:

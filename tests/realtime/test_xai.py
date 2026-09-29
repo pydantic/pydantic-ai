@@ -1376,3 +1376,27 @@ async def test_create_response_after_the_commit_reply(between: list[RealtimeInpu
         assert sent_after_commit[-1] == 'input_audio_buffer.clear'
         assert 'response.create' not in sent_after_commit
         assert rest[0] == InputRejected(create_index, refused='response')
+
+
+async def test_audio_that_fails_to_send_is_not_counted_as_buffered() -> None:
+    """Audio `send()` rejects never reached the buffer, so a request after the commit is still refused."""
+    ws = FakeWebSocket(
+        [
+            _response_frame('response.created'),
+            _response_frame('response.done'),
+            json.dumps({'type': 'input_audio_buffer.cleared'}),
+        ]
+    )
+    conn = XaiRealtimeConnection(ws)  # type: ignore[arg-type]
+    await conn.send(_AUDIO)
+    await conn.send(CommitAudio())
+    events = conn.__aiter__()
+    assert isinstance(await events.__anext__(), ResponseDone)
+    with pytest.raises(UserError, match='require raw PCM audio'):
+        await conn.send(BinaryAudio(data=b'RIFF', media_type='audio/wav'))
+    await conn.send(CommitAudio())
+    await conn.send(CreateResponse())
+    rest = [event async for event in events]
+
+    assert 'response.create' not in _sent_types(ws)
+    assert rest[0] == InputRejected(4, refused='response')
