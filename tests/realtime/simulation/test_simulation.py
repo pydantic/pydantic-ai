@@ -495,6 +495,20 @@ def test_known_turn_spoken_while_a_cancelled_reply_ends_filed_before_it() -> Non
     reproduce('SIM-11', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', dialect='azure')), scenario)
 
 
+@known('SIM-24')
+def test_known_gemini_async_result_cut_in_ends_the_wait_early() -> None:
+    """The model finishes speaking after an async call; the result then cuts in, before the model answers it."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools()
+        sim.wait_for_reply()
+        sim.finish(deliver=False)
+        sim.settle()
+
+    reproduce('SIM-24', async_gemini(), scenario)
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:

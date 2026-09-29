@@ -487,6 +487,20 @@ ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT = Finding(
 )
 
 
+ASYNC_RESULT_CUT_IN_ENDS_THE_WAIT = Finding(
+    id='SIM-24',
+    title=(
+        "with asynchronous Gemini tool calls, the `interrupted` + `turn_complete` the batch's result cuts in with "
+        'ends `wait_for_reply()` before the model has answered the result'
+    ),
+    tracked_by='turn boundaries mapped to the exchange they close (#8760 is parked); found by this simulator',
+    evidence='recorded',
+    codes=frozenset({'wait.early'}),
+    providers=GEMINI,
+    matches=lambda sim, violation: _gemini_behavior(sim, 'talks_through_tool_calls') and bool(sim.truth.tool_calls),
+)
+
+
 GEMINI_ASYNC_TOOL_ROUND = Finding(
     id='8760',
     title=(
@@ -815,6 +829,7 @@ KNOWN_FINDINGS.extend(
         LIVE_ABANDONED_CALL_RESERVATIONS,
         ASYNC_SPEECH_IN_FLIGHT_AT_THE_RESULT,
         GEMINI_ASYNC_TOOL_ROUND,
+        ASYNC_RESULT_CUT_IN_ENDS_THE_WAIT,
         CUT_OFF_TURN_COMPLETE,
         # The general reservation leaks last: a more specific finding explains a hang better.
         LOST_RESPONSE_RESERVATION,
