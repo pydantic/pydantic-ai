@@ -925,10 +925,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The model name."""
         return self._model_name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest retention requested by active Anthropic cache settings."""
         settings = merge_model_settings(self.settings, model_settings) or {}
-        return self._max_prompt_cache_retention(
+        return self._max_cache_retention(
             settings.get('anthropic_cache'),
             settings.get('anthropic_cache_instructions'),
             settings.get('anthropic_cache_tool_definitions'),

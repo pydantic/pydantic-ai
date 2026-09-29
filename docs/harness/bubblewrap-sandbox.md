@@ -36,13 +36,26 @@ result = agent.run_sync('Run the test suite and fix the first failure.')
 
 ## What the sandbox allows
 
-Inside the sandbox, commands see the host's files read-only, a private `/tmp` and no network, and can write only to the working directory. `/run` is empty, because host daemons such as Docker listen on sockets there, and a read-only mount doesn't stop a connection.
+Inside the sandbox, commands see the host's files read-only, a private `/tmp` and no network, and can write only to the working directory. `/run` is empty, because host daemons such as Docker listen on sockets there, and a read-only mount doesn't stop a connection. `bwrap` must be able to give the sandbox its own user namespace, and the sandbox has no capabilities.
 
-Pass `network=True` to allow the network (the DNS configuration under `/run` comes back with it), and add `bwrap` arguments with `bwrap_args=`: they come after the defaults, so `['--bind', path, path]` makes another directory writable and `['--tmpfs', path]` hides one.
+Without the network, a seccomp filter blocks the same system calls as the [Codex CLI](https://github.com/openai/codex)'s Linux sandbox does without network access: commands can't connect to, serve or accept on any socket, including Unix sockets the host has elsewhere on disk and the sandbox's own loopback, and can't use `ptrace` or `io_uring`. Commands can still create stream socket pairs, which language runtimes use between their own processes. Unlike Codex, Unix datagram sockets are blocked too, because a datagram can be addressed to any socket file without connecting first. So a test suite that starts a local server needs `network=True`, and so does Python's `forkserver` start method for `multiprocessing` (the default on Linux since Python 3.14), which listens on a socket: `multiprocessing.get_context('spawn')` or `'fork'` work without it. The filter covers x86_64 and aarch64 hosts; a 32-bit program in the sandbox is stopped when it makes a system call.
 
-Commands share the host's process list rather than getting their own, so a command started in the background, such as a [Shell](shell.md) background job or a dev server, keeps running after the call that started it, and later calls can check on it or stop it. The cost is that sandboxed commands can see the host's processes and signal the host user's own.
+Pass `network=True` to share the host's network: commands can reach it, including services on the host's loopback and anything the host can reach, and can listen on the host's ports. The DNS configuration under `/run` comes back with it, and there is no seccomp filter. Add `bwrap` arguments with `bwrap_args=`: they come after the defaults, so `['--bind', path, path]` makes another directory writable and `['--tmpfs', path]` hides one, such as `~/.ssh`.
 
-Only commands are sandboxed. File methods such as `write_text` go to the wrapped workspace, so they see the host's `/tmp` rather than the sandbox's, and reach outside the working directory. To limit them too, use [`ReadOnlyWorkspace`](../workspace.md#read-only-access) or a [FileSystem](filesystem.md) root. The run's ref is the wrapped workspace's, and its `backend` is the wrapped backend.
+Commands share the host's process list rather than getting their own, so a command started in the background, such as a [Shell](shell.md) background job or a dev server, keeps running after the call that started it, and after the agent run, until something stops it. Later calls can check on it or stop it. The cost is that sandboxed commands can see the host's processes and their command lines, and signal the host user's own.
+
+File methods such as `write_text`, and so the [FileSystem](filesystem.md) and [Coder](coder.md) file tools, run in the sandbox too, as shell commands, so they see what commands see: they can't write outside the working directory, even through a symlink a command swapped in after a path check. Only when the wrapped workspace is read-only, and so runs no commands, are its files read from the host directly. The run's ref is the wrapped workspace's, and its `backend` is the wrapped backend.
+
+### What it doesn't protect
+
+The sandbox keeps an agent from changing the host outside its working directory. It is not a boundary against an agent trying to harm the host user:
+
+- Commands can read every file the host user can, such as SSH keys and cloud credentials, and show them to the model. Hide those directories with `bwrap_args=['--tmpfs', path]`.
+- Commands can signal, and so stop, the host user's other processes.
+- Anything a command writes in the working directory, such as Git hooks, a `Makefile` or an `.envrc`, runs unsandboxed if you later run it outside the sandbox.
+- The wrapped workspace's own settings, `bwrap_args` and the host's `bwrap` are trusted.
+
+For an agent you don't trust, give it its own user on the host, or use a cloud sandbox such as [E2B](e2b-sandbox.md).
 
 ## Use the workspace directly
 
