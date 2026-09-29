@@ -80,7 +80,11 @@ async def _streamed_and_complete(
     # Both drop a server tool call whose tool the request didn't enable, which depends on request parameters the
     # recording doesn't keep, so every server tool in the response counts as enabled.
     server_tool_names = frozenset(block.name for block in message.content if isinstance(block, BetaServerToolUseBlock))
-    monkeypatch.setattr(model, '_get_enabled_server_tool_names', lambda *_: server_tool_names)
+
+    def enabled_server_tool_names(*_: object) -> frozenset[str]:
+        return server_tool_names
+
+    monkeypatch.setattr(model, '_get_enabled_server_tool_names', enabled_server_tool_names)
     complete = model._process_response(message, model_request_parameters, {})  # pyright: ignore[reportPrivateUsage]
 
     streamed = await model._process_streamed_response(  # pyright: ignore[reportPrivateUsage]

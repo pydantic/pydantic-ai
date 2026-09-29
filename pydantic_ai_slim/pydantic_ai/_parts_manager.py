@@ -150,7 +150,7 @@ class ModelResponsePartsManager:
             return self._materialize_and_cache_part(part_index)
         return None
 
-    def finalize_tool_call_args(self, *, vendor_part_id: VendorId, args: dict[str, Any] | None) -> None:
+    def finalize_tool_call_args(self, *, vendor_part_id: VendorId, args: str | dict[str, Any] | None) -> None:
         """Replace a streamed tool call's accumulated args with their parsed form, without emitting an event.
 
         For providers whose streamed args arrive as JSON string deltas while their non-streamed responses carry parsed

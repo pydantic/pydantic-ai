@@ -1326,7 +1326,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
             async def open_stream() -> _AnthropicEventStream:
                 raw_stream = cast(AsyncStream[BetaRawMessageStreamEvent], await send(True))
-                event_stream = _utils.PeekableAsyncStream(raw_stream)
+                event_stream: _AnthropicEventStream = _utils.PeekableAsyncStream(raw_stream)
                 try:
                     # An error that stops the response, like an expired container, arrives as the first event,
                     # so peek it here to reach the retries below.
