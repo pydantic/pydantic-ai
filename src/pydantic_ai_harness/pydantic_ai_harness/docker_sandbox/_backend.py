@@ -7,6 +7,7 @@ import posixpath
 import re
 import secrets
 from collections.abc import Mapping, Sequence
+from typing import Literal
 
 import anyio
 
@@ -111,27 +112,30 @@ def _is_missing(result: CommandResult) -> bool:
     return 'no such container' in result.stderr.lower()
 
 
-async def _check_owned(runner: LocalWorkspaceBackend, executable: str, name: str, error: type[WorkspaceError]) -> bool:
-    """Whether the container `name` exists, raising `error` unless this capability created it.
+async def _owned_state(
+    runner: LocalWorkspaceBackend, executable: str, name: str, error: type[WorkspaceError]
+) -> Literal['running', 'stopped', 'missing']:
+    """The state of the container `name`, raising `error` unless this capability created it.
 
     A ref can come from message history, and the daemon serves every container on the machine: without this
     check, a crafted ref could run commands in, or remove, an unrelated container.
     """
-    template = f'{{{{index .Config.Labels "{_LABEL}"}}}}'
+    template = f'{{{{index .Config.Labels "{_LABEL}"}}}} {{{{.State.Running}}}}'
     result = await runner.run([executable, 'inspect', '--type', 'container', '--format', template, '--', name])
     if result.exit_code != 0:
         if _is_missing(result):
-            return False
+            return 'missing'
         raise error(f'could not inspect container {name}: {result.stderr.strip()}')
-    if result.stdout.strip() != 'true':
+    label, _, running = result.stdout.strip().rpartition(' ')
+    if label != 'true':
         raise error(f'container {name} was not created by `DockerSandbox`: it lacks the label {_LABEL}=true')
-    return True
+    return 'running' if running == 'true' else 'stopped'
 
 
 async def remove_container(name: str, *, executable: str = 'docker') -> None:
     """Remove a container this capability created, with its anonymous volumes; a missing one is fine."""
     runner = _runner()
-    if not await _check_owned(runner, executable, name, WorkspaceError):
+    if await _owned_state(runner, executable, name, WorkspaceError) == 'missing':
         return
     result = await runner.run([executable, 'rm', '--force', '--volumes', '--', name])
     if result.exit_code != 0 and not _is_missing(result):
@@ -256,8 +260,11 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             raise WorkspaceUnavailableError(f'could not create a container from {self._image}: {result.stderr.strip()}')
 
     async def _start(self) -> None:
-        if not await _check_owned(self._runner, self._executable, self._name, WorkspaceUnavailableError):
+        state = await _owned_state(self._runner, self._executable, self._name, WorkspaceUnavailableError)
+        if state == 'missing':
             raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: no such container')
+        if state == 'running':
+            return
         result = await self._runner.run([self._executable, 'start', '--', self._name])
         if result.exit_code != 0:
             raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: {result.stderr.strip()}')

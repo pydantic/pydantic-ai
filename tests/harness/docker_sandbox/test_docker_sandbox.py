@@ -195,6 +195,19 @@ async def test_capability_attaches_to_its_own_refs_only(docker: FakeDocker, cont
         await capability.destroy(WorkspaceRef(provider='e2b', id='earlier'))
 
 
+async def test_attaching_starts_a_stopped_container_but_not_a_running_one(
+    docker: FakeDocker, container_dir: Path
+) -> None:
+    docker.add_container('stopped', container_dir)
+    ref = WorkspaceRef(provider='docker', id='stopped')
+
+    sandbox = DockerSandbox('image', working_dir=str(container_dir))
+    await sandbox.backend(ref).working_dir()
+    await sandbox.backend(ref).working_dir()
+
+    assert [call for call in docker.calls if call.startswith('start')] == ['start -- stopped']
+
+
 async def test_containers_it_did_not_create_are_refused(docker: FakeDocker, container_dir: Path) -> None:
     docker.add_container('database', container_dir, labeled=False)
     ref = WorkspaceRef(provider='docker', id='database')

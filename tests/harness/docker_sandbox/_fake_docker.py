@@ -38,6 +38,7 @@ run)
     fi
     mkdir -p "$workdir" && printf '%s' "$workdir" > "$state/$name" || exit 1
     [ "$label" != ai.pydantic.workspace=true ] || touch "$state/$name.labeled"
+    touch "$state/$name.running"
     echo "$name"
     ;;
 inspect)
@@ -45,11 +46,14 @@ inspect)
     name=$6
     [ -f "$state/$name" ] || { echo "Error: No such container: $name" >&2; exit 1; }
     [ "$name" != uninspectable ] || { echo 'permission denied while trying to connect to the daemon' >&2; exit 1; }
-    if [ -f "$state/$name.labeled" ]; then echo true; else echo '<no value>'; fi
+    if [ -f "$state/$name.labeled" ]; then label=true; else label='<no value>'; fi
+    if [ -f "$state/$name.running" ]; then running=true; else running=false; fi
+    echo "$label $running"
     ;;
 start)
     [ -f "$state/$2" ] || { echo "Error response from daemon: No such container: $2" >&2; exit 1; }
     [ "$2" != broken ] || { echo 'Error response from daemon: port is already allocated' >&2; exit 1; }
+    touch "$state/$2.running"
     echo "$2"
     ;;
 exec)
@@ -94,7 +98,7 @@ rm)
         *"$bin/docker"*) kill -s KILL -- "-$pid" "$pid" 2> /dev/null ;;
         esac
     done
-    rm -rf "$state/$name" "$state/$name.labeled" "$state/$name.pids" "$state/$name.hang-stop"
+    rm -rf "$state/$name" "$state/$name".*
     ;;
 esac
 """
@@ -113,7 +117,7 @@ class FakeDocker:
         return sorted(path.name for path in (self.bin_dir / 'containers').glob('*') if not path.suffix)
 
     def add_container(self, name: str, working_dir: Path, *, labeled: bool = True) -> None:
-        """Add a container; `labeled=False` makes it one `DockerSandbox` didn't create."""
+        """Add a stopped container; `labeled=False` makes it one `DockerSandbox` didn't create."""
         state = self.bin_dir / 'containers'
         state.mkdir(exist_ok=True)
         (state / name).write_text(str(working_dir))

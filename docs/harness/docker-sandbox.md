@@ -84,7 +84,7 @@ Containers the capability created carry the label `ai.pydantic.workspace=true`, 
 
 ## Security
 
-A container shares your machine's kernel, so it is a weaker boundary than a VM such as [E2B](e2b-sandbox.md) or [Modal](modal-sandbox.md). Commands run as the image's user, usually `root` inside the container. Don't mount the Docker socket or directories holding secrets, and add hardening such as `--cap-drop ALL`, `--read-only` or `--user` through `docker_args` when the image allows it.
+A container shares your machine's kernel, so it is a weaker boundary than a VM such as [E2B](e2b-sandbox.md) or [Modal](modal-sandbox.md). Commands run as the image's user, usually `root` inside the container. Don't mount the Docker socket or directories holding secrets, and add hardening such as `--cap-drop ALL`, `--user` or `--read-only` through `docker_args` when the image allows it. With `--read-only`, also pass `--tmpfs /tmp`, where each command records its process ID so a timeout can stop it, and mount a writable working directory.
 
 `env=` values are passed to `docker exec` as arguments, so while a command runs they are visible in process listings (`ps`) on your machine. `env=` is kept out of the capability's `repr`.
 
