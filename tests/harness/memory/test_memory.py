@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserContent,
     UserPromptPart,
 )
@@ -109,6 +110,37 @@ async def test_file_store_hides_mutations_on_read_only_run(tmp_path: Path) -> No
         await toolset.write_memory(ctx, 'hello')
     with pytest.raises(ToolFailed):
         await toolset.delete_memory(ctx, 'topic')
+
+
+@pytest.mark.parametrize('run_local_context', [False, True])
+async def test_memory_tools_recover_run_configuration(run_local_context: bool) -> None:
+    class LimitedMemory(Memory[None]):
+        async def for_run(self, ctx: RunContext[None]) -> Memory[None]:
+            clone = await super().for_run(ctx)
+            clone.max_memory_size = 4
+            clone.max_search_results = 1
+            clone.max_search_result_chars = 20
+            clone.max_search_files = 2
+            return clone
+
+    store = InMemoryStore({'main/one.md': 'needle one', 'main/two.md': 'needle two'})
+    memory = LimitedMemory(store=store, inject_memory=False)
+    toolset = MemoryToolset(memory)
+    ctx = _ctx()
+    ctx.root_capability = await memory.for_run(ctx) if run_local_context else memory
+
+    assert await toolset.read_memory(ctx, 'one') == (
+        'need\n\n[Truncated: this file exceeds `max_memory_size`; edit it externally before using `write_memory`.]'
+    )
+    with pytest.raises(ModelRetry, match='the limit is 4'):
+        await toolset.write_memory(ctx, 'too long')
+    result = await toolset.search_memory(ctx, 'need')
+    assert len(result['matches']) == 1
+    assert sum(len(match['file']) + len(match['snippet']) for match in result['matches']) <= 20
+    assert result['scanned'] <= 2
+    assert result['truncated'] is True
+    assert (await toolset.delete_memory(ctx, 'one'))['status'] == 'deleted'
+    assert await store.read('main/one.md', max_chars=100) is None
 
 
 def _latest_instructions(messages: list[ModelMessage]) -> str:
@@ -1189,6 +1221,52 @@ class TestInjection:
         assert calls == 1
         await agent.run('second run')
         assert calls == 2
+
+    async def test_static_tools_keep_concurrent_run_limits_and_scopes(self) -> None:
+        class LimitedMemory(Memory[int]):
+            async def for_run(self, ctx: RunContext[int]) -> Memory[int]:
+                clone = await super().for_run(ctx)
+                clone.max_memory_size = ctx.deps
+                return clone
+
+        stores = {limit: InMemoryStore({f'{limit}/main/MEMORY.md': 'abcdefghijk'}) for limit in (4, 8)}
+        resolutions: list[int] = []
+        both_started = asyncio.Event()
+        model_calls = 0
+
+        def resolver(ctx: RunContext[int]) -> MemoryStore:
+            resolutions.append(ctx.deps)
+            return stores[ctx.deps]
+
+        async def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal model_calls
+            del info
+            returned = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+            if returned:
+                return ModelResponse(parts=[TextPart(str(returned[-1].content))])
+            model_calls += 1
+            if model_calls == 2:
+                both_started.set()
+            await both_started.wait()
+            return ModelResponse(parts=[ToolCallPart('read_memory', {'file': 'MEMORY.md'})])
+
+        memory = LimitedMemory(store_resolver=resolver, namespace=lambda ctx: str(ctx.deps), inject_memory=False)
+        agent = Agent(FunctionModel(model), deps_type=int, capabilities=[memory])
+        first, second = await asyncio.wait_for(
+            asyncio.gather(agent.run('read', deps=4), agent.run('read', deps=8)), timeout=5
+        )
+
+        assert (
+            first.output
+            == 'abcd\n\n[Truncated: this file exceeds `max_memory_size`; edit it externally before using `write_memory`.]'
+        )
+        assert (
+            second.output
+            == 'abcdefgh\n\n[Truncated: this file exceeds `max_memory_size`; edit it externally before using `write_memory`.]'
+        )
+        assert sorted(resolutions) == [4, 8]
+        assert (await agent.run('read again', deps=4)).output == first.output
+        assert sorted(resolutions) == [4, 4, 8]
 
     async def test_out_of_scope_listing_is_rejected(self) -> None:
         with pytest.raises(RuntimeError, match='outside the requested scope'):
