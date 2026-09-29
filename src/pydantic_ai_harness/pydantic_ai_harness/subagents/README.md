@@ -46,9 +46,11 @@ A delegate's name -- how the parent model refers to it, and how it is listed in 
 - **Deps are forwarded.** The parent run's `deps` are passed to each sub-agent, so sub-agents share the parent's `AgentDepsT` (enforced by the type signature -- every sub-agent is an `AbstractAgent[AgentDepsT, Any]`).
 - Delegated agents run in the parent's workspace, including wrappers such as `ReadOnlyWorkspace`.
 - **Usage is shared by default.** The parent's `usage` is passed to each sub-agent run, so token usage aggregates and a parent `usage_limits` applies across the whole agent tree. Set `forward_usage=False` to give each sub-agent run its own accounting.
-- **Tools can be inherited.** With `inherit_tools=True`, the parent agent's own tools (registered directly or via `toolsets`) are added to each sub-agent run, on top of the sub-agent's own. Tools contributed by the parent's capabilities are not inherited: they are bound to capability instances registered in the parent run, and would arrive without the hooks and instructions they depend on. Use `shared_capabilities` to give sub-agents a capability. This also excludes the delegate tool itself, so a sub-agent can't recurse into further delegation. Off by default.
+- **The parent's tools are not passed on.** A sub-agent runs with its own tools. To delegate to an agent that has all of the parent's tools and capabilities, use `include_self=True` (see "Delegating to the agent itself" below).
 - **Capabilities can be shared.** `shared_capabilities` are applied to every sub-agent run -- e.g. give all sub-agents a common guardrail, memory, or planning capability without rebuilding each `Agent`.
 - **Sub-agent events can be streamed.** Pass an `event_stream_handler` and it's forwarded to each sub-agent run, so the sub-agent's model-streaming and tool events surface to the caller (the handler receives the sub-agent's own `RunContext`).
+
+`inherit_tools=True` is deprecated and emits a `HarnessDeprecationWarning`. It adds the parent agent's own tools (registered via `tools=` or `toolsets=`) to each sub-agent run, minus the delegate tool, but not the tools contributed by the parent's capabilities. Bind the tools an explicit sub-agent needs directly to its `Agent`, use `include_self=True` to delegate to a fresh run of the agent with everything bound to it, or use a `tool_resolver` to give disk-loaded agents tools.
 
 ## Delegating to the agent itself
 
@@ -60,14 +62,14 @@ from pydantic_ai_harness import SubAgents
 
 agent = Agent(
     'anthropic:claude-opus-4-7',
-    capabilities=[SubAgents(include_self=True, agent_folders=None)],
+    capabilities=[SubAgents(include_self=True)],
 )
 ```
 
 - **Only what is bound to the `Agent` carries over.** Capabilities, toolsets, instructions, and model settings passed to the parent's `run()` are not part of the agent, so the delegate does not get them. Passing `SubAgents(include_self=True)` itself to `run()` raises a `UserError` when the run starts, since the delegate would come up without it.
 - **Delegation depth is capped.** The delegate carries `delegate_task` too, so `max_depth` (default `3`, counting the top-level run) bounds the tree: the top-level run delegates, its delegates delegate once more, and a run at the limit gets neither `delegate_task` nor the sub-agent listing. The limit applies to every delegation through `SubAgents`, including explicit rosters.
 - **Delegates inherit everything, including what may not suit a sub-task.** An `AskUser` capability bound to the agent can prompt the user from inside a delegation, and the delegate returns the agent's own `output_type`, rendered with `str()`.
-- `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
+- The deprecated `inherit_tools` does not apply to `self`, whose tools are already the parent's. The name `self` is reserved: an explicit delegate with that name is an error, and a disk definition with that name is skipped with a warning.
 
 ## Per-delegate run controls
 
@@ -198,7 +200,7 @@ The sub-agents are listed in the system prompt via `get_instructions`, using eac
 
 ## Loading sub-agents from disk
 
-A repo's markdown agent definitions become delegates without writing any `Agent` code. By default every `*.md` file under the conventional folders is loaded as a sub-agent, alongside the explicitly-passed `agents`.
+A repo's markdown agent definitions can become delegates without writing any `Agent` code. With `agent_folders` set, every `*.md` file under those folders is loaded as a sub-agent, alongside the explicitly-passed `agents`.
 
 ```python
 from pydantic_ai import Agent
@@ -206,17 +208,19 @@ from pydantic_ai_harness import SubAgents
 
 orchestrator = Agent(
     'anthropic:claude-opus-5-5',
-    capabilities=[SubAgents(inherit_tools=True)],  # auto-loads .agents/agents/ from the run's workspace
+    capabilities=[SubAgents(agent_folders='agents')],  # loads .agents/agents/ from the run's workspace
 )
 ```
 
 Definitions are read at the start of every run from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a sandbox's agent files are found and nothing is read from your home directory. To read them from somewhere else, such as definitions that ship with your application, pass `workspace=LocalWorkspaceBackend('/app')`.
 
-`agent_folders` controls which folders are read. It defaults to `'agents'`, the conventional layout:
+`agent_folders` controls which folders are read:
 
-- A folder-name `str` (the default `'agents'`): load from `.agents/<name>/` under the workspace's working directory, falling back to `.claude/<name>/` when `.agents/` is absent. A run without a workspace skips it.
+- A folder-name `str` (`'agents'` is the conventional layout): load from `.agents/<name>/` under the workspace's working directory, falling back to `.claude/<name>/` when `.agents/` is absent. A run without a workspace skips it.
 - A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
-- `None` disables disk loading, exposing only the explicitly-passed `agents`.
+- `None`, the default, disables disk loading, exposing only the explicitly-passed `agents`.
+
+Earlier releases loaded the conventional folder by default. When `agent_folders` is omitted and that folder contains a definition, the run emits a `HarnessDeprecationWarning` naming the folder it no longer loads. Pass `agent_folders='agents'` to retain the old behavior, or `agent_folders=None` to keep the new behavior without a warning.
 
 Until this release, the folders were read from this machine, including the home folder `~/.agents/agents/`. A run without a workspace now fails at its start when given a path sequence. Convention discovery warns once when it skips a folder in the current or home directory that the workspace does not reach, naming the folder and the `workspace=` that reads it.
 
@@ -259,7 +263,7 @@ Every agent the capability builds runs at a minimum thinking-effort floor. `MINI
 
 ### Tools
 
-A disk agent gets no tools by default (`inherit_tools` is `False`); set `inherit_tools=True` to expose the parent's tools to it through the `inherit_tools` mechanism, in which case its `tools` frontmatter is ignored. To map the frontmatter tool names to specific toolsets instead, pass a `tool_resolver`: it receives each tool name (so it can honor entries like `Bash(git:*)`) and returns the toolsets that provide it, or `None` for an unknown name, which is skipped with a warning.
+Without a `tool_resolver`, a disk agent gets no tools and its `tools` frontmatter is ignored. To map the frontmatter tool names to toolsets, pass a `tool_resolver`: it receives each tool name (so it can honor entries like `Bash(git:*)`) and returns the toolsets that provide it, or `None` for an unknown name, which is skipped with a warning.
 
 ```python {names="defined"}
 from collections.abc import Sequence
@@ -288,11 +292,11 @@ from pydantic_ai_harness import SubAgents
 SubAgents(
     agents=(),             # Sequence[SubAgent[AgentDepsT]] -- each pairs an agent with its run controls
     models={},             # Mapping[str, Model | str | ModelOption] -- per-delegation model menu (off when empty)
-    agent_folders='agents',# folder-name str (convention) | Sequence[str | Path] workspace paths | None (disable)
+    agent_folders=None,    # folder-name str ('agents' is conventional) | Sequence[str | Path] workspace paths | None
     agent_overrides={},    # Mapping[str, AgentOverride] -- per-disk-agent model/effort override
     tool_resolver=None,    # Callable[[str], Sequence[AgentToolset[object]] | None] -- disk-agent tool mapping
     forward_usage=True,    # share the parent's usage with sub-agent runs
-    inherit_tools=False,   # expose the parent's own tools to sub-agents (capability tools excluded)
+    inherit_tools=False,   # deprecated: use include_self=True, or tool_resolver for disk agents
     shared_capabilities=(),# capabilities applied to every sub-agent run
     event_stream_handler=None,  # forwarded to each sub-agent run to stream its events
     tool_name='delegate_task',

@@ -688,11 +688,14 @@ class GoogleModel(Model[Client]):
                 ),
             )
 
-        response = await self.client.aio.models.count_tokens(
-            model=self._model_name,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response = await self.client.aio.models.count_tokens(
+                model=self._model_name,
+                contents=contents,
+                config=config,
+            )
+        except errors.APIError as e:
+            raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if response.total_tokens is None:
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Total tokens missing from Gemini response', str(response)
@@ -2104,6 +2107,21 @@ def _usage_metadata_as_usage(
     [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
     speaks the generate-content field names, so a Live caller translates before handing it over.
     """
+    if not any(
+        (
+            prompt_token_count,
+            output_token_count,
+            cached_content_token_count,
+            thoughts_token_count,
+            tool_use_prompt_token_count,
+            prompt_tokens_details,
+            cache_tokens_details,
+            output_tokens_details,
+            tool_use_prompt_tokens_details,
+        )
+    ):
+        return existing_usage or usage.RequestUsage()
+
     details: dict[str, int] = {}
     if cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count

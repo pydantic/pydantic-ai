@@ -252,6 +252,8 @@ def _map_usage(response: EmbedByTypeResponse, provider: str, provider_url: str, 
         for k, v in u.billed_units.model_dump(exclude_none=True).items()
         if isinstance(v, int | float) and v > 0
     }
+    if not usage_data:
+        return RequestUsage()
     details = {k: int(v) for k, v in usage_data.items() if k != 'input_tokens' and isinstance(v, int | float) and v > 0}
     response_data = dict(model=model, meta=dict(billed_units=usage_data))
 

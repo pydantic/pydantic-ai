@@ -12,6 +12,10 @@ Context management is the built-in `compaction` plugin,
 [described below](#compacting-the-conversation).
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
+The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
+token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
+entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
+[its settings](PLUGINS.md#google_workspace-gmail-calendar-and-drive-tools).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
 `stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON
@@ -1389,6 +1393,12 @@ reload, and remove. Closing the menu returns to the prompt without printing the
 plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
 
 [PLUGINS.md](PLUGINS.md) has the full list of hooks, events, and rules.
+
+`/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
+settings menu (`/plugins configure notion` reopens it). The token is picked from
+`/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one, it
+signs in through the browser. Plugin settings never hold the token. See
+[PLUGINS.md](PLUGINS.md#notion-workspace-tools).
 
 ## Questions from the model
 
