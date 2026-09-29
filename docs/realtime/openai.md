@@ -304,6 +304,10 @@ reply it speaks.) The backend's
 request is also what a `per_request_input_tokens_limit` is measured against, since it is the only
 thing in a Live session that spends input tokens.
 
+When a Live session's history is passed to an [`Agent`][pydantic_ai.agent.Agent] using a Responses
+model, Pydantic AI replays the spoken transcript but omits delegated web-search items. Live does not
+expose the backend reasoning item that OpenAI requires alongside those items.
+
 For [usage limits](observability.md#usage-and-limits), that means a `cost_limit` on
 [`UsageLimits`][pydantic_ai.usage.UsageLimits] bounds the whole call, spoken seconds and backend tokens
 together, as long as both are priced; token limits bound only the backend. No field caps duration

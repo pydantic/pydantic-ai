@@ -3434,6 +3434,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         assert_never(part)
             elif isinstance(message, ModelResponse):
                 response_from_same_provider = message.provider_name == self.system
+                delegated_live_response = (
+                    message.provider_details is not None and 'delegated_model' in message.provider_details
+                )
                 message_item: responses.ResponseOutputMessageParam | None = None
                 reasoning_item: responses.ResponseReasoningItemParam | None = None
                 web_search_item: responses.ResponseFunctionWebSearchParam | None = None
@@ -3448,6 +3451,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         client_tool_search_active=client_tool_search_active,
                     )
                 for item in response_parts:
+                    if (
+                        delegated_live_response
+                        and isinstance(item, (NativeToolCallPart, NativeToolReturnPart))
+                        and item.tool_name == WebSearchTool.kind
+                    ):
+                        # Live does not retain the delegated backend's linked reasoning item, so OpenAI
+                        # rejects this web-search item when it is replayed into the Responses API.
+                        continue
                     from_same_provider = item.provider_name == self.system or (
                         item.provider_name is None and message.provider_name == self.system
                     )
