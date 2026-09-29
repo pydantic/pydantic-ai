@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import anyio
 import anyio.to_thread
 
-from pydantic_ai._utils import gather
+from pydantic_ai._utils import BaseExceptionGroup, gather
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
@@ -629,9 +629,17 @@ class BedrockEmbeddingModel(EmbeddingModel):
                 embeddings, _ = self._handler.parse_response(response)
                 return embeddings[0], input_tokens
 
-        # `gather` re-raises a sole failure directly, so a failed request surfaces as its `ModelHTTPError` or
-        # `ModelAPIError` rather than wrapped in an `ExceptionGroup`.
-        results = await gather(*(embed_single(text) for text in inputs))
+        try:
+            results = await gather(*(embed_single(text) for text in inputs))
+        except BaseExceptionGroup as eg:
+            # Requests already sent to a thread can't be cancelled, so a throttle or validation error that fails every
+            # request surfaces several times. Raise the first model error, so callers see the same `ModelHTTPError` or
+            # `ModelAPIError` whatever the number of inputs.
+            first = eg.exceptions[0]
+            if isinstance(first, ModelAPIError):
+                first.__suppress_context__ = True
+                raise first
+            raise  # pragma: no cover
 
         all_embeddings = [embedding for embedding, _ in results]
         total_input_tokens = sum(tokens for _, tokens in results)

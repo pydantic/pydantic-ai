@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-import sys
+import time
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -14,19 +14,10 @@ from urllib.parse import urlparse
 import anyio
 import httpx
 import pytest
+from opentelemetry.trace import StatusCode
 from pytest_mock import MockerFixture
 
 import pydantic_ai.models
-
-from ._inline_snapshot import snapshot
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup as ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
-
-from opentelemetry.trace import StatusCode
-
 from pydantic_ai.embeddings import (
     Embedder,
     EmbeddingResult,
@@ -41,6 +32,7 @@ from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
+from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsFloat, IsInt, IsList, IsStr, TestEnv, try_import
 
 pytestmark = [
@@ -1395,6 +1387,25 @@ class TestBedrock:
             with pytest.raises(ModelAPIError) as exc_info:
                 await model.embed(['test'], input_type='query')
             assert type(exc_info.value) is ModelAPIError
+
+    async def test_client_error_on_every_concurrent_request(self, bedrock_provider: BedrockProvider):
+        """A throttle that fails every concurrent request raises one `ModelHTTPError`, not an `ExceptionGroup`."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        error_response = {
+            'Error': {'Code': 'ThrottlingException', 'Message': 'Too many requests'},
+            'ResponseMetadata': {'HTTPStatusCode': 429},
+        }
+
+        def invoke_model(**kwargs: Any) -> Any:
+            time.sleep(0.05)  # let every request reach its thread before the first failure cancels the task group
+            raise ClientError(error_response, 'InvokeModel')  # pyright: ignore[reportArgumentType]
+
+        with patch.object(model.client, 'invoke_model', side_effect=invoke_model):
+            with pytest.raises(ModelHTTPError) as exc_info:
+                await model.embed(['a', 'b', 'c'], input_type='document')
+        assert exc_info.value.status_code == 429
+        assert isinstance(exc_info.value.__cause__, ClientError)
 
     @pytest.mark.parametrize('error_type', ['read-timeout', 'endpoint-connection'])
     async def test_transport_error(self, bedrock_provider: BedrockProvider, error_type: str):
