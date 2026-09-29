@@ -25,9 +25,13 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
     BinaryImage,
+    CachePoint,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RealtimeSessionErrorEvent,
@@ -39,7 +43,10 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
+    UserContent,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import (
@@ -792,18 +799,126 @@ async def test_tool_result_text_content_reaches_the_backend() -> None:
     )
 
 
-async def test_tool_result_media_is_refused() -> None:
-    """Live carries no media, so a result that needs it fails with nothing on the wire."""
+async def test_tool_result_text_content_types_reach_the_backend_as_text() -> None:
+    """Typed text rides with plain text in the follow-up message; a cache point has no meaning here."""
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Sink(object())  # pyright: ignore[reportArgumentType]
+    await connection.send(
+        ToolResult('c1', output='ok', content=[TextContent(content='Returning guest.'), CachePoint()])
+    )
+
+    assert sent[1] == snapshot(
+        {
+            'type': 'response.item.create',
+            'item': {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'Returning guest.'}],
+            },
+        }
+    )
+
+
+async def test_tool_result_media_goes_to_the_backend_in_the_output() -> None:
+    """Media rides in the function output itself, which is where the Responses backend reads a tool's files.
+
+    The text goes with it, in order, so a file stays next to the text that introduces it. The mapping is
+    `OpenAIResponsesModel`'s, so a pinned payload is what catches it drifting: a cassette would still match.
+    """
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Sink(object(), provider_name='openai')  # pyright: ignore[reportArgumentType]
+    content: list[UserContent] = [
+        'The photo:',
+        BinaryContent(data=b'png', media_type='image/png'),
+        TextContent(content='The invoice:'),
+        BinaryContent(data=b'pdf', media_type='application/pdf'),
+        CachePoint(),
+        ImageUrl(url='https://example.com/kiwi.jpg'),
+        DocumentUrl(url='https://example.com/terms.pdf'),
+        UploadedFile(file_id='file-abc', provider_name='openai', media_type='image/png'),
+    ]
+    await connection.send(ToolResult('c1', output='See the attachments.', content=content))
+
+    assert sent == snapshot(
+        [
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'function_call_output',
+                    'call_id': 'c1',
+                    'output': [
+                        {'type': 'input_text', 'text': 'See the attachments.'},
+                        {'type': 'input_text', 'text': 'The photo:'},
+                        {'image_url': 'data:image/png;base64,cG5n', 'type': 'input_image', 'detail': 'auto'},
+                        {'type': 'input_text', 'text': 'The invoice:'},
+                        {
+                            'type': 'input_file',
+                            'file_data': 'data:application/pdf;base64,cGRm',
+                            'filename': 'filename.pdf',
+                        },
+                        {'image_url': 'https://example.com/kiwi.jpg', 'type': 'input_image', 'detail': 'auto'},
+                        {'type': 'input_file', 'file_url': 'https://example.com/terms.pdf'},
+                        {'type': 'input_image', 'file_id': 'file-abc', 'detail': 'auto'},
+                    ],
+                },
+            },
+            {'type': 'response.create'},
+        ]
+    )
+
+
+async def test_tool_result_media_with_no_text_output_is_sent_alone() -> None:
+    """An empty return value adds no empty text part in front of the media."""
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Sink(object())  # pyright: ignore[reportArgumentType]
+    await connection.send(ToolResult('c1', output='', content=[BinaryContent(data=b'png', media_type='image/png')]))
+
+    assert sent[0]['item']['output'] == snapshot(
+        [{'image_url': 'data:image/png;base64,cG5n', 'type': 'input_image', 'detail': 'auto'}]
+    )
+
+
+@pytest.mark.parametrize(
+    'item,match',
+    [
+        (AudioUrl(url='https://example.com/clip'), 'cannot send `AudioUrl` content'),
+        (VideoUrl(url='https://example.com/clip'), 'cannot send `VideoUrl` content'),
+        (BinaryContent(data=b'x', media_type='audio/wav'), 'cannot send `audio/wav` content'),
+        (BinaryContent(data=b'x', media_type='video/mp4'), 'cannot send `video/mp4` content'),
+        (UploadedFile(file_id='f', provider_name='openai', media_type='audio/wav'), 'uploaded `audio/wav` file'),
+        (UploadedFile(file_id='f', provider_name='openai', media_type='video/mp4'), 'uploaded `video/mp4` file'),
+        (UploadedFile(file_id='f', provider_name='anthropic'), "provider_name='anthropic'"),
+    ],
+)
+async def test_tool_result_media_the_backend_cannot_read_is_refused(item: UserContent, match: str) -> None:
+    """A function output carries text, images, and documents only, so anything else fails with nothing sent."""
     sent: list[dict[str, Any]] = []
 
     class _Recorder(OpenAILiveConnection):
         async def _send_event(self, event: dict[str, Any]) -> None:
             sent.append(event)  # pragma: no cover
 
-    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
-    result = ToolResult('c1', output='see this', content=[BinaryContent(data=b'x', media_type='image/png')])
+    connection = _Recorder(object(), provider_name='openai')  # pyright: ignore[reportArgumentType]
+    result = ToolResult(
+        'c1', output='see this', content=['Here:', BinaryContent(data=b'x', media_type='image/png'), item]
+    )
 
-    with pytest.raises(UserError, match='does not support media in tool results'):
+    with pytest.raises(UserError, match=match):
         await connection.send(result)
 
     assert sent == []

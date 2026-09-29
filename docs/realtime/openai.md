@@ -137,8 +137,11 @@ the backend model takes over, calling the agent's tools as it goes. Those calls 
 [`ToolCall`][pydantic_ai.realtime.codec.ToolCall]s, so the session runs them through the same
 [tool loop](tools.md#function-tools) as every other provider, including validation, retries,
 [dependencies](../dependencies.md), and [capability hooks](capabilities.md), and sends the
-results back. Speech and delegated work run independently, so the Live model can keep talking while
-that happens rather than leaving dead air.
+results back. Images and documents a tool returns, in its return value or in a
+[`ToolReturn`][pydantic_ai.messages.ToolReturn]'s `content`, go to the backend in the tool's output, as
+they would in a [standard run](../tools-advanced.md#advanced-tool-returns) on
+[`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel]. Speech and delegated work run
+independently, so the Live model can keep talking while that happens rather than leaving dead air.
 
 That split is why the agent's instructions describe the *work* and `openai_live_instructions`
 describes the *speech*:
@@ -468,10 +471,9 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt].
 - An image sent without `respond=True`, text over the 500-token cap, and seeded history that contains
   audio or images.
-- A [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `content` carries media, which Pydantic AI
-  does not route to the delegated backend yet. It is refused before anything is sent rather than
-  reaching the backend without the material that explains it. Text `content` is sent to the backend as
-  a message after the tool's result.
+- A tool result carrying audio or video, which a Responses function output has no place for. It is
+  refused before anything is sent rather than reaching the backend without the material that explains
+  it. Images and documents go to the backend in the tool's output.
 
 ### gpt-realtime {#gpt-realtime-feature-support-and-limitations}
 
