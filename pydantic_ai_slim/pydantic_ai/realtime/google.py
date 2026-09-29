@@ -76,6 +76,7 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..models import ModelRequestParameters, download_item
 
@@ -1495,17 +1496,34 @@ class GoogleRealtimeConnection(RealtimeConnection):
         media: list[genai_types.FunctionResponsePart] = []
         if content.content:
             text_content: list[str] = []
-            for item in content.content:
-                if isinstance(item, str):
-                    text_content.append(item)
-                elif isinstance(item, TextContent):
-                    text_content.append(item.content)
-                elif isinstance(item, CachePoint):
-                    continue
-                elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
-                    media.append(await self._tool_result_media(item, tool_call_id=content.tool_call_id))
-                else:
-                    assert_never(item)
+            items = content.content
+            dropped_tags: set[int] = set()
+            try:
+                for index, item in enumerate(items):
+                    if index in dropped_tags:
+                        continue
+                    if isinstance(item, str):
+                        text_content.append(item)
+                    elif isinstance(item, TextContent):
+                        text_content.append(item.content)
+                    elif isinstance(item, CachePoint):
+                        continue
+                    elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
+                        media.append(await self._tool_result_media(item))
+                        # A file the tool returned comes framed in provenance tags for the user channel.
+                        # Inside the function response it is the tool's by construction, as on a
+                        # standard Gemini request, so the tags, which would frame nothing, are dropped.
+                        open_tag, close_tag = _tool_result_provenance_tags(name, content.tool_call_id, item.identifier)
+                        if text_content[-1:] == [open_tag] and index + 1 < len(items) and items[index + 1] == close_tag:
+                            text_content.pop()
+                            dropped_tags.add(index + 1)
+                    else:
+                        assert_never(item)
+            except BaseException:
+                # Refused, or its media couldn't be fetched: the result is never sent, so the call is
+                # forgotten as a sent one would be.
+                self._tool_calls.pop(content.tool_call_id, None)
+                raise
             output = '\n\n'.join(part for part in (output, *text_content) if part)
         function_response = genai_types.FunctionResponse(
             id=gemini_id,
@@ -1537,7 +1555,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._tool_calls.pop(content.tool_call_id, None)
 
     async def _tool_result_media(
-        self, item: ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile, *, tool_call_id: str
+        self, item: ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile
     ) -> genai_types.FunctionResponsePart:
         """Map media attached to a tool return to a function-response part, or raise if this model can't carry it."""
         supported = self._tool_return_mime_types
@@ -1549,13 +1567,12 @@ class GoogleRealtimeConnection(RealtimeConnection):
             downloaded = await download_item(item, data_format='bytes')
             data, media_type = downloaded['data'], downloaded['data_type']
         if data is None or media_type not in supported:
-            # Forgotten, since the result is refused and never sent.
-            self._tool_calls.pop(tool_call_id, None)
+            carries = f'{", ".join(supported)} content, inline or from an `ImageUrl`' if supported else 'only text'
             raise UserError(
-                f'{self._provider_label} tool results on this model cannot carry `{type(item).__name__}` content'
-                + (f' of type {media_type!r}' if media_type is not None else '')
-                + f', only {", ".join(supported) if supported else "text"}. Return text instead, or use a model '
-                'or realtime provider that supports this tool-result media.'
+                f'{self._provider_label} tool results on this model carry {carries}, so `{type(item).__name__}` '
+                + (f'content of type {media_type!r} ' if media_type is not None else 'content ')
+                + 'attached to a tool return cannot be delivered. Return text instead, or use a model or '
+                'realtime provider that supports this tool-result media.'
             )
         return genai_types.FunctionResponsePart(
             inline_data=genai_types.FunctionResponseBlob(data=data, mime_type=media_type)
