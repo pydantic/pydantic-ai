@@ -400,6 +400,17 @@ class ReplayWebSocket:
             # Recorded before OpenAI-protocol client frames carried an `event_id` (the id a refusal
             # echoes, see `client_event_id`); the rest of the frame is still pinned.
             actual.pop('event_id', None)
+        if actual.get('type') == 'conversation.item.create' and 'id' not in (expected.get('item') or {}):
+            # Recorded before a user message item was created under an id naming its input (see
+            # `client_item_id`); only that id is let through, and the rest of the item is still pinned.
+            item: dict[str, Any] = actual.get('item') or {}
+            if str(item.get('id', '')).startswith('pydantic_ai_item_'):
+                del item['id']
+        if actual.get('type') == 'response.create' and 'response' not in expected:
+            # Recorded before a `response.create` carried the `metadata` naming the inputs it answers (see
+            # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.
+            if (response := actual.get('response')) is not None and set(response) == {'metadata'}:
+                del actual['response']
         assert actual == expected, (
             f'Outbound WebSocket frame did not match cassette at position {self._position - 1}.\n'
             f'expected={expected!r}\nactual={actual!r}'
