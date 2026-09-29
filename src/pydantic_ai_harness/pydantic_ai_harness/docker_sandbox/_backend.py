@@ -30,20 +30,24 @@ PROVIDER = 'docker'
 
 _READY = '__pydantic_ai_docker_ready__\n'
 """Printed on stderr before the command starts; anything before it is the `docker` client's own error."""
-_DONE = re.compile(r'\n__pydantic_ai_docker_done__(\d+)\n')
+_DONE = re.compile(r'\n__pydantic_ai_docker_done__([0-9a-f]+):(\d+)\n')
 """Carries the command's exit status, so a container that dies mid-command isn't read as a result."""
 
 _PID_DIR = '/tmp'
 """Where each command records its process ID, so a second `docker exec` can stop it on a timeout."""
 
-_WRAPPER = f"""pidfile={_PID_DIR}/.pydantic-ai-$1.pid
+_WRAPPER = f"""tag=$1
+pidfile={_PID_DIR}/.pydantic-ai-$tag.pid
 shift
-echo $$ > "$pidfile" 2> /dev/null
+if ! echo $$ 2> /dev/null > "$pidfile"; then
+    echo "cannot write $pidfile, which stops the command on a timeout: {_PID_DIR} must be writable" >&2
+    exit 1
+fi
 printf '%s' '{_READY}' >&2
 (exec "$@")
 status=$?
 rm -f "$pidfile"
-printf '\\n__pydantic_ai_docker_done__%d\\n' "$status" >&2
+printf '\\n__pydantic_ai_docker_done__%s:%d\\n' "$tag" "$status" >&2
 exit "$status"
 """
 """Runs as `sh -c WRAPPER sh <tag> <argv...>`: records its PID, marks the start, and reports the exit status.
@@ -248,7 +252,9 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
     async def _exec(self, argv: Sequence[str], *, env: Mapping[str, str], timeout: float | None) -> CommandResult:
         tag = secrets.token_hex(8)
         env_args = [arg for name, value in env.items() for arg in ('--env', f'{name}={value}')]
-        docker = [self._executable, 'exec', '--workdir', self._working_dir, *env_args, self._name]
+        # Once resolved, commands start where `working_dir()` says they do, even if a symlink on the way changes.
+        workdir = self._resolved_working_dir or self._working_dir
+        docker = [self._executable, 'exec', '--workdir', workdir, *env_args, self._name]
         try:
             result = await self._runner.run([*docker, 'sh', '-c', _WRAPPER, 'sh', tag, *argv], timeout=timeout)
         except anyio.get_cancelled_exc_class():
@@ -270,13 +276,12 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         if not ready:
             reason = before.strip() or f'`{self._executable} exec` exited with code {result.exit_code}'
             raise WorkspaceUnavailableError(f'Docker workspace {self._name} is unavailable: {reason}')
-        # A background child that kept stderr open can write after the marker, so take the last one, not the end.
-        markers = list(_DONE.finditer(stderr))
-        if not markers:
+        # A background child that kept stderr open can write around the marker, so match this command's tag.
+        done = next((marker for marker in _DONE.finditer(stderr) if marker[1] == tag), None)
+        if done is None:
             raise WorkspaceUnavailableError(f'Docker workspace {self._name}: the container stopped during the command')
-        done = markers[-1]
         return CommandResult(
-            exit_code=int(done[1]), stdout=result.stdout, stderr=stderr[: done.start()] + stderr[done.end() :]
+            exit_code=int(done[2]), stdout=result.stdout, stderr=stderr[: done.start()] + stderr[done.end() :]
         )
 
     async def _stop(self, tag: str) -> None:

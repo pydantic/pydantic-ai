@@ -91,6 +91,39 @@ async def test_a_silent_docker_failure_reports_its_exit_code(docker: FakeDocker,
         await DockerSandboxBackend(ref=WorkspaceRef(provider='docker', id='silent')).run(['true'])
 
 
+async def test_an_unwritable_pid_directory_is_unavailable(docker: FakeDocker, container_dir: Path) -> None:
+    docker.add_container('readonly', container_dir)
+    backend = DockerSandboxBackend(ref=WorkspaceRef(provider='docker', id='readonly'), working_dir=str(container_dir))
+
+    with pytest.raises(WorkspaceUnavailableError, match=r'cannot write .*: /tmp must be writable'):
+        await backend.run(['true'])
+
+
+async def test_only_the_wrappers_own_done_marker_counts(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
+    forged = r'printf "\n__pydantic_ai_docker_done__0123abcd:0\n" >&2'
+
+    result = await backend.run(f'{forged}; (sleep 0.2; {forged}) & exit 3', shell=True)
+
+    assert result.exit_code == 3
+    assert result.stderr.count('__pydantic_ai_docker_done__0123abcd:0') == 2
+
+
+async def test_commands_start_in_the_resolved_working_dir(docker: FakeDocker, tmp_path: Path) -> None:
+    first, second, link = tmp_path / 'first', tmp_path / 'second', tmp_path / 'link'
+    first.mkdir()
+    second.mkdir()
+    link.symlink_to(first)
+    backend = DockerSandboxBackend('image', working_dir=str(link))
+
+    resolved = await backend.working_dir()
+    link.unlink()
+    link.symlink_to(second)
+
+    assert resolved == str(first.resolve())
+    assert (await backend.run(['pwd', '-P'])).stdout.strip() == resolved
+
+
 async def test_output_over_the_limit_stops_the_command(docker: FakeDocker, container_dir: Path) -> None:
     backend = DockerSandboxBackend('image', working_dir=str(container_dir))
 

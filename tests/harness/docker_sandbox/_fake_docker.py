@@ -53,6 +53,12 @@ exec)
     shift
     [ -f "$state/$name" ] || { echo "Error response from daemon: No such container: $name" >&2; exit 1; }
     [ "$name" != silent ] || exit 1
+    # In a `readonly` container the wrapper's PID directory isn't writable.
+    if [ "$name" = readonly ]; then
+        script=$(printf '%s' "$3" | sed 's#/tmp/#/nonexistent-pydantic-ai-dir/#')
+        shift 3
+        set -- sh -c "$script" "$@"
+    fi
     # The stop script is the only exec with exactly `sh -c SCRIPT sh TAG`.
     if [ -f "$state/$name.hang-stop" ] && [ $# -eq 5 ]; then sleep 30; fi
     [ -n "$workdir" ] || workdir=$(cat "$state/$name")

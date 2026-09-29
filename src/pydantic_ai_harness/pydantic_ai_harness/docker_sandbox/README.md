@@ -35,7 +35,7 @@ agent = Agent(
 result = agent.run_sync('Write a script that prints the first 10 primes, and run it.')
 ```
 
-`Coder`'s shell and file tools now run in a fresh container from `python:3.13-slim`, in `/workspace`. For a single run, pass `workspace=DockerSandboxBackend('python:3.13-slim')` to `agent.run` instead.
+`Coder`'s shell and file tools now run in a fresh container from `python:3.13-slim`, in `/workspace`. For a single run, pass `workspace=DockerSandboxBackend('python:3.13-slim')` (also imported from `pydantic_ai_harness`) to `agent.run` instead.
 
 ## Working on a project
 
@@ -75,8 +75,12 @@ The ref is `WorkspaceRef(provider='docker', id='pydantic-ai-<hex>')`, the contai
 The container outlives the run, like every workspace. Remove it, with its anonymous volumes, when you're done:
 
 ```python {test="skip"}
-ref = result.workspace.ref  # set once the container exists
-await DockerSandbox('python:3.13-slim').destroy(ref)
+from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai_harness import DockerSandbox
+
+
+async def remove_sandbox(ref: WorkspaceRef) -> None:  # for example `result.workspace.ref`
+    await DockerSandbox('python:3.13-slim').destroy(ref)
 ```
 
 Containers the capability created carry the label `ai.pydantic.workspace=true`, so `docker ps --all --filter label=ai.pydantic.workspace=true` finds any you've lost track of.
