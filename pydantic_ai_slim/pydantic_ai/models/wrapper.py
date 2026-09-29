@@ -4,6 +4,7 @@ import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from types import TracebackType
 from typing import Any
 
@@ -149,6 +150,11 @@ class WrapperModel(Model):
     def settings(self) -> ModelSettings | None:
         """Get the settings from the wrapped model."""
         return self.wrapped.settings
+
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+        # `Model.resolve_cache_retention` returns `None`, so without this override normal attribute
+        # lookup succeeds and `__getattr__` never forwards.
+        return self.wrapped.resolve_cache_retention(model_settings)
 
     @property
     def base_url(self) -> str | None:

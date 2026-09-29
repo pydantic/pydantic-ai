@@ -340,7 +340,6 @@ def test_agent_implementation_forwarding_parity(implementation: type, method_nam
     )
 
 
-@pytest.mark.anyio
 async def test_wrapper_agent_override_metadata_reaches_the_run():
     """End-to-end pin for the forwarding the meta-tests above check structurally.
 

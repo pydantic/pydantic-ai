@@ -43,11 +43,12 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
             # Prefect rebuilds dynamic task keys in the same order on flow retry. A counter per
             # semantic operation therefore distinguishes repeated live invocations while producing
             # the same cache keys during replay. Capability operations use separate counters so an
-            # unrelated operation cannot shift their replay identities.
+            # unrelated operation cannot shift their replay identities. The counter is per agent, so
+            # its key goes into the cache key: two agents in one flow must not share cached results.
             sequence = flow_context.task_run_dynamic_keys.get(sequence_key, 0)
             assert isinstance(sequence, int)
             flow_context.task_run_dynamic_keys[sequence_key] = sequence + 1
-            cache_key = (*cache_key, sequence)
+            cache_key = (*cache_key, sequence_key, sequence)
 
         @task
         async def operation(operation_name: str, *logical_inputs: object) -> object:

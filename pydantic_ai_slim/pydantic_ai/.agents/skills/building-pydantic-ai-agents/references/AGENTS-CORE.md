@@ -4,11 +4,18 @@ Read this file when the user needs the core `Agent` workflow: creating agents, c
 
 ## Create a Basic Agent
 
+Include Logfire instrumentation in new applications from the start, so every run is visible; see [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior) for credentials and other OpenTelemetry backends.
+
 ```python
+import logfire
+
 from pydantic_ai import Agent
 
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-fable-5-1',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
@@ -45,6 +52,34 @@ If the user is choosing between output modes:
 - `output_type=MyModel` for structured output
 - `TextOutput` for custom text parsing
 - `NativeOutput` or `ToolOutput` when they need explicit output-mode control
+
+## Picking One of a Run-Time Set
+
+Use `Choices({key: description})` when the model has to pick one of a set that only exists once the run is under
+way — the records a search returned, the actions available on a screen. Each option carries its meaning into the
+schema, the output is validated against the keys, and it is a type, so the same value also works as a model field
+or a tool parameter — there, write `Annotated[str, Intent]` so type checkers see a `str`. For a set you know when you write the code, use a `Literal` or an `Enum` (with
+`UseEnumMemberDocstrings` for per-member descriptions), which give exhaustiveness checking.
+
+```python
+from pydantic_ai import Agent, Choices
+
+agent = Agent('openai:gpt-5.2', name='triage_agent')
+
+result = agent.run_sync(
+    'The blender arrived smashed. Just send me another one.',
+    output_type=Choices(
+        {'refund': 'They want their money back.', 'replace': 'They want a working unit.'},
+        description='What the customer is asking for.',
+    ),
+)
+print(result.output)
+```
+
+`Choice(description, value=...)` makes an option stand for something other than its key. When that value is
+callable, picking it *calls* it — sync or async, with no arguments — so the run's output is what the action
+returned, the way an output function's is, and `ModelRetry` from it sends the model back for another pick. A set
+with a callable value is an `output_type` only; as a field or a parameter it raises `UserError`.
 
 ## Dependency Injection
 
@@ -102,6 +137,11 @@ Examples:
 - `openai:gpt-5.2`
 - `anthropic:claude-sonnet-4-6`
 - `google:gemini-3-pro-preview`
+
+Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/), one `PYDANTIC_AI_GATEWAY_API_KEY` reaches models from several providers, with spending limits and cost monitoring in Logfire. Prefix the model string with `gateway/`, using the provider's API format:
+
+- `gateway/anthropic:claude-fable-5-1`
+- `gateway/openai:gpt-6-sol`
 
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
+from copy import copy
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
@@ -28,6 +29,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset, CombinedToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._on_event import collect_on_event_methods, marked_listens_to
 from ._ordering import collect_leaves, is_innermost, sort_capabilities
@@ -441,6 +443,25 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 native_tools.append(deferred_native_tool)
         return native_tools
 
+    @property
+    def _has_get_workspace(self) -> bool:
+        return type(self).get_workspace is not CombinedCapability.get_workspace or any(
+            capability._has_get_workspace for capability in self.capabilities
+        )
+
+    def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        for capability in self.capabilities:
+            if (workspace := capability.get_workspace(ctx, ref=ref)) is not None:
+                return workspace
+        return None
+
+    def _prepare_workspace(self, ctx: RunContext[AgentDepsT], workspace: Workspace, *, explicit: bool) -> Workspace:
+        # Middleware order, like `get_wrapper_toolset`: the last capability wraps first, so its
+        # wrapper sits innermost, directly around the selected workspace.
+        for capability in reversed(self.capabilities):
+            workspace = capability._prepare_workspace(ctx, workspace, explicit=explicit)
+        return workspace
+
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         wrapped = toolset
         any_wrapped = False
@@ -472,6 +493,13 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 tool_defs = await capability.prepare_output_tools(cap_ctx, tool_defs)
         return tool_defs
+
+    def _default_run_id(self) -> str | None:
+        if self._has_get_workspace:
+            for capability in reversed(self.capabilities):
+                if (run_id := capability._default_run_id()) is not None:
+                    return run_id
+        return None
 
     # --- Run lifecycle hooks ---
 
@@ -1101,6 +1129,12 @@ def _ctx_for_active_cap(
 def _replace_capability_context(
     ctx: RunContext[AgentDepsT], *, capability: AbstractCapability[AgentDepsT], capability_active: bool
 ) -> RunContext[AgentDepsT]:
+    if type(ctx) is RunContext:
+        cap_ctx = copy(ctx)
+        cap_ctx.capability_active = capability_active
+        cap_ctx._capability = capability  # pyright: ignore[reportPrivateUsage]
+        return cap_ctx
+    # Subclasses can rely on reconstruction, e.g. TemporalRunContext's field availability guards.
     return replace(ctx, capability_active=capability_active, _capability=capability)
 
 

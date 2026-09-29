@@ -8,7 +8,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '830'
+      - '859'
       content-type:
       - application/json
       host:
@@ -19,8 +19,9 @@ interactions:
       questions:
         irreversible:
           instructions:
+            background: Judge what the command would actually do.
+            field: irreversible
             goal: Decide how a coding agent's shell command should be handled before it runs.
-            instructions: Judge what the command would actually do.
             question: Would running this destroy data or leak secrets?
           type: noul
         verdict:
@@ -29,12 +30,12 @@ interactions:
             reject: Destroys data, rewrites shared history, or sends secrets over the network.
             run: Reads, builds, tests or edits inside the project. Reversible.
           instructions:
+            background: Judge what the command would actually do.
+            field: verdict
             goal: Decide how a coding agent's shell command should be handled before it runs.
-            instructions: Judge what the command would actually do.
             question: How to handle this command.
           type: choice
-      state:
-        prompt: rm -rf ./build
+      state: rm -rf ./build
     uri: https://api.typesafe.ai/v1/systemone
   response:
     headers:
@@ -45,19 +46,19 @@ interactions:
     parsed_body:
       answers:
         irreversible:
-          noul: 0.55
+          noul: 0.65
           type: noul
         verdict:
           choice: ask
-          confidence: 0.55
+          confidence: 0.61
           probabilities:
-            ask: 0.69
+            ask: 0.74
             reject: 0.14
-            run: 0.17
+            run: 0.12
           type: choice
       model: jev-1.13.0
       usage:
-        input_tokens: 474
+        input_tokens: 487
         output_tokens: 58
     status:
       code: 200
