@@ -1,3 +1,7 @@
+---
+description: "Use Moonshot AI's Kimi models with Pydantic AI through MoonshotAIProvider and the OpenAI-compatible Chat Completions API, with the moonshotai: prefix."
+---
+
 # Moonshot AI / Kimi
 
 Use Moonshot AI's Kimi models through [`MoonshotAIProvider`][pydantic_ai.providers.moonshotai.MoonshotAIProvider] and the OpenAI-compatible Chat Completions API. The provider prefix is `moonshotai:`.

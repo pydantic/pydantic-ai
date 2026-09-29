@@ -1,3 +1,7 @@
+---
+description: "Use Azure OpenAI and Microsoft Foundry model deployments with Pydantic AI through the Chat Completions or Responses API, or Claude via the Anthropic SDK."
+---
+
 # Microsoft Azure / Foundry
 
 Pydantic AI supports Azure OpenAI and other model deployments in Microsoft Foundry (formerly Azure AI Foundry), as well as Claude through the Anthropic SDK.
@@ -9,6 +13,9 @@ Pydantic AI supports Azure OpenAI and other model deployments in Microsoft Found
 | Anthropic Messages | [`AnthropicModel` with a Foundry client](#claude-on-microsoft-foundry) |
 
 Use your Azure deployment name as the model name. The examples below assume a deployment named `gpt-5.2`.
+
+!!! tip "Voice agents"
+    For live speech-to-speech conversations with Azure OpenAI realtime models or Azure AI Voice Live, see [Azure realtime](../realtime/azure.md).
 
 ## Install
 
@@ -88,7 +95,7 @@ agent = Agent('azure-responses:gpt-5.2')
 !!! note
     Azure's Responses API doesn't yet support every feature of OpenAI's Responses API — for example, native web search is unavailable, and there are limits around image editing and file uploads. See [Microsoft's Responses API docs](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses) for the current list. This applies whether you use the `azure-responses:` shorthand or construct `OpenAIResponsesModel` with `AzureProvider` directly.
 
-Or initialise the model and provider directly:
+Or initialise the model and provider directly, for example to process a document:
 
 ??? example "Document processing with Azure using Responses API"
     ```python

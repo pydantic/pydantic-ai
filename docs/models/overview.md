@@ -14,7 +14,6 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | --- | --- | --- |
 | [Alibaba Cloud / Qwen (DashScope)](compatible-apis.md#alibaba-cloud-model-studio-dashscope) | Cloud platform; model developer | `alibaba:` |
 | [Anthropic](anthropic.md) | Model developer | `anthropic:` |
-| [Atlas Cloud](compatible-apis.md#atlas-cloud) | Gateway | Custom endpoint |
 | [AWS Bedrock](bedrock.md) | Cloud platform | `bedrock:`, `bedrock-mantle:`; Anthropic client |
 | [Cerebras](cerebras.md) | Inference platform | `cerebras:` |
 | [Cohere](cohere.md) | Model developer | `cohere:` |
@@ -37,9 +36,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [OpenAI Codex](openai-codex.md) | Subscription access | `openai-codex:` |
 | [OpenRouter](openrouter.md) | Gateway | `openrouter:` |
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
-| [Perplexity / Sonar](compatible-apis.md#perplexity) | Search models | Custom endpoint |
 | [Pydantic AI Gateway](../gateway.md) | Gateway | `gateway/<provider>:` |
-| [Rapid-MLX](compatible-apis.md#rapid-mlx-apple-silicon) | Local inference | Custom endpoint |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
 | [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
 | [Together AI](compatible-apis.md#together-ai) | Inference platform | `together:` |
@@ -51,9 +48,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 
 The service descriptions help you find a deployment option; a company may offer more than one kind of service. Feature support depends on the model and API you select, even when two services use the same API format.
 
-For an endpoint not listed here, see [Other compatible APIs](compatible-apis.md) or implement a [custom model](#custom-models).
-
-[GitHub Models](compatible-apis.md#github-models) is retired; its deprecated integration is separate from [GitHub Copilot](github-copilot.md).
+For an OpenAI-compatible endpoint not listed here, see [Other endpoints](compatible-apis.md#other-endpoints); for any other API, implement a [custom model](#custom-models).
 
 For testing and development, use [`TestModel`](../api/models/test.md) or [`FunctionModel`](../api/models/function.md).
 

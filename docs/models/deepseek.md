@@ -1,3 +1,7 @@
+---
+description: "Use DeepSeek V4 models with Pydantic AI through the Chat Completions or Responses API, with thinking, structured output and the deepseek: prefix."
+---
+
 # DeepSeek
 
 Use DeepSeek through its Chat Completions or Responses API. The `deepseek:` prefix selects Chat Completions; use [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel] explicitly for Responses.

@@ -1,8 +1,11 @@
 ---
-description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat Completions API, or any OpenAI-compatible API such as DeepSeek, Azure, vLLM or LiteLLM."
+description: "Use OpenAI GPT models with Pydantic AI via the Responses or Chat Completions API, with native tools, background mode, conversations and compaction."
 ---
 
 # OpenAI
+
+!!! tip "Voice agents"
+    For live speech-to-speech conversations with GPT-Live and `gpt-realtime` models, see [OpenAI realtime](../realtime/openai.md).
 
 ## Install
 
@@ -504,14 +507,14 @@ agent = Agent(model)
 
 Five [`ModelSettings`][pydantic_ai.settings.ModelSettings] fields reach OpenAI only through this API — `seed`, `presence_penalty`, `frequency_penalty`, `logit_bias` and `stop_sequences`. The Responses API accepts none of them, so they are dropped on the default `openai:` path.
 
-For other services using the same API format, see the [provider directory](overview.md#provider-directory) and [compatible API configuration](compatible-apis.md).
+For other services using the same API format, see [OpenAI-compatible models](#openai-compatible-models).
 
 ## OpenAI-compatible Models
 
-Find services in the [provider directory](overview.md#provider-directory), or use [Other compatible APIs](compatible-apis.md) to configure a custom endpoint. The provider guides and configuration topics previously on this page are now available here:
+Many other services serve OpenAI-compatible APIs and have their own provider in Pydantic AI: find yours in the [provider directory](overview.md#provider-directory). To connect to an endpoint without one, see [Other endpoints](compatible-apis.md#other-endpoints). Setup and configuration for these services:
 
-- <span id="model-profile"></span>[Model Profile](compatible-apis.md#model-profile)
-- <span id="custom-openai-compatible-provider"></span>[Custom providers for gateways](compatible-apis.md#custom-openai-compatible-provider)
+- <span id="model-profile"></span>[Model profile](compatible-apis.md#model-profile)
+- <span id="custom-openai-compatible-provider"></span>[Gateways that serve several model families](compatible-apis.md#custom-openai-compatible-provider)
 - <span id="detect-incomplete-streamed-responses"></span>[Detect incomplete streamed responses](compatible-apis.md#detect-incomplete-streamed-responses)
 - <span id="models-that-accept-only-one-leading-system-message"></span>[Models that accept only one leading system message](compatible-apis.md#models-that-accept-only-one-leading-system-message)
 - <span id="deepseek"></span>[DeepSeek](deepseek.md)
@@ -522,8 +525,6 @@ Find services in the [provider directory](overview.md#provider-directory), or us
 - <span id="using-azure-with-the-responses-api"></span>[Using Azure with the Responses API](azure.md#using-azure-with-the-responses-api)
 - <span id="vercel-ai-gateway"></span>[Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway)
 - <span id="moonshotai"></span>[MoonshotAI](moonshotai.md)
-- <span id="github-models"></span>[GitHub Models](compatible-apis.md#github-models)
-- <span id="perplexity"></span>[Perplexity](compatible-apis.md#perplexity)
 - <span id="fireworks-ai"></span>[Fireworks AI](compatible-apis.md#fireworks-ai)
 - <span id="together-ai"></span>[Together AI](compatible-apis.md#together-ai)
 - <span id="heroku-ai"></span>[Heroku AI](compatible-apis.md#heroku-ai)
@@ -532,5 +533,3 @@ Find services in the [provider directory](overview.md#provider-directory), or us
 - <span id="nebius-ai-studio"></span>[Nebius AI Studio](compatible-apis.md#nebius-ai-studio)
 - <span id="ovhcloud-ai-endpoints"></span>[OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints)
 - <span id="sambanova"></span>[SambaNova](compatible-apis.md#sambanova)
-- <span id="atlas-cloud"></span>[Atlas Cloud](compatible-apis.md#atlas-cloud)
-- <span id="rapid-mlx-apple-silicon"></span>[Rapid-MLX (Apple Silicon)](compatible-apis.md#rapid-mlx-apple-silicon)

@@ -157,7 +157,7 @@ Use [Pydantic Evals](evals.md) to track retrieval quality across a dataset of re
 
 ### OpenAI
 
-[`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] works with OpenAI's embeddings API and any [OpenAI-compatible provider](models/compatible-apis.md).
+[`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] works with OpenAI's embeddings API and any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers).
 
 #### Install
 
@@ -217,7 +217,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 #### OpenAI-Compatible Providers {#openai-compatible}
 
-Since [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] uses the same provider system as [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you can use it with any [OpenAI-compatible provider](models/compatible-apis.md):
+Since [`OpenAIEmbeddingModel`][pydantic_ai.embeddings.openai.OpenAIEmbeddingModel] uses the same provider system as [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel], you can use it with any [OpenAI-compatible provider](models/overview.md#openai-compatible-providers):
 
 ```python {title="openai_compatible_embeddings.py"}
 # Using Azure OpenAI
@@ -322,7 +322,7 @@ model = GoogleEmbeddingModel(
 embedder = Embedder(model)
 ```
 
-See the [Google provider documentation](models/google-cloud.md#authentication) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
+See the [Google Cloud documentation](models/google-cloud.md#authentication) for more details on Google Cloud authentication options, including application default credentials, service accounts, and API keys.
 
 #### Dimension Control
 

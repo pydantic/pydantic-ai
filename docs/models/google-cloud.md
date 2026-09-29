@@ -1,3 +1,7 @@
+---
+description: "Use Gemini, Model Garden models and Claude on Google Cloud (Vertex AI) with Pydantic AI: application default credentials, service accounts, API keys and regions."
+---
+
 # Google Cloud
 
 Use Gemini and other supported Model Garden models through [`GoogleModel`][pydantic_ai.models.google.GoogleModel], or Claude through [`AnthropicModel`][pydantic_ai.models.anthropic.AnthropicModel]. Google Cloud's model APIs are also known as Vertex AI.
@@ -10,6 +14,9 @@ Use Gemini and other supported Model Garden models through [`GoogleModel`][pydan
 
 For Gemini through Google AI Studio instead, see [Google's Gemini API](google.md#api-key-gemini-api).
 
+!!! tip "Voice agents"
+    For live speech-to-speech conversations with Gemini Live on Vertex AI, see [Gemini realtime](../realtime/gemini.md).
+
 ## Install
 
 For Gemini and Model Garden models using `GoogleModel`, install the `google` optional group:
@@ -20,9 +27,7 @@ pip/uv-add "pydantic-ai-slim[google]"
 
 ## Authentication
 
-If you are an enterprise user, you can also use `GoogleModel` to access Gemini via Google Cloud (formerly known as Vertex AI).
-
-This interface has a number of advantages over the Gemini API:
+Compared to the Gemini API, Gemini on Google Cloud has a number of advantages:
 
 1. The Google Cloud API comes with more enterprise readiness guarantees.
 2. You can [purchase provisioned throughput](https://cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput#purchase-provisioned-throughput) with Google Cloud to guarantee capacity.
