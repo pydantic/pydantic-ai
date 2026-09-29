@@ -46,6 +46,7 @@ _upstream_get_conv_fn: Callable[[MarkdownConverter, str], Callable[[Tag, str, se
 _TITLE_OPEN_RE = re.compile(r'<title', re.IGNORECASE)
 _TITLE_CLOSE_RE = re.compile(r'</title>', re.IGNORECASE)
 _HTML_HEADING_RE = re.compile(r'h\d+')
+_BACKTICK_RUN_RE = re.compile(r'`+')
 _MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 # This rejects 15 nested `<dd>` tags with 300k short lines before 600 KB of HTML expands
 # to ~19 MB of Markdown (0.7 s in a local conversion benchmark).
@@ -205,9 +206,9 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
     text_scan_cost = 0
     nodes: list[PageElement] = []
     contentful: set[int] = set()
-    text_metrics: dict[int, tuple[int, int]] = {}
+    text_metrics: dict[int, tuple[int, int, int, int]] = {}
     direct_link_text: dict[int, str] = {}
-    anchors: list[tuple[Tag, int, bool]] = []
+    anchors: list[tuple[Tag, int, bool, bool]] = []
     videos: list[tuple[Tag, int, bool]] = []
     code_tags: list[tuple[Tag, int, bool]] = []
     headings: list[tuple[Tag, int, bool]] = []
@@ -244,7 +245,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 work += 8 * colspan
                 cost += 8 * colspan
             if node.name == 'a' and depth > 16:
-                anchors.append((node, depth, noformat))
+                anchors.append((node, depth, noformat, inline))
             elif node.name == 'video':
                 videos.append((node, depth, inline))
             if node.name in ('code', 'kbd', 'samp') and depth > 16:
@@ -265,7 +266,16 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             assert isinstance(node, NavigableString)
             parent_tags: set[str] = {'pre', '_noformat'} if in_pre else {'_noformat'} if noformat else set()
             converted_text = converter.process_text(node, parent_tags)
-            text_metrics[id(node)] = (len(converted_text), converted_text.count('`'))
+            text_length = len(converted_text)
+            leading_backticks = trailing_backticks = longest_backtick_run = 0
+            for match in _BACKTICK_RUN_RE.finditer(converted_text):
+                run_length = match.end() - match.start()
+                longest_backtick_run = max(longest_backtick_run, run_length)
+                if match.start() == 0:
+                    leading_backticks = run_length
+                if match.end() == text_length:
+                    trailing_backticks = run_length
+            text_metrics[id(node)] = (text_length, longest_backtick_run, leading_backticks, trailing_backticks)
             direct_link_text[id(node)] = converted_text
             if converted_text.strip():
                 contentful.add(id(node))
@@ -285,7 +295,7 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
         if isinstance(node, Tag):
             node_id = id(node)
             subtree_sizes[node_id] = 1
-            text_length = backticks = 0
+            text_length = longest_backtick_run = leading_backticks = trailing_backticks = 0
             if node.name == 'td':
                 descendant_td.add(node_id)
             if node.name == 'source' and node.has_attr('src'):
@@ -293,16 +303,21 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
             for child in node.contents:
                 child_id = id(child)
                 subtree_sizes[node_id] += subtree_sizes.get(child_id, 1)
-                child_length, child_backticks = text_metrics.get(child_id, (0, 0))
+                child_length, child_max_run, child_leading, child_trailing = text_metrics.get(child_id, (0, 0, 0, 0))
+                longest_backtick_run = max(longest_backtick_run, child_max_run, trailing_backticks + child_leading)
+                if leading_backticks == text_length:
+                    leading_backticks += child_leading
+                trailing_backticks = (
+                    trailing_backticks + child_trailing if child_leading == child_length else child_trailing
+                )
                 text_length += child_length
-                backticks += child_backticks
                 if child_id in contentful:
                     contentful.add(node_id)
                 if child_id in descendant_td:
                     descendant_td.add(node_id)
                 if node_id not in first_sources and child_id in first_sources:
                     first_sources[node_id] = first_sources[child_id]
-            text_metrics[node_id] = (text_length, backticks)
+            text_metrics[node_id] = (text_length, longest_backtick_run, leading_backticks, trailing_backticks)
             if node.name in ('hr', 'q', 'td', 'th', 'tr') or (
                 node.name == 'video'
                 and not video_inline[node_id]
@@ -311,7 +326,9 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 contentful.add(node_id)
 
     link_probe_cost = 0
-    for node, depth, noformat in anchors:
+    # These conversions only change surrounding whitespace, which `convert_a` strips.
+    whitespace_only_tags = {'p', 'div', 'article', 'section', 'dl', 'table', 'caption', 'figcaption'}
+    for node, depth, noformat, inline in anchors:
         href = node.get('href')
         if href and not noformat and any(id(child) in contentful for child in node.contents):
             title = str(node.get('title') or '')
@@ -326,7 +343,11 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                     cost += 8
                     if cost > _MAX_HTML_CONVERSION_COST:
                         raise ModelRetry('the document is too complex')
-                    if isinstance(child, Tag) and _upstream_get_conv_fn(converter, child.name) is not None:
+                    if (
+                        isinstance(child, Tag)
+                        and child.name not in whitespace_only_tags
+                        and _upstream_get_conv_fn(converter, child.name) is not None
+                    ):
                         break
                     link_nodes.append(child)
                 else:
@@ -365,6 +386,13 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                                     raise ModelRetry('the document is too complex')
                             else:
                                 text = child_strings[0] if child_strings else ''
+                            if child.name in whitespace_only_tags:
+                                conversion = _upstream_get_conv_fn(converter, child.name)
+                                assert conversion is not None
+                                text = conversion(child, text, {'_inline'} if inline else set())
+                                link_probe_cost += len(text)
+                                if link_probe_cost > _MAX_HTML_TEXT_SCAN_COST:
+                                    raise ModelRetry('the document is too complex')
                             rendered[id(child)] = text
                         else:
                             rendered[id(child)] = direct_link_text[id(child)]
@@ -379,8 +407,10 @@ def _convert_html(html: str) -> tuple[str, str]:  # noqa: C901
                 raise ModelRetry('the document is too complex')
 
     for node, depth, noformat in code_tags:
-        if not noformat:
-            text_scan_cost += (depth - 16) * 2 * text_metrics[id(node)][1]
+        if not noformat and id(node) in contentful:
+            # `convert_code` uses one more backtick than its longest run on each side.
+            longest_backtick_run = text_metrics[id(node)][1]
+            text_scan_cost += (depth - 16) * (2 * (longest_backtick_run + 1) + 2 * bool(longest_backtick_run))
     for node, depth, inline in headings:
         if not inline:
             text_scan_cost += (depth - 16) * text_metrics[id(node)][0]

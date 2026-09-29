@@ -892,6 +892,21 @@ class TestMarkdownConverter:
         html = '<div>' * 300 + f'<a href="{value}"><span>{value}</span></a>' + '</div>' * 300
         assert _convert_html(html)[1] == f'<{value}>'
 
+    @pytest.mark.parametrize('wrapper', ['p', 'div'])
+    def test_whitespace_wrapped_autolink_is_not_overcharged(self, wrapper: str):
+        """Whitespace wrappers preserve the autolink shortcut without an extra URL copy."""
+        value = 'x' * 1000
+        html = '<div>' * 300 + f'<a href="{value}"><{wrapper}>{value}</{wrapper}></a>' + '</div>' * 300
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 350_000):
+            assert _convert_html(html)[1] == f'<{value}>'
+
+    def test_inline_whitespace_wrapped_autolink_is_not_overcharged(self):
+        """A paragraph inside a heading emits spaces that the enclosing link strips."""
+        value = 'x' * 1000
+        html = '<div>' * 300 + f'<h3><a href="{value}"><p>{value}</p></a></h3>' + '</div>' * 300
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 350_000):
+            assert _convert_html(html)[1] == f'### <{value}>'
+
     def test_wrapped_autolink_with_surrounding_spaces_is_not_overcharged(self):
         """The autolink shortcut strips surrounding whitespace before comparing the URL."""
         value = 'x' * 9_000_000
@@ -945,6 +960,21 @@ class TestMarkdownConverter:
         with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', budget):
             with pytest.raises(ModelRetry, match='too complex'):
                 _convert_html(html)
+
+    def test_whitespace_wrapper_probe_text_budget(self):
+        """A wrapper's converted text counts toward the bounded autolink probe."""
+        value = 'x' * 100
+        html = '<div>' * 17 + f'<h3><a href="{value}"><p>{value}</p></a></h3>' + '</div>' * 17
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 101):
+            with pytest.raises(ModelRetry, match='too complex'):
+                _convert_html(html)
+
+    def test_alternating_backticks_are_not_overcharged(self):
+        """A code span's delimiter depends on its longest backtick run, not the total count."""
+        value = '`x' * 10_000
+        html = '<div>' * 300 + f'<code>{value}</code>' + '</div>' * 300
+        with patch('pydantic_ai.common_tools.web_fetch._MAX_HTML_TEXT_SCAN_COST', 6_500_000):
+            assert _convert_html(html)[1] == markdownify(html, strip=['img', 'script', 'style'])
 
     def test_pre_padding_is_not_overcharged(self):
         """Preformatted whitespace is stripped before enclosing blocks scan it."""
