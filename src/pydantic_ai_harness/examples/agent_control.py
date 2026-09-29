@@ -215,7 +215,7 @@ def build_agent(model: Model | str = DEFAULT_MODEL) -> Agent[SupportDeps, str]:
     )
 
     @agent.instructions(name='tenant')
-    def tenant_context(ctx: RunContext[SupportDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
+    def tenant_context(ctx: RunContext[SupportDeps]) -> str:
         """-> block id 'agent:tenant'.
 
         Recomputed per request because it reads `deps`, so Logfire shows the block and never offers

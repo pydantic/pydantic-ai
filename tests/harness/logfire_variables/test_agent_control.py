@@ -528,7 +528,7 @@ def test_prebuilt_variable() -> None:
         default=AgentConfig(model='test'),
         logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE,
     )
-    assert AgentControl(variable)._variable is variable
+    assert AgentControl(variable)._variable is variable  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.parametrize('control_first', [True, False])
@@ -1008,7 +1008,7 @@ async def test_nameless_model_selector_resolves_once_per_run(monkeypatch: pytest
     # A nameless capability's selector is evaluated once per request step, but the managed model is a
     # run-stable value, so it memoizes and resolves the variable exactly once even across steps.
     resolves: list[str] = []
-    original = AgentControl[Any]._resolve_for_selection
+    original = AgentControl[Any]._resolve_for_selection  # pyright: ignore[reportPrivateUsage]
 
     def counting(self: AgentControl[Any], variable: Variable[Any], ctx: Any) -> Any:
         resolves.append(variable.name)

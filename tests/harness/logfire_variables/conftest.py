@@ -41,12 +41,12 @@ def _forget_process_state() -> Iterator[None]:
     message, and a test that counts warnings has to reach both.
     """
     reset_warned_messages()
-    _agent_control._warned_drops.clear()
-    _agent_control._reset_config_hint_guard()
+    _agent_control._warned_drops.clear()  # pyright: ignore[reportPrivateUsage]
+    _agent_control._reset_config_hint_guard()  # pyright: ignore[reportPrivateUsage]
     yield
     reset_warned_messages()
-    _agent_control._warned_drops.clear()
-    _agent_control._reset_config_hint_guard()
+    _agent_control._warned_drops.clear()  # pyright: ignore[reportPrivateUsage]
+    _agent_control._reset_config_hint_guard()  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.fixture(autouse=True)

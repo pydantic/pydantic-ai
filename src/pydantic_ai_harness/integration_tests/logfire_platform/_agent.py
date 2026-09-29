@@ -340,7 +340,7 @@ def build_agent(
     )
 
     @agent.instructions(name='tenant')
-    def tenant_context(ctx: RunContext[SupportDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
+    def tenant_context(ctx: RunContext[SupportDeps]) -> str:
         """-> id `agent:tenant`: dynamic, because it reads the run."""
         rendered = (
             f'Today is {todays_date()}. '

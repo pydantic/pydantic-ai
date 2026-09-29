@@ -14,20 +14,29 @@ async def test_nameless_prompt_normalizes_agent_name() -> None:
     capability = ManagedPrompt(default='hello')
     agent = Agent(TestModel(), name=' Checkout Assistant #2 ', capabilities=[capability])
     await agent.run('hello')
-    assert [variable.name for variable in capability._variables_by_agent.values()] == ['prompt__checkout_assistant_2']
+    assert [
+        variable.name
+        for variable in capability._variables_by_agent.values()  # pyright: ignore[reportPrivateUsage]
+    ] == ['prompt__checkout_assistant_2']
 
 
 async def test_nameless_agent_normalizes_agent_name() -> None:
     capability = AgentControl()
     agent = Agent(TestModel(), name=' Checkout Assistant #2 ', capabilities=[capability])
     await agent.run('hello')
-    assert [variable.name for variable in capability._variables_by_agent.values()] == ['agent__checkout_assistant_2']
+    assert [
+        variable.name
+        for variable in capability._variables_by_agent.values()  # pyright: ignore[reportPrivateUsage]
+    ] == ['agent__checkout_assistant_2']
 
 
 async def test_hyphenated_agent_name() -> None:
     capability = AgentControl()
     await Agent(TestModel(), name='pydanty-explorer', capabilities=[capability]).run('hello')
-    assert [variable.name for variable in capability._variables_by_agent.values()] == ['agent__pydanty_explorer']
+    assert [
+        variable.name
+        for variable in capability._variables_by_agent.values()  # pyright: ignore[reportPrivateUsage]
+    ] == ['agent__pydanty_explorer']
 
 
 async def test_a_nameless_prompt_on_a_nameless_agent_raises() -> None:
@@ -56,7 +65,7 @@ def test_an_inferred_agent_name_is_refused_at_construction() -> None:
 
 
 def test_explicit_name_rules_unchanged() -> None:
-    assert AgentControl('Checkout-Agent')._variable.name == 'agent__Checkout_Agent'
+    assert AgentControl('Checkout-Agent')._variable.name == 'agent__Checkout_Agent'  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValueError, match='invalid variable name'):
         AgentControl('Checkout Agent')
 
@@ -69,7 +78,9 @@ async def test_nameless_sources_model_for_model_less_agent(publish: Publish) -> 
     capability = AgentControl(label='production')
     result = await Agent(None, name='solo', capabilities=[capability]).run('hello')
     assert result.output.startswith('success')
-    assert [variable.name for variable in capability._variables_by_agent.values()] == ['agent__solo']
+    assert [variable.name for variable in capability._variables_by_agent.values()] == [  # pyright: ignore[reportPrivateUsage]
+        'agent__solo'
+    ]
 
 
 async def test_nameless_model_less_agent_without_managed_model_raises() -> None:
@@ -85,7 +96,7 @@ async def test_shared_nameless_capability_derives_a_variable_per_agent() -> None
     capability = AgentControl()
     await Agent(TestModel(), name='first_agent', capabilities=[capability]).run('hello')
     await Agent(TestModel(), name='second_agent', capabilities=[capability]).run('hello')
-    assert sorted(variable.name for variable in capability._variables_by_agent.values()) == [
+    assert sorted(variable.name for variable in capability._variables_by_agent.values()) == [  # pyright: ignore[reportPrivateUsage]
         'agent__first_agent',
         'agent__second_agent',
     ]
@@ -106,4 +117,4 @@ async def test_failed_model_selection_leaves_no_resolution_behind() -> None:
     capability = AgentControl()
     with pytest.raises(UserError, match='has no model to run'):
         await Agent(None, name='stranded', capabilities=[capability]).run('hello')
-    assert capability._selection_resolved.get() is None
+    assert capability._selection_resolved.get() is None  # pyright: ignore[reportPrivateUsage]

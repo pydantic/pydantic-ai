@@ -199,7 +199,7 @@ def _check_background_tools(merged: Any) -> None:
 
 def _check_agent_control(merged: Any) -> None:
     # The later variable wins, so the merge is one managed config rather than two resolutions.
-    assert merged._variable.name == 'agent__beta'  # pyright: ignore[reportPrivateUsage]
+    assert merged._variable.name == 'agent__beta'
     assert merged.render_template is True
 
 

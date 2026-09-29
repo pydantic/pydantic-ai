@@ -43,17 +43,17 @@ class _NamelessStrVariable(ManagedVariableCapability[None, str]):
 
 
 def test_name_becomes_prefixed_variable_name() -> None:
-    assert _StrVariable('greeting')._variable.name == 'var__greeting'
+    assert _StrVariable('greeting')._variable.name == 'var__greeting'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_hyphenated_name_is_normalized() -> None:
-    assert _StrVariable('welcome-email')._variable.name == 'var__welcome_email'
+    assert _StrVariable('welcome-email')._variable.name == 'var__welcome_email'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_prefix_in_name_warns_and_is_stripped() -> None:
     with pytest.warns(UserWarning, match='added automatically') as caught:
         capability = _StrVariable('var__already_prefixed')
-    assert capability._variable.name == 'var__already_prefixed'
+    assert capability._variable.name == 'var__already_prefixed'  # pyright: ignore[reportPrivateUsage]
     # The warning's filename should be this test module (the user's call site), not the
     # library's internal `_managed_variable.py`. Anchors the `stacklevel` against regressions.
     assert caught[0].filename == __file__
@@ -70,14 +70,14 @@ def test_duplicate_construction_is_idempotent() -> None:
     # would raise.
     first = _StrVariable('shared')
     second = _StrVariable('shared')
-    assert first._variable.name == second._variable.name == 'var__shared'
+    assert first._variable.name == second._variable.name == 'var__shared'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_explicit_logfire_instance_is_used() -> None:
     # Exercises the explicit-instance branch of variable construction (the default-instance branch is
     # covered by every other construction).
     capability = _StrVariable('with_instance', logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE)
-    assert capability._variable.name == 'var__with_instance'
+    assert capability._variable.name == 'var__with_instance'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_resolution_reason_falls_back_to_private_reason() -> None:
@@ -110,7 +110,7 @@ def test_ensure_variable_returns_variable_built_while_awaiting_lock() -> None:
     # finishes building it while this run waits for the build lock, so the second check inside the
     # lock returns that already-built variable rather than building a second one.
     capability = _NamelessStrVariable()
-    assert capability._built_variable is None
+    assert capability._built_variable is None  # pyright: ignore[reportPrivateUsage]
 
     built = Variable('var__raced', type=str, default='', logfire_instance=logfire.DEFAULT_LOGFIRE_INSTANCE)
 
@@ -118,11 +118,16 @@ def test_ensure_variable_returns_variable_built_while_awaiting_lock() -> None:
         """Stands in for the build lock, simulating the concurrent build completing on acquire."""
 
         def __enter__(self) -> _RaceLock:
-            capability._variables_by_agent['racer'] = built
+            capability._variables_by_agent['racer'] = built  # pyright: ignore[reportPrivateUsage]
             return self
 
         def __exit__(self, *exc: object) -> bool:
             return False
 
-    capability._build_lock = cast(Any, _RaceLock())
-    assert capability._ensure_variable_for_agent(cast(Any, SimpleNamespace(name='racer'))) is built
+    capability._build_lock = cast(Any, _RaceLock())  # pyright: ignore[reportPrivateUsage]
+    assert (
+        capability._ensure_variable_for_agent(  # pyright: ignore[reportPrivateUsage]
+            cast(Any, SimpleNamespace(name='racer'))
+        )
+        is built
+    )

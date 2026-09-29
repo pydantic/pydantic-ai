@@ -351,7 +351,7 @@ async def test_only_canonical_settings_reach_the_hint(capfire: CaptureLogfire) -
         await Agent(
             TestModel(),
             name='secretless_hint',
-            model_settings={  # pyright: ignore[reportArgumentType]
+            model_settings={
                 'temperature': 0.1,
                 'extra_headers': {'Authorization': 'Bearer sk-secret'},
                 'extra_body': {'signature': 'sk-secret'},
@@ -663,7 +663,7 @@ def test_the_budget_stays_an_order_of_magnitude_under_the_backends() -> None:
     # A guard on the constant itself. The whole point of enforcing a budget here is to stay well
     # under the row budget the backend truncates against, so a change to it is a decision to make
     # deliberately rather than a number to drift.
-    assert _agent_control._MAX_BASELINE_BYTES == 1024 * 1024
+    assert _agent_control._MAX_BASELINE_BYTES == 1024 * 1024  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_a_run_writes_nothing_to_the_variable_api(capfire: CaptureLogfire) -> None:
