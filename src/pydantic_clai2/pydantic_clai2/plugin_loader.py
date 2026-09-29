@@ -106,8 +106,11 @@ class PluginLoader(Generic[DepsT]):
         conversation: Conversation | None = None,
         status: Status | None = None,
         full_screen: FullScreen = bare_screen,
+        enabled: bool = True,
     ) -> None:
         """`builtin` ships with CLAI, `project` comes from `.clai/settings.json`; the store overrides both.
+
+        `enabled=False` lists and loads no plugins at all, without changing anything saved.
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
         `conversation` and `status` are handed to every host; see `PluginHost` for the defaults.
@@ -123,6 +126,7 @@ class PluginLoader(Generic[DepsT]):
         self._project = {declaration.id: declaration for declaration in project}
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, PluginHost[DepsT]] = {}
+        self.enabled = enabled
 
     @property
     def plugins_dir(self) -> Path:
@@ -131,6 +135,8 @@ class PluginLoader(Generic[DepsT]):
 
     def entries(self) -> list[PluginEntry[DepsT]]:
         """Saved declarations plus drop-in files, keeping the loaded state of each."""
+        if not self.enabled:
+            return []
         folder = self._discover()
         declared = {declaration.id: declaration for declaration in self._store.plugins()}
         for name in folder.keys() - declared.keys():

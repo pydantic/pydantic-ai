@@ -23,6 +23,15 @@ def run(*, splash: Splash | None = None) -> None:
         metavar='NAME',
         help='Start in a new Git worktree; omit NAME to generate one',
     )
+    parser.add_argument(
+        '-a',
+        '--agent',
+        metavar='MODULE:ATTR',
+        help=(
+            'Chat with an existing Pydantic AI Agent instance, e.g. pydantic_ai.main:my_cool_agent; '
+            "loads no plugins for this session and keeps the agent's model unless -m is given"
+        ),
+    )
     parser.add_argument('-m', '--model', help='Provider-qualified model name')
     parser.add_argument(
         '-p', '--prompt', metavar='TEXT', help='Run one prompt without interaction and print only the answer'
@@ -37,6 +46,7 @@ def run(*, splash: Splash | None = None) -> None:
         from pydantic_ai.usage import UsageLimits
 
         from ._app import DEFAULT_PLUGINS, chat, create_agent
+        from .agent_import import import_agent
         from .commands import config_command, plugins_command
         from .config import resolve_settings
         from .project_settings import load_project_settings
@@ -52,6 +62,7 @@ def run(*, splash: Splash | None = None) -> None:
             handler = config_command if args.command == 'config' else plugins_command
             print(handler(store, args.arguments))
             return
+        agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
             workspace = create_worktree(name=args.worktree)
             print(
@@ -66,6 +77,9 @@ def run(*, splash: Splash | None = None) -> None:
         if args.request_limit is not None:
             overrides['run.request_limit'] = args.request_limit
         settings = resolve_settings(overrides)
+        if agent is not None and agent.model is not None and not model:
+            # Keep the agent's own model over saved, project, and default ones; only -m or CLAI_MODEL replaces it.
+            settings = settings.model_copy(update={'model': None})
         if args.prompt is not None:
             from .headless import run_headless
 
@@ -77,12 +91,13 @@ def run(*, splash: Splash | None = None) -> None:
                         store=store,
                         project=project,
                         resume=args.resume,
+                        agent=agent,
                     )
                 )
             )
         asyncio.run(
             chat(
-                create_agent(),
+                agent or create_agent(),
                 deps=None,
                 usage_limits=UsageLimits(request_limit=settings.request_limit),
                 settings=settings,
@@ -90,6 +105,7 @@ def run(*, splash: Splash | None = None) -> None:
                 builtin_plugins=DEFAULT_PLUGINS,
                 project=project,
                 resume=args.resume,
+                load_plugins=agent is None,
             )
         )
         offer_worktree_cleanup()
@@ -101,8 +117,8 @@ def run(*, splash: Splash | None = None) -> None:
 
 
 def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    if args.command and (args.resume is not None or args.worktree is not None):
-        parser.error('--resume and --worktree cannot be combined with config or plugins')
+    if args.command and (args.resume is not None or args.worktree is not None or args.agent is not None):
+        parser.error('--resume, --worktree, and --agent cannot be combined with config or plugins')
     if args.worktree is not None and args.resume is not None:
         parser.error('--worktree cannot be combined with --resume; resume from an existing worktree directory')
     if args.prompt is not None:

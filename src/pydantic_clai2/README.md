@@ -267,6 +267,25 @@ pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
+## Your own agent
+
+```bash
+clai2 --agent pydantic_ai.main:my_cool_agent
+clai2 -a my_agents:reviewer -p "Review the staged diff"
+```
+
+`--agent MODULE:ATTR` (short form `-a`) chats with an existing Pydantic AI `Agent`
+instance instead of CLAI's default agent. The launch directory is importable, so a
+module next to where you start CLAI resolves without installing it. `ATTR` must
+name an instance, not a class; the agent runs with `deps=None`. For that session
+only, no plugins load: no built-ins (including the stock coder tools), no saved or
+drop-in user plugins, and no project plugins, and `/plugins` reports that they are
+off. Nothing saved changes, so plain `clai2` loads plugins as before. The agent
+keeps its own model unless `-m` or `CLAI_MODEL` selects another. `-p`, `--resume`,
+and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
+To pass deps or plugins, write a launcher that calls `chat` (see
+`customization.md`).
+
 ## Headless mode
 
 ```bash
@@ -387,7 +406,8 @@ Use a separate OS account or isolated environment for untrusted repositories.
 
 The requested default does not guarantee model availability for a subscription.
 Custom agents supplied to `chat` retain their model unless settings explicitly
-select an override. `/login` is async, and plugin command handlers may also return
+select an override. `clai2 --agent MODULE:ATTR` keeps the agent's model over saved
+and project models; only `-m` or `CLAI_MODEL` replaces it. `/login` is async, and plugin command handlers may also return
 an awaitable string.
 
 ## GitHub Copilot subscriptions
