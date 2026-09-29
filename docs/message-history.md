@@ -270,6 +270,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelResponse,
     ToolCallPart,
+    ToolReturnPart,
     repair_messages,
 )
 
@@ -278,7 +279,9 @@ stored: list[ModelMessage] = [
 ]
 
 runnable = repair_messages(stored)
-print(runnable[-1].parts[-1].content)
+closed_out = runnable[-1].parts[-1]
+assert isinstance(closed_out, ToolReturnPart)
+print(closed_out.content)
 #> The tool call was interrupted before a result was produced.
 ```
 
