@@ -13,6 +13,7 @@ from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any, Literal
 
+import yaml
 from google.genai import _live_converters as live_converters, types as genai_types
 from websockets.exceptions import ConnectionClosedOK
 
@@ -71,10 +72,16 @@ def cassette_protocol(path: Path) -> Protocol | None:
 def websocket_cassettes() -> list[Path]:
     """Every WebSocket cassette (the same directories also hold HTTP recordings of WebRTC signaling)."""
     return sorted(
-        path
-        for path in CASSETTES_DIR.glob('*/*.yaml')
-        if cassette_protocol(path) is not None and path.read_text(encoding='utf-8').startswith('version:')
+        path for path in CASSETTES_DIR.glob('*/*.yaml') if cassette_protocol(path) is not None and _is_websocket(path)
     )
+
+
+def _is_websocket(path: Path) -> bool:
+    # Both formats can open with `version:`, so tell them apart by their interactions: HTTP recordings
+    # (e.g. WebRTC signaling) hold `request`/`response` pairs, WebSocket ones hold frames and closes.
+    raw: dict[str, Any] = yaml.safe_load(path.read_text(encoding='utf-8'))
+    interactions: list[dict[str, Any]] = raw.get('interactions') or [{}]
+    return 'request' not in interactions[0]
 
 
 def _segments(cassette: RealtimeCassette) -> Iterator[list[dict[str, Any]]]:
