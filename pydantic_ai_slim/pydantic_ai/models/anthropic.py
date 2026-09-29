@@ -646,18 +646,37 @@ def _effective_thinking(
     return OMIT if isinstance(thinking, Omit) else dict(thinking)
 
 
-_DEFAULT_MAX_TOKENS = 4096
+_DEFAULT_MAX_TOKENS = 16384
+"""The `max_tokens` sent when the request doesn't set one.
+
+Anthropic requires `max_tokens`. This stays under the SDK's limit for non-streaming requests (about 21,000 tokens,
+8,192 for some Claude Opus 4 and 4.1 model ids), and fits the maximum output of every Claude model that gets it
+(Claude Sonnet 4.5 and later); older models get `_LEGACY_DEFAULT_MAX_TOKENS`.
+"""
+
+_LEGACY_DEFAULT_MAX_TOKENS = 4096
+"""The default `max_tokens` for models that reject input plus `max_tokens` beyond the context window."""
+
+_MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
+"""The room the default `max_tokens` leaves beyond an extended thinking `budget_tokens`."""
 
 
-def _default_max_tokens(thinking: dict[str, object] | Omit) -> int:
+def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
     """The `max_tokens` to send when the request doesn't set one.
 
-    Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a request whose
-    `max_tokens` isn't greater than the budget, so the budget is added on top of the default.
+    Models that reject input plus `max_tokens` beyond the context window keep a lower default, so conversations close
+    to the window still fit. Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a
+    request whose `max_tokens` isn't greater than the budget, so a large budget raises the default to leave room for
+    the answer.
     """
+    default = (
+        _LEGACY_DEFAULT_MAX_TOKENS
+        if profile.get('anthropic_rejects_max_tokens_beyond_context_window', False)
+        else _DEFAULT_MAX_TOKENS
+    )
     wire_thinking: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
     budget = wire_thinking.get('budget_tokens') if wire_thinking.get('type') == 'enabled' else None
-    return _DEFAULT_MAX_TOKENS + (budget if isinstance(budget, int) else 0)
+    return max(default, (budget if isinstance(budget, int) else 0) + _MIN_TOKENS_AFTER_THINKING_BUDGET)
 
 
 def _can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
@@ -1219,7 +1238,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             thinking_override: dict[str, object] | None,
         ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
             return await self.client.beta.messages.create(
-                max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking)),
+                max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)),
                 system=system_prompt or OMIT,
                 messages=anthropic_messages,
                 model=self._model_name,
@@ -1555,7 +1574,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     self._model_name,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
-                    max_tokens=model_settings.get('max_tokens', _default_max_tokens(effective_thinking)),
+                    max_tokens=model_settings.get(
+                        'max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)
+                    ),
                     tools=tools or OMIT,
                     tool_choice=tool_choice or OMIT,
                     mcp_servers=mcp_servers or OMIT,
