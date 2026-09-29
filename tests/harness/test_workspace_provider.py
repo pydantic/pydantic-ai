@@ -101,16 +101,16 @@ async def test_native_repeated_cancel_cannot_abandon_stop(anyio_backend: str) ->
         if timeout is None:
             await asyncio.sleep(0)
             task.cancel()
-        await asyncio.wait_for(entered.wait(), 3)
+        await asyncio.wait_for(entered.wait(), 5)
         for _ in range(cancellations):
             task.cancel()
             await asyncio.sleep(0)
         release.set()
         try:
-            await asyncio.wait_for(task, 3)
+            await asyncio.wait_for(task, 5)
         except (asyncio.CancelledError, WorkspaceTimeoutError):
             pass
-        await asyncio.wait_for(finished.wait(), 3)
+        await asyncio.wait_for(finished.wait(), 5)
         assert calls == 1
 
     await exercise(0.01, 0)

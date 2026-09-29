@@ -17,8 +17,9 @@ Application Default Credentials.
 from __future__ import annotations as _annotations
 
 import time
+import warnings
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Sequence
-from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, ExitStack, asynccontextmanager, contextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, Literal, cast
 
@@ -39,8 +40,10 @@ except ImportError as _import_error:
 
 from .._instrumentation import get_instructions
 from .._utils import generate_tool_call_id
+from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelHTTPError, UserError
 from ..messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     AudioUrl,
     BinaryAudio,
     BinaryContent,
@@ -101,6 +104,7 @@ from ..settings import ThinkingEffort, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
 from ._utils import (
+    DEFAULT_MAX_RECONNECTS,
     inject_trace_context,
     reconnect_with_backoff,
     require_pcm_audio,
@@ -110,6 +114,7 @@ from ._utils import (
 )
 from .codec import (
     AudioDelta,
+    InputRejected,
     InputTranscript,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -281,23 +286,10 @@ class GoogleRealtimeModelSettings(RealtimeModelSettings, total=False):
     """
 
     google_async_tool_calls: bool
-    """Whether tool calls may run without pausing the model's speech. Defaults to `False`.
+    """Deprecated: use the shared [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls] setting instead.
 
-    By default Gemini stops generating while a tool call is outstanding, so the caller hears silence
-    for as long as the tool takes. Enabling this declares tools `NON_BLOCKING` and returns their
-    results with `INTERRUPT` scheduling, so the model keeps talking (typically narrating what it's
-    doing) and the result cuts into that speech when it arrives.
-
-    This pays off for tools that take a noticeable moment. It is a poor trade for fast tools: the
-    result interrupts a reply the model has barely started, leaving an extra interrupted turn in
-    history with nothing in it. Verified live against `gemini-2.5-flash-native-audio-latest`.
-
-    Supported by the Gemini native-audio models and `gemini-3.8-live` (see
-    [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]).
-    Other models silently ignore it.
-
-    `gemini-3.8-live-extended-thinking` has no blocking mode at all, so it runs tool calls
-    asynchronously whether or not this is set, and ignores an explicit `False` the same way.
+    Translated (with a deprecation warning) when a session connects; an `async_tool_calls` in the same
+    settings wins.
     """
 
 
@@ -331,19 +323,15 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     """Whether the model runs a tool call asynchronously when its declaration sets no `behavior`. Default: `False`.
 
     True of the Gemini 3.8 Live family, where Google made `NON_BLOCKING` the default. Tool calls stay
-    blocking unless
-    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
+    blocking unless [`async_tool_calls`][pydantic_ai.realtime.RealtimeModelSettings.async_tool_calls]
     asks otherwise, so on such a model the declaration says `BLOCKING` explicitly instead of leaving it unset.
     """
 
     google_requires_async_tool_calls: bool
-    """Whether the model *only* runs tool calls asynchronously, having no blocking mode. Default: `False`.
+    """Deprecated: use [`async_tool_call_mode='always'`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] instead.
 
-    Stronger than [`supports_async_tool_calls`][pydantic_ai.realtime.RealtimeModelProfile.supports_async_tool_calls]:
-    tool calls are declared `NON_BLOCKING` whatever
-    [`google_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelSettings.google_async_tool_calls]
-    says, since a `BLOCKING` declaration closes the session. `gemini-3.8-live-extended-thinking` answers
-    `1007 BLOCKING function calls are not supported for this model`.
+    Translated (with a deprecation warning) when the profile is resolved: `True` becomes
+    `async_tool_call_mode='always'`, and `False`, which left the choice to the other flags, is dropped.
     """
 
     google_closes_tool_call_turn_separately: bool
@@ -634,6 +622,25 @@ def _schema_from_json_schema(json_schema: dict[str, Any]) -> genai_types.Schema:
     )
 
 
+def _translate_legacy_settings(
+    settings: GoogleRealtimeModelSettings, *, stacklevel: int = 2
+) -> GoogleRealtimeModelSettings:
+    """Translate the deprecated `google_async_tool_calls` into the shared `async_tool_calls`, warning."""
+    # TODO(v3): remove, along with the `google_async_tool_calls` setting.
+    if 'google_async_tool_calls' not in settings:
+        return settings
+    # Session settings reach the model at connect time, where no stack level points at the code that set
+    # them, so the message names the setting.
+    warnings.warn(
+        '`google_async_tool_calls` is deprecated, use the shared `async_tool_calls` setting instead.',
+        PydanticAIDeprecationWarning,
+        stacklevel=stacklevel,
+    )
+    translated = settings.copy()
+    translated.setdefault('async_tool_calls', translated.pop('google_async_tool_calls'))
+    return translated
+
+
 def _tool_def_to_genai(
     tool: ToolDefinition, *, async_tool_calls: bool = False, explicit_blocking: bool = False
 ) -> genai_types.FunctionDeclaration:
@@ -825,6 +832,9 @@ class GoogleRealtimeModel(RealtimeModel):
         settings: RealtimeModelSettings | None = None,
         profile: RealtimeModelProfileSpec | None = None,
     ) -> None:
+        if settings:
+            # Translated here so the deprecation warning points at the caller's line.
+            settings = _translate_legacy_settings(cast(GoogleRealtimeModelSettings, settings), stacklevel=3)
         super().__init__(settings=settings, profile=profile)
         self.model = model
         if isinstance(provider, str):
@@ -857,9 +867,35 @@ class GoogleRealtimeModel(RealtimeModel):
         return profile
 
     @property
+    def profile(self) -> RealtimeModelProfile:
+        profile = cast(GoogleRealtimeModelProfile, super().profile)
+        # TODO(v3): remove, along with the `google_requires_async_tool_calls` profile field.
+        if 'google_requires_async_tool_calls' not in profile:
+            return profile
+        warnings.warn(
+            '`GoogleRealtimeModelProfile` key `google_requires_async_tool_calls` is deprecated, use '
+            "`async_tool_call_mode='always'` instead.",
+            PydanticAIDeprecationWarning,
+            stacklevel=2,
+        )
+        translated = profile.copy()
+        if translated.pop('google_requires_async_tool_calls'):
+            translated.update(async_tool_call_mode='always', supports_async_tool_calls=True)
+        return translated
+
+    @property
     def _google_profile(self) -> GoogleRealtimeModelProfile:
         """[`profile`][pydantic_ai.realtime.RealtimeModel.profile], narrowed to the Gemini-specific fields."""
         return cast(GoogleRealtimeModelProfile, self.profile)
+
+    def _merge_model_settings(self, model_settings: RealtimeModelSettings | None) -> RealtimeModelSettings | None:
+        # Each layer is translated on its own, so a deprecated setting keeps its layer's precedence.
+        merged: GoogleRealtimeModelSettings | None = None
+        for layer in (self.settings, model_settings):
+            if layer:
+                translated = _translate_legacy_settings(cast(GoogleRealtimeModelSettings, layer))
+                merged = {**merged, **translated} if merged is not None else translated.copy()
+        return merged
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -898,23 +934,6 @@ class GoogleRealtimeModel(RealtimeModel):
             multi_speaker_voice_config=multi_speaker_config,
             language_code=language_code,
         )
-
-    def _async_tool_calls(self, model_settings: GoogleRealtimeModelSettings | None) -> bool:
-        """Whether to run this session's tool calls without pausing the model's speech.
-
-        Opt-in, and only where the model actually honors it — the other Live families accept
-        `NON_BLOCKING` and then block anyway, so enabling it there would promise something the
-        provider doesn't deliver. A model that has no blocking mode
-        ([`google_requires_async_tool_calls`][pydantic_ai.realtime.google.GoogleRealtimeModelProfile.google_requires_async_tool_calls])
-        runs them asynchronously whether or not the session asked, since a `BLOCKING` declaration
-        closes the session outright. Either way a setting the model can't honor is ignored, not raised.
-        """
-        profile = self._google_profile
-        if profile.get('google_requires_async_tool_calls', False):
-            return True
-        if not (model_settings and model_settings.get('google_async_tool_calls', False)):
-            return False
-        return profile.get('supports_async_tool_calls', False)
 
     def _check_proactive_audio_api_version(self, settings: GoogleRealtimeModelSettings) -> None:
         """Reject a proactive-audio session on a client that can't carry the setting.
@@ -1248,6 +1267,16 @@ class GoogleRealtimeModel(RealtimeModel):
                 await cm.__aexit__(None, None, None)
 
 
+@dataclass
+class _TypedTurn:
+    """A typed turn sent on a Gemini connection, tracked until a resumption handle covers it."""
+
+    input_index: int
+    answered: bool = False
+    # Still on the wire: if the send then fails, the session takes the turn back itself.
+    sending: bool = True
+
+
 class GoogleRealtimeConnection(RealtimeConnection):
     """A live connection to the Gemini Live API, backed by a `google-genai` session."""
 
@@ -1273,6 +1302,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._profile = profile if profile is not None else DEFAULT_REALTIME_PROFILE
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
+        self._gave_up = False
         self._async_tool_calls_enabled = async_tool_calls
         # Whether the model takes a `scheduling` field at all: extended thinking paces results against its
         # own reasoning and closes the session if one is sent. A connection built without a profile keeps
@@ -1293,6 +1323,25 @@ class GoogleRealtimeConnection(RealtimeConnection):
         # Gemini requires. Calls Gemini sends without an id get a synthetic one so parallel id-less
         # calls don't collide.
         self._tool_calls: dict[str, tuple[str, str | None]] = {}
+        # (tool name, Gemini call id) of calls a resumed session lost but still waits on, and whether they
+        # have been answered on the current session; see `_answer_lost_tool_calls`.
+        self._unanswered_lost_tool_calls: list[tuple[str, str | None]] = []
+        self._lost_tool_calls_answered = False
+        # Every `send()` call is numbered (see `InputRejected.input_index`). These are the typed turns a
+        # resumed session may not have, oldest first: each stays until a handle arrives after the exchange
+        # that answered it ended. A handle's arrival time says nothing about which inputs it covers, but a
+        # server that withholds handles mid-turn only issues one once a turn is over.
+        self._inputs_received = 0
+        self._uncovered_typed_turns: list[_TypedTurn] = []
+        # Whether the server withholds handles while it works on a turn, seen as an update without a
+        # handle while a typed turn is outstanding. Gemini 2.5 takes up every typed turn that way, and a
+        # session resumed from the handle before it doesn't have the turn. 3.8 never does, and (verified
+        # live) resumes with the turn known. Learned once rather than from the latest update, which a
+        # drop right after a send can beat.
+        self._withholds_handles_mid_turn = False
+        # Orders the answers for lost calls, which both the receive loop and `send()` may send, so an
+        # input waiting on them never overtakes them.
+        self._send_lock = Lock()
         self._native_part_index = 0
         # The `tool_call_id` generated for the most recent `executable_code` part, reused to pair the
         # following `code_execution_result` return with its call — mirroring the classic `GoogleModel`
@@ -1325,6 +1374,15 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._tool_call_turn_unanswered = False
 
     @property
+    def _can_reconnect(self) -> bool:
+        return (
+            not self._gave_up
+            and self._dial is not None
+            and self._reconnect is not None
+            and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
+        )
+
+    @property
     def _answers_tool_calls_per_response(self) -> bool:
         # A blocking tool-call frame is answered once, when every call has its result. A non-blocking
         # call's result cuts into the speech on its own, so it may get an answer of its own.
@@ -1343,6 +1401,31 @@ class GoogleRealtimeConnection(RealtimeConnection):
         automatic VAD), and a `ToolResult`'s `respond` is ignored: Gemini answers a tool-call frame by
         itself once every call in it has a result.
         """
+        input_index = self._inputs_received
+        self._inputs_received += 1
+        while self._unanswered_lost_tool_calls and not self._lost_tool_calls_answered:
+            # Whatever reaches a resumed session first is consumed by an exchange stuck on calls it lost,
+            # so those are answered ahead of any input (see `_answer_lost_tool_calls`). The lock orders
+            # this with the receive loop's own answer, so the input can't overtake it; the loop answers
+            # again if a re-dial replaced the session while an answer was on the wire.
+            async with self._send_lock:
+                await self._answer_lost_tool_calls()
+        # Tracked from before the send, so a handle or answer arriving while it is on the wire counts.
+        # Only needed to tell a reconnect what it lost, so not tracked without a reconnect policy.
+        turn = _TypedTurn(input_index) if isinstance(content, str) and self._reconnect is not None else None
+        if turn is not None:
+            self._uncovered_typed_turns.append(turn)
+        try:
+            await self._send(content)
+        except BaseException:
+            # A reconnect noticed meanwhile has already let go of the list it was in.
+            if turn is not None and turn in self._uncovered_typed_turns:
+                self._uncovered_typed_turns.remove(turn)
+            raise
+        if turn is not None:
+            turn.sending = False
+
+    async def _send(self, content: RealtimeInput) -> None:
         # `send_realtime_input` is typed against a PIL.Image union the SDK leaves partially untyped.
         if isinstance(content, BinaryAudio):
             require_pcm_audio(content, provider_name=self._provider_name)
@@ -1377,7 +1460,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
             if not self._text_turns_see_video_frames:
                 self._recent_image = (content, time.monotonic())
         elif isinstance(content, ToolResult):
-            name, gemini_id = self._tool_calls.pop(content.tool_call_id, ('', None))
+            # Forgotten once sent, or once refused below. A send that fails on a dropped connection leaves
+            # the call for the reconnect, which cancels it and answers the resumed session for it.
+            name, gemini_id = self._tool_calls.get(content.tool_call_id, ('', None))
             # `FunctionResponse.response` is JSON-only, so text attachments are folded into the
             # output and binary attachments raise — loudly, with the tool result unsent, never a
             # silent placeholder. Every live delivery channel was probed and fails: content in a
@@ -1398,6 +1483,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     elif isinstance(item, CachePoint):
                         continue
                     elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
+                        self._tool_calls.pop(content.tool_call_id, None)
                         raise UserError(
                             f'{self._provider_label} tool results are JSON-only, so `{type(item).__name__}` '
                             'content attached to a tool return cannot be delivered. Return text instead, or '
@@ -1423,6 +1509,7 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     else None,
                 )
             )
+            self._tool_calls.pop(content.tool_call_id, None)
         else:
             raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
 
@@ -1447,16 +1534,42 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         message=f'{self._provider_label} connection closed: {e}', recoverable=False
                     )
                     return
-                state_restored = self._resumption_handle is not None
+                # Gemini issues no resumption handle while a call is executing, so the re-dialed session
+                # never has a call still running at the drop, and won't answer its result (verified live:
+                # 2.5 ignores it, 3.8 closes the turn without speaking).
+                lost_tool_calls = dict(self._tool_calls)
+                state_resumed = self._resumption_handle is not None
+                # Likewise the typed turns no handle has covered yet, on a server that withholds handles
+                # mid-turn (or without any handle). Those still awaiting their reply are released, unless
+                # the reply had already started (it took the response, and is closed as interrupted below).
+                # A turn still on the wire is left out: its send fails, and the session takes it back.
+                uncovered = [
+                    turn
+                    for turn in self._uncovered_typed_turns
+                    if not turn.sending and (not state_resumed or self._withholds_handles_mid_turn)
+                ]
+                unanswered = [turn.input_index for turn in uncovered if not turn.answered]
+                lost_typed_turns = unanswered[1:] if self._turn_open else unanswered
+                self._uncovered_typed_turns = []
+                # Losing a call or a turn loses the exchange it belongs to, so that isn't a restored state.
+                state_restored = state_resumed and not lost_tool_calls and not uncovered
                 if await self._try_reconnect():
-                    if not state_restored and self._tool_calls:
-                        # Without a resumption handle the re-dialed session is a fresh one that never
-                        # issued these calls, so a tool task still running for the lost session would
-                        # send its result back against an id Gemini doesn't know. Abandon them the way
-                        # Gemini's own `tool_call_cancellation` does: the tasks are cancelled and each
-                        # call still gets a matching return in history.
-                        yield ToolCallCancelled(tool_call_ids=list(self._tool_calls))
-                        self._tool_calls.clear()
+                    # The new session hasn't been answered for anything yet.
+                    self._lost_tool_calls_answered = False
+                    if not state_resumed:
+                        # A fresh session has no stale exchange left to answer.
+                        self._unanswered_lost_tool_calls.clear()
+                    if lost_tool_calls:
+                        # Abandon them the way Gemini's own `tool_call_cancellation` does: the tasks are
+                        # cancelled and each call still gets a matching return in history. Nothing
+                        # awaits between the re-dial and this event, so no tool task can send a result
+                        # for one of these calls onto the new socket before the session cancels it. A
+                        # result sent while re-dialing went to the dead socket, so the call is still owed.
+                        for call_id, call in lost_tool_calls.items():
+                            self._tool_calls.pop(call_id, None)
+                            if state_resumed:
+                                self._unanswered_lost_tool_calls.append(call)
+                        yield ToolCallCancelled(tool_call_ids=list(lost_tool_calls))
                     if self._turn_open:
                         # The dropped connection was mid-turn. Gemini never continues an in-flight
                         # generation on the re-dialed connection (resumption restores conversation
@@ -1468,13 +1581,52 @@ class GoogleRealtimeConnection(RealtimeConnection):
                         self._tool_call_turn_unanswered = False
                         self._native_part_index = 0
                         yield ResponseDone(interrupted=True)
+                    for input_index in lost_typed_turns:
+                        # Nothing will answer it, so the reply it asked for is released rather than awaited
+                        # forever; the turn stays in history, and `state_restored=False` tells the app to
+                        # send it again.
+                        yield InputRejected(input_index=input_index, refused='response')
                     yield RealtimeSessionReconnectEvent(state_restored=state_restored)
+                    if self._unanswered_lost_tool_calls:
+                        # Answered right away rather than only ahead of the next input, so the resumed
+                        # session has closed the stale exchange by the time the user speaks. A new socket
+                        # that is already gone keeps them owed; receiving notices the drop next.
+                        with suppress(*self.transport_errors):
+                            async with self._send_lock:
+                                await self._answer_lost_tool_calls()
                     continue
+                # Out of attempts: no reconnect is coming any more.
+                self._gave_up = True
                 yield RealtimeSessionErrorEvent(
                     message=f'{self._provider_label} connection closed; reconnect failed: {e}', recoverable=False
                 )
                 return
             # `receive()` returned normally → the turn ended; loop for the next one.
+
+    async def _answer_lost_tool_calls(self) -> None:
+        """Answer calls a resumed session lost with an error, so they don't swallow the next input.
+
+        The session resumes still waiting on the exchange the calls belong to, but no longer accepts
+        their results. Verified live: on `gemini-3.8-live` the next input only closes that stale
+        exchange, so the user's next turn goes unanswered. Answering the calls closes it instead, with
+        an empty `turn_complete`. Gemini 2.5 ignores the response. They stay owed until a handle issued
+        after the answer covers it: a session resumed from an older handle is stuck on them again and is
+        answered again. Called under `_send_lock`.
+        """
+        if not self._unanswered_lost_tool_calls or self._lost_tool_calls_answered:
+            return
+        session = self._session
+        await session.send_tool_response(
+            function_responses=[
+                genai_types.FunctionResponse(
+                    id=gemini_id, name=name, response={'error': INTERRUPTED_TOOL_RETURN_CONTENT}
+                )
+                for name, gemini_id in self._unanswered_lost_tool_calls
+            ]
+        )
+        # An answer that completes after a re-dial went to the old session; the new one is still owed.
+        if self._session is session:
+            self._lost_tool_calls_answered = True
 
     async def _try_reconnect(self) -> bool:
         """Re-dial with exponential backoff, resuming from the latest handle; return whether it worked."""
@@ -1663,6 +1815,8 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 self._turn_open = True
             else:
                 events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
+                if not more_expected:
+                    self._mark_oldest_typed_turn_answered()
                 self._turn_interrupted = False
                 # A stalled exchange's response is still open — the model will add a tool call and an
                 # answer to it — so the turn stays open too. Closing it here would leave a drop between
@@ -1672,7 +1826,21 @@ class GoogleRealtimeConnection(RealtimeConnection):
                 if not more_expected:
                     self._native_part_index = 0
         # Track the resumption handle (internal state, not an event) so a reconnect can resume state.
-        update = message.session_resumption_update
-        if update is not None and update.new_handle:
-            self._resumption_handle = update.new_handle
+        if (update := message.session_resumption_update) is not None:
+            self._track_resumption_update(update)
         return events
+
+    def _mark_oldest_typed_turn_answered(self) -> None:
+        """The exchange that answered the oldest unanswered typed turn is over; the next handle covers it."""
+        if turn := next((turn for turn in self._uncovered_typed_turns if not turn.answered), None):
+            turn.answered = True
+
+    def _track_resumption_update(self, update: genai_types.LiveServerSessionResumptionUpdate) -> None:
+        if update.new_handle:
+            self._resumption_handle = update.new_handle
+            if self._lost_tool_calls_answered:
+                # Issued after the answer, so a session resumed from it is no longer stuck on the calls.
+                self._unanswered_lost_tool_calls.clear()
+            self._uncovered_typed_turns = [turn for turn in self._uncovered_typed_turns if not turn.answered]
+        elif any(not turn.answered for turn in self._uncovered_typed_turns):
+            self._withholds_handles_mid_turn = True

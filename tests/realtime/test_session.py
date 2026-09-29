@@ -249,6 +249,29 @@ async def drain_events(session: _RealtimeSession) -> list[RealtimeEvent]:
     return [event async for event in session]
 
 
+async def _consume_until(events: AsyncIterator[RealtimeEvent], stop: Callable[[RealtimeEvent], bool]) -> None:
+    """Consume events up to and including the first one `stop` matches."""
+    while not stop(await anext(events)):
+        pass
+
+
+def _is_delta_of(index: int) -> Callable[[RealtimeEvent], bool]:
+    return lambda event: isinstance(event, PartDeltaEvent) and event.index == index
+
+
+def _is_turn_complete(event: RealtimeEvent) -> bool:
+    return isinstance(event, RealtimeTurnCompleteEvent)
+
+
+def _speech_cuts(session: _RealtimeSession) -> list[tuple[str, list[int | None]]]:
+    """Each recorded response's state and the cut positions on its speech parts."""
+    return [
+        (message.state, [part.interrupted_at_ms for part in message.parts if isinstance(part, SpeechPart)])
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+    ]
+
+
 async def aiter_to_list(iterator: AsyncIterator[T]) -> list[T]:
     return [item async for item in iterator]
 
@@ -1397,17 +1420,21 @@ async def test_interrupted_turn_keeps_partial_transcript() -> None:
 
 
 async def test_explicit_interrupt_records_audio_offset_on_last_speech_part() -> None:
-    conn = FakeRealtimeConnection(
+    conn = _GatedRealtimeConnection(
         [
             OutputTranscript(text='first', is_final=True, item_id='item-1'),
             OutputTranscript(text='second', is_final=True, item_id='item-2'),
-            ResponseDone(interrupted=True),
-        ]
+        ],
+        [ResponseDone(interrupted=True)],
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
 
-    await session.interrupt(played_ms=640)
-    _ = await collect_events(session)
+    async with session:
+        events = aiter(session)
+        await _consume_until(events, _is_delta_of(1))
+        await session.interrupt(played_ms=640)
+        conn.release.set()
+        _ = [event async for event in events]
 
     assert session.new_messages() == snapshot(
         [
@@ -1431,17 +1458,21 @@ async def test_deltas_still_in_flight_when_a_cancel_lands_stay_in_the_interrupte
     arrive. Those deltas must land in the response being cancelled — starting a second response for
     them would show the user a turn the model never took.
     """
-    conn = FakeRealtimeConnection(
+    conn = _GatedRealtimeConnection(
+        [OutputTranscript(text='I was saying', is_final=False, item_id='item-1')],
         [
-            OutputTranscript(text='I was saying', is_final=False, item_id='item-1'),
             OutputTranscript(text=' something', is_final=True, item_id='item-1'),
             ResponseDone(interrupted=True),
-        ]
+        ],
     )
     session = RealtimeSession(conn, _noop_runner, model_name='m')
 
-    await session.interrupt(played_ms=120)
-    _ = await collect_events(session)
+    async with session:
+        events = aiter(session)
+        await _consume_until(events, _is_delta_of(0))
+        await session.interrupt(played_ms=120)
+        conn.release.set()
+        _ = [event async for event in events]
 
     assert session.new_messages() == snapshot(
         [
@@ -1585,6 +1616,105 @@ async def test_interrupt_played_bytes_flushes_and_attributes_to_the_current_turn
 
         # Nothing further arrives; the stream ends when the connection does.
         assert [chunk async for chunk in stream] == []
+
+
+def _speech(item_id: str, chunks: int = 1) -> list[RealtimeCodecEvent]:
+    return [AudioDelta(b'a' * _CHUNK, item_id=item_id) for _ in range(chunks)]
+
+
+async def test_interrupt_played_bytes_after_the_reply_finished_generating_truncates_it() -> None:
+    """Generation outruns playback, so the user usually cuts off a reply that has finished generating.
+
+    The provider's copy is still truncated where playback stopped, so the model doesn't take the whole
+    reply as heard. History is append-only: the recorded reply stays `complete`, and the position isn't
+    left behind for the next response that happens to be interrupted.
+    """
+    conn = _GatedRealtimeConnection(
+        [*_speech('item-a', 2), ResponseDone()],
+        [*_speech('item-b'), ResponseDone(interrupted=True)],  # a later reply, cut with no position
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)  # the second chunk stays buffered and unheard
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [TruncateOutput(audio_end_ms=100, item_id='item-a'), CancelResponse()]
+
+        conn.release.set()
+        _ = [event async for event in events]
+
+    assert _speech_cuts(session) == [('complete', [None]), ('interrupted', [None])]
+
+
+async def test_interrupt_played_ms_after_the_reply_finished_generating_leaves_no_position_behind() -> None:
+    conn = _GatedRealtimeConnection(
+        [*_speech('item-a'), ResponseDone()],
+        [*_speech('item-b'), ResponseDone(interrupted=True)],
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await session.interrupt(played_ms=40)
+        assert conn.sent == [TruncateOutput(audio_end_ms=40), CancelResponse()]
+        conn.release.set()
+        _ = [event async for event in events]
+
+    assert _speech_cuts(session) == [('complete', [None]), ('interrupted', [None])]
+
+
+async def test_interrupt_played_bytes_truncates_every_reply_generated_ahead_of_playback() -> None:
+    """Two replies can finish generating before the first has finished playing — after a tool round, say.
+
+    The one playing is truncated where playback stopped, and the one after it, never heard, at 0.
+    """
+    conn = BlockingRealtimeConnection([*_speech('item-a', 2), ResponseDone(), *_speech('item-b', 2), ResponseDone()])
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [
+            TruncateOutput(audio_end_ms=100, item_id='item-a'),
+            TruncateOutput(audio_end_ms=0, item_id='item-b'),
+            CancelResponse(),
+        ]
+
+    assert _speech_cuts(session) == [('complete', [None]), ('complete', [None])]
+
+
+async def test_interrupt_played_bytes_without_item_ids_truncates_the_current_item() -> None:
+    """A provider that names no output items can only truncate its current one: the last reply."""
+    conn = BlockingRealtimeConnection(
+        [
+            AudioDelta(b'a' * _CHUNK),
+            AudioDelta(b'a' * _CHUNK),
+            ResponseDone(),
+            AudioDelta(b'b' * _CHUNK),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _noop_runner)
+
+    async with session:
+        stream = session.stream_audio()
+        events = aiter(session)
+        await _consume_until(events, _is_turn_complete)
+        await _consume_until(events, _is_turn_complete)
+        await anext(stream)
+
+        assert await session.interrupt(played_bytes=_CHUNK) is True
+        assert conn.sent == [TruncateOutput(audio_end_ms=0), CancelResponse()]
 
 
 async def test_interrupt_played_bytes_clamps_to_zero_inside_a_previous_turn() -> None:
@@ -5322,6 +5452,83 @@ async def test_transport_failure_while_sending_becomes_a_realtime_error() -> Non
     with pytest.raises(RealtimeError) as exc_info:
         await anonymous.send('anyone there?')
     assert exc_info.value.model_name == 'unknown'
+
+
+class _ReconnectingDisconnectedConnection(FakeRealtimeConnection):
+    """Fails every send while `dropped`, as a link its reconnect policy is still replacing does."""
+
+    transport_errors = (ConnectionResetError,)
+
+    def __init__(self, *, can_reconnect: bool = True) -> None:
+        super().__init__([])
+        self.dropped = False
+        self.can_reconnect = can_reconnect
+
+    @property
+    def _can_reconnect(self) -> bool:
+        return self.can_reconnect
+
+    async def send(self, content: RealtimeInput) -> None:
+        if self.dropped:
+            raise ConnectionResetError('connection reset by peer')
+        self.sent.append(content)
+
+
+async def test_audio_chunk_that_hits_a_reconnecting_link_is_dropped() -> None:
+    # An always-on microphone streams a chunk every ~100 ms and a reconnect's backoff is longer, so a
+    # chunk used to hit the dead socket on every reconnect and raise, killing the capture task. While
+    # the connection is reconnecting, the chunk is dropped instead (live audio is worthless late) and
+    # the capture loop carries on. Other sends still raise, as does audio without a reconnect policy.
+    conn = _ReconnectingDisconnectedConnection()
+    session = RealtimeSession(conn, model_name='gpt-realtime', audio_retention='input_audio')
+
+    async def microphone() -> AsyncIterator[bytes]:
+        yield b'\x01\x01'
+        conn.dropped = True
+        yield b'\x02\x02'
+        conn.dropped = False
+        yield b'\x03\x03'
+
+    await session.send_audio(microphone())
+    assert [content.data for content in conn.sent if isinstance(content, BinaryAudio)] == [
+        b'\x01\x01',
+        b'\x03\x03',
+    ]
+    # The dropped chunk isn't retained as audio the user said to the model either.
+    assert bytes(session._input_audio) == b'\x01\x01\x03\x03'  # pyright: ignore[reportPrivateUsage]
+
+    conn.dropped = True
+    with pytest.raises(RealtimeError, match='failed while sending'):
+        await session.send('anyone there?')
+
+    without_policy = _ReconnectingDisconnectedConnection(can_reconnect=False)
+    without_policy.dropped = True
+    with pytest.raises(RealtimeError, match='failed while sending'):
+        await RealtimeSession(without_policy, model_name='gpt-realtime').send_audio(b'\x01\x01')
+
+
+async def test_audio_raises_once_receiving_has_ended_even_if_the_connection_still_claims_a_reconnect() -> None:
+    # A re-dial can fail with an error the reconnect loop doesn't expect, ending receiving without the
+    # connection marking its reconnect as given up. Once a consumer has caught that failure, nothing will
+    # replace the link, so a mic chunk must raise rather than be dropped silently forever.
+    class _DialBlowsUp(_ReconnectingDisconnectedConnection):
+        async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
+            raise RuntimeError('handshake rejected')
+            yield  # pragma: no cover  (makes this an async generator)
+
+    conn = _DialBlowsUp()
+    session = RealtimeSession(conn, model_name='gpt-realtime')
+    async with session:
+        with pytest.raises(RuntimeError, match='handshake rejected'):
+            async for _ in session:
+                pass  # pragma: no cover - the failure is the only thing that arrives
+        conn.dropped = True
+        with pytest.raises(RealtimeError, match='failed while sending'):
+            await session.send_audio(b'\x01\x01')
+
+
+def test_a_connection_does_not_reconnect_by_default() -> None:
+    assert FakeRealtimeConnection([])._can_reconnect is False  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_undeclared_send_failure_is_left_alone() -> None:
