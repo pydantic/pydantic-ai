@@ -97,7 +97,7 @@ def run(*, splash: Splash | None = None) -> None:
             )
         asyncio.run(
             chat(
-                agent or create_agent(),
+                create_agent() if agent is None else agent,
                 deps=None,
                 usage_limits=UsageLimits(request_limit=settings.request_limit),
                 settings=settings,

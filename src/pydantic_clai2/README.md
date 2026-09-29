@@ -275,8 +275,9 @@ clai2 -a my_agents:reviewer -p "Review the staged diff"
 ```
 
 `--agent MODULE:ATTR` (short form `-a`) chats with an existing Pydantic AI `Agent`
-instance instead of CLAI's default agent. The launch directory is importable, so a
-module next to where you start CLAI resolves without installing it. `ATTR` must
+instance instead of CLAI's default agent. The launch directory is importable after
+installed packages, which it never shadows, so a module next to where you start
+CLAI resolves without installing it. `ATTR` must
 name an instance, not a class; the agent runs with `deps=None`. For that session
 only, no plugins load: no built-ins (including the stock coder tools), no saved or
 drop-in user plugins, and no project plugins, and `/plugins` reports that they are

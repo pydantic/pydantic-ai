@@ -39,7 +39,7 @@ async def run_headless(
     A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
     """
     load_plugins = agent is None
-    agent = agent or create_agent()
+    agent = create_agent() if agent is None else agent
     if settings.model is None and agent.model is None:
         raise ValueError('Choose a model with -m PROVIDER:NAME')
     reason: SessionEndReason = 'error'

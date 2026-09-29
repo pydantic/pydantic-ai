@@ -42,7 +42,7 @@ def fixture_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_import_agent_resolves_instance_from_launch_directory(fixture_module: Path) -> None:
     agent = import_agent(f'{_MODULE}:agent')
     assert isinstance(agent, Agent)
-    assert sys.path[0] == str(fixture_module)
+    assert sys.path[-1] == str(fixture_module)
     # A second resolution does not add the launch directory again.
     assert import_agent(f'{_MODULE}:agent') is agent
     assert sys.path.count(str(fixture_module)) == 1

@@ -10,15 +10,15 @@ from pydantic_ai.agent import AbstractAgent
 def import_agent(path: str) -> AbstractAgent[None, object]:
     """Import `MODULE:ATTR` and return the agent instance it names.
 
-    The working directory is importable, like `python -m`, so a module in the launch directory resolves
-    without installing it. The agent runs with `deps=None`.
+    The launch directory is appended to `sys.path`, so a module there resolves without installing it,
+    but never shadows an installed module of the same name. The agent runs with `deps=None`.
     """
     module_name, _, attr = path.partition(':')
     if not module_name or not attr:
         raise ValueError(f'--agent expects MODULE:ATTR, for example pydantic_ai.main:my_cool_agent; got {path!r}')
     cwd = str(Path.cwd())
     if cwd not in sys.path:
-        sys.path.insert(0, cwd)
+        sys.path.append(cwd)
     try:
         module = importlib.import_module(module_name)
     except ModuleNotFoundError as exc:
