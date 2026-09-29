@@ -716,11 +716,13 @@ _MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
 
 
 class _WithoutUntypedEvents:
-    """A stream of Anthropic events that skips the untyped ones Bedrock sends.
+    """A stream of Anthropic events that skips the untyped ones Bedrock sends, for the SDK's message accumulator.
 
     The SDK's Bedrock stream decoder drops event types, so a Bedrock-only chunk like
     `amazon-bedrock-invocationMetrics` arrives as `BetaRawMessageStartEvent(message=None)`
-    (https://github.com/pydantic/pydantic-ai/issues/5774), which the SDK's message accumulator rejects.
+    (https://github.com/pydantic/pydantic-ai/issues/5774), which the accumulator rejects. A stream without any
+    event raises `UnexpectedModelBehavior`, as it does when streamed through `AnthropicStreamedResponse`, rather
+    than the accumulator's bare assertion.
     """
 
     def __init__(self, stream: AsyncStream[BetaRawMessageStreamEvent]) -> None:
@@ -731,10 +733,14 @@ class _WithoutUntypedEvents:
         return self._stream.response
 
     async def __aiter__(self) -> AsyncIterator[BetaRawMessageStreamEvent]:
+        empty = True
         async for event in self._stream:
             if isinstance(event, BetaRawMessageStartEvent) and event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
                 continue
+            empty = False
             yield event
+        if empty:
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
     async def close(self) -> None:
         await self._stream.close()

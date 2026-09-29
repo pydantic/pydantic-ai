@@ -11908,25 +11908,319 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(
         chunks = [c async for c in result.stream_output(debounce_by=None)]
         assert chunks == snapshot(
             [
-                'On',
-                'On September 29, 1954',
-                'On September 29, 1954,',
-                'On September 29, 1954, C',
-                'On September 29, 1954, CERN',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research)',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by ',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12 European governments',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12 European governments.',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12 European governments.',
+                'I need',
+                'I need to clar',
+                'I need to clarify what',
+                "I need to clarify what you're asking.",
+                "I need to clarify what you're asking. Today",
+                "I need to clarify what you're asking. Today is September 29, 2026",
+                "I need to clarify what you're asking. Today is September 29, 2026, so",
+                'I need to clarify what you\'re asking. Today is September 29, 2026, so "',
+                'I need to clarify what you\'re asking. Today is September 29, 2026, so "tomorrow" would be September 30,',
+                'I need to clarify what you\'re asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026,',
+                'I need to clarify what you\'re asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in',
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Su\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to app\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and avoid war.\
+""",
+                """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and avoid war.\
+""",
             ]
         )
 
     assert await result.get_output() == snapshot(
-        'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12 European governments.'
+        """\
+I need to clarify what you're asking. Today is September 29, 2026, so "tomorrow" would be September 30, 2026, which is in the future. \n\
+
+Did you mean:
+1. An event that happened on September 30th in history (past years)?
+2. Or something else?
+
+If you meant historical events that occurred on September 30th, here's one notable example:
+
+**September 30, 1938**: The Munich Agreement was signed, allowing Nazi Germany to annex the Sudetenland region of Czechoslovakia in an attempt to appease Hitler and avoid war.\
+"""
     )
 
     async with agent.run_stream('Briefly mention 1 event that happened yesterday in history?') as result:
@@ -11934,23 +12228,17 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(
         assert chunks == snapshot(
             [
                 'On',
-                'On September 29, 1954',
-                'On September 29, 1954,',
-                'On September 29, 1954, C',
-                'On September 29, 1954, CERN',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research)',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by ',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12 European governments',
-                'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12 European governments.',
+                'On September 28, 1928',
+                'On September 28, 1928, ',
+                'On September 28, 1928, Alexander Fleming discovered penic',
+                'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-',
+                'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-killing mold growing in his laboratory',
+                'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-killing mold growing in his laboratory.',
             ]
         )
 
     assert await result.get_output() == snapshot(
-        'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12 European governments.'
+        'On September 28, 1928, Alexander Fleming discovered penicillin when he noticed a bacteria-killing mold growing in his laboratory.'
     )
 
     async with agent.run_stream(
@@ -11959,24 +12247,34 @@ async def test_anthropic_text_parts_ahead_of_built_in_tool_call(
         chunks = [c async for c in result.stream_text(debounce_by=None, delta=True)]  # pragma: lax no cover
         assert chunks == snapshot(
             [
-                'On',
-                ' September 29, 1954',
+                'I',
+                ' need',
+                ' to search for historical',
+                ' events that occurred on',
+                ' October',
+                ' 1st (',
+                'the day after tomorrow from',
+                ' today,',
+                ' September',
+                ' 29',
                 ',',
-                ' C',
-                'ERN',
-                ' (the European Organization for Nuclear Research)',
-                ' was',
-                ' established',
-                ' by',
-                ' ',
-                '12',
-                ' European governments',
+                ' 2026',
+                ').',
+                """\
+
+
+""",
+                'On',
+                ' October 1, 1949',
+                ', the People',
+                "'s Republic of China was founded with",
+                ' Mao Zedong as Chairman',
                 '.',
             ]
         )
 
     assert await result.get_output() == snapshot(
-        'On September 29, 1954, CERN (the European Organization for Nuclear Research) was established by 12 European governments.'
+        "On October 1, 1949, the People's Republic of China was founded with Mao Zedong as Chairman."
     )
 
 
