@@ -2211,7 +2211,11 @@ async def test_openrouter_stream_transport_error_raises_model_api_error(
 
 @pytest.mark.vcr(ignore_hosts=['openrouter.example'])
 async def test_openrouter_stream_error_without_integer_code_raises_model_api_error(allow_model_requests: None) -> None:
-    """An in-stream error object whose `code` isn't an HTTP status surfaces as `ModelAPIError` with no status."""
+    """An in-stream error object whose `code` isn't an HTTP status surfaces as `ModelAPIError` with no status.
+
+    OpenRouter documents an integer `code`, so no recording carries this shape; a mock transport serves it to pin that
+    an envelope that doesn't validate is mapped rather than escaping as a `ValidationError`.
+    """
     error_chunk = b'data: {"error":{"code":"server_error","message":"upstream failed"}}\n\n'
     error = await _run_openrouter_stream(httpx2.ByteStream(_MID_STREAM_TEXT_CHUNK + error_chunk))
 
