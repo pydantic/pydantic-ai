@@ -1,22 +1,23 @@
-"""Choosing a plugin's `/keys` entry: a masked new value saved under the plugin's name, or a saved key's name."""
+"""A plugin settings menu's credential rows: a masked new value saved under the plugin's name, or a saved key's name."""
 
 import asyncio
 
 import pytest
+from anyio import to_thread
 from pydantic import SecretStr
 from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
 from pydantic_clai2 import api_keys
 from pydantic_clai2.api_keys import KeyReference
-from pydantic_clai2.plugin_keys import choose_key, pick_key_from_menu
+from pydantic_clai2.plugin_keys import choose_key, on_loop
 from tests.clai2.menu_script import Script, pick, typed
 
 CLOSE = MenuResult(cancelled=True)
 
 
 async def choose(script: Script) -> KeyReference | None:
-    return await choose_key(name='DEMO_TOKEN', label='Demo token', placeholder='Paste it', runners=script.runners)
+    return await choose_key(name='DEMO_TOKEN', label='Demo token', runners=script.runners)
 
 
 def answer(monkeypatch: pytest.MonkeyPatch, choice: str | KeyReference | None) -> None:
@@ -41,7 +42,10 @@ async def test_escape_or_an_empty_value_saves_nothing(result: TextInputResult) -
     assert api_keys.load_keys() == {}
 
 
-async def test_a_key_saved_by_another_session_meanwhile_is_not_overwritten(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(('confirm', 'kept'), [(CLOSE, 'theirs'), (pick(True), 'mine')])
+async def test_a_key_saved_by_another_session_meanwhile_is_only_replaced_after_asking(
+    monkeypatch: pytest.MonkeyPatch, confirm: MenuResult, kept: str
+) -> None:
     answer(monkeypatch, 'mine')
     real_load_keys = api_keys.load_keys
 
@@ -51,28 +55,14 @@ async def test_a_key_saved_by_another_session_meanwhile_is_not_overwritten(monke
         return keys
 
     monkeypatch.setattr('pydantic_clai2.plugin_keys.load_keys', load_keys_then_another_session_saves)
-    with pytest.raises(api_keys.KeyExistsError, match='DEMO_TOKEN is already saved'):
-        await choose(Script(lists=[], choices=[], texts=[]))
-    assert api_keys.load_keys()['DEMO_TOKEN'].get_secret_value() == 'theirs'
+    result = await choose(Script(lists=[], choices=[confirm], texts=[]))
+    assert result == (KeyReference(name='DEMO_TOKEN') if kept == 'mine' else None)
+    assert api_keys.load_keys()['DEMO_TOKEN'].get_secret_value() == kept
 
 
 async def test_a_saved_key_is_returned_by_name(monkeypatch: pytest.MonkeyPatch) -> None:
     answer(monkeypatch, KeyReference(name='OTHER'))
     assert await choose(Script(lists=[], choices=[], texts=[])) == KeyReference(name='OTHER')
-
-
-async def test_a_menu_thread_waits_for_a_slow_picker(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def prompt_api_key(*, prompt: object, label: str, optional: bool = False) -> str | KeyReference | None:
-        await asyncio.sleep(0.2)
-        return KeyReference(name='SLOW')
-
-    monkeypatch.setattr('pydantic_clai2.plugin_keys.prompt_api_key', prompt_api_key)
-    runners = Script(lists=[], choices=[], texts=[]).runners
-    loop = asyncio.get_running_loop()
-    picked = await asyncio.to_thread(
-        lambda: pick_key_from_menu(loop, name='DEMO_TOKEN', label='Demo token', placeholder='Paste it', runners=runners)
-    )
-    assert picked == KeyReference(name='SLOW')
 
 
 @pytest.mark.parametrize(('confirm', 'kept'), [(CLOSE, 'old'), (pick(False), 'old'), (pick(True), 'new')])
@@ -84,3 +74,21 @@ async def test_replacing_a_shared_key_asks_first(
     result = await choose(Script(lists=[], choices=[confirm], texts=[]))
     assert result == (KeyReference(name='DEMO_TOKEN') if kept == 'new' else None)
     assert api_keys.load_keys()['DEMO_TOKEN'].get_secret_value() == kept
+
+
+async def test_a_flows_own_timeout_reaches_the_menu_instead_of_being_polled_forever() -> None:
+    # `concurrent.futures.TimeoutError` is the builtin since Python 3.11, so it must not double as "still waiting".
+    async def timed_out() -> str:
+        raise TimeoutError('the service did not answer')
+
+    loop = asyncio.get_running_loop()
+    with pytest.raises(TimeoutError, match='the service did not answer'):
+        await to_thread.run_sync(on_loop, timed_out, loop)
+
+
+async def test_the_flows_result_is_returned() -> None:
+    async def answered() -> str:
+        await asyncio.sleep(0.1)  # Past one polling interval.
+        return 'done'
+
+    assert await to_thread.run_sync(on_loop, answered, asyncio.get_running_loop()) == 'done'
