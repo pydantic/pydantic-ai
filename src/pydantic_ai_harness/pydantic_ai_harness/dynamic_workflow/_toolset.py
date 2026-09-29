@@ -329,6 +329,11 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         """
         clone = copy.copy(self)
         clone._budget = CallBudget(self.max_agent_calls)
+        if self.library is not None:
+            # A run's saves land in its own copy, so a toolset reused across runs doesn't share them.
+            clone.library = replace(
+                self.library, workflows=dict(self.library.workflows), errors=dict(self.library.errors)
+            )
         workspace = ctx.workspace
         clone._can_save = (
             self.library is not None

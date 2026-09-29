@@ -10,7 +10,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic_monty import AsyncMonty
 
-from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai import Agent, RunContext, capture_run_messages
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UserError
 from pydantic_ai.messages import ModelRequest, SystemPromptPart, ToolReturnPart
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace, WorkspaceTimeoutError
@@ -325,6 +325,14 @@ async def test_budget_exhausted_in_a_nested_workflow_ends_the_call() -> None:
 # --- Saving ------------------------------------------------------------------------------------
 
 
+async def _saving_toolset_from(
+    ts: DynamicWorkflowToolset[object], root: Path
+) -> tuple[DynamicWorkflowToolset[object], RunContext[object]]:
+    root.mkdir(parents=True, exist_ok=True)
+    ctx = run_ctx(workspace=_workspace(root))
+    return await ts.for_run(ctx), ctx
+
+
 async def _saving_toolset(
     root: Path, *, workspace: Workspace | None = None
 ) -> tuple[DynamicWorkflowToolset[object], Any]:
@@ -490,3 +498,17 @@ def test_tool_name_cannot_take_the_save_tools_name() -> None:
     with pytest.raises(UserError, match="`tool_name` cannot be 'save_workflow'"):
         _toolset(save_directory='workflows', tool_name='save_workflow')
     assert _toolset(tool_name='save_workflow').tool_name == 'save_workflow'
+
+
+async def test_saves_stay_in_their_own_run_when_a_toolset_is_reused(tmp_path: Path) -> None:
+    shared = _toolset(save_directory='workflows')
+    first, ctx = await _saving_toolset_from(shared, tmp_path / 'one')
+    save = {'tool_name': 'save_workflow', 'name': 'echo', 'description': 'Echo.', 'code': '1'}
+    await call_workflow_tool(first, save, ctx)
+    assert first.library is not None and 'echo' in first.library.workflows
+
+    second, ctx = await _saving_toolset_from(shared, tmp_path / 'two')
+    assert shared.library is not None and shared.library.workflows == {}
+    assert second.library is not None and second.library.workflows == {}
+    with pytest.raises(ModelRetry, match="unknown saved workflow 'echo'"):
+        await call_workflow_tool(second, {'name': 'echo'}, ctx)
