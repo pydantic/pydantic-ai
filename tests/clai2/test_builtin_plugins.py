@@ -18,7 +18,8 @@ from pydantic_clai2.plugin_menu import PluginMenu
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.settings_store import SettingsStore
 
-CURATED = {'coder', 'ask_user', 'repo_context', 'compaction', 'persistence', 'logfire', 'notifications', 'mcp'}
+ENABLED = {'coder', 'ask_user', 'repo_context', 'compaction', 'persistence', 'logfire', 'notifications', 'mcp'}
+CURATED = ENABLED | {'pylon'}
 
 
 class Menu:
@@ -42,7 +43,7 @@ def _apply(action: Coroutine[object, object, object]) -> None:
 
 def test_builtins_are_the_curated_enabled_set() -> None:
     assert sorted(plugin.id for plugin in DEFAULT_PLUGINS) == sorted(CURATED)
-    assert all(plugin.enabled for plugin in DEFAULT_PLUGINS)
+    assert {plugin.id for plugin in DEFAULT_PLUGINS if plugin.enabled} == ENABLED
 
 
 def test_menu_offers_no_uncurated_harness_capabilities(tmp_path: Path) -> None:
