@@ -110,6 +110,13 @@ async def test_description_advertises_a_policy_clock_with_a_mount(tmp_path: Path
     assert '`time.time()` remain unavailable' not in description
 
 
+async def test_description_advertises_a_policy_clock_with_os_access() -> None:
+    description = await _description(CodeMode[None](os_access=paris_clock, os_policy={'datetime': 'system'}))
+    assert POLICY_CLOCK in description
+    assert '`pathlib.Path` operations and `os.getenv`/`os.environ` are routed to the OS handler' in description
+    assert '`time.time()` are routed' not in description
+
+
 @pytest.mark.parametrize(
     'os_policy',
     [pytest.param(None, id='default'), pytest.param({'timezone': 'Europe/Paris'}, id='zone-only')],

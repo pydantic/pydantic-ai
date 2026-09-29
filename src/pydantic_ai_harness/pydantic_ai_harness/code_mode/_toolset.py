@@ -428,8 +428,8 @@ _OS_ENABLED_NOTE = (
     'handler configured for this agent (availability depends on that configuration). '
     '`time.sleep` and `asyncio.sleep` really wait.'
 )
-# The variants used when `os_policy` gives the sandbox a clock of its own and no OS handler is
-# configured: the notes above without their "clock unavailable" claim, plus the clock sentence.
+# The variants used when `os_policy` gives the sandbox a clock of its own: the notes above without
+# their "clock unavailable" or "clock routed to the handler" claim, plus the clock sentence.
 _POLICY_CLOCK_SENTENCE = (
     '`datetime.datetime.now()`, `datetime.date.today()`, and `time.time()` read the clock configured for this sandbox.'
 )
@@ -442,6 +442,11 @@ _NO_OS_WITH_CLOCK_NOTE = (
 _MOUNT_ONLY_WITH_CLOCK_NOTE = (
     '- **Mounted filesystem access**: `pathlib.Path` operations under the configured mount '
     f'point(s) are routed to the host. `os.getenv`/`os.environ` remain unavailable. {_POLICY_CLOCK_SENTENCE} '
+    '`time.sleep` and `asyncio.sleep` really wait.'
+)
+_OS_ENABLED_WITH_CLOCK_NOTE = (
+    '- **Configured OS access**: `pathlib.Path` operations and `os.getenv`/`os.environ` are routed to the OS '
+    f'handler configured for this agent (availability depends on that configuration). {_POLICY_CLOCK_SENTENCE} '
     '`time.sleep` and `asyncio.sleep` really wait.'
 )
 _MOUNT_LIFETIME_NOTE = (
@@ -487,10 +492,10 @@ def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool) -> str:
     exposes filesystem paths, so a mount-only sandbox must not advertise env or
     clock access (the model would generate calls that fail and burn retries).
     `has_clock` says `os_policy` gives the sandbox a clock of its own, which the
-    note then advertises instead of calling it unavailable.
+    note then advertises instead of calling it unavailable or routed to `os`.
     """
     if has_os:
-        restriction = _OS_ENABLED_NOTE
+        restriction = _OS_ENABLED_WITH_CLOCK_NOTE if has_clock else _OS_ENABLED_NOTE
     elif has_mount:
         restriction = _MOUNT_ONLY_WITH_CLOCK_NOTE if has_clock else _MOUNT_ONLY_NOTE
     else:
