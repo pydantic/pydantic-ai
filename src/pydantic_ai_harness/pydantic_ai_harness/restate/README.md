@@ -4,7 +4,11 @@
 durable-execution engine (Python SDK `restate-sdk`). Attach the capability and call `agent.run()`
 inside a Restate service handler: every model request, MCP call, and function tool call is
 journaled into a Restate run step (`ctx.run_typed(...)`), so a handler that crashes or is retried
-mid-run replays from the journal instead of repeating the work.
+mid-run replays from the journal instead of repeating the work. A completed step is served from its
+journal entry on replay instead of being recomputed, so tokens are not re-spent on work that already
+finished. A step is journaled after it runs, so a crash between a tool's side effect and its journal
+entry re-runs the tool on recovery: keep tool side effects idempotent. Outside a Restate context the
+capability is transparent and the run is a normal, non-durable agent run.
 
 Restate Durability is a released, non-experimental capability. Pydantic AI Harness is still on 0.x
 releases, so the API may change between minor releases. See the repository

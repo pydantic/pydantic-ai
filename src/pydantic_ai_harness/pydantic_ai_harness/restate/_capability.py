@@ -48,7 +48,7 @@ from pydantic_ai.toolsets import ToolsetTool
 
 _ENGINE_NAME = 'Restate'
 _TOOL_CONFIG_KEY = 'restate'
-_MAX_ATTEMPTS = 2**32 - 1
+_MAX_ATTEMPTS_LIMIT = 2**32 - 1
 _IN_RESTATE_STEP: ContextVar[bool] = ContextVar('pydantic_ai_harness.restate.in_step', default=False)
 
 
@@ -63,12 +63,15 @@ def _current_restate_context() -> restate.Context | None:
 def _resolve_tool_config(
     operation_id: DurableOperationId, tool: object | None, tool_name: str
 ) -> Mapping[str, object] | Literal[False]:
-    del operation_id, tool_name
+    del operation_id
     config = (tool.tool_def.metadata or {}).get(_TOOL_CONFIG_KEY) if isinstance(tool, ToolsetTool) else None
     if config is False:
         return False
     if config:
-        raise UserError('Restate run steps take no per-tool options; remove the config.')
+        raise UserError(
+            f'Tool {tool_name!r} has invalid {_TOOL_CONFIG_KEY!r} metadata: '
+            'Restate run steps take no per-tool options, so only `False` (opt out) or no config is supported.'
+        )
     return {}
 
 
@@ -197,9 +200,9 @@ class RestateDurability(BaseDurabilityCapability[AgentDepsT]):
         if max_attempts is not None and (
             isinstance(max_attempts, bool)
             or not isinstance(max_attempts, int)
-            or not 1 <= max_attempts <= _MAX_ATTEMPTS
+            or not 1 <= max_attempts <= _MAX_ATTEMPTS_LIMIT
         ):
-            raise UserError(f'`max_attempts` must be an integer from 1 to {_MAX_ATTEMPTS}, or `None`.')
+            raise UserError(f'`max_attempts` must be an integer from 1 to {_MAX_ATTEMPTS_LIMIT}, or `None`.')
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self._max_attempts = max_attempts
 
