@@ -167,6 +167,16 @@ def _sse(*events: tuple[str, dict[str, Any]]) -> Handler:
     return handler
 
 
+def _sse_data(*data: dict[str, Any]) -> Handler:
+    """An OpenAI-style SSE stream of `data:` events."""
+    content = b''.join(f'data: {json.dumps(d)}\n\n'.encode() for d in data)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
+
+    return handler
+
+
 def _raise(kind: Literal['connect', 'timeout']) -> Handler:
     def handler(request: Any) -> Any:
         if isinstance(request, httpx.Request):
@@ -269,6 +279,47 @@ CASES = [
         model=_openai,
         handler=_raise('timeout'),
         categories={ModelConnectionError, ModelTimeoutError},
+    ),
+    Case(
+        id='openai-stream-rate-limit',
+        model=_openai,
+        handler=_sse_data(
+            {'error': {'message': 'Rate limit reached', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}
+        ),
+        categories={ModelRateLimitError},
+        attrs={'provider_error_code': 'rate_limit_exceeded', 'provider_error_type': 'tokens', 'retry_after': None},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-context-window',
+        model=_openai,
+        handler=_sse_data(
+            {
+                'error': {
+                    'message': "This model's maximum context length is 128000 tokens.",
+                    'type': 'invalid_request_error',
+                    'code': 'context_length_exceeded',
+                }
+            }
+        ),
+        categories={ContextWindowExceeded},
+        attrs={
+            'provider_error_code': 'context_length_exceeded',
+            'body': {
+                'message': "This model's maximum context length is 128000 tokens.",
+                'type': 'invalid_request_error',
+                'code': 'context_length_exceeded',
+            },
+        },
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-overloaded-type',
+        model=_openai,
+        handler=_sse_data({'error': {'message': 'Overloaded', 'type': 'overloaded'}}),
+        categories={ModelOverloadedError},
+        attrs={'provider_error_code': None, 'provider_error_type': 'overloaded'},
+        stream=True,
     ),
     Case(
         id='openrouter-http-context-window',

@@ -23,6 +23,7 @@ from pydantic_ai import (
     ImageUrl,
     ModelAPIError,
     ModelHTTPError,
+    ModelOverloadedError,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -759,8 +760,10 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
             async with Agent(model).run_stream('hello') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelAPIError
+    assert type(exc_info.value) is ModelOverloadedError
     assert exc_info.value.message == 'over capacity'
+    assert exc_info.value.provider_error_code == 'service_unavailable'
+    assert exc_info.value.provider_error_type == 'server_error'
     cause = exc_info.value.__cause__
     assert isinstance(cause, APIError)
     assert cause.body == snapshot({'message': 'over capacity', 'type': 'server_error', 'code': 'service_unavailable'})

@@ -2119,8 +2119,11 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
             async with Agent(model).run_stream('hello') as result:
                 await result.get_output()
 
+    # A server error isn't classified into a category.
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == 'upstream model failed'
+    assert exc_info.value.provider_error_code == '500'
+    assert exc_info.value.provider_error_type == 'server_error'
     cause = exc_info.value.__cause__
     assert isinstance(cause, APIError)
     assert cause.body == snapshot({'message': 'upstream model failed', 'type': 'server_error', 'code': 500})

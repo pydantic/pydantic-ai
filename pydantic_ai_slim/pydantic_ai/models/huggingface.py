@@ -12,6 +12,7 @@ from .. import ModelAPIError, UnexpectedModelBehavior, _model_errors, _utils, us
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
+from ..exceptions import ModelOverloadedError
 from ..messages import (
     AudioUrl,
     BinaryContent,
@@ -71,7 +72,7 @@ try:
         ChatCompletionStreamOutput,
         TextGenerationOutputFinishReason,
     )
-    from huggingface_hub.errors import HfHubHTTPError, TextGenerationError
+    from huggingface_hub.errors import HfHubHTTPError, OverloadedError, TextGenerationError
 
 except ImportError as _import_error:
     raise ImportError(
@@ -94,7 +95,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
     except TextGenerationError as e:
         # Raised for an error object inside a stream, after the HTTP 200 has already been received, so there is no
         # status code to report.
-        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+        error_class = ModelOverloadedError if isinstance(e, OverloadedError) else ModelAPIError
+        raise error_class(model_name=model_name, message=str(e)) from e
 
 
 __all__ = (

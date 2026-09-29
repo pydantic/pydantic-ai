@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+from ._utils import is_str_dict
 from .exceptions import ContextWindowExceeded, ModelAPIError, ModelHTTPError, ModelOverloadedError, ModelRateLimitError
 
 
@@ -36,3 +37,26 @@ def http_status_category(status_code: int) -> type[ModelAPIError] | None:
     if status_code in (503, 529):
         return ModelOverloadedError
     return None
+
+
+_STREAM_ERROR_CATEGORIES: dict[str, type[ModelAPIError]] = {
+    'rate_limit_exceeded': ModelRateLimitError,
+    'context_length_exceeded': ContextWindowExceeded,
+    'service_unavailable': ModelOverloadedError,
+    'overloaded': ModelOverloadedError,
+}
+
+
+def stream_error(model_name: str, message: str, body: object) -> ModelAPIError:
+    """Map an error object sent inside a 200 stream by an OpenAI-compatible API, classified by its `code` or `type`.
+
+    The HTTP status was already 200, so none is reported.
+    """
+    code = body.get('code') if is_str_dict(body) else None
+    error_type = body.get('type') if is_str_dict(body) else None
+    code = str(code) if isinstance(code, str | int) else None
+    error_type = error_type if isinstance(error_type, str) else None
+    category = _STREAM_ERROR_CATEGORIES.get(code or '') or _STREAM_ERROR_CATEGORIES.get(error_type or '')
+    return (category or ModelAPIError)(
+        model_name=model_name, message=message, body=body, provider_error_code=code, provider_error_type=error_type
+    )

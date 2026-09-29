@@ -129,7 +129,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
     except APIError as e:
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
         # been received, so there is no status code to report.
-        raise ModelAPIError(model_name=model_name, message=e.message) from e
+        raise _model_errors.stream_error(model_name, e.message, e.body) from e
 
 
 ProductionGroqModelNames = Literal[
