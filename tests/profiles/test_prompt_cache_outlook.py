@@ -31,6 +31,7 @@ with try_import() as bedrock_imports:
     from pydantic_ai.providers.bedrock import BedrockProvider
 
 with try_import() as openai_imports:
+    from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -185,14 +186,14 @@ def test_cache_point_extends_explicit_retention():
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_unsupported_cache_point_ttl_does_not_extend_retention():
     # OpenAI ignores `CachePoint.ttl`, so a `'1h'` marker doesn't stretch GPT-5.6's 30-minute retention.
-    profile = OpenAIProvider.model_profile('gpt-5.6-sol')
+    profile = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='test-key')).profile
     assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=45), '1h'), profile=profile, now=NOW) == 'cold'
     assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=20), '1h'), profile=profile, now=NOW) == 'warm'
 
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 def test_supported_cache_point_ttl_extends_retention():
-    profile = AnthropicProvider.model_profile('claude-sonnet-4-5')
+    profile = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key')).profile
     assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=45), '1h'), profile=profile, now=NOW) == 'warm'
     assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=45), '5m'), profile=profile, now=NOW) == 'cold'
 

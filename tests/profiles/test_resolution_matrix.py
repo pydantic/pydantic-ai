@@ -407,6 +407,7 @@ def test_openai_gpt_6_astra():
             'tool_deferral_mode': 'with_tool_search',
             'openai_supports_minimal_reasoning_effort': False,
             'default_cache_retention': timedelta(seconds=1800),
+            'supports_cache': True,
         }
     )
 
@@ -579,6 +580,7 @@ def test_openai_codex_gpt_5_6():
             'tool_addition_mode': 'with_definitions',
             'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
             'default_cache_retention': timedelta(seconds=1800),
+            'supports_cache': True,
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -1238,6 +1240,8 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'supports_thinking': True,
             'supports_tool_return_schema': True,
             'default_cache_retention': timedelta(seconds=300),
+            'supports_cache': True,
+            'supported_cache_retentions': ('5m',),
         }
     )
 
