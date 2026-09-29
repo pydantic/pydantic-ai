@@ -599,7 +599,7 @@ class TestRuntimeToolsets:
 
         ctx = FakeRestateContext()
         with restate_context(ctx):
-            with pytest.raises(UserError, match=r'cannot be passed to `run\(toolsets=...\)` at runtime'):
+            with pytest.raises(UserError, match='cannot be added at runtime with Restate'):
                 await agent.run('hi', toolsets=[toolset])
 
     async def test_non_executing_runtime_toolset_allowed_inside_handler(self) -> None:
