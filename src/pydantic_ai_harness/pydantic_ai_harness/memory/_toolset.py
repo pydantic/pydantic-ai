@@ -276,16 +276,42 @@ def _apply_write(existing: str | None, content: str, old_text: str | None, name:
     return existing.replace(old_text, content, 1), 'updated'
 
 
+DEFAULT_AGENT_NAME = 'main'
+"""The `Memory.agent_name` scope that keeps the bare `memory` ID."""
+
+DEFAULT_MEMORY_ID = 'memory'
+"""The capability and toolset ID the default scope keeps, and `Memory`'s class-level default."""
+
+
+def memory_toolset_id(agent_name: str) -> str:
+    """The toolset ID for the memory scoped to `agent_name`.
+
+    Per scope rather than one shared ID, because several `Memory` capabilities can be composed on
+    one agent (see `Memory.heading`) and two toolsets on one agent may not share an `id`: it keys
+    their instruction blocks, so an override addressing `toolset:memory` would reach both, and it
+    names their Temporal and Prefect steps, so two of them would silently collide on one activity.
+    `agent_name` is already the scope key that separates their stored files, and the store's path
+    validation confines it to characters an ID segment allows.
+
+    The default scope keeps the bare `memory`, so an agent that never set `agent_name` keeps the
+    workflow step names its histories were recorded with. One that did set it does not: `agent_name`
+    predates this, so a deployment already running a single `Memory(agent_name='support')` moves its
+    step from `memory` to `memory-support`, and Temporal reports nondeterminism until the workflows
+    recorded against the old name drain.
+    """
+    return DEFAULT_MEMORY_ID if agent_name == DEFAULT_AGENT_NAME else f'{DEFAULT_MEMORY_ID}-{agent_name}'
+
+
 class MemoryToolset(FunctionToolset[AgentDepsT]):
     """Scoped read/write/delete/search tools with CAS and durable idempotency.
 
-    The stable `memory` ID lets Temporal and Prefect wrap this static toolset.
-    DBOS does not currently turn an ordinary `FunctionToolset` into a durable
-    step, so applications requiring DBOS durability must provide that wrapper.
+    The ID is stable per `agent_name` (see `memory_toolset_id`), which lets Temporal and Prefect
+    wrap this static toolset. DBOS does not currently turn an ordinary `FunctionToolset` into a
+    durable step, so applications requiring DBOS durability must provide that wrapper.
     """
 
     def __init__(self, capability: Memory[AgentDepsT]) -> None:
-        super().__init__(id='memory')
+        super().__init__(id=memory_toolset_id(capability.agent_name))
         self._capability = capability
         self.add_function(self.write_memory, name='write_memory')
         self.add_function(self.read_memory, name='read_memory')

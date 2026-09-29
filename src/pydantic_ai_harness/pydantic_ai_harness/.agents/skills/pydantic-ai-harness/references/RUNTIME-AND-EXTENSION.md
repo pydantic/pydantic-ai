@@ -2,9 +2,10 @@
 
 How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
 resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), harness
-capabilities under core durable execution, Logfire-managed instructions (`ManagedPrompt`), agent-written
-capabilities (`CapabilityCreation`), loading harness capabilities from YAML/JSON specs, serving an agent
-to editors over ACP, and running one as a GitHub Agentic Workflow.
+capabilities under core durable execution, Logfire-managed agent configuration (`AgentControl`) and
+instructions (`ManagedPrompt`), agent-written capabilities (`CapabilityCreation`), loading harness
+capabilities from YAML/JSON specs, serving an agent to editors over ACP, and running one as a GitHub
+Agentic Workflow.
 
 ## Choose
 
@@ -13,6 +14,7 @@ to editors over ACP, and running one as a GitHub Agentic Workflow.
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
+| Edit an agent's instructions, model, settings, and tool descriptions from Logfire | `AgentControl` |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
@@ -228,10 +230,47 @@ Gotchas:
 - `ctx.enqueue()` is unavailable inside a durable step. Do not detach work with `asyncio.create_task()`.
 - Budget: 3,000 operations and 100 MB of checkpointed state. Return references, not blobs.
 
+## AgentControl
+
+Resolves one Logfire-managed agent configuration per run. Published sections patch the agent's
+instructions, model, model settings, and model-facing tool names and descriptions; omitted sections
+keep their code-defined values.
+
+```bash
+uv add "pydantic-ai-harness[logfire]"
+```
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import AgentControl
+
+agent = Agent(
+    'anthropic:claude-fable-5',
+    name='checkout_assistant',
+    instructions='You are a concise checkout assistant.',
+    capabilities=[AgentControl(label='production')],
+)
+```
+
+The agent needs an explicit `name`, unless `AgentControl(name=...)` names the backing variable
+directly. Pin `label='production'` for a stable rollout. `on_unmatched='warn'` reports published
+instruction blocks, tool overrides, or settings this deployment could not apply; use `'error'` to
+stop instead or `'ignore'` to suppress the report. `targeting_key`, `attributes`, and
+`logfire_instance` have the same meaning as on other Logfire managed variables.
+
+Instructions are addressed by block id. Static agent text is `agent`; named parts append their name
+(`agent:refunds`); toolset and capability blocks use `toolset:<id>` and `capability:<id>`. Dynamic
+instruction functions are reported without their rendered text and cannot be edited. A tool override
+changes only what the model sees and calls; the implementation and parameter structure remain in
+code. The resolved configuration is fixed for the run and falls back to the code-defined agent when
+Logfire is unavailable or no value is published.
+
 ## ManagedPrompt
 
 Resolves a Logfire-managed prompt once per run and uses it as the agent's instructions, with the label
-and version attached as baggage to every span of the run.
+and version attached as baggage to every span of the run. Prefer `AgentControl` for new agents; this
+capability remains for existing prompt variables.
 
 ```bash
 uv add "pydantic-ai-harness[logfire]"

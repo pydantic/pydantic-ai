@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
 from pydantic_ai_harness.memory import (
@@ -1471,3 +1472,36 @@ class TestTelemetryAndComposition:
             name='memory-agent',
             capabilities=[Memory[object](id='memory', inject_memory=False), TemporalDurability()],
         )
+
+
+class TestToolsetIdentity:
+    def test_default_scope_keeps_the_bare_id(self) -> None:
+        """Every existing single-memory agent keeps the toolset id its workflow histories recorded."""
+        toolset = Memory(store=InMemoryStore()).get_toolset()
+        assert isinstance(toolset, AbstractToolset) and toolset.id == 'memory'
+
+    def test_each_scope_gets_its_own_id(self) -> None:
+        """Composed memories are distinct toolsets, so they can't share the id that keys their blocks.
+
+        Two toolsets on one agent may not share an `id`: it keys their instruction blocks, so an
+        override addressing `toolset:memory` would reach both, and it names their Temporal and
+        Prefect steps, so they'd silently collide on one activity. Registering both is what would
+        otherwise be rejected, so the assertion runs it through a real agent.
+        """
+        store = InMemoryStore()
+        you = Memory(store=store, agent_name='you')
+        team = Memory(store=store, agent_name='team')
+
+        toolsets = [capability.get_toolset() for capability in (you, team)]
+        assert [toolset.id for toolset in toolsets if isinstance(toolset, AbstractToolset)] == [
+            'memory-you',
+            'memory-team',
+        ]
+
+        # The capability carries the scope too. A fixed `id` keeps durable-operation recovery stable
+        # across restarts, but one shared between two composed memories is what the run rejects.
+        assert [capability.id for capability in (you, team)] == ['memory-you', 'memory-team']
+        assert Memory(store=store).id == 'memory', 'the default scope keeps the id already journaled'
+
+        # Registering both is the part that would be rejected if the ids still matched.
+        Agent(TestModel(), capabilities=[you, team.prefix_tools('team')])
