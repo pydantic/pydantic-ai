@@ -43,6 +43,12 @@ class TruthInput:
     """The session's number for this input (the `event_id` echo), when the frame carried one."""
     rejected: bool = False
     answered_by: str | None = None
+    committed_read: int | None = None
+    """For a spoken turn: when the client read that the provider committed it (`input_audio_buffer.committed`)."""
+    transcript_read: int | None = None
+    """For a spoken turn: when the client read its transcript (or that transcription failed)."""
+    committed_by_client: bool = False
+    """For a spoken turn: whether the client committed it itself (`commit_audio()`), so knows it exists."""
     refused_at: int | None = None
     """When the server refused this input, or the response it asked for."""
     refused_read: int | None = None

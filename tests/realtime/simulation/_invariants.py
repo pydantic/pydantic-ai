@@ -43,6 +43,7 @@ Checked at rest (`settle()`):
   calls' results reached the server is recorded after those results (asynchronous tool calls, where
   the model keeps talking after the call);
 - `history.rejected_kept`: an input the provider refused is still in history;
+- `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read;
 - `response.missing` / `response.truncated`: a response the server completed is missing from history,
   or recorded without all of what it said;
 - `usage.total`: `session.usage` tokens differ from what the server billed in the reports the client read;
@@ -460,6 +461,7 @@ class Checker:
         self._check_tool_round_order(messages)
         self._check_order(messages)
         self._check_completeness(messages)
+        self._check_spoken_turns(messages)
         self._check_usage(messages)
         self._check_playback(messages)
         roundtrip = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
@@ -594,6 +596,23 @@ class Checker:
             if second.seq_end is not None and second.seq_end < first.seq_start
         ]
         self.report('history.order', violations)
+
+    def _check_spoken_turns(self, messages: list[ModelMessage]) -> None:
+        # By count: a turn recorded without its transcript can't be told apart from another.
+        committed = [
+            input_.key
+            for input_ in self.sim.truth.inputs
+            if input_.kind == 'speech'
+            and (input_.committed_read is not None or input_.committed_by_client)
+            and not input_.rejected
+        ]
+        recorded = sum(1 for message in messages if is_user_speech_request(message))
+        self.report(
+            'history.turn_missing',
+            [(f'{len(committed)} spoken turns committed ({committed}), but {recorded} recorded', {'inputs': committed})]
+            if recorded < len(committed)
+            else [],
+        )
 
     def _check_completeness(self, messages: list[ModelMessage]) -> None:
         truth = self.sim.truth

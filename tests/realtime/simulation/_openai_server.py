@@ -229,6 +229,19 @@ class OpenAIServer:
             self.truth.usage_read.setdefault(
                 response.key, (usage.get('input_tokens', 0), usage.get('output_tokens', 0))
             )
+        elif frame_type in (
+            'conversation.item.input_audio_transcription.completed',
+            'conversation.item.input_audio_transcription.failed',
+        ):
+            key = frame['item_id'].removeprefix('item_')
+            input_ = self.truth.input(key)
+            assert input_ is not None
+            input_.transcript_read = input_.transcript_read or now
+        elif frame_type == 'input_audio_buffer.committed':
+            key = frame['item_id'].removeprefix('item_')
+            input_ = self.truth.input(key)
+            assert input_ is not None
+            input_.committed_read = input_.committed_read or now
         elif frame_type == 'error':
             for key in self._refusals.pop(frame.get('event_id', ''), ()):
                 input_ = self.truth.input(key)
@@ -589,7 +602,7 @@ class OpenAIServer:
         key = self.truth.new_user_turn()
         item_id = f'item_{key}'
         session.audio_ms = 0
-        self.truth.add_input(key, 'speech')
+        self.truth.add_input(key, 'speech').committed_by_client = True
         self._emit(session, {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None})
         self._audio_item_added(session, item_id)
         if session.transcription:

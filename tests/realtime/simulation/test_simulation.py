@@ -509,6 +509,34 @@ def test_known_gemini_async_result_cut_in_ends_the_wait_early() -> None:
     reproduce('SIM-24', async_gemini(), scenario)
 
 
+@known('SIM-25')
+def test_known_turn_committed_before_closing_is_lost() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.commit_audio()
+        sim.close()
+        sim.settle()
+
+    reproduce('SIM-25', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual', transcription=True)), scenario)
+
+
+@known('SIM-26')
+def test_known_turn_committed_after_a_racing_clear_is_lost() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio(chunks=3, ticks=0)
+        sim.clear_audio()
+        sim.commit_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-26',
+        OpenAISimulation(
+            options=SessionOptions(latency=True), openai=OpenAIOptions(turn_detection='manual', transcription=False)
+        ),
+        scenario,
+    )
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:

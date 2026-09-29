@@ -109,7 +109,7 @@ LATE_CANCEL_DROPS_CONTENT = Finding(
     ),
     tracked_by='per-response-id state: a cancel targets a response id, and is a no-op once that response is done; found by this simulator',
     evidence='simulated',
-    codes=frozenset({'response.truncated', 'response.missing', 'usage.attribution', 'wait.hang'}),
+    codes=frozenset({'response.truncated', 'response.missing', 'usage.attribution', 'wait.hang', 'history.order'}),
     providers=OPENAI_PROTOCOL,
     matches=_late_cancel,
 )
@@ -796,6 +796,55 @@ BARGE_IN_WITHOUT_A_VAD_REPLY = Finding(
     matches=lambda sim, violation: _barged_in_without_a_vad_reply(sim),
 )
 
+
+def _turn_without_its_transcript(sim: Simulation) -> bool:
+    """With transcription on, a spoken turn's transcript never reached the client before the session ended or dropped."""
+    ended = sim.close_requested is not None or sim.receive_ended or bool(sim.truth.connection_losses)
+    return (
+        ended
+        and getattr(getattr(sim, 'openai', None), 'transcription', False)
+        and any(input_.kind == 'speech' and input_.transcript_read is None for input_ in sim.truth.inputs)
+    )
+
+
+def _audio_after_a_clear(sim: Simulation) -> bool:
+    """Audio the microphone was still streaming when the app cleared the buffer reached the provider after the clear."""
+    clears = [operation.issued for operation in sim.operations if operation.name == 'clear_audio']
+    return any(
+        operation.name == 'send_audio' and operation.completed is not None and operation.completed > issued
+        for operation in sim.operations
+        for issued in clears
+    )
+
+
+AUDIO_AFTER_A_CLEAR = Finding(
+    id='SIM-26',
+    title=(
+        'audio still streaming from the microphone when the app calls `clear_audio()` lands after the clear, and the '
+        'turn a `commit_audio()` then commits on the provider is never recorded: the session thinks the buffer is empty'
+    ),
+    tracked_by='user turns recorded from the provider committing them; found by this simulator',
+    evidence='simulated',
+    codes=frozenset({'history.turn_missing'}),
+    providers=OPENAI_PROTOCOL,
+    matches=lambda sim, violation: _audio_after_a_clear(sim),
+)
+
+
+TURN_LOST_AT_CLOSE = Finding(
+    id='SIM-25',
+    title=(
+        'a spoken turn committed with input transcription on, whose transcript never arrives (the session closes or '
+        'ends on an error, or the connection drops, first), is never recorded: it waits for a transcript that never comes (surfaced by '
+        'Macroscope for closing after `commit_audio()`)'
+    ),
+    tracked_by='user turns recorded from the provider committing them, not from their transcript; found reviewing #9070',
+    evidence='recorded',
+    codes=frozenset({'history.turn_missing'}),
+    providers=OPENAI_PROTOCOL,
+    matches=lambda sim, violation: _turn_without_its_transcript(sim),
+)
+
 NON_AUDIO_SEND_DURING_RECONNECT = Finding(
     id='G3b',
     title=(
@@ -813,6 +862,8 @@ NON_AUDIO_SEND_DURING_RECONNECT = Finding(
 KNOWN_FINDINGS.extend(
     [
         NON_AUDIO_SEND_DURING_RECONNECT,
+        TURN_LOST_AT_CLOSE,
+        AUDIO_AFTER_A_CLEAR,
         BARGE_IN_WITHOUT_A_VAD_REPLY,
         LOST_REFUSAL,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
