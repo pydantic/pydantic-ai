@@ -1,6 +1,8 @@
 """Render typed capability events without parsing model-facing tool results."""
 
+import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel
@@ -21,14 +23,40 @@ def terminal_text(text: str, *, keep: str = '\n\t') -> str:
     return ''.join(char if char.isprintable() or char in keep else f'\\x{ord(char):02x}' for char in text)
 
 
-def print_tool_header(console: Console, *, name: str, argument: str = '') -> None:
-    """Highlight the tool name, leaving its marker and arguments muted."""
+def print_tool_header(console: Console, *, name: str, argument: str | Text = '') -> None:
+    """Highlight the tool name, leaving its marker and a plain-string argument muted.
+
+    A `Text` argument is appended as-is, so it must already be styled and terminal-safe.
+    """
     text = Text('● ', style=theme.color(theme.MUTED))
     text.append(terminal_text(name), style=theme.color(theme.ACCENT))
-    if argument:
+    if isinstance(argument, Text):
+        if argument:
+            text.append(' ')
+            text.append_text(argument)
+    elif argument:
         text.append(f' {terminal_text(argument)}', style=theme.color(theme.MUTED))
     console.print(text, overflow='ellipsis', no_wrap=True)
     console.print()
+
+
+def tool_arguments_text(arguments: Mapping[str, object], *, max_chars: int) -> Text:
+    """Show arguments as one-line `name=value` pairs, clipping each value to `max_chars`.
+
+    Values are compact JSON, so strings are quoted and newlines stay escaped. Zero hides arguments.
+    """
+    text = Text()
+    if max_chars <= 0:
+        return text
+    for name, value in arguments.items():
+        rendered = json.dumps(value, ensure_ascii=False, separators=(',', ':'), default=str)
+        if len(rendered) > max_chars:
+            rendered = rendered[: max_chars - 1] + '…'
+        if text:
+            text.append(' ')
+        text.append(terminal_text(name, keep=''), style=theme.color(theme.ACCENT))
+        text.append(f'={terminal_text(rendered, keep="")}', style=theme.color(theme.MUTED))
+    return text
 
 
 _SGR = re.compile(r'(\x1b\[[0-9;]*m)')
