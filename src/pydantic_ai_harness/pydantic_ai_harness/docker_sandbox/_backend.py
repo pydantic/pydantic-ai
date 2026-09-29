@@ -40,9 +40,14 @@ _PID_DIR = '/tmp'
 _WRAPPER = f"""tag=$1
 pidfile={_PID_DIR}/.pydantic-ai-$tag.pid
 shift
+stopped={_PID_DIR}/.pydantic-ai-$tag.stopped
 if ! echo $$ 2> /dev/null > "$pidfile"; then
     echo "cannot write $pidfile, which stops the command on a timeout: {_PID_DIR} must be writable" >&2
     exit 1
+fi
+if [ -e "$stopped" ]; then
+    rm -f "$pidfile" "$stopped"
+    exit 143
 fi
 printf '%s' '{_READY}' >&2
 (exec "$@")
@@ -57,13 +62,19 @@ A subshell `exec` runs the program itself, never a builtin, and exits 127 when i
 """
 
 _STOP = f"""pidfile={_PID_DIR}/.pydantic-ai-$1.pid
-[ -f "$pidfile" ] || exit 0
-pid=$(cat "$pidfile")
-rm -f "$pidfile"
+stopped={_PID_DIR}/.pydantic-ai-$1.stopped
+: > "$stopped"
+pid=$(cat "$pidfile" 2> /dev/null)
+[ -n "$pid" ] || exit 0
+rm -f "$pidfile" "$stopped"
 kill -s TERM -- "-$pid" "$pid" 2> /dev/null
 (sleep 1; kill -s KILL -- "-$pid" "$pid" 2> /dev/null) < /dev/null > /dev/null 2>&1 &
 exit 0"""
 """Stop the command recorded under the tag `$1`, and its process group.
+
+A timeout can come before the wrapper has recorded its PID, even before it starts. So the stop first leaves a
+`.stopped` marker, which a wrapper that records its PID afterwards finds before it starts the command: whichever
+of the two comes second sees the other's file. A marker for a command that already finished stays behind, empty.
 
 A `docker exec` process leads a session of its own in both runc and crun, so its group is the command's; a
 command that started a session of its own (the harness `Shell`'s jobs) is in another group and keeps running.

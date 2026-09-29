@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 
 import anyio
@@ -12,6 +13,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
+    LocalWorkspaceBackend,
     WorkspaceError,
     WorkspaceOutputLimitError,
     WorkspaceRef,
@@ -19,6 +21,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness.docker_sandbox import DockerSandbox, DockerSandboxBackend
+from pydantic_ai_harness.docker_sandbox._backend import _WRAPPER  # pyright: ignore[reportPrivateUsage]
 
 from ._fake_docker import FakeDocker, install_fake_docker
 
@@ -91,9 +94,10 @@ async def test_a_cancelled_create_keeps_the_ref_so_the_container_can_be_removed(
 ) -> None:
     backend = DockerSandboxBackend('image', working_dir=str(container_dir), docker_args=['--fake-hang'])
 
-    with anyio.move_on_after(0.5):
+    with anyio.move_on_after(0.5) as scope:
         await backend.working_dir()
 
+    assert scope.cancelled_caught
     assert backend.ref is not None and backend.ref.id.startswith('pydantic-ai-')
 
 
@@ -135,6 +139,22 @@ async def test_commands_start_in_the_resolved_working_dir(docker: FakeDocker, tm
 
     assert resolved == str(first.resolve())
     assert (await backend.run(['pwd', '-P'])).stdout.strip() == resolved
+
+
+async def test_a_stop_that_comes_before_the_command_starts_prevents_it(docker: FakeDocker, container_dir: Path) -> None:
+    backend = DockerSandboxBackend('image', working_dir=str(container_dir))
+    await backend.working_dir()
+    tag = secrets.token_hex(8)
+
+    assert backend.ref is not None
+
+    await backend._stop(tag)  # pyright: ignore[reportPrivateUsage]
+    wrapped = ['sh', '-c', _WRAPPER, 'sh', tag, 'touch', 'started']
+    result = await LocalWorkspaceBackend(str(container_dir)).run(['docker', 'exec', backend.ref.id, *wrapped])
+
+    assert result.exit_code == 143
+    assert not (container_dir / 'started').exists()
+    assert not list(Path('/tmp').glob(f'.pydantic-ai-{tag}.*'))
 
 
 async def test_output_over_the_limit_stops_the_command(docker: FakeDocker, container_dir: Path) -> None:
