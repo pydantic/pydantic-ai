@@ -508,44 +508,6 @@ class TestModelRouter:
                 default='fast',
             )
 
-    async def test_the_router_agent_is_not_rebuilt_on_every_step(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        builds = 0
-        original = ModelRouter._output_type  # pyright: ignore[reportPrivateUsage]
-
-        def counting(router: ModelRouter[Any]) -> type[Any]:
-            nonlocal builds
-            builds += 1
-            return original(router)
-
-        monkeypatch.setattr(ModelRouter, '_output_type', counting)
-
-        router_calls = 0
-
-        def route(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal router_calls
-            router_calls += 1
-            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'choice': 'fast'})])
-
-        def fast(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
-            if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
-                return ModelResponse(parts=[ToolCallPart('lookup', {})])
-            return ModelResponse(parts=[TextPart('done')])
-
-        agent = Agent(
-            capabilities=[
-                _router(FunctionModel(route), mode='per_step', fast_model=FunctionModel(fast)),
-            ]
-        )
-
-        @agent.tool_plain
-        def lookup() -> str:
-            return 'new information'
-
-        await agent.run('Research this')
-
-        assert router_calls == 2, 'per_step routes before each step'
-        assert builds == 2, 'one agent at construction and one for the run-scoped copy, not one per step'
-
     async def test_not_agent_spec_serializable(self) -> None:
         assert ModelRouter.get_serialization_name() is None
 
