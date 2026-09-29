@@ -14,11 +14,12 @@ _ACTIONS = {0x7FFF0000: ALLOW, 0x00050001: DENY, 0x80000000: KILL}
 
 X86_64, AARCH64, I386 = 0xC000003E, 0xC00000B7, 0x40000003
 AF_UNIX, AF_INET, AF_VSOCK = 1, 2, 40
+SOCK_STREAM, SOCK_DGRAM, SOCK_SEQPACKET, SOCK_CLOEXEC = 1, 2, 5, 0o2000000
 
 
-def run_filter(arch: int, number: int, arg0: int = 0) -> str:
+def run_filter(arch: int, number: int, arg0: int = 0, arg1: int = SOCK_STREAM) -> str:
     """What the filter does with a call: `struct seccomp_data` is nr, arch, instruction pointer, then args."""
-    data = struct.pack('<iIQ6Q', number, arch, 0, arg0, 0, 0, 0, 0, 0)
+    data = struct.pack('<iIQ6Q', number, arch, 0, arg0, arg1, 0, 0, 0, 0)
     program = base64.b64decode(NETWORK_FILTER_BASE64)
     accumulator, pc = 0, 0
     while True:
@@ -26,6 +27,8 @@ def run_filter(arch: int, number: int, arg0: int = 0) -> str:
         pc += 1
         if code == 0x20:
             (accumulator,) = struct.unpack_from('<I', data, k)
+        elif code == 0x54:
+            accumulator &= k
         elif code == 0x06:
             return _ACTIONS[k]
         else:
@@ -76,6 +79,15 @@ def test_only_unix_sockets_can_be_created(arch: int, socket: int, socketpair: in
         assert [run_filter(arch, call, family) for call in (socket, socketpair)] == [DENY, DENY]
     # Only the domain's low 32 bits count, as the kernel reads an `int`.
     assert run_filter(arch, socket, AF_UNIX | 1 << 32) == ALLOW
+
+
+@pytest.mark.parametrize(('arch', 'socket', 'socketpair'), [(X86_64, 41, 53), (AARCH64, 198, 199)])
+def test_unix_datagram_sockets_are_denied(arch: int, socket: int, socketpair: int) -> None:
+    """`sendmsg` can address a datagram to any path without `connect`; stream and seqpacket sockets can't."""
+    for kind in (SOCK_DGRAM, SOCK_DGRAM | SOCK_CLOEXEC):
+        assert [run_filter(arch, call, AF_UNIX, kind) for call in (socket, socketpair)] == [DENY, DENY]
+    for kind in (SOCK_STREAM | SOCK_CLOEXEC, SOCK_SEQPACKET):
+        assert [run_filter(arch, call, AF_UNIX, kind) for call in (socket, socketpair)] == [ALLOW, ALLOW]
 
 
 def test_other_abis_are_killed_rather_than_let_through() -> None:

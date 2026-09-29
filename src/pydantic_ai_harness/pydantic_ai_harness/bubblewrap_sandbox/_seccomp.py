@@ -3,7 +3,9 @@
 It denies what the Codex CLI's Linux sandbox denies without network access
 (`codex-rs/linux-sandbox/src/landlock.rs`, `NetworkSeccompMode::Restricted`): every socket operation that could
 reach another process, including over Unix sockets, which a private network namespace doesn't cover. Unix
-`socketpair()` stays allowed, since runtimes use it between their own processes. Denied calls fail with `EPERM`.
+`socketpair()` stays allowed, since runtimes use it between their own processes. Unlike Codex, Unix datagram
+sockets are denied too: `sendmsg` (which runtimes need to pass descriptors) can address one to any path without
+`connect`. Denied calls fail with `EPERM`.
 
 The program is built for the host that runs `bwrap`, which may not be this one, so it covers x86_64 and aarch64 and
 kills a process calling in with any other ABI (32-bit, or x32 on x86_64) rather than let it skip the rules.
@@ -42,18 +44,22 @@ _DENIED = {
     'aarch64': (117, 270, 271, 425, 426, 427, 203, 202, 242, 200, 201, 205, 204, 210, 206, 269, 243, 209, 208),
 }
 _SOCKET = {'x86_64': (41, 53), 'aarch64': (198, 199)}
-"""`socket` and `socketpair`: denied unless the domain is `AF_UNIX`, as in Codex."""
+"""`socket` and `socketpair`: denied unless the domain is `AF_UNIX`, as in Codex, and the type isn't `SOCK_DGRAM`."""
 
 _AUDIT_ARCH = {'x86_64': 0xC000003E, 'aarch64': 0xC00000B7}
 _X32_SYSCALL_BIT = 0x40000000
 _AF_UNIX = 1
+_SOCK_DGRAM = 2
+_SOCK_TYPE_MASK = 0xF
+"""The type argument also carries flags such as `SOCK_CLOEXEC`."""
 
 # `struct seccomp_data`: int nr, u32 arch, u64 instruction_pointer, u64 args[6] (little-endian on both arches).
-_NR, _ARCH, _ARG0_LOW = 0, 4, 16
+_NR, _ARCH, _ARG0_LOW, _ARG1_LOW = 0, 4, 16, 24
 
 _LOAD = 0x20  # BPF_LD | BPF_W | BPF_ABS
 _JEQ = 0x15  # BPF_JMP | BPF_JEQ | BPF_K
 _JGE = 0x35  # BPF_JMP | BPF_JGE | BPF_K
+_AND = 0x54  # BPF_ALU | BPF_AND | BPF_K
 _RET = 0x06  # BPF_RET | BPF_K
 _ALLOW = 0x7FFF0000
 _DENY = 0x00050000 | 1  # SECCOMP_RET_ERRNO | EPERM
@@ -78,7 +84,10 @@ def _program() -> list[_Instruction | str]:
     program += [
         'socket',
         (_LOAD, 0, 0, _ARG0_LOW),
-        (_JEQ, 'allow', 'deny', _AF_UNIX),
+        (_JEQ, 0, 'deny', _AF_UNIX),
+        (_LOAD, 0, 0, _ARG1_LOW),
+        (_AND, 0, 0, _SOCK_TYPE_MASK),
+        (_JEQ, 'deny', 'allow', _SOCK_DGRAM),
         'allow',
         (_RET, 0, 0, _ALLOW),
         'deny',
