@@ -1409,7 +1409,7 @@ class TestBedrock:
         assert isinstance(exc_info.value.__cause__, ClientError)
         group = exc_info.value.__context__
         assert isinstance(group, BaseExceptionGroup)
-        assert exc_info.value in group.exceptions
+        assert exc_info.value in group.exceptions  # pyright: ignore[reportUnknownMemberType]
 
     @pytest.mark.parametrize('error_type', ['read-timeout', 'endpoint-connection'])
     async def test_transport_error(self, bedrock_provider: BedrockProvider, error_type: str):
