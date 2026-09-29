@@ -75,7 +75,7 @@ with try_import() as imports_successful:
     import httpx2
     import websockets
     from openai import AsyncOpenAI
-    from openai.types.live import ServerEvent, SessionConfig
+    from openai.types.live import SessionConfig
     from openai.types.shared import ReasoningEffort
     from pydantic import TypeAdapter
     from websockets.frames import Close
@@ -93,6 +93,7 @@ with try_import() as imports_successful:
         OpenAILiveModel,
         OpenAILiveModelSettings,
         OpenAILiveResponsesDelegation,
+        _ActedOnEvent,  # pyright: ignore[reportPrivateUsage]
         seed_input_items,
     )
 
@@ -119,12 +120,12 @@ def _connection(**kwargs: Any) -> OpenAILiveConnection:
     return OpenAILiveConnection(object(), **kwargs)  # pyright: ignore[reportArgumentType]
 
 
-_server_events: TypeAdapter[ServerEvent] = TypeAdapter(ServerEvent)
+_acted_on_events: TypeAdapter[_ActedOnEvent] = TypeAdapter(_ActedOnEvent)
 
 
-def _event(payload: dict[str, Any]) -> ServerEvent:
+def _event(payload: dict[str, Any]) -> _ActedOnEvent:
     """Parse a raw Live frame the way the connection does, so tests drive real SDK event objects."""
-    return _server_events.validate_python(payload)
+    return _acted_on_events.validate_python(payload)
 
 
 def test_live_model_names_route_to_the_live_protocol(env: Any) -> None:
@@ -926,6 +927,52 @@ def test_an_error_with_no_code_is_still_reported() -> None:
 def test_unknown_events_are_ignored() -> None:
     """A future event type is not a reason to end a call in progress."""
     assert _connection()._map_frame('{"type": "session.something.new"}') == []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_events_the_connection_does_not_act_on_are_ignored_even_if_malformed() -> None:
+    """An acknowledgement or notice changes nothing the session has said or heard, whatever its shape."""
+    assert _connection()._map_frame('{"type": "session.commentary.appended"}') == []  # pyright: ignore[reportPrivateUsage]
+    # A `type` that isn't a string names no event at all.
+    assert _connection()._map_frame('{"type": []}') == []  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    'frame',
+    [
+        pytest.param({'type': 'session.usage.updated', 'event_id': 'e', 'usage': {'seconds': 'many'}}, id='usage'),
+        pytest.param({'type': 'session.delegation.created', 'event_id': 'e'}, id='delegation'),
+        pytest.param({'type': 'response.event', 'event_id': 'e'}, id='backend-event'),
+        pytest.param({'type': 'error', 'event_id': 'e', 'error': 'boom'}, id='error'),
+        pytest.param({'type': 'session.closed', 'event_id': 'e', 'reason': 'expired'}, id='closed-without-usage'),
+    ],
+)
+def test_a_malformed_event_the_connection_acts_on_is_a_recoverable_error(frame: dict[str, Any]) -> None:
+    """Dropping it silently could lose the final usage, why the session ended, or delegated work."""
+    (event,) = _connection()._map_frame(json.dumps(frame))  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(event, RealtimeSessionErrorEvent)
+    assert event.recoverable is True
+    assert event.message.startswith('Failed to parse OpenAI GPT-Live event:')
+    assert frame['type'] in event.message
+
+
+def test_a_frame_that_is_not_a_json_object_is_a_recoverable_error() -> None:
+    (event,) = _connection()._map_frame('[1, 2]')  # pyright: ignore[reportPrivateUsage]
+
+    assert isinstance(event, RealtimeSessionErrorEvent) and event.recoverable is True
+
+
+def test_a_drifted_session_closed_still_records_usage_and_why_it_ended() -> None:
+    """`session.closed` is read for its usage and reason, so a change to its other fields loses neither."""
+    connection = _connection()
+    frame = {**_session_closed('expired', seconds=12), 'session': {'id': 's', 'shape': 'changed'}}
+
+    events = connection._map_frame(json.dumps(frame))  # pyright: ignore[reportPrivateUsage]
+
+    assert [type(event).__name__ for event in events] == snapshot(['SessionUsage', 'RealtimeSessionErrorEvent'])
+    usage, error = events
+    assert isinstance(usage, SessionUsage) and usage.usage.audio_seconds == 12
+    assert isinstance(error, RealtimeSessionErrorEvent) and error.code == 'live_session_expired'
 
 
 async def test_agent_rejects_text_output(model: OpenAILiveModel) -> None:
@@ -1773,7 +1820,7 @@ def test_a_new_transcript_segment_is_spaced_from_the_last() -> None:
     assert fragment('Sorry', speaker='input')[-1] == InputTranscript('Sorry')
 
 
-def _audio_frame(pcm: bytes) -> ServerEvent:
+def _audio_frame(pcm: bytes) -> _ActedOnEvent:
     return _event({'type': 'session.output_audio.delta', 'delta': base64.b64encode(pcm).decode()})
 
 

@@ -36,12 +36,12 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, ClassVar, Literal, cast
+from typing import Annotated, Any, ClassVar, Literal, cast
 from urllib.parse import quote
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Field, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import TypedDict
+from typing_extensions import TypedDict, assert_never
 
 # The delegated backend is an ordinary Responses call, so its usage is mapped by the same code that
 # maps a direct one — including the cache and reasoning breakdowns genai-prices reads.
@@ -120,7 +120,6 @@ try:
         OutputAudioDeltaEvent,
         OutputTranscriptDeltaEvent,
         ResponseEvent,
-        ServerEvent,
         SessionClosedEvent,
         SessionStartedEvent,
         SessionUsageUpdatedEvent,
@@ -202,7 +201,33 @@ _OPENAI_MODEL_KINDS = frozenset({'openai', 'openai-chat', 'openai-responses'})
 #: live). The frame names no delegation, so this is what says delegated work ended.
 _HANDOFF_FAILURE_PREFIX = 'Responses handoff'
 
-_server_event_adapter: TypeAdapter[ServerEvent] = TypeAdapter(ServerEvent)
+_ActedOnEvent = Annotated[
+    OutputAudioDeltaEvent
+    | OutputTranscriptDeltaEvent
+    | InputTranscriptDeltaEvent
+    | DelegationCreatedEvent
+    | ResponseEvent
+    | SessionUsageUpdatedEvent
+    | SessionClosedEvent
+    | ErrorEvent,
+    Field(discriminator='type'),
+]
+#: The Live server events the connection acts on. Every other type, including ones this version of the SDK
+#: doesn't know, is a notice or an acknowledgement that changes nothing the session has said or heard.
+_ACTED_ON_EVENT_TYPES = frozenset(
+    {
+        'session.output_audio.delta',
+        'session.output_transcript.delta',
+        'session.input_transcript.delta',
+        'session.delegation.created',
+        'response.event',
+        'session.usage.updated',
+        'session.closed',
+        'error',
+    }
+)
+_acted_on_event_adapter: TypeAdapter[_ActedOnEvent] = TypeAdapter(_ActedOnEvent)
+_json_object_adapter: TypeAdapter[dict[str, Any]] = TypeAdapter(dict[str, Any])
 
 
 class _LiveErrorDetails(TypedDict):
@@ -218,6 +243,20 @@ class _LiveErrorFrame(TypedDict):
 # OpenAI's guide says to expect `error` frames whose `code` is null, but the SDK's `Error.code` is a
 # required `str`, so those fail `ServerEvent` validation. This narrower shape still parses them.
 _live_error_adapter: TypeAdapter[_LiveErrorFrame] = TypeAdapter(_LiveErrorFrame)
+
+
+class _LiveSessionUsage(TypedDict):
+    seconds: float
+
+
+class _LiveSessionClosedFrame(TypedDict):
+    reason: str
+    usage: _LiveSessionUsage
+
+
+# The two fields of `session.closed` the connection reads, so a frame whose other fields have drifted from
+# the SDK's shape still records the final usage and says why the session ended.
+_live_session_closed_adapter: TypeAdapter[_LiveSessionClosedFrame] = TypeAdapter(_LiveSessionClosedFrame)
 
 #: Why a session can end without anyone asking. The others, `close_requested` and `remote_hangup`, are
 #: an ordinary end of the call.
@@ -721,30 +760,55 @@ class OpenAILiveConnection(RealtimeConnection):
         return events
 
     def _map_frame(self, raw: str | bytes) -> list[RealtimeCodecEvent]:
+        """Translate one frame, dispatching on its `type` before validating it, as the Realtime connection does.
+
+        A frame the connection acts on that no longer matches the SDK's shape is reported as a recoverable
+        error rather than dropped: dropping a drifted `session.closed` would lose the final usage and why
+        the session ended, and a drifted `response.event` the delegated work. Any other type is ignored,
+        known or not, so an event this version of the SDK doesn't know is not a reason to end the session.
+        """
         try:
-            event = _server_event_adapter.validate_json(raw)
-        except ValidationError:
-            try:
-                error = _live_error_adapter.validate_json(raw)['error']
-            except ValidationError:
-                # An event type this version of the SDK doesn't know is not a reason to end the session.
+            data = _json_object_adapter.validate_json(raw)
+            event_type = data.get('type')
+            if not isinstance(event_type, str) or event_type not in _ACTED_ON_EVENT_TYPES:
                 return []
-            return self._map_error(error['message'], code=error['code'])
-        try:
+            try:
+                event = _acted_on_event_adapter.validate_python(data)
+            except ValidationError as e:
+                return self._map_drifted_event(data, e)
             return self._map_event(event)
         except ValueError as e:
-            # A well-formed event with a payload we can't decode (bad base64 audio, say) costs that
-            # frame, not the call: report it as recoverable and keep reading, as the Realtime
-            # connection does.
+            # A frame that isn't a JSON object, or a well-formed event with a payload we can't decode (bad
+            # base64 audio, say), costs that frame, not the call: report it as recoverable and keep
+            # reading, as the Realtime connection does.
             return [RealtimeSessionErrorEvent(message=f'Failed to parse OpenAI GPT-Live event: {e}', recoverable=True)]
 
-    def _map_event(self, event: ServerEvent) -> list[RealtimeCodecEvent]:
-        """Translate one Live server event, ignoring the ones the session has no vocabulary for.
+    def _map_drifted_event(self, data: dict[str, Any], error: ValidationError) -> list[RealtimeCodecEvent]:
+        """Salvage what the connection reads from an event that no longer matches the SDK's shape.
+
+        OpenAI's guide says to expect `error` frames whose `code` is null, which the SDK's `Error.code`
+        refuses, and a `session.closed` is read for two fields only; anything else that fails to validate is
+        reported as a recoverable error naming its type.
+        """
+        event_type = data['type']
+        with suppress(ValidationError):
+            if event_type == 'error':
+                details = _live_error_adapter.validate_python(data)['error']
+                return self._map_error(details['message'], code=details['code'])
+            if event_type == 'session.closed':
+                closed = _live_session_closed_adapter.validate_python(data)
+                return self._map_session_closed(closed['usage']['seconds'], reason=closed['reason'])
+        return [
+            RealtimeSessionErrorEvent(
+                message=f'Failed to parse OpenAI GPT-Live event: `{event_type}` {error}', recoverable=True
+            )
+        ]
+
+    def _map_event(self, event: _ActedOnEvent) -> list[RealtimeCodecEvent]:
+        """Translate one Live server event the connection acts on.
 
         Dispatch is on the parsed SDK types rather than the `type` string so each branch narrows to
-        the payload it reads. The events not handled here are the SIP transport notices, the sideband
-        audio reflections, and the acknowledgements of our own commands, none of which change what a
-        session has said or heard.
+        the payload it reads.
         """
         if isinstance(event, OutputAudioDeltaEvent):
             return self._map_output_audio(_b64decode(event.delta))
@@ -778,10 +842,10 @@ class OpenAILiveConnection(RealtimeConnection):
                 event.usage.seconds, context_window_used=context_window.usage_ratio if context_window else None
             )
         if isinstance(event, SessionClosedEvent):
-            return self._map_session_closed(event)
+            return self._map_session_closed(event.usage.seconds, reason=event.reason)
         if isinstance(event, ErrorEvent):
             return self._map_error(event.error.message, code=event.error.code)
-        return []
+        assert_never(event)
 
     def _fragment(self, direction: Literal['input', 'output'], delta: str) -> str:
         """One transcript fragment, with the space Live leaves out where a new segment starts.
@@ -834,20 +898,20 @@ class OpenAILiveConnection(RealtimeConnection):
         )
         return events
 
-    def _map_session_closed(self, event: SessionClosedEvent) -> list[RealtimeCodecEvent]:
+    def _map_session_closed(self, cumulative_seconds: float, *, reason: str) -> list[RealtimeCodecEvent]:
         """Record the final usage, and say so when the session ended without anyone asking.
 
         The WebSocket close that follows is clean either way, so without this a reply cut off by the
         safety filter or the duration limit would be settled as though the model had finished it.
         """
-        events = self._map_usage(event.usage.seconds)
-        if event.reason not in _ABNORMAL_CLOSE_REASONS:
+        events = self._map_usage(cumulative_seconds)
+        if reason not in _ABNORMAL_CLOSE_REASONS:
             return events
         events.extend(self._settle_open_turns(interrupted=True))
         events.append(
             RealtimeSessionErrorEvent(
-                message=f'The OpenAI GPT-Live session ended: {event.reason}.',
-                code=f'live_session_{event.reason}',
+                message=f'The OpenAI GPT-Live session ended: {reason}.',
+                code=f'live_session_{reason}',
                 recoverable=False,
             )
         )
