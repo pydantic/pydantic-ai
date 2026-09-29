@@ -120,12 +120,14 @@ class GroundTruth:
     """`(input, output)` tokens per response, for every usage report the client read (first report wins)."""
     usage_reports_read: int = 0
     """How many usage-bearing frames the client read, duplicates included."""
-    repeated_terminals_read: int = 0
-    """How many terminals the client read for a response it had already read the terminal of."""
+    repeated_terminals: set[str] = field(default_factory=set[str])
+    """Responses the client read a second terminal for."""
     speech_started: dict[str, int] = field(default_factory=dict[str, int])
     """When server VAD heard each spoken user turn start, on the shared clock."""
     word_seq: dict[str, int] = field(default_factory=dict[str, int])
     """When the server generated each word a response said, on the shared clock."""
+    word_read: dict[str, int] = field(default_factory=dict[str, int])
+    """When the client read each word (tracked by the Gemini server, for the async tool round)."""
     merged_requests: int = 0
     """How many requests for a response the client folded into another one's single request."""
 

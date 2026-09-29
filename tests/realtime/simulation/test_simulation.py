@@ -30,9 +30,10 @@ with try_import() as imports_successful:
         run_state_machine_as_test,  # pyright: ignore[reportUnknownVariableType]
     )
 
-    from ._findings import FINDINGS_BY_ID
+    from ._findings import FINDINGS_BY_ID, KNOWN_FINDINGS
     from ._gemini import GeminiBehavior, GeminiMachine, GeminiSimulation
     from ._live import LiveMachine, LiveSimulation
+    from ._machine import KNOWN_HIT_COUNTS
     from ._openai_simulation import AzureMachine, OpenAIMachine, OpenAIOptions, OpenAISimulation, XaiMachine
     from ._simulation import FindingReproduced, SessionOptions, Simulation
 
@@ -66,20 +67,31 @@ def exploration_settings() -> settings:
     else [],
 )
 def test_exploration(machine: type[RuleBasedStateMachine]) -> None:
+    KNOWN_HIT_COUNTS.clear()
     run_state_machine_as_test(machine, settings=exploration_settings())
+    if os.environ.get('REALTIME_SIMULATION_EXAMPLES'):  # pragma: no cover (a long run, by hand)
+        print(f'\nknown findings hit ({machine.__name__}):')
+        for hit, count in KNOWN_HIT_COUNTS.most_common():
+            print(f'  {count:6} {hit}')
 
 
 # --- known findings, pinned ------------------------------------------------------------------------
 
 
+PINNED: set[str] = set()
+
+
 def known(finding_id: str) -> pytest.MarkDecorator:
     """Mark a scenario as reproducing a known finding: it must raise `FindingReproduced` until the fix lands."""
+    PINNED.add(finding_id)
     if not imports_successful():  # pragma: lax no cover (the module is skipped)
         return pytest.mark.xfail(reason=finding_id)
     return pytest.mark.xfail(raises=FindingReproduced, strict=True, reason=str(FINDINGS_BY_ID[finding_id]))
 
 
 def reproduce(finding_id: str, sim: Simulation, scenario: Callable[[Any], object]) -> None:
+    # Other known findings the scenario meets on the way are tolerated, even in a strict run.
+    sim.strict = False
     with sim.enforcing(finding_id) as s:
         scenario(s)
 
@@ -393,6 +405,68 @@ def test_known_barge_in_on_a_tool_round_keeps_the_deferred_request() -> None:
     reproduce('SIM-20', OpenAISimulation(), scenario)
 
 
+@known('8801')
+def test_known_late_terminal_of_a_barged_in_reply_lands_on_the_next() -> None:
+    """#8801's case: the `response.done` of a reply the user cut off arrives after the next reply started."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.send_audio()
+        sim.speech_start(late=True)
+        sim.speech_stop()
+        sim.speak()
+
+    reproduce('8801', OpenAISimulation(), scenario)
+
+
+@known('SIM-21')
+def test_known_request_whose_refusal_is_lost_keeps_its_reservation() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.reject_next('response')
+        sim.create_response()
+        sim.send_text()
+        sim.drop()
+        sim.settle()
+
+    reproduce('SIM-21', OpenAISimulation(), scenario)
+
+
+@known('SIM-22')
+def test_known_terminal_read_as_the_connection_drops_loses_its_usage() -> None:
+    """The cancelled reply's `response.done` is read right before the drop (found by exploration on the refactor)."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.clear_audio()
+        sim.create_response()
+        for _ in range(15):  # (each send draws a latency, which is what lines the drop up with the read)
+            sim.clear_audio()
+        sim.interrupt(mode='cancel')
+        sim.send_audio()
+        sim.create_response()
+        sim.speech_start(ticks=0)
+        sim.drop()
+        sim.settle()
+
+    reproduce(
+        'SIM-22',
+        OpenAISimulation(options=SessionOptions(latency=True), openai=OpenAIOptions(transcription=False)),
+        scenario,
+    )
+
+
+@known('SIM-4')
+def test_known_failed_deferred_create_after_a_refusal_keeps_its_reservation() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.reject_next('response')
+        sim.create_response()
+        sim.create_response()
+        sim.fail_next_send()
+        sim.settle()
+
+    reproduce('SIM-4', OpenAISimulation(), scenario)
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
@@ -408,6 +482,8 @@ def test_known_late_transcript_inserted_into_recorded_history() -> None:
 
 @known('8801')
 def test_known_repeated_terminal_recorded_as_a_new_response() -> None:
+    """A robustness fault, not recorded provider behavior: the server sends a `response.done` twice."""
+
     def scenario(sim: OpenAISimulation) -> None:
         sim.send_text()
         sim.speak()
@@ -764,6 +840,8 @@ def test_scenario_openai_server_vad_edges() -> None:
         sim.send_audio()
         sim.speech_start()
         sim.speech_stop()
+        sim.speak()
+        sim.interrupt(mode='cancel')
         sim.finish(late=True)
         sim.settle()
         sim.send_audio()
@@ -774,6 +852,7 @@ def test_scenario_openai_server_vad_edges() -> None:
         sim.finish(status='failed')
         sim.speak()
         sim.call_tool()
+        sim.interrupt(mode='cancel')
         sim.finish(late=True)
         sim.finish_tool(outcome='retry')
         sim.send_text()
@@ -786,9 +865,8 @@ def test_scenario_openai_server_vad_edges() -> None:
         sim.settle()
         sim.send_text()
         sim.speak()
-        sim.finish(late=True)
         sim.send_audio()
-        sim.speech_start()
+        sim.speech_start(late=True)
         sim.speech_stop()
         sim.release_late_done()
         sim.settle()
@@ -1040,3 +1118,49 @@ def test_scenario_openai_tool_retries_exhausted() -> None:
         sim.finish_tool(outcome='retry')
 
     run_tolerant(OpenAISimulation(), scenario)
+
+
+def test_scenario_gemini_async_speech_in_flight_at_the_result_is_accepted() -> None:
+    """Speech still on its way to the session when the result goes out is split there: an accepted limitation."""
+    sim = async_gemini()
+    sim.strict = False
+    with sim as s:
+        s.send_text()
+        s.call_tools()
+        s.speak()
+        s.speak(deliver=False)
+        s.finish_tool()
+        s.settle()
+        assert '8760-accepted' in {finding_id for finding_id, _ in s.checker.known_hits}
+
+
+def test_every_finding_is_pinned() -> None:
+    """Every known bug has a scenario that fails with it until the fix lands; accepted limitations have none."""
+    assert {finding.id for finding in KNOWN_FINDINGS if not finding.accepted} == PINNED
+
+
+def test_gemini_tool_call_abandoned_by_a_drop_ends_the_wait() -> None:
+    """A call the resumed session doesn't know is abandoned (#8763), so nothing more is owed to the turn that made it."""
+
+    def scenario(sim: GeminiSimulation) -> None:
+        sim.send_text()
+        sim.call_tools()
+        sim.drop()
+        sim.wait_for_reply()
+
+    run_clean(GeminiSimulation(), scenario)
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_baseline_openai_tool_result_with_media(dialect: str) -> None:
+    """A tool result with an image: the image follows the output as a user message (xAI takes no images)."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.call_tool()
+        sim.finish()
+        sim.finish_tool(outcome='media')
+        sim.speak()
+        sim.finish()
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)  # pyright: ignore[reportArgumentType]

@@ -12,7 +12,8 @@ conversion, server-VAD config, and the WebSocket connection itself — and diver
   than OpenAI's incremental `.delta` events (see [`map_event`][pydantic_ai.realtime.xai.map_event]);
 - native conversation resumption when a reconnect policy is configured: the provider-assigned
   `conversation.id` is reused and its replay burst is suppressed from local history;
-- no output truncation (`conversation.item.truncate` is unsupported), so
+- no output truncation at barge-in: xAI's `conversation.item.truncate` only lands once the response
+  has ended, and unreliably even then, so
   [`RealtimeModelProfile.supports_output_truncation`][pydantic_ai.realtime.RealtimeModelProfile.supports_output_truncation]
   is `False` while cancellation-based interruption still works;
 - no text output — the API has no response-modality control and always speaks — so
@@ -196,9 +197,11 @@ class XaiRealtimeModelSettings(RealtimeModelSettings, total=False):
     """Voice used for audio output, e.g. `eve`, or a custom voice ID."""
 
     xai_turn_detection: ServerVAD
-    """xAI-specific server-VAD configuration.
+    """xAI-specific server-VAD configuration, for an exact threshold, prefix padding, or silence duration.
 
-    When present, this fully overrides the cross-provider `turn_detection` setting.
+    When present, this fully overrides the cross-provider `turn_detection` setting. xAI echoes
+    `create_response: False` back but still responds when the user stops speaking; set
+    `turn_detection=False` for push-to-talk instead.
     """
 
 
@@ -373,7 +376,7 @@ class XaiRealtimeModel(RealtimeModel):
         settings: [Model settings][pydantic_ai.realtime.RealtimeModelSettings] used as defaults for
             realtime sessions. A [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect]
             policy enables xAI's native session resumption: prior turns are restored when reconnecting
-            within xAI's resumption window (reportedly ~30 minutes).
+            within xAI's resumption window (30 minutes of inactivity).
         profile: Optional override for the [realtime model profile][pydantic_ai.realtime.RealtimeModelProfile],
             merged over the provider's — a partial dict, or a callable taking the resolved profile and
             returning the one to use. Mirrors `profile=` on a standard

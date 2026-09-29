@@ -37,8 +37,8 @@ REALTIME_SIMULATION_EXAMPLES=5000 REALTIME_SIMULATION_STEPS=40 \\
     uv run pytest tests/realtime/simulation/test_simulation.py -k exploration
 ```
 
-Known findings are tolerated there (`--hypothesis-show-statistics` counts them), so only something new
-fails; set `REALTIME_SIMULATION_STRICT=1` to fail on those too. A failure prints the replayable trace:
+Known findings are tolerated there, so only something new fails (a long run prints how often it hit each,
+with `-s`); set `REALTIME_SIMULATION_STRICT=1` to fail on those too. A failure prints the replayable trace:
 
 ```python
 sim = OpenAISimulation()

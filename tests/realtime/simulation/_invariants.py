@@ -36,7 +36,9 @@ Checked at rest (`settle()`):
 - `history.tool_pairing`: a tool call without exactly one return, a return without its call, or a
   return not directly after its call's response;
 - `history.order`: a user input and a response recorded in the opposite order to the one the server
-  saw them in, or two responses out of order;
+  saw them in, or two responses out of order. History follows the provider's conversation order; with
+  history also append-only, a session can only satisfy both by holding a reply back until the user turn
+  before it is final, never by inserting the turn afterwards;
 - `history.tool_round_order`: something the model said in a response before the first of its tool
   calls' results reached the server is recorded after those results (asynchronous tool calls, where
   the model keeps talking after the call);
@@ -398,6 +400,8 @@ class Checker:
             waiter.error is not None
             or sim.close_requested is not None
             or any(loss >= waiter.started for loss in truth.connection_losses)
+            # Every connection was lost and none replaced (GPT-Live doesn't reconnect): the session is over.
+            or len(truth.connection_losses) >= truth.connections
             or 'error' in sim.tools.settled.values()
             or sim.receive_ended
         ):

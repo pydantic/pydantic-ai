@@ -13,7 +13,14 @@ would get wrong if an adapter broke it:
   that response's `ResponseDone` (it would land on whatever response the session is assembling next);
 - `codec.duplicate_terminal`: a response's `ResponseDone` arrives twice (the second would close
   whatever response the session is assembling next);
+- `codec.overlapping_responses`: content for one response arrives while another is still open (neither
+  its `ResponseDone` nor its usage seen yet): a provider runs one response at a time;
 - `codec.event_after_fatal`: anything follows a non-recoverable `RealtimeSessionErrorEvent`.
+
+The three rules keyed on response ids (`content_after_terminal`, `duplicate_terminal`,
+`overlapping_responses`) only apply to the OpenAI-protocol adapters, which report the provider's response
+ids. Gemini Live and GPT-Live have none, so for them those rules never fire; their turn boundaries are
+checked by the simulator's invariants against the fake server's ground truth instead.
 
 A connection on the second version of the lifecycle contract (`_lifecycle.py`) is also held to the rules
 its lifecycle events promise, checked on its lifecycle stream (`LifecycleChecker(lifecycle=True)`):
@@ -79,9 +86,10 @@ class LifecycleChecker:
     events: int = 0
     _tool_calls: set[str] = field(default_factory=set[str])
     _ended: set[str] = field(default_factory=set[str])
+    _open: str | None = None
     _fatal: bool = False
     _started: set[str] = field(default_factory=set[str])
-    _open: set[str] = field(default_factory=set[str])
+    _open_responses: set[str] = field(default_factory=set[str])
     _responses_ended: set[str] = field(default_factory=set[str])
     _settled_inputs: set[int] = field(default_factory=set[int])
     _added_inputs: set[int] = field(default_factory=set[int])
@@ -98,20 +106,26 @@ class LifecycleChecker:
 
         if isinstance(event, LIFECYCLE_EVENT_TYPES):
             self._feed_lifecycle(event, issue)
-            self.issues.extend(found)
-            return found
-        if self.lifecycle:
+        elif self.lifecycle:
             # The codec rules are checked on the codec stream; this one carries the same events, minus stale ones.
-            response_id = event.provider_response_id if isinstance(event, ResponseDone) else _content_response_id(event)
-            if response_id is not None and response_id not in self._open:
-                issue('lifecycle.content_outside_response', f'{type(event).__name__} for {response_id!r} outside it')
-            self.issues.extend(found)
-            return found
+            self._feed_lifecycle_content(event, issue)
+        else:
+            self._feed_codec(event, issue)
+        self.issues.extend(found)
+        return found
+
+    def _feed_lifecycle_content(self, event: RealtimeCodecEvent, issue: Callable[[str, str], None]) -> None:
+        response_id = event.provider_response_id if isinstance(event, ResponseDone) else _content_response_id(event)
+        if response_id is not None and response_id not in self._open_responses:
+            issue('lifecycle.content_outside_response', f'{type(event).__name__} for {response_id!r} outside it')
+
+    def _feed_codec(self, event: RealtimeCodecEvent, issue: Callable[[str, str], None]) -> None:
         if self._fatal:
             issue('codec.event_after_fatal', f'{type(event).__name__} after a non-recoverable error')
         if isinstance(event, RealtimeSessionReconnectEvent):
-            # A new connection: ids are only unique per server session.
+            # A new connection: ids are only unique per server session, and the open response is gone.
             self._ended.clear()
+            self._open = None
         if isinstance(event, ToolCall):
             if event.tool_call_id in self._tool_calls:
                 issue('codec.duplicate_tool_call', f'tool call {event.tool_call_id!r} reported twice')
@@ -123,21 +137,26 @@ class LifecycleChecker:
         response_id = _content_response_id(event)
         if response_id is not None and response_id in self._ended:
             issue('codec.content_after_terminal', f'{type(event).__name__} for {response_id!r} after its ResponseDone')
+        elif response_id is not None:
+            if self._open is not None and self._open != response_id:
+                issue('codec.overlapping_responses', f'content for {response_id!r} while {self._open!r} is still open')
+            # A response's usage comes with its terminal: a function-call-only response has no `ResponseDone`.
+            self._open = None if isinstance(event, SessionUsage) else response_id
         if isinstance(event, ResponseDone) and event.provider_response_id is not None:
             if event.provider_response_id in self._ended:
                 issue('codec.duplicate_terminal', f'second ResponseDone for {event.provider_response_id!r}')
             self._ended.add(event.provider_response_id)
+            if self._open == event.provider_response_id:
+                self._open = None
         if isinstance(event, RealtimeSessionErrorEvent) and not event.recoverable:
             self._fatal = True
-        self.issues.extend(found)
-        return found
 
     def _feed_lifecycle(self, event: LifecycleEvent, issue: Callable[[str, str], None]) -> None:
         if isinstance(event, ResponseStarted):
             if event.response_id in self._started:
                 issue('lifecycle.duplicate_start', f'{event.response_id!r} started twice')
             self._started.add(event.response_id)
-            self._open.add(event.response_id)
+            self._open_responses.add(event.response_id)
             sent = self.inputs_sent() if self.inputs_sent is not None else 0
             if unknown := [input_id for input_id in event.answers if input_id >= sent]:
                 issue('lifecycle.unknown_answer', f'{event.response_id!r} answers inputs never sent: {unknown}')
@@ -145,9 +164,9 @@ class LifecycleChecker:
         elif isinstance(event, ResponseEnded):
             if event.response_id in self._responses_ended:
                 issue('lifecycle.duplicate_end', f'{event.response_id!r} ended twice')
-            elif event.response_id not in self._open:
+            elif event.response_id not in self._open_responses:
                 issue('lifecycle.end_without_start', f'{event.response_id!r} ended without starting')
-            self._open.discard(event.response_id)
+            self._open_responses.discard(event.response_id)
             self._responses_ended.add(event.response_id)
         elif isinstance(event, UserTurnStarted):
             if event.turn_id in self._turns:
@@ -174,7 +193,7 @@ class LifecycleChecker:
         """The stream ended: nothing may still be open."""
         found = [
             ConformanceIssue('lifecycle.unended_at_close', f'{response_id!r} never ended', self.events)
-            for response_id in sorted(self._open)
+            for response_id in sorted(self._open_responses)
         ]
         found += [
             ConformanceIssue('lifecycle.turn_unended_at_close', f'spoken turn {turn_id!r} never ended', self.events)

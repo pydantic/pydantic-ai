@@ -113,6 +113,11 @@ class FakeGeminiSession:
         responses = function_responses if isinstance(function_responses, list) else [function_responses]
         await self._outbound('tool_response', lambda session: self.server.on_tool_response(session, responses))
 
+    @property
+    def _ws(self) -> _RawSocket:  # pragma: lax no cover (as above)
+        """The SDK session's socket, which a connection may write a serialized `LiveClientMessage` to directly."""
+        return _RawSocket(self)
+
     async def receive(self) -> AsyncIterator[gt.LiveServerMessage]:
         while True:
             while not self.inbox:
@@ -161,6 +166,16 @@ class FakeGeminiSession:
     def _push(self, item: gt.LiveServerMessage | _Closed) -> None:
         self.inbox.append(item)
         self._readable.set()
+
+
+@dataclass
+class _RawSocket:  # pragma: lax no cover (for #9065, which writes a tool result with media to it)
+    session: FakeGeminiSession
+
+    async def send(self, text: str) -> None:
+        message = gt.LiveClientMessage.model_validate_json(text)
+        assert message.tool_response is not None, 'only tool responses are sent raw'
+        await self.session.send_tool_response(function_responses=list(message.tool_response.function_responses or []))
 
 
 @dataclass
@@ -247,6 +262,7 @@ class GeminiServer:
         self.dial_failures = 0
         self.latency: Any = lambda: 0
         self._next_handle = 1
+        self._orphaned_calls: set[str] = set()
 
     # --- transport ---------------------------------------------------------------------------------
 
@@ -266,6 +282,10 @@ class GeminiServer:
         handle = resumption.handle if resumption is not None else None
         socket = FakeGeminiSession(self, len(self.sessions), handle)
         known = set(self.handles.get(handle, set[str]())) if handle is not None else set[str]()
+        # Calls a dropped turn was waiting on that this session doesn't know are abandoned: no answer can follow.
+        for call_id in self._orphaned_calls - known:
+            self.truth.tool_calls[call_id].cancelled_by_server = True
+        self._orphaned_calls.clear()
         self.truth.connections += 1
         self.sessions.append(_ServerSession(socket=socket, known_calls=known))
         return socket
@@ -292,6 +312,8 @@ class GeminiServer:
             if response.connection == socket.index + 1 and response.terminal_read is None:
                 self.truth.lose(response)
         session = self.session_for(socket)
+        if session.turn is not None:
+            self._orphaned_calls.update(session.turn.awaiting)
         session.turn = None
         # What the model was about to answer is gone with the connection: a re-dial doesn't resume a generation.
         for key in session.triggers:
@@ -374,6 +396,8 @@ class GeminiServer:
                 response.terminal_read = now
             if tags.get('stall') and response.stall_read is None:
                 response.stall_read = now
+        if (word := tags.get('word')) is not None:
+            self.truth.word_read.setdefault(word, now)
         for call_id in tags.get('calls', ()):
             self.truth.tool_calls[call_id].read = True
         for key, tokens in tags.get('usage', {}).items():
@@ -523,6 +547,7 @@ class GeminiServer:
             ),
             response=response.key,
             content=True,
+            word=word,
         )
 
     def call_tools(self, count: int = 1) -> list[str]:

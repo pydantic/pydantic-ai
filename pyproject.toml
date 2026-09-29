@@ -263,7 +263,7 @@ dev = [
     # the compat readers' field-name pairs against the real v2 models while running against v1.
     "mcp-types>=2.0.0",
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
-    "blockbuster>=1.5.26,<1.6",
+    "blockbuster>=1.5.28,<1.6",
     "sqlparse>=0.6.0",
     "nest-asyncio>=1.6.0",
     "azure-identity>=1.25.3",
@@ -271,7 +271,7 @@ dev = [
     "mongomock-motor>=0.0.36",
     "redis>=8.1.0",
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
-    "cassetter>=0.12.1",
+    "cassetter>=0.13.0",
     # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
     # interleavings of client operations and provider events, shrunk to a minimal failing trace.
     "hypothesis>=6.100",
@@ -339,8 +339,6 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
-    ".github/scripts/sandbox_live_changes.py",
-    ".github/scripts/test_sandbox_live_changes.py",
 ]
 
 [tool.ruff.lint]
@@ -405,7 +403,6 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
-".github/scripts/test_sandbox_live_changes.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]
@@ -463,6 +460,7 @@ markers = [
     "modal_live: runs against a real Modal control plane; needs credentials",
     "e2b_live: runs against a real E2B sandbox; needs credentials",
     "sprites_live: runs against a real Sprites control plane; needs credentials",
+    "temporal: starts or connects to a local Temporal dev server",
 ]
 filterwarnings = [
     "error",

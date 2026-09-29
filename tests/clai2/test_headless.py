@@ -121,8 +121,15 @@ def test_cli_alias_and_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setattr('sys.argv', ['clai2', '--database', str(store.path), '-m', 'explicit:model', '-p', 'hello'])
 
     async def run_headless(
-        *, text: str, settings: Settings, store: SettingsStore, project: ProjectSettings, resume: str | None
+        *,
+        text: str,
+        settings: Settings,
+        store: SettingsStore,
+        project: ProjectSettings,
+        resume: str | None,
+        agent: object,
     ) -> int:
+        assert agent is None
         assert text == 'hello'
         assert settings.model == 'explicit:model'
         if interrupt:
