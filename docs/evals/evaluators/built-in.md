@@ -1,3 +1,7 @@
+---
+description: "Reference for the evaluators built into Pydantic Evals: exact match, contains, type checks, max duration, LLM judge, G-Eval, span checks and confusion matrices."
+---
+
 # Native Evaluators
 
 Pydantic Evals provides several built-in evaluators for common evaluation tasks.
@@ -40,6 +44,9 @@ dataset = Dataset(
 **Notes:**
 
 - Skips evaluation if `expected_output` is `None` (returns empty dict `{}`)
+- Because of that skip, a case whose expected output *is* `None` records no assertion at
+  all, so it passes whatever the task returns. To assert that the output is `None`, use
+  [`Equals(value=None)`](#equals), which takes the value explicitly.
 - Uses Python's `==` operator, so works with any comparable types
 - For structured data, considers nested equality
 
@@ -383,6 +390,11 @@ GEval(
 
 **Returns:** `EvaluationReason` with the integer score and the judge's reasoning
 
+When the judge model cannot generate text, like a [decision model](../../models/decision.md) such as
+[TypeSafe's Jev](../../models/typesafe.md), the score keeps the requested integer scale and the reason
+is `None`. Scoring becomes one question with a level per score, so `score_range` may contain at most
+20 levels.
+
 **See Also:** [Standard Quality Metrics](standard-quality-metrics.md)
 
 ---
@@ -391,7 +403,7 @@ GEval(
 
 ### HasMatchingSpan
 
-Check if OpenTelemetry spans match a query (requires Logfire configuration).
+Check if OpenTelemetry spans match a query (requires the `logfire` SDK to be configured; no Pydantic Logfire account is needed).
 
 ```python
 from pydantic_evals.evaluators import HasMatchingSpan
@@ -453,7 +465,9 @@ analyze entire experiment results. These are passed via the `report_evaluators` 
 | Report Evaluator | Purpose | Output |
 |------------------|---------|--------|
 | [`ConfusionMatrixEvaluator`][pydantic_evals.evaluators.ConfusionMatrixEvaluator] | Classification confusion matrix | `ConfusionMatrix` |
-| [`PrecisionRecallEvaluator`][pydantic_evals.evaluators.PrecisionRecallEvaluator] | PR curve with AUC | `PrecisionRecall` |
+| [`PrecisionRecallEvaluator`][pydantic_evals.evaluators.PrecisionRecallEvaluator] | PR curve with AUC | `PrecisionRecall` + `ScalarResult` |
+| [`ROCAUCEvaluator`][pydantic_evals.evaluators.ROCAUCEvaluator] | ROC curve with AUC | `LinePlot` + `ScalarResult` |
+| [`KolmogorovSmirnovEvaluator`][pydantic_evals.evaluators.KolmogorovSmirnovEvaluator] | KS plot with KS statistic | `LinePlot` + `ScalarResult` |
 
 **See:** [Report Evaluators](report-evaluators.md) for full documentation, parameters, and examples,
 including how to write custom report evaluators that produce `ScalarResult` and `TableResult` analyses.

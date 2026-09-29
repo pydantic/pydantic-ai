@@ -25,6 +25,13 @@ safe-outputs:
     close-older-issues: false
     expires: 7d
 timeout-minutes: 30
+env:
+  # Must equal `timeout-minutes` above. The shim subtracts teardown headroom from it
+  # so the agent stops itself and emits a result instead of being killed mid-flight.
+  # gh-aw's own `GH_AW_TIMEOUT_MINUTES` is set only on the failure-handler step and
+  # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
+  # fails the build if the two ever diverge.
+  PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -36,6 +43,7 @@ imports:
   - shared/engine-minimax.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
+  - shared/issue-filing-context.md
 
 jobs:
   fetch_dynamic_prompt:

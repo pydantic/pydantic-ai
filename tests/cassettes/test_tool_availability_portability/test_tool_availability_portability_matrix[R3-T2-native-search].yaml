@@ -1,0 +1,135 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1157'
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    method: POST
+    parsed_body:
+      max_tokens: 4096
+      messages:
+      - content:
+        - text: Find the exchange-rate tool.
+          type: text
+        role: user
+      - content:
+        - id: search_call_1
+          input:
+            queries:
+            - exchange rate
+          name: search_tools
+          type: tool_use
+        role: assistant
+      - content:
+        - content:
+          - tool_name: lookup_exchange_rate
+            type: tool_reference
+          is_error: false
+          tool_use_id: search_call_1
+          type: tool_result
+        - text: Acknowledge the available exchange-rate tool without calling it.
+          type: text
+        role: user
+      model: claude-sonnet-4-6
+      stream: false
+      tool_choice:
+        type: auto
+      tools:
+      - description: Provide an always-available tool so provider tool lists remain valid.
+        input_schema:
+          additionalProperties: false
+          properties: {}
+          type: object
+        name: always_ready
+      - defer_loading: true
+        description: Look up an exchange rate.
+        input_schema:
+          additionalProperties: false
+          properties:
+            currency:
+              type: string
+          required:
+          - currency
+          type: object
+        name: lookup_exchange_rate
+      - name: tool_search_tool_bm25
+        type: tool_search_tool_bm25_20251119
+    uri: https://api.anthropic.com/v1/messages?beta=true
+  response:
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - '1511'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d28ebc388730f9de6869a4e62b3d0ed6-396969957481b701-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    parsed_body:
+      content:
+      - text: I tried to use a tool called `search_tools` which isn't one of the tools available to me. Let me use the correct
+          tool to find the exchange-rate tool.
+        type: text
+      - id: srvtoolu_019Rr9T6rkXormLFynuZueH2
+        input:
+          query: exchange rate
+        name: tool_search_tool_bm25
+        type: server_tool_use
+      - content:
+          tool_references:
+          - tool_name: lookup_exchange_rate
+            type: tool_reference
+          type: tool_search_tool_search_result
+        tool_use_id: srvtoolu_019Rr9T6rkXormLFynuZueH2
+        type: tool_search_tool_result
+      - text: |-
+          The available exchange-rate tool is **`lookup_exchange_rate`**. Here's a summary of it:
+
+          - **Name:** `lookup_exchange_rate`
+          - **Description:** Look up an exchange rate.
+          - **Parameters:**
+            - `currency` *(required, string)*: The currency for which to look up the exchange rate.
+
+          This tool can be used to retrieve exchange rate information for a specified currency. Let me know if you'd like to use it!
+        type: text
+      id: msg_011CdZKwMWSeoTcG7yE4pGob
+      model: claude-sonnet-4-6
+      role: assistant
+      stop_details: null
+      stop_reason: end_turn
+      stop_sequence: null
+      type: message
+      usage:
+        cache_creation:
+          ephemeral_1h_input_tokens: 0
+          ephemeral_5m_input_tokens: 0
+        cache_creation_input_tokens: 0
+        cache_read_input_tokens: 0
+        inference_geo: global
+        input_tokens: 2001
+        output_tokens: 204
+        server_tool_use:
+          web_fetch_requests: 0
+          web_search_requests: 0
+        service_tier: standard
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,8 +1,10 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+import warnings
 from copy import copy
 from dataclasses import dataclass
+from decimal import Decimal
 from functools import cache
 from typing import Annotated, Any, cast
 
@@ -11,6 +13,8 @@ from pydantic import AliasChoices, BeforeValidator, Field, GetCoreSchemaHandler,
 from pydantic_core import SchemaSerializer, core_schema
 
 from . import _utils
+from ._genai_prices import iter_provider_references
+from ._warnings import CostNotFoundWarning
 from .exceptions import UsageLimitExceeded
 
 __all__ = 'RequestUsage', 'RunUsage', 'UsageLimits'
@@ -117,12 +121,29 @@ class UsageBase:
     output_audio_tokens: int = 0
     """Number of audio output tokens. Included in `output_tokens`."""
 
+    audio_seconds: float = 0
+    """Seconds of audio billed, for models priced by duration rather than by token.
+
+    Some realtime models (xAI's Grok Voice, for instance) have no token prices at all and bill per
+    second of audio, so their token counts price to zero. Reporting the duration here is what makes such a
+    call priceable, and is why this is a field rather than a `details` entry: `details` is deliberately
+    not priced, and is typed `dict[str, int]` while these durations are fractional.
+    """
+
     details: Annotated[
         dict[str, int],
         # `details` can not be `None` any longer, but we still want to support deserializing model responses stored in a DB before this was changed
         BeforeValidator(lambda d: d or {}),
     ] = dataclasses.field(default_factory=dict[str, int])
     """Any extra details returned by the model."""
+
+    cost: Decimal | None = None
+    """Best-effort cost in USD, or `None` if no cost could be determined.
+
+    Calculated with [genai-prices](https://github.com/pydantic/genai-prices). `None` (rather than zero) when the
+    model or provider can't be priced, so "unknown" stays distinguishable from a genuine zero cost. Models released
+    after your install can be priced by calling [`update_in_background()`][pydantic_ai.prices.update_in_background].
+    """
 
     def __init__(self, *, details: dict[str, int] | None = None, **kwargs: Any):
         self.details = details or {}
@@ -276,7 +297,8 @@ class RequestUsage(UsageBase):
         Args:
             incr_usage: The usage to increment by.
         """
-        return _incr_usage_tokens(self, incr_usage)
+        _incr_usage_tokens(self, incr_usage)
+        _incr_usage_cost(self, incr_usage)
 
     def __add__(self, other: RequestUsage) -> RequestUsage:
         """Add two RequestUsages together.
@@ -313,7 +335,9 @@ class RequestUsage(UsageBase):
             details: Becomes the `details` field on the returned `RequestUsage` for convenience.
         """
         details = details or {}
-        for provider_id, provider_api_url in [(None, provider_url), (provider, None), (provider_fallback, None)]:
+        for provider_id, provider_api_url in iter_provider_references(
+            provider_api_url=provider_url, provider_id=provider, provider_fallback=provider_fallback
+        ):
             try:
                 provider_obj = get_snapshot().find_provider(None, provider_id, provider_api_url)
                 _model_ref, extracted_usage = provider_obj.extract_usage(data, api_flavor=api_flavor)
@@ -366,7 +390,8 @@ class RunUsage(UsageBase):
         if isinstance(incr_usage, RunUsage):
             self.requests += incr_usage.requests
             self.tool_calls += incr_usage.tool_calls
-        return _incr_usage_tokens(self, incr_usage)
+        _incr_usage_tokens(self, incr_usage)
+        _incr_usage_cost(self, incr_usage)
 
     def __add__(self, other: RunUsage | RequestUsage) -> RunUsage:
         """Add two RunUsages together.
@@ -377,6 +402,36 @@ class RunUsage(UsageBase):
         new_usage.incr(other)
         return new_usage
 
+    def __sub__(self, other: RunUsage) -> RunUsage:
+        """Return the field-by-field usage accumulated since `other`.
+
+        This is useful when a nested operation shares a run's mutable usage object and needs to
+        report only the requests, tool calls, tokens, details, and cost added by that operation.
+        Unknown costs remain `None`; an unchanged known cost also produces `None`.
+        """
+        details = {
+            name: self.details.get(name, 0) - other.details.get(name, 0) for name in self.details | other.details
+        }
+        return RunUsage(
+            requests=self.requests - other.requests,
+            tool_calls=self.tool_calls - other.tool_calls,
+            input_tokens=self.input_tokens - other.input_tokens,
+            cache_write_tokens=self.cache_write_tokens - other.cache_write_tokens,
+            cache_read_tokens=self.cache_read_tokens - other.cache_read_tokens,
+            output_tokens=self.output_tokens - other.output_tokens,
+            input_audio_tokens=self.input_audio_tokens - other.input_audio_tokens,
+            cache_audio_read_tokens=self.cache_audio_read_tokens - other.cache_audio_read_tokens,
+            output_audio_tokens=self.output_audio_tokens - other.output_audio_tokens,
+            audio_seconds=self.audio_seconds - other.audio_seconds,
+            details=details,
+            cost=self.cost - (other.cost or 0) if self.cost is not None and self.cost != other.cost else None,
+        )
+
+
+def _incr_usage_cost(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
+    if incr_usage.cost is not None:
+        slf.cost = (slf.cost or 0) + incr_usage.cost
+
 
 def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | RequestUsage) -> None:
     """Increment the usage in place.
@@ -385,7 +440,7 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
         slf: The usage to increment.
         incr_usage: The usage to increment by.
     """
-    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details'}:
+    for k in (slf.__dict__.keys() | incr_usage.__dict__.keys()) - {'requests', 'tool_calls', 'details', 'cost'}:
         slf_value = getattr(slf, k, 0)
         incr_value = getattr(incr_usage, k, 0)
         if isinstance(slf_value, (int, float)) and isinstance(incr_value, (int, float)):
@@ -407,6 +462,8 @@ class UsageLimits:
     Each of the limits can be set to `None` to disable that limit.
     """
 
+    cost_limit: Decimal | None = None
+    """The maximum cost allowed in USD."""
     request_limit: int | None = 50
     """The maximum number of requests allowed to the model."""
     tool_calls_limit: int | None = None
@@ -417,9 +474,29 @@ class UsageLimits:
     """The maximum number of output/response tokens allowed."""
     total_tokens_limit: int | None = None
     """The maximum number of tokens allowed in requests and responses combined."""
+    per_request_input_tokens_limit: int | None = None
+    """The maximum number of input/prompt tokens allowed per individual request.
+
+    Unlike `input_tokens_limit` which is cumulative across the entire run, this
+    limit is checked against each request's input token count independently —
+    ahead of the request when `count_tokens_before_request=True`, otherwise against
+    the provider-reported `input_tokens` of the response.
+
+    This provides a guard against oversized contexts (which hurt model performance
+    and incur high costs on cache misses), complementing the runaway-loop
+    protection that cumulative limits provide.
+
+    Note that `input_tokens` (and therefore this limit) includes cached-prefix tokens,
+    normalized consistently across providers: a request served largely from cache still
+    counts its full context size toward this limit. This caps context size, not cache-miss cost.
+
+    Set `count_tokens_before_request=True` to enforce this preemptively; otherwise the
+    request is sent before the limit is checked, so the oversized request is still
+    billed (matching `input_tokens_limit`).
+    """
     count_tokens_before_request: bool = False
     """If True, perform a token counting pass before sending the request to the model,
-    to enforce `input_tokens_limit` ahead of time.
+    to enforce `input_tokens_limit` and `per_request_input_tokens_limit` ahead of time.
 
     This may incur additional overhead (from calling the model's `count_tokens` API before making the actual request)
     and is disabled by default.
@@ -435,13 +512,19 @@ class UsageLimits:
     def has_token_limits(self) -> bool:
         """Returns `True` if this instance places any limits on token counts.
 
-        If this returns `False`, the `check_tokens` method will never raise an error.
+        If this returns `False`, the `check_tokens` and `check_per_request_input_tokens` methods will never raise an error.
 
         This is useful because if we have token limits, we need to check them after receiving each streamed message.
         If there are no limits, we can skip that processing in the streaming response iterator.
         """
         return any(
-            limit is not None for limit in (self.input_tokens_limit, self.output_tokens_limit, self.total_tokens_limit)
+            limit is not None
+            for limit in (
+                self.input_tokens_limit,
+                self.output_tokens_limit,
+                self.total_tokens_limit,
+                self.per_request_input_tokens_limit,
+            )
         )
 
     def check_before_request(self, usage: RunUsage) -> None:
@@ -460,6 +543,34 @@ class UsageLimits:
         if self.total_tokens_limit is not None and total_tokens > self.total_tokens_limit:
             raise UsageLimitExceeded(  # pragma: lax no cover
                 f'The next request would exceed the total_tokens_limit of {self.total_tokens_limit} ({total_tokens=})'
+            )
+
+        cost = usage.cost
+        if cost is not None and self.cost_limit is not None and cost > self.cost_limit:
+            raise UsageLimitExceeded(
+                f'The next request would exceed the `cost_limit` of {self.cost_limit} (`cost`={cost!r})'
+            )
+
+    def check_cost(self, usage: RunUsage, *, warn_if_cost_unavailable: bool = True) -> None:
+        """Check whether usage exceeds the cost limit.
+
+        Args:
+            usage: The accumulated run usage to check.
+            warn_if_cost_unavailable: Whether to warn when a `cost_limit` is set but no cost was calculated.
+        """
+        if warn_if_cost_unavailable:
+            self._warn_if_cost_unavailable(usage)
+        if usage.cost is not None and self.cost_limit is not None and usage.cost > self.cost_limit:
+            raise UsageLimitExceeded(f'Exceeded the `cost_limit` of {self.cost_limit} (`usage.cost`={usage.cost!r})')
+
+    def _warn_if_cost_unavailable(self, usage: RunUsage) -> None:
+        if self.cost_limit is not None and usage.cost is None:
+            warnings.warn(
+                CostNotFoundWarning(
+                    'A `cost_limit` is set but cannot be enforced because no cost was calculated for this run. '
+                    'This usually means there is no pricing data for the model or provider in use. If the model is newer '
+                    'than your install, `pydantic_ai.prices.update_in_background()` can download current prices.'
+                )
             )
 
     def check_tokens(self, usage: RunUsage) -> None:
@@ -485,6 +596,18 @@ class UsageLimits:
         if tool_calls_limit is not None and tool_calls > tool_calls_limit:
             raise UsageLimitExceeded(
                 f'The next tool call(s) would exceed the tool_calls_limit of {tool_calls_limit} ({tool_calls=}).'
+            )
+
+    def check_per_request_input_tokens(self, request_input_tokens: int) -> None:
+        """Raises a `UsageLimitExceeded` if the per-request input tokens exceed the limit.
+
+        This checks a single request's input token count — not the cumulative
+        `RunUsage.input_tokens` — against `per_request_input_tokens_limit`.
+        """
+        limit = self.per_request_input_tokens_limit
+        if limit is not None and request_input_tokens > limit:
+            raise UsageLimitExceeded(
+                f'Exceeded the per_request_input_tokens_limit of {limit} ({request_input_tokens=})'
             )
 
     __repr__ = _utils.dataclasses_no_defaults_repr

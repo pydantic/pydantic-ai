@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from dataclasses import KW_ONLY, dataclass, replace
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, SystemPromptPart
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability
 
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
+    from pydantic_ai.settings import ModelSettings
 
 
 @dataclass
@@ -41,6 +43,15 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     the agent's configured prompt. If `False` (the default), the capability is a no-op when
     any `SystemPromptPart` is already present."""
 
+    _: KW_ONLY
+
+    id: str | None = 'reinject_system_prompt'
+    """One-off: an agent reinjects the system prompt one way, so the id is fixed by default.
+
+    Two of them resolve to one via [`combine`][pydantic_ai.capabilities.AbstractCapability.combine],
+    which keeps the last. Pass a distinct `id` to keep both, or `id=None` for derived ids.
+    """
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -53,14 +64,22 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             return request_context
         # `ctx.agent` is always set during an agent run.
         if ctx.agent is None:
+            # `ctx.agent` is always set during an agent run.
             return request_context  # pragma: no cover
+        # `ctx.model` is an `AbstractModel`, which is a regular `Model` on every path that makes
+        # model requests; fall back to the agent's configured model otherwise. The `cast` only
+        # pins `Model`'s client type parameter, which `isinstance` can't recover.
+        ctx_model = ctx.model
+        model = cast('Model[Any]', ctx_model) if isinstance(ctx_model, Model) else None
         sys_parts = await ctx.agent.system_prompt_parts(
             deps=ctx.deps,
-            model=ctx.model,
+            model=model,
             message_history=messages,
             prompt=ctx.prompt,
             usage=ctx.usage,
-            model_settings=ctx.model_settings,
+            # This hook only runs in the classic request pipeline, where `ctx.model_settings`
+            # never holds `RealtimeModelSettings`.
+            model_settings=cast('ModelSettings | None', ctx.model_settings),
         )
         if sys_parts:
             _prepend_to_first_request(messages, sys_parts)

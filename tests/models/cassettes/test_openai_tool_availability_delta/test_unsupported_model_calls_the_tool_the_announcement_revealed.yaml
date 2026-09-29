@@ -1,0 +1,158 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '668'
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    method: POST
+    parsed_body:
+      include:
+      - reasoning.encrypted_content
+      input:
+      - content: Call lookup_refund_policy with order_id order-123. Do not answer directly.
+        role: user
+      - content: I will load the refund capability.
+        role: assistant
+      - content: 'The following tool(s) are now available: `lookup_refund_policy`'
+        role: system
+      model: gpt-5
+      stream: false
+      tool_choice: auto
+      tools:
+      - description: Look up the refund policy for an order.
+        name: lookup_refund_policy
+        parameters:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        strict: true
+        type: function
+    uri: https://api.openai.com/v1/responses
+  response:
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-length:
+      - '5205'
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - '6831'
+      openai-version:
+      - '2020-10-01'
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    parsed_body:
+      background: false
+      billing:
+        payer: developer
+      completed_at: 1785963548
+      created_at: 1785963542
+      error: null
+      frequency_penalty: 0.0
+      id: resp_0e96e43246e07433006a73a41622d0819687bbda37303e8515
+      incomplete_details: null
+      instructions: null
+      max_output_tokens: null
+      max_tool_calls: null
+      metadata: {}
+      model: gpt-5-2025-08-07
+      moderation: null
+      object: response
+      output:
+      - content: []
+        encrypted_content: gAAAAABqc6QcKOOE1YkPPIIFRxizirT-6KUbfjmA6mLwePJk0wzLG9kTemw8E9gThLZ0MkEpJFQRKzoUWtlYoVVgUKVygWWz02ZXSG2LY_YZbaXEYMJtmd7-vfOinzUTRhTu8MwXG0RAswTRSTnyEtBW6Di-QXojbo21tQauyWino-4c-2j-4YJx7fqmczBDXTKpKowoKkwWARXmdCmJcULCv9dqBoFpmQsWrBTaycyMraNj2Wxcw2mc0-lsXmaDRX5JVNaNGfDdK6I9aMvoCDWCae_hiOa5Ye1VC_FprdzVLD0l-mAvCdgj2T3bIYTE5nTaTF4g1PdxYS2qXKf7v46hQGAZd1woh4vIA4qdf1o2i_3viNLJkqhv0nM6GH0DjICRNnP8nV7cNQG1z3mq9BJxvbpjr7d344GjIBbmUKgWibShq37OE1ot5KKogeAyDQlL9qXrfJt3aPaTvwnfliwUusV7vaHZ8JAjtpxfx-avYilJT0aj2_aQ3GMK_W-dwhiTBK2ONccyP48FPzEUHqlYpTJSM62D6neKOfV2W5p8ldTKwJ2rEsBnsz7yG1fDQVhFHjLwTanvivJ7VwvDL-0AMGDuUw5tczYgSaZhrI0KJLfktcwu4GmOADX_wr5TsKL8a3F8Zr-65np-ZVancbnkjN6bzHxvFgllYP_aLq3XoxmC86ipX9TqezfHeL4Vzrg36olbjIyE94DZ652YnUlR-d_lhgMhJWg9n5Fluj4kGqUbQ3GI2FzUi5NPjEfsSqJvDl8XvlUSBxcr3JAH9G5TVI6T9o9C-fW8_72n7v7P0z1iq1VptQ1XdnHuZ8AiMp_xwSTMnuMRr7SAUWnfmA78eRaaQ8hw1NDeuTqfaxYdYDa3QQhI0CI7kYIXa93vpGrlxACvLjgg8w9VXar6Bf_8rCaAJNwqjrlI7Z3zbn07yPbATZf3CYYJErjB1EStMRE-Ms12wqCKlGiN5th5TwPNyscyV2aVPgAa6DZG7Jg0QSgzEwRXTUYpzd7H3b2hjmBibDGnSm5p4dU7h_P6z7WT8_Xs3FxCAPJjUTBF-k5QBUbDGqQLNvSxxrxYYV7Vp_RK8OlX5xzjhh3t2tqicXZSoleuQ7YpDjb1vlUaG6aJb3J3nUmZ02krh4F2aoEhaOClI8eNC3wA0d4TLAPafkZkQOsxu6_m013HxJhNysThZSCYciP3O-vLawwDVasrKPw-AqBFI-h0ULAzUpME3I0HJ3pVYrJn_93-yBGs2pRc00Afgw6fCCyh_cuh8i6rlNDh1Upx53Qm2AFuzxSVfUyU1QAbiHr6OQ6ss2Zuwv0K2xRJvGcAs2L9Kp8PWpYbH1e03cIefxjd5teOR-b4LSAJp8TWKi9TdT6SKq4UivMSeE4CcU4xelcAaYZt_phYk_ouex19-xXzmvagvSq0CeIeV7cjKOMi7ZVNQfJADO6iMi8qm8VZmfK9qRZNO1Xqbb-eOhJs6j1bUzUz0BglzaPYmro035jieU9ARbu9Y27ibyeBu2sPWqZ_-0Y6ZQ0G3fYSIjWly6QKVwrYFkIjtOzriDVMcYZbzcFuJqwwbxdC-ErcIM-RS6ZDJx6vyjsKT1NvszRueJ2anFJbmsoQ8pUyPNROwvtYlSEzW4xSyaKXbzvgi0Oj_XuEjKjFtn0PXSmcMWOTDuBYoXRjkP9tL0ixLqKaNIdkCbmsTGpJgn-BLEFUQE40fcCxCmm9it5dDSX8pLxHInsujF9NEGpIK1FBsgPuqOkWbZdUQNbaJesQxyl-p0k1KMdK8bCXyBp-mqceiiVUEL9I4nHJxPvko5-3HP7yGlom-33v8Bq2GvaGWkOxvCwDX6nr7X_pZ1MeUqOpxIevCDZTr097dbypkif4FROWrOE0UX62dgdeRmvRc0KdviD0Lu9W_aHBUSj0pRkHoIIyfZgsObKtGmD0qlSOsLKp8z-L740eoKIncpemyLMo-NhkE9CQmhBx52HpybyM0LbDpQwD6Yq2jpTMxG2PnkK3yWwHKov8S3NQgK3ZoaN_m5ka6MF9AXThF6A11XP2hyFC4GCLAtA5N3GRMRajw6sYcFybzqNpGDtZzCX2JLDmgEu1hngSzIYOLjw4hcpMloRvkQX05TzVuTtKb8UgwKkoFRbThtVAybzHJ09_E_7i-NRM48qmqT3jiUa0K8N9_5YXeNsr5SSjy9h6GG8DJtJW56HVmQ52f5qZP-eb54RO7C9VtspLBnIWV7fRwDRqYT4avm0V_7-Rg1hSEHvthUMmY5QP0hw-rMSRlYZFnmjrOupV4N3QzKqUFzUx5Zr7JYI-DDvzquRuuDnz0tfJ7xFPn8K_J_tX_9YcHrMYxRDvEEDhP56lZ-5fUV_p0ihmk8j0dbTeZaXzdrNO7AL-d5gwvzm89V-jzv__GaJPgiUjWHZQZQHqMkwHFb-OmrPNYumGTQQa2awJoEzWhfArPzsNjx0EGQGPJSA9S2q_LaAtvfOUfygKVL-eypC8LHh2OIaixeO1_oC3mwg79OKni3DmcUxj2-qVqObN_ANwNcv6VDUHymObUp0ZAddixyCWu-W5_ek5-UbrOcUVh3uNjEDOch1NEupHkty8Q8C0sSSfMWYqJROeSxRhO88dr0sMfdea1AHmWvcDa8Lny3SvOnkfI_7szqTMZbjXXuUeawQNZp0LrTxerxI9tA5uF5YMZhS3J3bTWHpPIhI5VpJHHKAw-t-HxTkemTaPP4Bpgeow8dpT7M4kCK395JOeh7olsfaLQBmxzn0HT0Om4JEMQjdkJkao0xnsPTDPKQJmAP86IYuVYneycVbOpGCqxuaFKS9u3QVXkDh-i3cWyGhpr0DXbFAoORG6-mYdWrrgFy7CWS2YE1scyZY3tRsbfZxcivSixpQPn51eSXB1pdCC0xz_vD9rWZaPdei2eMuFS_WEhPjfpVpIbxAAkROXXKkPH90Ga4D1gly6_lWHQ3n_5l0VGVhYPVCqanoO_xgDVMk6ZrFAZbtsPi1o6y-PP2uLybUofqy3jkFDy_DjCwRdItVO5pg1qUiERLT50TascyYlTHRZgXJYJ4_7EjPsJyWHugzZe5LRotD8WAlHEnAJ4Bq77y-eyuhf1bpJpRRhlvvVnwO6QhfeI2aSHlwNGkH4RHEQUepv
+        id: rs_0e96e43246e07433006a73a4169b488196a0919c13e13e5191
+        summary: []
+        type: reasoning
+      - arguments: '{"order_id":"order-123"}'
+        call_id: call_sw83GUUrMeTQ0BlWkzYlrguh
+        id: fc_0e96e43246e07433006a73a41ca2148196b7670a71f3d188d3
+        name: lookup_refund_policy
+        status: completed
+        type: function_call
+      parallel_tool_calls: true
+      presence_penalty: 0.0
+      previous_response_id: null
+      prompt_cache_key: null
+      prompt_cache_retention: in_memory
+      reasoning:
+        context: current_turn
+        effort: medium
+        mode: standard
+        summary: null
+      safety_identifier: null
+      service_tier: default
+      status: completed
+      store: true
+      temperature: 1.0
+      text:
+        format:
+          type: text
+        verbosity: medium
+      tool_choice: auto
+      tool_usage:
+        image_gen:
+          input_tokens: 0
+          input_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          output_tokens: 0
+          output_tokens_details:
+            image_tokens: 0
+            text_tokens: 0
+          total_tokens: 0
+        web_search:
+          num_requests: 0
+      tools:
+      - description: Look up the refund policy for an order.
+        name: lookup_refund_policy
+        output_schema: null
+        parameters:
+          additionalProperties: false
+          properties:
+            order_id:
+              type: string
+          required:
+          - order_id
+          type: object
+        strict: true
+        type: function
+      top_logprobs: 0
+      top_p: 1.0
+      truncation: disabled
+      usage:
+        input_tokens: 97
+        input_tokens_details:
+          cache_write_tokens: 0
+          cached_tokens: 0
+        output_tokens: 369
+        output_tokens_details:
+          reasoning_tokens: 320
+        total_tokens: 466
+      user: null
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -16,10 +16,10 @@ from datetime import datetime
 from types import TracebackType
 
 from pydantic_ai.usage import RequestUsage
-from pydantic_graph._utils import run_until_complete as _run_until_complete
 
 from . import agent, messages, models, settings
 from ._sync_stream import SyncStreamBridge
+from ._utils import run_until_complete as _run_until_complete
 from .models import StreamedResponse, instrumented as instrumented_models
 
 __all__ = (

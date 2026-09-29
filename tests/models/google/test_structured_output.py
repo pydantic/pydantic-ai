@@ -12,6 +12,7 @@ from __future__ import annotations as _annotations
 
 import re
 from collections.abc import Callable
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 import pytest
@@ -45,7 +46,6 @@ if TYPE_CHECKING:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -146,7 +146,12 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=29, output_tokens=114, details={'thoughts_tokens': 102, 'text_prompt_tokens': 29}
+                    input_tokens=29,
+                    output_tokens=114,
+                    input_text_tokens=29,
+                    details={'thoughts_tokens': 102, 'text_prompt_tokens': 29},
+                    output_reasoning_tokens=102,
+                    cost=Decimal('0.0003565'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -182,7 +187,12 @@ async def test_native_output_with_function_tools(allow_model_requests: None, goo
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=161, output_tokens=72, details={'thoughts_tokens': 51, 'text_prompt_tokens': 161}
+                    input_tokens=161,
+                    output_tokens=72,
+                    input_text_tokens=161,
+                    details={'thoughts_tokens': 51, 'text_prompt_tokens': 161},
+                    output_reasoning_tokens=51,
+                    cost=Decimal('0.0002965'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -229,7 +239,12 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=29, output_tokens=81, details={'thoughts_tokens': 69, 'text_prompt_tokens': 29}
+                    input_tokens=29,
+                    output_tokens=81,
+                    input_text_tokens=29,
+                    details={'thoughts_tokens': 69, 'text_prompt_tokens': 29},
+                    output_reasoning_tokens=69,
+                    cost=Decimal('0.0002575'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -265,7 +280,12 @@ async def test_native_output_with_function_tools_stream(allow_model_requests: No
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=128, output_tokens=51, details={'thoughts_tokens': 30, 'text_prompt_tokens': 128}
+                    input_tokens=128,
+                    output_tokens=51,
+                    input_text_tokens=128,
+                    details={'thoughts_tokens': 30, 'text_prompt_tokens': 128},
+                    output_reasoning_tokens=30,
+                    cost=Decimal('0.000217'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -328,7 +348,12 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=87, output_tokens=78, details={'thoughts_tokens': 78, 'text_prompt_tokens': 87}
+                    input_tokens=87,
+                    output_tokens=78,
+                    input_text_tokens=87,
+                    details={'thoughts_tokens': 78, 'text_prompt_tokens': 87},
+                    output_reasoning_tokens=78,
+                    cost=Decimal('0.0002775'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -522,7 +547,12 @@ async def test_function_tools_with_builtin_tools(allow_model_requests: None, goo
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=47, output_tokens=86, details={'thoughts_tokens': 55, 'text_prompt_tokens': 47}
+                    input_tokens=47,
+                    output_tokens=86,
+                    input_text_tokens=47,
+                    details={'thoughts_tokens': 55, 'text_prompt_tokens': 47},
+                    output_reasoning_tokens=55,
+                    cost=Decimal('0.0002815'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -576,7 +606,12 @@ As for the weather in Tokyo, it is currently **cloudy** with a temperature of ap
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=132, output_tokens=183, details={'thoughts_tokens': 121, 'text_prompt_tokens': 132}
+                    input_tokens=132,
+                    output_tokens=183,
+                    input_text_tokens=132,
+                    details={'thoughts_tokens': 121, 'text_prompt_tokens': 132},
+                    output_reasoning_tokens=121,
+                    cost=Decimal('0.000615'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -631,7 +666,10 @@ async def test_native_output_with_function_and_builtin_tools(
                 usage=RequestUsage(
                     input_tokens=35,
                     output_tokens=71,
+                    input_text_tokens=35,
                     details={'thoughts_tokens': 59, 'text_prompt_tokens': 35},
+                    output_reasoning_tokens=59,
+                    cost=Decimal('0.0002305'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -686,7 +724,11 @@ async def test_native_output_with_function_and_builtin_tools(
                 usage=RequestUsage(
                     input_tokens=526,
                     output_tokens=27,
+                    input_text_tokens=341,
                     details={'thoughts_tokens': 27, 'tool_use_prompt_tokens': 86, 'text_prompt_tokens': 341},
+                    output_reasoning_tokens=27,
+                    input_tool_tokens=86,
+                    cost=Decimal('0.000344'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -748,7 +790,12 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=417, output_tokens=71, details={'thoughts_tokens': 71, 'text_prompt_tokens': 351}
+                    input_tokens=417,
+                    output_tokens=71,
+                    input_text_tokens=351,
+                    details={'thoughts_tokens': 71, 'text_prompt_tokens': 351},
+                    output_reasoning_tokens=71,
+                    cost=Decimal('0.0004215'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -807,7 +854,12 @@ async def test_tool_output_with_builtin_tools(allow_model_requests: None, google
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=279, output_tokens=31, details={'thoughts_tokens': 31, 'text_prompt_tokens': 176}
+                    input_tokens=279,
+                    output_tokens=31,
+                    input_text_tokens=176,
+                    details={'thoughts_tokens': 31, 'text_prompt_tokens': 176},
+                    output_reasoning_tokens=31,
+                    cost=Decimal('0.0002325'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -868,7 +920,10 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                 usage=RequestUsage(
                     input_tokens=85,
                     output_tokens=72,
+                    input_text_tokens=85,
                     details={'thoughts_tokens': 60, 'text_prompt_tokens': 85},
+                    output_reasoning_tokens=60,
+                    cost=Decimal('0.0002585'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -920,7 +975,11 @@ async def test_auto_mode_with_function_and_builtin_tools(allow_model_requests: N
                 usage=RequestUsage(
                     input_tokens=510,
                     output_tokens=18,
+                    input_text_tokens=301,
                     details={'thoughts_tokens': 18, 'tool_use_prompt_tokens': 78, 'text_prompt_tokens': 301},
+                    output_reasoning_tokens=18,
+                    input_tool_tokens=78,
+                    cost=Decimal('0.000309'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -991,12 +1050,17 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                 usage=RequestUsage(
                     input_tokens=217,
                     output_tokens=82,
+                    input_text_tokens=217,
                     details={
                         'thoughts_tokens': 54,
                         'tool_use_prompt_tokens': 132,
                         'text_prompt_tokens': 85,
                         'text_tool_use_prompt_tokens': 132,
                     },
+                    output_reasoning_tokens=54,
+                    input_tool_tokens=132,
+                    input_text_tool_tokens=132,
+                    cost=Decimal('0.0002701'),
                 ),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),

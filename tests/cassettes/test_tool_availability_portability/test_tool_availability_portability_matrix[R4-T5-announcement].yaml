@@ -1,0 +1,105 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - '*/*'
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - '1657'
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    method: POST
+    parsed_body:
+      contents:
+      - parts:
+        - text: Find the exchange-rate tool.
+        - text: '<system>The following tool(s) are now available: `lookup_exchange_rate`</system>'
+        - text: Acknowledge the available exchange-rate tool without calling it.
+        role: user
+      generationConfig:
+        responseModalities:
+        - TEXT
+      toolConfig:
+        functionCallingConfig:
+          mode: VALIDATED
+      tools:
+      - functionDeclarations:
+        - description: Provide an always-available tool so provider tool lists remain valid.
+          name: always_ready
+          parameters_json_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - description: Look up an exchange rate.
+          name: lookup_exchange_rate
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              currency:
+                type: string
+            required:
+            - currency
+            type: object
+        - description: Search first for a standalone deferred tool when current tools and catalog descriptions do not name
+            the requested operation. A capability id used as an ordinary domain word does not request that capability. This
+            cannot find capability-owned tools; load a listed capability by id instead. If no tools are found, do not retry.
+          name: search_tools
+          parameters_json_schema:
+            additionalProperties: false
+            properties:
+              queries:
+                description: List of search queries to match against tool names and descriptions. Use specific words likely
+                  to appear in tool names or descriptions to narrow down relevant tools. Each query is independently tokenized;
+                  matches across queries are unioned.
+                items:
+                  type: string
+                type: array
+            required:
+            - queries
+            type: object
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent
+  response:
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - '980'
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1995
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    parsed_body:
+      candidates:
+      - content:
+          parts:
+          - text: I have access to the `lookup_exchange_rate` tool.
+            thoughtSignature: EvMCCvACARFNMg+/yIqJpXb6Yxqz90Ix4JRXI1oHmO5KEQuqkh9/l6t/NI+OZ0IJcWh96FB9e6Qzc8NqbHmMwPBijQEG3J3FqrpBmKIGUtPOsgtRLNkz+GrOsIPA54TNmZL2TSXP6s2IxYNmUW7nWTJyMLlNb2LpQL8ZL2suuGZcvmHNKs489/qR3oV3mpVyIkN/j06pBySpap08nnkxpAspSIJvEu7Qoo6SgjCd4x6EQ8pMr9KKfGjE7fBONULJlk17doeDMrUuGLAPalVNaQ5uYkEct3jECqSPtiPJgT0aLggWEkeAYp2sBh3bxOMgXcQpFvxPY36yYSc26uRrjUp3onQ1RdUkoMm4qPzDNdCvBUWtEGZUIcHlVba4hk/a2eACoIEPpBuxdi2spLtZT+/DW9OegJ8leYwc/vLXs/GttjQ88D7Qwdg/n0WwtfMj8ZOOLWycLM2yhx68GEYgsnUmwGWRl9d33Ry0xjz6h/rOn0txpEU=
+          role: model
+        finishReason: STOP
+        index: 0
+      modelVersion: gemini-3-flash-preview
+      responseId: NKRzapWWGK2Bz7IPy4-KmA4
+      usageMetadata:
+        candidatesTokenCount: 14
+        promptTokenCount: 277
+        promptTokensDetails:
+        - modality: TEXT
+          tokenCount: 277
+        serviceTier: standard
+        thoughtsTokenCount: 75
+        totalTokenCount: 366
+    status:
+      code: 200
+      message: OK
+version: 1

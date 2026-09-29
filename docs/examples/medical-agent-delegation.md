@@ -1,3 +1,7 @@
+---
+description: "A multi-agent Pydantic AI example where a medical triage agent delegates to specialist agents through tools and combines their structured reports."
+---
+
 Medical triage and delegation system built with **Pydantic AI**, demonstrating how an orchestrator agent (`triage_agent`) coordinates multiple specialized agents (e.g. cardiology, neurology, and senior clinician).
 
 Demonstrates:
@@ -31,15 +35,4 @@ With [dependencies installed and environment variables set](./setup.md#usage), r
 
 ```bash
 python -m pydantic_ai_examples.medical_agent_delegation
-
-Make sure to set a valid **Cohere API key** or replace the model reference:
-
-```bash
-export CO_API_KEY="your-cohere-api-key"
-```
-
-You may also switch to an OpenAI or Anthropic model if preferred:
-
-```python
-MODEL = 'openai:gpt-5.2'
 ```

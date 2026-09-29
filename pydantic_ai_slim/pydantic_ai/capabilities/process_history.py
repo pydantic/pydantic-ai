@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai import messages as _messages
 from pydantic_ai._history_processor import HistoryProcessor as HistoryProcessorFunc
-from pydantic_ai._utils import is_async_callable, run_in_executor, takes_run_context
+from pydantic_ai._utils import await_maybe, is_async_callable, run_in_executor, takes_run_context
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability
@@ -56,7 +56,8 @@ async def _run_history_processor(
         else:
             return await cast('_AsyncNoCtx', processor)(messages)
     else:
+        # A plain `def` may still return an awaitable, which `run_in_executor` would leave un-awaited.
         if takes_ctx:
-            return await run_in_executor(cast('_SyncWithCtx', processor), ctx, messages)
+            return await await_maybe(await run_in_executor(cast('_SyncWithCtx', processor), ctx, messages))
         else:
-            return await run_in_executor(cast('_SyncNoCtx', processor), messages)
+            return await await_maybe(await run_in_executor(cast('_SyncNoCtx', processor), messages))

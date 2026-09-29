@@ -14,7 +14,7 @@ def harmony_model_profile(model_name: str) -> ModelProfile | None:
         OpenAIModelProfile(
             supports_thinking=True,
             thinking_always_enabled=True,
-            openai_supports_tool_choice_required=False,
+            supports_forced_tool_choice=False,
             ignore_streamed_leading_whitespace=True,
         ),
     )

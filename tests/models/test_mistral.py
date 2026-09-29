@@ -5,15 +5,17 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
+from enum import Enum
 from functools import cached_property
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from cassetter import Cassette
 from pydantic import BaseModel
 from typing_extensions import NotRequired, TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     BinaryContent,
@@ -29,18 +31,20 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UploadedFile,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     VideoUrl,
 )
 from pydantic_ai.agent import Agent
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.messages import BinaryImage
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, ToolDefinition
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .._inline_snapshot import snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, raise_if_exception, try_import
+from ..cassette_utils import request_json
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
 with try_import() as imports_successful:
@@ -83,8 +87,27 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='mistral or openai not installed'),
-    pytest.mark.anyio,
 ]
+
+
+def test_mistral_hidden_tools_stay_off_the_wire():
+    """Guard Mistral's single-line switch from `tool_defs` to `declared_tool_defs`."""
+    model = MistralModel('mistral-small-latest', provider=MistralProvider(api_key='foobar'))
+    hidden = ToolDefinition(
+        name='process_refund',
+        description='Process a refund.',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        capability_id='refunds',
+    )
+    visible = ToolDefinition(name='visible')
+
+    _, prepared = model.prepare_request(None, ModelRequestParameters(function_tools=[hidden, visible]))
+    assert prepared.tool_visibility == {'process_refund': 'withheld', 'visible': 'visible'}
+
+    tools, _ = model._get_tool_choice(prepared, {})  # pyright: ignore[reportPrivateUsage]
+    assert tools is not None
+    assert [tool.function.name for tool in tools] == ['visible']
 
 
 @dataclass
@@ -428,7 +451,7 @@ async def test_mistral_history_uses_prompt_cache(allow_model_requests: None, mis
         model_settings=settings,
     )
 
-    second_request = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    second_request = request_json(vcr.requests[1])
     assert second_request['messages'][2]['content'] == [{'text': first.output, 'type': 'text'}]
     assert second.usage.cache_read_tokens >= 64
 
@@ -583,7 +606,9 @@ async def test_stream_usage_with_cached_tokens(allow_model_requests: None):
             pass
 
     # `prompt_tokens_details.cached_tokens` is surfaced as first-class `cache_read_tokens`.
-    assert result.usage == snapshot(RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1))
+    assert result.usage == snapshot(
+        RunUsage(input_tokens=1013, cache_read_tokens=1008, output_tokens=30, requests=1, cost=Decimal('0.002206'))
+    )
 
 
 async def test_stream_text_finish_reason(allow_model_requests: None):
@@ -2322,6 +2347,25 @@ async def test_stream_tool_call_with_retry(allow_model_requests: None):
 #####################
 
 
+@pytest.mark.parametrize(
+    'any_of,expected',
+    [
+        pytest.param([{'type': 'number', 'const': 0.5}, {'type': 'number', 'const': 1.5}], 'float', id='floats'),
+        pytest.param([{'const': 0.5}, {'const': 1.5}], 'float', id='floats without a declared type'),
+        pytest.param([{'type': 'integer', 'const': 0}, {'type': 'integer', 'const': 1}], 'int', id='integers'),
+        pytest.param([{'const': True}, {'const': False}], 'bool', id='booleans'),
+        pytest.param([{'const': 'low', 'description': 'Can wait.'}, {'const': 'high'}], 'str', id='strings'),
+    ],
+)
+def test_described_options_keep_the_type_their_constants_have(any_of: list[dict[str, Any]], expected: str):
+    """An `Enum` with member docstrings renders as `anyOf` of `const`s, which Mistral's JSON mode describes.
+
+    Inferring the type from the first constant treated a `float` as a `str`, because it is neither a `bool`
+    nor an `int`, so the generated prompt asked for the wrong type and the answer failed validation.
+    """
+    assert MistralModel._get_python_type({'anyOf': any_of}) == expected  # pyright: ignore[reportPrivateUsage]
+
+
 def test_generate_user_output_format_complex(mistral_api_key: str):
     """
     Single test that includes properties exercising every branch
@@ -2343,6 +2387,12 @@ def test_generate_user_output_format_complex(mistral_api_key: str):
             'prop_object_object': {'type': 'object', 'additionalProperties': {'type': 'object'}},
             'prop_object_unknown': {'type': 'object', 'additionalProperties': {'type': 'someUnknownType'}},
             'prop_unrecognized_type': {'type': 'customSomething'},
+            # An `Enum` with member docstrings renders as `anyOf` of described `const`s: still one typed value
+            'prop_described_options': {
+                'type': 'string',
+                'anyOf': [{'const': 'low', 'description': 'Can wait.'}, {'const': 'high'}],
+            },
+            'prop_described_ints': {'anyOf': [{'const': 1}, {'const': 2}]},
         }
     }
     m = MistralModel('', json_mode_schema_prompt='{schema}', provider=MistralProvider(api_key=mistral_api_key))
@@ -2356,7 +2406,9 @@ def test_generate_user_output_format_complex(mistral_api_key: str):
         "'prop_object_array': 'dict[str, list[int]]', "
         "'prop_object_object': 'dict[str, dict[str, Any]]', "
         "'prop_object_unknown': 'dict[str, Any]', "
-        "'prop_unrecognized_type': 'Any'}"
+        "'prop_unrecognized_type': 'Any', "
+        "'prop_described_options': 'str', "
+        "'prop_described_ints': 'int'}"
     )
 
 
@@ -2561,7 +2613,7 @@ async def test_image_as_binary_content_tool_response(
             ),
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_image', args='{}', tool_call_id='FI5qQGzDE')],
-                usage=RequestUsage(input_tokens=65, output_tokens=16),
+                usage=RequestUsage(input_tokens=65, output_tokens=16, cost=Decimal('0.00001215')),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
@@ -2591,7 +2643,7 @@ async def test_image_as_binary_content_tool_response(
                         content='The image shows a kiwi fruit that has been cut in half. Kiwis are small, oval-shaped fruits with a bright green flesh and tiny black seeds. They have a sweet and tangy flavor and are known for being rich in vitamin C and fiber.'
                     )
                 ],
-                usage=RequestUsage(input_tokens=1540, output_tokens=54),
+                usage=RequestUsage(input_tokens=1540, output_tokens=54, cost=Decimal('0.0002391')),
                 model_name='pixtral-12b-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
@@ -3012,7 +3064,7 @@ async def test_mistral_forwards_penalties(allow_model_requests: None, mistral_ap
     result = await agent.run('hello')
 
     assert result.output
-    sent = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    sent = request_json(vcr.requests[0])
     assert sent['presence_penalty'] == 0.5
     assert sent['frequency_penalty'] == 0.25
 
@@ -3056,7 +3108,13 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=13, output_tokens=1616, details={'reasoning_tokens': 1344}),
+                usage=RequestUsage(
+                    input_tokens=13,
+                    output_tokens=1616,
+                    output_reasoning_tokens=1344,
+                    details={'reasoning_tokens': 1344},
+                    cost=Decimal('0.0071247'),
+                ),
                 model_name='o3-mini-2025-01-31',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -3064,6 +3122,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 5, 22, 29, 38, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68bb6452990081968f5aff503a55e3b903498c8aa840cf12',
                 finish_reason='stop',
@@ -3097,7 +3156,7 @@ async def test_mistral_model_thinking_part(allow_model_requests: None, openai_ap
                     ThinkingPart(content=IsStr()),
                     TextPart(content=IsStr()),
                 ],
-                usage=RequestUsage(input_tokens=664, output_tokens=747),
+                usage=RequestUsage(input_tokens=664, output_tokens=747, cost=Decimal('0.005063')),
                 model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
@@ -3168,7 +3227,7 @@ By following these steps, you can ensure a safe crossing.\
 """
                     ),
                 ],
-                usage=RequestUsage(input_tokens=10, output_tokens=232),
+                usage=RequestUsage(input_tokens=10, output_tokens=232, cost=Decimal('0.00118')),
                 model_name='magistral-medium-latest',
                 timestamp=IsDatetime(),
                 provider_name='mistral',
@@ -3680,3 +3739,59 @@ async def test_parallel_tool_calls_stream(allow_model_requests: None) -> None:
         text = await result.get_output()
     assert text == 'hello'
     assert mock_client.chat_completion_kwargs[-1]['parallel_tool_calls'] is True
+
+
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@pytest.mark.vcr()
+async def test_mistral_enum_member_docstrings_reach_the_wire(
+    allow_model_requests: None, mistral_api_key: str, request_capture: RequestCapture
+):
+    """A documented enum goes to Mistral as `anyOf` of `const`s with descriptions, and the model calls with one."""
+    provider = MistralProvider(api_key=mistral_api_key, http_client=request_capture.client)
+    agent = Agent(
+        MistralModel('mistral-small-latest', provider=provider), instructions='Set the priority of the ticket.'
+    )
+
+    @agent.tool_plain
+    def set_priority(priority: TicketPriority) -> str:
+        return f'Priority set to {priority.value}.'
+
+    result = await agent.run('Production is down for every customer.')
+    calls = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert calls[0].args_as_dict() == {'priority': 'high'}
+    body = request_capture.body('/chat/completions')
+    assert cast(list[dict[str, Any]], body['tools'])[0]['function']['parameters'] == snapshot(
+        {
+            '$defs': {
+                'TicketPriority': {
+                    'anyOf': [
+                        {'const': 'low', 'description': 'Can wait a week.'},
+                        {'const': 'high', 'description': 'Needs attention today.'},
+                    ],
+                    'description': 'How urgent the ticket is.',
+                    'title': 'TicketPriority',
+                    'type': 'string',
+                }
+            },
+            'additionalProperties': False,
+            'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
+            'required': ['priority'],
+            'type': 'object',
+        }
+    )

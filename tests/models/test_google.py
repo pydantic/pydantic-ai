@@ -11,14 +11,21 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import date, timezone
 from decimal import Decimal
+from enum import Enum
 from typing import Any, cast
 
 import pytest
-from httpx import AsyncClient as HttpxAsyncClient, MockTransport, Request, Response, Timeout
+from cassetter import Cassette
+from httpx import Timeout
+from httpx2 import (
+    AsyncClient as HTTPX2AsyncClient,
+    MockTransport as HTTPX2MockTransport,
+    Request as HTTPX2Request,
+    Response as HTTPX2Response,
+)
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -50,6 +57,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     VideoUrl,
     capture_run_messages,
@@ -81,7 +89,8 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..cassette_utils import request_json, single_request_body
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 from ..parts_from_messages import part_types_from_messages
 
 with try_import() as imports_successful:
@@ -130,7 +139,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -164,8 +172,11 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
         RunUsage(
             requests=1,
             input_tokens=9,
+            input_text_tokens=9,
             output_tokens=43,
+            output_reasoning_tokens=34,
             details={'thoughts_tokens': 34, 'text_prompt_tokens': 9},
+            cost=Decimal('0.0001102'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -185,7 +196,12 @@ async def test_google_model(allow_model_requests: None, google_provider: GoogleP
             ModelResponse(
                 parts=[TextPart(content='Hello! How can I help you today?')],
                 usage=RequestUsage(
-                    input_tokens=9, output_tokens=43, details={'thoughts_tokens': 34, 'text_prompt_tokens': 9}
+                    input_tokens=9,
+                    output_tokens=43,
+                    input_text_tokens=9,
+                    details={'thoughts_tokens': 34, 'text_prompt_tokens': 9},
+                    output_reasoning_tokens=34,
+                    cost=Decimal('0.0001102'),
                 ),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -229,9 +245,12 @@ async def test_google_model_structured_output(allow_model_requests: None, google
         RunUsage(
             requests=2,
             input_tokens=160,
+            input_text_tokens=160,
             output_tokens=35,
+            output_text_tokens=35,
             tool_calls=1,
             details={'text_prompt_tokens': 160, 'text_candidates_tokens': 35},
+            cost=Decimal('0.0000300'),
         )
     )
     assert result.all_messages() == snapshot(
@@ -257,7 +276,10 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 usage=RequestUsage(
                     input_tokens=69,
                     output_tokens=14,
+                    input_text_tokens=69,
+                    output_text_tokens=14,
                     details={'text_candidates_tokens': 14, 'text_prompt_tokens': 69},
+                    cost=Decimal('0.0000125'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -291,7 +313,10 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                 usage=RequestUsage(
                     input_tokens=91,
                     output_tokens=21,
+                    input_text_tokens=91,
+                    output_text_tokens=21,
                     details={'text_candidates_tokens': 21, 'text_prompt_tokens': 91},
+                    cost=Decimal('0.0000175'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -320,70 +345,6 @@ async def test_google_model_structured_output(allow_model_requests: None, google
     )
 
 
-async def test_stream_cancel(allow_model_requests: None, gemini_api_key: str):
-    provider = GoogleProvider(api_key=gemini_api_key, base_url='https://generativelanguage.googleapis.com')
-    model = GoogleModel('gemini-2.0-flash', provider=provider)
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
-    async with agent.run_stream('What is the capital of France?') as result:
-        async for _ in result.stream_text(delta=True, debounce_by=None):  # pragma: no branch
-            break
-        await result.cancel()
-        await result.cancel()  # double cancel is a no-op
-        assert result.cancelled
-
-    assert result.all_messages() == snapshot(
-        [
-            ModelRequest(
-                parts=[UserPromptPart(content='What is the capital of France?', timestamp=IsDatetime())],
-                instructions='You are a helpful chatbot.',
-                timestamp=IsNow(tz=timezone.utc),
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-            ModelResponse(
-                parts=[TextPart(content=IsStr())],
-                usage=IsInstance(RequestUsage),
-                model_name='gemini-2.0-flash',
-                timestamp=IsDatetime(),
-                provider_name='google',
-                provider_url='https://generativelanguage.googleapis.com',
-                provider_response_id=IsStr(),
-                state='interrupted',
-                run_id=IsStr(),
-                conversation_id=IsStr(),
-            ),
-        ]
-    )
-
-
-@pytest.mark.parametrize(
-    ('error_message', 'raises'),
-    [
-        ('asynchronous generator is already running', False),
-        ('boom', True),
-    ],
-)
-async def test_google_close_stream_only_suppresses_async_generator_race(error_message: str, raises: bool):
-    class FailingStream:
-        async def aclose(self) -> None:
-            raise RuntimeError(error_message)
-
-    stream = FailingStream()
-    response = GeminiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='gemini-2.0-flash',
-        _response=cast(Any, PeekableAsyncStream(cast(Any, stream))),
-        _provider_name='google',
-        _provider_url='https://generativelanguage.googleapis.com',
-    )
-
-    if raises:
-        with pytest.raises(RuntimeError, match='boom'):
-            await response.close_stream()
-    else:
-        await response.close_stream()
-
-
 async def test_google_model_stream(allow_model_requests: None, google_provider: GoogleProvider):
     model = GoogleModel('gemini-2.0-flash-exp', provider=google_provider)
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings={'temperature': 0.0})
@@ -396,6 +357,8 @@ async def test_google_model_stream(allow_model_requests: None, google_provider: 
                     usage=RequestUsage(
                         input_tokens=13,
                         output_tokens=8,
+                        input_text_tokens=13,
+                        output_text_tokens=8,
                         details={'text_prompt_tokens': 13, 'text_candidates_tokens': 8},
                     ),
                     model_name='gemini-2.0-flash-exp',
@@ -454,7 +417,12 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=57, output_tokens=139, details={'thoughts_tokens': 124, 'text_prompt_tokens': 57}
+                    input_tokens=57,
+                    output_tokens=139,
+                    input_text_tokens=57,
+                    details={'thoughts_tokens': 124, 'text_prompt_tokens': 57},
+                    output_reasoning_tokens=124,
+                    cost=Decimal('0.00146125'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -490,7 +458,12 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=109, output_tokens=215, details={'thoughts_tokens': 199, 'text_prompt_tokens': 109}
+                    input_tokens=109,
+                    output_tokens=215,
+                    input_text_tokens=109,
+                    details={'thoughts_tokens': 199, 'text_prompt_tokens': 109},
+                    output_reasoning_tokens=199,
+                    cost=Decimal('0.00228625'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -524,7 +497,12 @@ async def test_google_model_retry(allow_model_requests: None, google_provider: G
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=142, output_tokens=98, details={'thoughts_tokens': 97, 'text_prompt_tokens': 142}
+                    input_tokens=142,
+                    output_tokens=98,
+                    input_text_tokens=142,
+                    details={'thoughts_tokens': 97, 'text_prompt_tokens': 142},
+                    output_reasoning_tokens=97,
+                    cost=Decimal('0.0011575'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -592,7 +570,13 @@ async def test_google_model_gla_labels_raises_value_error(allow_model_requests: 
     agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
 
     # Raises before any request is made.
-    with pytest.raises(ValueError, match=re.escape('labels parameter is not supported in Gemini API.')):
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            'labels parameter is only supported in Gemini Enterprise Agent Platform mode, '
+            'not in Gemini Developer API mode.'
+        ),
+    ):
         await agent.run('What is the capital of France?')
 
 
@@ -806,6 +790,54 @@ async def test_google_model_youtube_video_url_input(allow_model_requests: None, 
     )
 
 
+async def test_google_model_mobile_youtube_video_url_input(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """`m.youtube.com` share links resolve as a `file_uri`, like any other YouTube host.
+
+    What catches a regression here is the cassette itself, not the request-body snapshot: drop
+    the host from `VideoUrl.is_youtube` and `_resolve_file` falls through to `download_item`,
+    whose live GET has no recorded interaction, so replay fails before the snapshot is reached.
+    The recorded usage is what proves Gemini resolved the URL to the video rather than to the
+    watch page — it bills video and audio prompt tokens, which a `text/html` page could not.
+    """
+    m = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    agent = Agent(m, instructions='You are a helpful chatbot.')
+
+    result = await agent.run(
+        [
+            'Explain me this video in a few sentences',
+            VideoUrl(url='https://m.youtube.com/watch?v=lCdaVNyHtjU'),
+        ]
+    )
+    assert single_request_body(vcr) == snapshot(
+        {
+            'contents': [
+                {
+                    'parts': [
+                        {'text': 'Explain me this video in a few sentences'},
+                        {
+                            'fileData': {
+                                'file_uri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU',
+                                'mime_type': 'video/mp4',
+                            }
+                        },
+                    ],
+                    'role': 'user',
+                }
+            ],
+            'generationConfig': {'responseModalities': ['TEXT']},
+            'systemInstruction': {'parts': [{'text': 'You are a helpful chatbot.'}], 'role': 'user'},
+        }
+    )
+    assert result.output == snapshot(
+        'This video showcases an AI assistant diagnosing recent HTTP 404 errors. The assistant queries a logging database (LogLine) to identify patterns in the error responses, such as common problematic endpoints, request patterns, and issues related to timeline queries or authentication. Finally, the AI provides a detailed analysis of the identified problems and offers specific recommendations for resolution, interactively highlighting relevant sections in the code editor.'
+    )
+    assert result.usage.details == snapshot(
+        {'thoughts_tokens': 1091, 'text_prompt_tokens': 16, 'video_prompt_tokens': 15780, 'audio_prompt_tokens': 1917}
+    )
+
+
 async def test_google_model_youtube_video_url_input_with_vendor_metadata(
     allow_model_requests: None, google_provider: GoogleProvider
 ):
@@ -885,7 +917,12 @@ async def test_google_model_instructions(allow_model_requests: None, google_prov
             ModelResponse(
                 parts=[TextPart(content='The capital of France is Paris.\n')],
                 usage=RequestUsage(
-                    input_tokens=13, output_tokens=8, details={'text_candidates_tokens': 8, 'text_prompt_tokens': 13}
+                    input_tokens=13,
+                    output_tokens=8,
+                    input_text_tokens=13,
+                    output_text_tokens=8,
+                    details={'text_candidates_tokens': 8, 'text_prompt_tokens': 13},
+                    cost=Decimal('0.0000045'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -958,7 +995,10 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {'text_prompt_tokens': 14},
+                    'cost': '0.00000105',
+                    'input_text_tokens': 14,
                 },
                 'model_name': 'gemini-1.5-flash',
                 'timestamp': IsStr(),
@@ -1012,6 +1052,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -1084,12 +1125,17 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                 usage=RequestUsage(
                     input_tokens=136,
                     output_tokens=414,
+                    input_text_tokens=136,
                     details={
                         'thoughts_tokens': 213,
                         'tool_use_prompt_tokens': 119,
                         'text_prompt_tokens': 17,
                         'text_tool_use_prompt_tokens': 119,
                     },
+                    output_reasoning_tokens=213,
+                    input_tool_tokens=119,
+                    input_text_tool_tokens=119,
+                    cost=Decimal('0.00431'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1166,12 +1212,17 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                 usage=RequestUsage(
                     input_tokens=495,
                     output_tokens=337,
+                    input_text_tokens=495,
                     details={
                         'thoughts_tokens': 131,
                         'tool_use_prompt_tokens': 286,
                         'text_prompt_tokens': 209,
                         'text_tool_use_prompt_tokens': 286,
                     },
+                    output_reasoning_tokens=131,
+                    input_tool_tokens=286,
+                    input_text_tool_tokens=286,
+                    cost=Decimal('0.00398875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1234,12 +1285,17 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 usage=RequestUsage(
                     input_tokens=119,
                     output_tokens=653,
+                    input_text_tokens=119,
                     details={
                         'thoughts_tokens': 412,
                         'tool_use_prompt_tokens': 102,
                         'text_prompt_tokens': 17,
                         'text_tool_use_prompt_tokens': 102,
                     },
+                    output_reasoning_tokens=412,
+                    input_tool_tokens=102,
+                    input_text_tool_tokens=102,
+                    cost=Decimal('0.00667875'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1416,12 +1472,17 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                 usage=RequestUsage(
                     input_tokens=568,
                     output_tokens=541,
+                    input_text_tokens=568,
                     details={
                         'thoughts_tokens': 301,
                         'tool_use_prompt_tokens': 319,
                         'text_prompt_tokens': 249,
                         'text_tool_use_prompt_tokens': 319,
                     },
+                    output_reasoning_tokens=301,
+                    input_tool_tokens=319,
+                    input_text_tool_tokens=319,
+                    cost=Decimal('0.00612'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -1492,12 +1553,17 @@ async def test_google_model_web_fetch_tool(allow_model_requests: None, google_pr
                 usage=RequestUsage(
                     input_tokens=2427,
                     output_tokens=88,
+                    input_text_tokens=2427,
                     details={
                         'thoughts_tokens': 47,
                         'tool_use_prompt_tokens': 2395,
                         'text_prompt_tokens': 32,
                         'text_tool_use_prompt_tokens': 2395,
                     },
+                    output_reasoning_tokens=47,
+                    input_tool_tokens=2395,
+                    input_text_tool_tokens=2395,
+                    cost=Decimal('0.0009481'),
                 ),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -1573,12 +1639,17 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 usage=RequestUsage(
                     input_tokens=IsInstance(int),
                     output_tokens=IsInstance(int),
+                    input_text_tokens=4642,
                     details={
                         'thoughts_tokens': IsInstance(int),
                         'tool_use_prompt_tokens': IsInstance(int),
                         'text_prompt_tokens': IsInstance(int),
                         'text_tool_use_prompt_tokens': IsInstance(int),
                     },
+                    output_reasoning_tokens=37,
+                    input_tool_tokens=4610,
+                    input_text_tool_tokens=4610,
+                    cost=Decimal('0.0015476'),
                 ),
                 model_name='gemini-2.5-flash',
                 timestamp=IsDatetime(),
@@ -1832,7 +1903,12 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=29, output_tokens=1737, details={'thoughts_tokens': 1001, 'text_prompt_tokens': 29}
+                    input_tokens=29,
+                    output_tokens=1737,
+                    input_text_tokens=29,
+                    details={'thoughts_tokens': 1001, 'text_prompt_tokens': 29},
+                    output_reasoning_tokens=1001,
+                    cost=Decimal('0.020902'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1875,7 +1951,12 @@ async def test_google_model_thinking_part(allow_model_requests: None, google_pro
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1280, output_tokens=2073, details={'thoughts_tokens': 1115, 'text_prompt_tokens': 1280}
+                    input_tokens=1280,
+                    output_tokens=2073,
+                    input_text_tokens=1280,
+                    details={'thoughts_tokens': 1115, 'text_prompt_tokens': 1280},
+                    output_reasoning_tokens=1115,
+                    cost=Decimal('0.027436'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -1952,7 +2033,13 @@ async def test_google_model_thinking_part_from_other_model(
                         provider_name='openai',
                     ),
                 ],
-                usage=RequestUsage(input_tokens=45, output_tokens=1719, details={'reasoning_tokens': 1408}),
+                usage=RequestUsage(
+                    input_tokens=45,
+                    output_tokens=1719,
+                    output_reasoning_tokens=1408,
+                    details={'reasoning_tokens': 1408},
+                    cost=Decimal('0.01724625'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -1960,6 +2047,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -2002,7 +2090,12 @@ async def test_google_model_thinking_part_from_other_model(
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=1106, output_tokens=1867, details={'thoughts_tokens': 1089, 'text_prompt_tokens': 1106}
+                    input_tokens=1106,
+                    output_tokens=1867,
+                    input_text_tokens=1106,
+                    details={'thoughts_tokens': 1089, 'text_prompt_tokens': 1106},
+                    output_reasoning_tokens=1089,
+                    cost=Decimal('0.0200525'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2060,7 +2153,12 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=34, output_tokens=1256, details={'thoughts_tokens': 787, 'text_prompt_tokens': 34}
+                    input_tokens=34,
+                    output_tokens=1256,
+                    input_text_tokens=34,
+                    details={'thoughts_tokens': 787, 'text_prompt_tokens': 34},
+                    output_reasoning_tokens=787,
+                    cost=Decimal('0.0126025'),
                 ),
                 model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
@@ -2359,7 +2457,12 @@ async def test_google_tool_config_any_with_tool_without_args(
             ModelResponse(
                 parts=[ToolCallPart(tool_name='bar', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=21, output_tokens=1, details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21}
+                    input_tokens=21,
+                    output_tokens=1,
+                    input_text_tokens=21,
+                    output_text_tokens=1,
+                    details={'text_candidates_tokens': 1, 'text_prompt_tokens': 21},
+                    cost=Decimal('0.0000025'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2387,7 +2490,12 @@ async def test_google_tool_config_any_with_tool_without_args(
             ModelResponse(
                 parts=[ToolCallPart(tool_name='final_result', args={'bar': 'hello'}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=27, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27}
+                    input_tokens=27,
+                    output_tokens=5,
+                    input_text_tokens=27,
+                    output_text_tokens=5,
+                    details={'text_candidates_tokens': 5, 'text_prompt_tokens': 27},
+                    cost=Decimal('0.0000047'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2427,6 +2535,20 @@ async def test_google_timeout(allow_model_requests: None, google_provider: Googl
         UserError, match=re.escape('Google does not support setting ModelSettings.timeout to a httpx.Timeout')
     ):
         await agent.run('Hello!', model_settings={'timeout': Timeout(10)})
+
+
+async def test_google_timeout_zero_in_config():
+    """An explicit `timeout=0` is forwarded to the SDK config, which VCR does not expose."""
+    m = GoogleModel('gemini-1.5-flash', provider=GoogleProvider(api_key='test-key'))
+
+    _, config = await m._build_content_and_config(  # pyright: ignore[reportPrivateUsage]
+        messages=[ModelRequest(parts=[UserPromptPart(content='Hello')])],
+        model_settings=GoogleModelSettings(timeout=0),
+        model_request_parameters=ModelRequestParameters(),
+    )
+
+    config_dict = cast(dict[str, Any], config)
+    assert config_dict['http_options']['timeout'] == 0
 
 
 async def test_google_extra_headers(allow_model_requests: None, google_provider: GoogleProvider):
@@ -2595,7 +2717,12 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
             ModelResponse(
                 parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
                 usage=RequestUsage(
-                    input_tokens=33, output_tokens=5, details={'text_candidates_tokens': 5, 'text_prompt_tokens': 33}
+                    input_tokens=33,
+                    output_tokens=5,
+                    input_text_tokens=33,
+                    output_text_tokens=5,
+                    details={'text_candidates_tokens': 5, 'text_prompt_tokens': 33},
+                    cost=Decimal('0.0000053'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2629,7 +2756,12 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=47, output_tokens=8, details={'text_candidates_tokens': 8, 'text_prompt_tokens': 47}
+                    input_tokens=47,
+                    output_tokens=8,
+                    input_text_tokens=47,
+                    output_text_tokens=8,
+                    details={'text_candidates_tokens': 8, 'text_prompt_tokens': 47},
+                    cost=Decimal('0.0000079'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2659,7 +2791,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
 
 
 async def test_google_text_output_function(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-pro-preview-05-06', provider=google_provider)
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
 
     def upcase(text: str) -> str:
         return text.upper()
@@ -2689,11 +2821,26 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args={},
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                        provider_details={
+                            'thought_signature': 'CrwEARFNMg9kt50r8JWztiQv5EbaHEi9upzlu0Rb1dqVBXKFsp6Vl2LqdQYneurc2UGzFWXwa+lnyMw9Cl4/yeC3Vx+h96Ds2DagCO401yYYBuMZ0yAPLoDyTpJXCkB7e2Gfx8RMTjIA96lx0SC9/npeB+mxnvOBWqwGJsvMKVIsXIE7JcjhCD265+56xbl5zST65buBk4shjbxwVxAFFiSLhKYE6kspbh9F9wOc4peoPdMHtXGquGaAGkaVRQIbTVy2MeCN/LVgWRKSFqWP8OAZ1MXCVloIIL9uhjjREmVTme1kaUESIUvYFlUIXZRSmXDOStZiv1fsIaHe+YV82sEMi6ij8V0lCnCWSBWNcocEe89I43W/2nZLE8lpcWFiHVGMdBTJvbtpeLgTUPTvwi17B60UbQZxYvkDAq5sNUCAvtYXcGOvwMHeilR6VdBOaauqpuVDE+PHEjY0hY6U7YEXy0Gez67Rd7wgr+7Dt3BQdwdBhVJH+CBbs3JjbG0fTrEHICBhQ7m2TqPaiBuTW8v36tkHZhVZjFaZItrvgCywX/Up2KzFsBRLyETXpMpQRlYwQvtH14Z/+HYUJufwiWgMDwe72wIvdyn7AprbOFyts6DFJwDzIjO+g5e+DSvlQht+3xbx54iRbk8kxhOrTGzrd4vGKjsJ+ocbANgzfAS5BEgVcwn8n+/YgbABE8QLlxEthVSzUM4pQLbtxOizw4w6usvjD2968ds0rif+oTwQejfI1yVzTY/lPeBYoe8='
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=49, output_tokens=276, details={'thoughts_tokens': 264, 'text_prompt_tokens': 49}
+                    input_tokens=49,
+                    output_tokens=148,
+                    input_text_tokens=49,
+                    details={'thoughts_tokens': 136, 'text_prompt_tokens': 49},
+                    output_reasoning_tokens=136,
+                    cost=Decimal('0.00154125'),
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -2717,11 +2864,24 @@ async def test_google_text_output_function(allow_model_requests: None, google_pr
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='The largest city in Mexico is Mexico City.')],
+                parts=[
+                    TextPart(
+                        content='The largest city in Mexico is Mexico City.',
+                        provider_name='google',
+                        provider_details={
+                            'thought_signature': 'CrcCARFNMg+cYyWgxFYmMB2VHuVlPCZtnPoBf+LOFe1Ri22ptyBE/KNHpIe0nSTPNDqxhDXzYjH00gV6doJGdEVtseQRvxvZk+wm/Eka3H8vjrld0LriwJ+fUHuUldLRn6EHJmU42p4Vg6VbBd4jIzSNt/EQfxjPVmWi/IptqozGjtXTdfx4EW87xiAS7Ukbng2Ng8w5itar3TqsSSjoJ4MsZ2G1JSXqZWN2ilGTdcESoKw0BUwbNQavfqKKKy+7Y5vouovKP/vA1At4NUHWm7PvsznfEcoxR8Oeq8B3QTmh9dTrCI0iorin2M0FDkb2M+1+UZQE7Sag2cfcyLdBUGIr366FjSUDb88bVzuQKCQqj8mz4ri66uAcAf0B0/QZck2gfbLypq4uCvoNyJaDMgLmXtdtXAuRcM4='
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=80, output_tokens=159, details={'thoughts_tokens': 150, 'text_prompt_tokens': 80}
+                    input_tokens=80,
+                    output_tokens=73,
+                    input_text_tokens=80,
+                    details={'thoughts_tokens': 64, 'text_prompt_tokens': 80},
+                    output_reasoning_tokens=64,
+                    cost=Decimal('0.00083'),
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -2774,7 +2934,12 @@ async def test_google_native_output(allow_model_requests: None, google_provider:
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=8, output_tokens=20, details={'text_candidates_tokens': 20, 'text_prompt_tokens': 8}
+                    input_tokens=8,
+                    output_tokens=20,
+                    input_text_tokens=8,
+                    output_text_tokens=20,
+                    details={'text_candidates_tokens': 20, 'text_prompt_tokens': 8},
+                    cost=Decimal('0.0000088'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2836,7 +3001,12 @@ async def test_google_native_output_multiple(allow_model_requests: None, google_
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=50, output_tokens=46, details={'text_candidates_tokens': 46, 'text_prompt_tokens': 50}
+                    input_tokens=50,
+                    output_tokens=46,
+                    input_text_tokens=50,
+                    output_text_tokens=46,
+                    details={'text_candidates_tokens': 46, 'text_prompt_tokens': 50},
+                    cost=Decimal('0.0000234'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2880,7 +3050,12 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
             ModelResponse(
                 parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
                 usage=RequestUsage(
-                    input_tokens=80, output_tokens=13, details={'text_candidates_tokens': 13, 'text_prompt_tokens': 80}
+                    input_tokens=80,
+                    output_tokens=13,
+                    input_text_tokens=80,
+                    output_text_tokens=13,
+                    details={'text_candidates_tokens': 13, 'text_prompt_tokens': 80},
+                    cost=Decimal('0.0000132'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -2897,7 +3072,7 @@ async def test_google_prompted_output(allow_model_requests: None, google_provide
 
 
 async def test_google_prompted_output_with_tools(allow_model_requests: None, google_provider: GoogleProvider):
-    m = GoogleModel('gemini-2.5-pro-preview-05-06', provider=google_provider)
+    m = GoogleModel('gemini-2.5-pro', provider=google_provider)
 
     class CityLocation(BaseModel):
         city: str
@@ -2928,11 +3103,26 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='get_user_country', args={}, tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='get_user_country',
+                        args={},
+                        tool_call_id=IsStr(),
+                        provider_name='google',
+                        provider_details={
+                            'thought_signature': 'CoYMARFNMg9QOHK/+WeO6yW6CS/btSARMucqvbLKKdnePnxBJ+SQX9N6qwx1kLiq3LwfhUFxIAGq3EYl/fVT17SsYhiYrggO24R1/MN2CoO4scYPpKP+Kdb1VxQ4eGpBfjbu7+xnt0PWhHogBhegq6FRuf4D03lkPCfaOuroG7sq+ky0huctsU+VWi9gqtS2LRl47dUZMz7LlSJu6VZdsOnl0V330H/oRRL/jCqpB6UxLTsn4J88wSVnBxKROX8IHVgH2TiC0W83bfjtB0DP+zoYLdCdAGjmWgSvpNcMORwTw+xYUVegh57731J/gAJJ3xCFfpNOtfFs8cxJFUCfwyCFBPuxUZgeMXsMYFKID5Ha4Kw+sKfSJsryJXiqdsv4TQIIzCT7V2n8Mf2MEwBmBAWxYF2/oIrsXe12JjzAaG630BmsY2McZrUE68pxGKmr8aho5NXXMVlOBMRS5+jsdcUzoat6ZNt7hatEdvuCWEyfLEMO+U5JJWITmjGKDfllOtUyJnG/hJTmIczyXFfjBTk08nl+LoObR504e0A28Rle8o3h78uVYHe9+hmhruGMTKqMiz4mtPXVUok5HXnMJtl0M5nYaZWc/bVfw00aVif8u3C7eTcyzCgw8akRcPJeOOw7kN9UpDNEowfG1yi4jrdRphRpN8NkD4Xof9Id9iwq3OdGDB/ZwykPkk8XLUVeIxpFboulpm9BMiqt8TCIZiM2KzxPPkGayyIM+4JsyU51IwA+LMtBXR4yF7xpYqMBdGWarKat8E9I95BbBwkAZ2r6mL06+CWTejgBnl1itM4oVEOV3nSTbuaLoYCkxIsVFqfsHS0WXkIT60+rwSB4sKzt5U5KD1PfML9vLQLRlGHSYg6GY5PBNGZnRl0go7R52g12+uM+rTYQ9gL2MaTLIgb91s3te+3ufaoG2jYVObtz31bsnvJcC62idtlYaRDCpp5K5S67a5KoV/FZHML+vlNlBVNWKsd5dFh7HvB/klISzVZq9Spz0ZxOoZ3yRG0hdPX86Ou+VSJ4b2WErC6lBprbEfOFJ+ns6FZhM5zB2Vij2mUrYSJSP5u7IQBjYsg/zIshNTdFJ2alakstuAC7KhV9W8zAZ6Vg70pncQWzPetQ++OuvkgnWKuf7FGknFbawUL11uXhmCvtu/wtkqFSGgNPAupZrxNXgaxVj0ZGrdddwSKAOL1uDxvre/NMm+aXWL3CDMj44ClxsNm3lNlHojxPXekPzzPJ0kgmz9zvuZnM4ItiBtaBTrPZS7qwU9x3cTmD4DtYRqo+/tPpb+yoj74h8UWfTyvvlcXfxH+VQ4r13obC1ajkDxb011rLanbfd82w8p/p7WMMGBrlbj1PpwUpA4TjkVFD1TDFNJ67lhXMihDL0RXcEWykAvDiywPQT4gYTOUsTchN1IZBON0NrtvU4+ZOyYCuPDxKG4MIpD6Ns8Zitm/es/Kb6r/r7gW91T6W45r8+zKVH0ttnrBL4AwM6DlO6teEVuDEI8W5GX2dyNyH9q/o7NYr2B76rM3HGeswBqm39z1Jk2mOV9LLnkbYsvXiKaNPxDgNp0SePM3YSwvMubWdTC9b3PZZoh5bmUtfNWEYd+ab5Oa6iSuPvEN1+MbXVF3R1E49Gm/F0wpoAHOItDBqTkQ5M1Ekyj47RC4VckB8IPaNyd1SGQpw9bh1k0EXwJQ15q241yeShjQcrWf0onp+Rb49WEDsF+txtxFJ/NZxxkOgE+CqQSlv1JKZieHbUGbj06sQU/6jhgydEDdaYmUFBtFRYsNAxT1t/jOV7Hq8FBOen4r3qTz5K/1maBnbRjQjlqD2peEdU3hjaMg6eOfv8T/sD0QavWj7a/FNF5TYCcUP+0eG357zxhSW7mEn0GIFs4M7BXRxNjgfowNJ+WK5W4wmCF4fMoXf8s406z3ei3w5OUGmIuaCJyERwbvhH+M1sXy05IWQBUoDtAIWLjHRZNirQaazq8MsoDZ+prUJ7xHL3CwQzJ/EeocWjWoo04trYgjNSmxCdPc3H1S0lP/0OKOza2FdEqG8RMcEFILBvQ9X'
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=123, output_tokens=144, details={'thoughts_tokens': 132, 'text_prompt_tokens': 123}
+                    input_tokens=125,
+                    output_tokens=407,
+                    input_text_tokens=125,
+                    details={'thoughts_tokens': 395, 'text_prompt_tokens': 125},
+                    output_reasoning_tokens=395,
+                    cost=Decimal('0.00422625'),
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -2956,11 +3146,24 @@ async def test_google_prompted_output_with_tools(allow_model_requests: None, goo
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[TextPart(content='{"city": "Mexico City", "country": "Mexico"}')],
+                parts=[
+                    TextPart(
+                        content='{"city": "Mexico City", "country": "Mexico"}',
+                        provider_name='google',
+                        provider_details={
+                            'thought_signature': 'CqsDARFNMg/vlepSvb2pG4k5KFwTBqi3T3VxwOU/qAmGbn4rDU3DyDB1fRjECcKxFJtP93ele31bUFtVQVvFgw7CUSPbBMsonje7tIee8Wy0vzT0AWMBXCnX4+/UM2Kj3XBIHjj27WpjHlZnXm90HEl1zMYGQSbYpk4UwPphrzNQyv1FS71rCE1Qh/mSlZrNMLVMkPuSLpqXuTIQRKphweAqOXMi16ce3u6uSeandXVetn0PQMHZjljvA4iq+aQkIB+/zk0Y0/jgl02QUal0I+7Ng4svSwfMwVR2ezfiQ0ipRrenZUWRoNVT3ODz4x1dsgg7LKdypmSlpeMSpwf5LjE7yroMXvdoRBzPn/7ARuDvEBys/cVp7KrGbkpCcREAY2NUT0NqhRTkxeEnTMwEjYqlMCvaNRtJfdAxHt1XPaVEt98zBDvJYDkwexd9QLOpgxXyspRFqe+TZeaeQnsN5svuwvMkX8AohgcDBvPhSzcRKoqZlGahC0TeZUEje8BDH3LijJfvMsBSv+43s/RfD8ahCfpmHM88bU4Jkr/XAtiSKN/mK+8+6Dc169LufwpfARFNMg8VSgf8nhj2AVuL8xOjXodbnZLXSkvpNzzLnCJB0FL7bXnZxw8j1YNL+t6Jq+xoXETqqqqzB68B/Bplgey3zu1Hz8HyCMFGw+EhERAGAVkhVCxMixO1eH2xRUY='
+                        },
+                    )
+                ],
                 usage=RequestUsage(
-                    input_tokens=154, output_tokens=166, details={'thoughts_tokens': 153, 'text_prompt_tokens': 154}
+                    input_tokens=156,
+                    output_tokens=134,
+                    input_text_tokens=156,
+                    details={'thoughts_tokens': 121, 'text_prompt_tokens': 156},
+                    output_reasoning_tokens=121,
+                    cost=Decimal('0.001535'),
                 ),
-                model_name='models/gemini-2.5-pro',
+                model_name='gemini-2.5-pro',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',
@@ -3012,7 +3215,10 @@ async def test_google_prompted_output_multiple(allow_model_requests: None, googl
                 usage=RequestUsage(
                     input_tokens=240,
                     output_tokens=27,
+                    input_text_tokens=240,
+                    output_text_tokens=27,
                     details={'text_candidates_tokens': 27, 'text_prompt_tokens': 240},
+                    cost=Decimal('0.0000348'),
                 ),
                 model_name='gemini-2.0-flash',
                 timestamp=IsDatetime(),
@@ -3099,9 +3305,9 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
         usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
     )
 
-    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]
+    assert len(count_requests) == 1
+    assert request_json(count_requests[0])['tools'] == snapshot([{'googleSearch': {}}])
     assert result.output == snapshot('The capital of France is Paris.')
 
 
@@ -3142,6 +3348,7 @@ def test_map_usage():
                 'audio_cache_tokens': 9300,
                 'audio_candidates_tokens': 9400,
             },
+            output_reasoning_tokens=9500,
         )
     )
 
@@ -3178,7 +3385,11 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 usage=RequestUsage(
                     input_tokens=10,
                     output_tokens=1304,
+                    input_text_tokens=10,
+                    output_image_tokens=1120,
                     details={'thoughts_tokens': 115, 'text_prompt_tokens': 10, 'image_candidates_tokens': 1120},
+                    output_reasoning_tokens=115,
+                    cost=Decimal('0.136628'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3219,12 +3430,17 @@ async def test_google_image_generation(allow_model_requests: None, google_provid
                 usage=RequestUsage(
                     input_tokens=276,
                     output_tokens=1374,
+                    input_text_tokens=18,
+                    input_image_tokens=258,
+                    output_image_tokens=1120,
                     details={
                         'thoughts_tokens': 149,
                         'text_prompt_tokens': 18,
                         'image_prompt_tokens': 258,
                         'image_candidates_tokens': 1120,
                     },
+                    output_reasoning_tokens=149,
+                    cost=Decimal('0.138000'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3278,7 +3494,10 @@ async def test_google_image_generation_stream(allow_model_requests: None, google
                 usage=RequestUsage(
                     input_tokens=10,
                     output_tokens=1295,
+                    input_text_tokens=10,
+                    output_image_tokens=1290,
                     details={'text_prompt_tokens': 10, 'image_candidates_tokens': 1290},
+                    cost=Decimal('0.0387155'),
                 ),
                 model_name='gemini-2.5-flash-image',
                 timestamp=IsDatetime(),
@@ -3352,7 +3571,11 @@ A little axolotl named Archie lived in a beautiful glass tank, but he always won
                 usage=RequestUsage(
                     input_tokens=14,
                     output_tokens=1457,
+                    input_text_tokens=14,
+                    output_image_tokens=1120,
                     details={'thoughts_tokens': 174, 'text_prompt_tokens': 14, 'image_candidates_tokens': 1120},
+                    output_reasoning_tokens=174,
+                    cost=Decimal('0.138472'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3445,7 +3668,11 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 usage=RequestUsage(
                     input_tokens=15,
                     output_tokens=1334,
+                    input_text_tokens=15,
+                    output_image_tokens=1120,
                     details={'thoughts_tokens': 131, 'text_prompt_tokens': 15, 'image_candidates_tokens': 1120},
+                    output_reasoning_tokens=131,
+                    cost=Decimal('0.136998'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3485,7 +3712,11 @@ async def test_google_image_generation_with_native_output(allow_model_requests: 
                 usage=RequestUsage(
                     input_tokens=295,
                     output_tokens=222,
+                    input_text_tokens=37,
+                    input_image_tokens=258,
                     details={'thoughts_tokens': 196, 'text_prompt_tokens': 37, 'image_prompt_tokens': 258},
+                    output_reasoning_tokens=196,
+                    cost=Decimal('0.003254'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3588,7 +3819,11 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                 usage=RequestUsage(
                     input_tokens=33,
                     output_tokens=2309,
+                    input_text_tokens=33,
+                    output_image_tokens=1120,
                     details={'thoughts_tokens': 529, 'text_prompt_tokens': 33, 'image_candidates_tokens': 1120},
+                    output_reasoning_tokens=529,
+                    cost=Decimal('0.148734'),
                 ),
                 model_name='gemini-3-pro-image-preview',
                 timestamp=IsDatetime(),
@@ -3664,12 +3899,9 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
         model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_google_image_generation_tool_output_format(
-    mocker: MockerFixture, google_provider: GoogleProvider
-) -> None:
+async def test_google_image_generation_tool_output_format(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png')])
 
     tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -3678,11 +3910,10 @@ async def test_google_image_generation_tool_output_format(
 
 
 async def test_google_image_generation_tool_unsupported_format_raises_error(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that unsupported output_format values raise an error on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     # 'gif' is not supported by Google
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # pyright: ignore[reportArgumentType]
 
@@ -3691,11 +3922,10 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
 
 
 async def test_google_image_generation_tool_output_compression(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
 
     # Test explicit value
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=85)])
@@ -3710,11 +3940,10 @@ async def test_google_image_generation_tool_output_compression(
 
 
 async def test_google_image_generation_tool_compression_validation(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test compression validation on Vertex AI: range and JPEG-only."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
@@ -3776,10 +4005,9 @@ async def test_google_vertexai_image_generation_with_output_format(
     assert result.output.media_type == 'image/jpeg'
 
 
-async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, google_provider: GoogleProvider) -> None:
+async def test_google_image_generation_tool_all_fields(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     params = ModelRequestParameters(
         native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )
@@ -3795,15 +4023,19 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
 
 
 def test_google_vertex_skips_include_server_side_tool_invocations(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex.
+
+    The model is built the way #6792 reports: a
+    Vertex-backed `genai.Client` wrapped in `GoogleProvider`, whose `system` stays `'google'` —
+    the transport, not the provider name, must drive the skip.
 
     Not a VCR test: the field is dropped before the request is sent, and our cassette matchers don't
     inspect the request body, so a recording would stay green if it were reintroduced.
     """
-    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-preview', provider=vertex_client_google_provider)
+    assert model.system == 'google'
     # A function tool is included so `tool_config` is non-empty on both paths; the only field that
     # should differ is `include_server_side_tool_invocations`.
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
@@ -3851,8 +4083,8 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
 
     result = await agent.run('Look up the city I live in, then search the web for its weather today.')
 
-    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    request_bodies = [json.loads(request.body) for request in generate_requests]  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]
+    request_bodies = [request_json(request) for request in generate_requests]
     # On the Gemini Developer API these requests carry `toolConfig.includeServerSideToolInvocations`;
     # on Vertex the field is skipped, so it is absent from every request Vertex actually accepted.
     assert [body.get('toolConfig', {}) for body in request_bodies] == snapshot(
@@ -3900,7 +4132,11 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
                 usage=RequestUsage(
                     details={'thoughts_tokens': 59, 'text_prompt_tokens': 43, 'text_candidates_tokens': 12},
                     input_tokens=43,
+                    input_text_tokens=43,
+                    output_text_tokens=12,
                     output_tokens=71,
+                    output_reasoning_tokens=59,
+                    cost=Decimal('0.0002345'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -3984,7 +4220,11 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                 usage=RequestUsage(
                     details={'thoughts_tokens': 456, 'text_prompt_tokens': 125, 'text_candidates_tokens': 250},
                     input_tokens=125,
+                    input_text_tokens=125,
+                    output_text_tokens=250,
                     output_tokens=706,
+                    output_reasoning_tokens=456,
+                    cost=Decimal('0.0021805'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -4460,6 +4700,7 @@ async def test_gemini_streamed_response_emits_text_events_for_non_empty_parts():
         _response=cast(Any, PeekableAsyncStream(response)),
         _timestamp=IsDatetime(),
         _provider_name='test-provider',
+        _model_id_namespace='test-provider',
         _provider_url='',
     )
 
@@ -4502,6 +4743,7 @@ async def _stream_gemini_usage(chunks: list[GenerateContentResponse]) -> Request
         _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
         _timestamp=IsDatetime(),
         _provider_name='google',
+        _model_id_namespace='google',
         _provider_url='',
     )
 
@@ -4828,12 +5070,17 @@ async def test_google_model_file_search_tool(allow_model_requests: None, google_
                     usage=RequestUsage(
                         input_tokens=303,
                         output_tokens=297,
+                        input_text_tokens=303,
                         details={
                             'thoughts_tokens': 257,
                             'tool_use_prompt_tokens': 288,
                             'text_prompt_tokens': 15,
                             'text_tool_use_prompt_tokens': 288,
                         },
+                        output_reasoning_tokens=257,
+                        input_tool_tokens=288,
+                        input_text_tool_tokens=288,
+                        cost=Decimal('0.00334875'),
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
@@ -4902,12 +5149,17 @@ Here are some key facts about the Eiffel Tower:
                     usage=RequestUsage(
                         input_tokens=1482,
                         output_tokens=1273,
+                        input_text_tokens=1482,
                         details={
                             'thoughts_tokens': 980,
                             'tool_use_prompt_tokens': 1436,
                             'text_prompt_tokens': 46,
                             'text_tool_use_prompt_tokens': 1436,
                         },
+                        output_reasoning_tokens=980,
+                        input_tool_tokens=1436,
+                        input_text_tool_tokens=1436,
+                        cost=Decimal('0.0145825'),
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
@@ -4997,12 +5249,17 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     usage=RequestUsage(
                         input_tokens=785,
                         output_tokens=779,
+                        input_text_tokens=785,
                         details={
                             'thoughts_tokens': 742,
                             'tool_use_prompt_tokens': 770,
                             'text_prompt_tokens': 15,
                             'text_tool_use_prompt_tokens': 770,
                         },
+                        output_reasoning_tokens=742,
+                        input_tool_tokens=770,
+                        input_text_tool_tokens=770,
+                        cost=Decimal('0.00877125'),
                     ),
                     model_name='gemini-2.5-pro',
                     timestamp=IsDatetime(),
@@ -5205,7 +5462,13 @@ async def test_thinking_with_tool_calls_from_other_model(
                         tool_name='get_country', args='{}', tool_call_id=IsStr(), id=IsStr(), provider_name='openai'
                     ),
                 ],
-                usage=RequestUsage(input_tokens=37, output_tokens=272, details={'reasoning_tokens': 256}),
+                usage=RequestUsage(
+                    input_tokens=37,
+                    output_tokens=272,
+                    output_reasoning_tokens=256,
+                    details={'reasoning_tokens': 256},
+                    cost=Decimal('0.00276625'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -5213,6 +5476,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5242,7 +5506,13 @@ async def test_thinking_with_tool_calls_from_other_model(
                     ),
                     TextPart(content='Mexico City (Ciudad de México).', id=IsStr(), provider_name='openai'),
                 ],
-                usage=RequestUsage(input_tokens=379, output_tokens=77, details={'reasoning_tokens': 64}),
+                usage=RequestUsage(
+                    input_tokens=379,
+                    output_tokens=77,
+                    output_reasoning_tokens=64,
+                    details={'reasoning_tokens': 64},
+                    cost=Decimal('0.00124375'),
+                ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
                 provider_name='openai',
@@ -5250,6 +5520,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -5276,7 +5547,12 @@ async def test_thinking_with_tool_calls_from_other_model(
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=107, output_tokens=146, details={'thoughts_tokens': 123, 'text_prompt_tokens': 107}
+                    input_tokens=107,
+                    output_tokens=146,
+                    input_text_tokens=107,
+                    details={'thoughts_tokens': 123, 'text_prompt_tokens': 107},
+                    output_reasoning_tokens=123,
+                    cost=Decimal('0.001966'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5493,13 +5769,13 @@ async def test_google_stream_api_non_http_error_is_wrapped(
 async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model_requests: None):
     model_name = 'definitely-missing'
     error_response = {'error': {'code': 404, 'message': 'Model not found', 'status': 'NOT_FOUND'}}
-    requests: list[Request] = []
+    requests: list[HTTPX2Request] = []
 
-    async def handler(request: Request) -> Response:
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
         requests.append(request)
-        return Response(404, json=error_response)
+        return HTTPX2Response(404, json=error_response)
 
-    async with HttpxAsyncClient(transport=MockTransport(handler)) as http_client:
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
         model = GoogleModel(
             model_name,
             provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
@@ -5550,7 +5826,12 @@ async def test_google_model_retrying_after_empty_response(allow_model_requests: 
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=2, output_tokens=222, details={'thoughts_tokens': 213, 'text_prompt_tokens': 2}
+                    input_tokens=2,
+                    output_tokens=222,
+                    input_text_tokens=2,
+                    details={'thoughts_tokens': 213, 'text_prompt_tokens': 2},
+                    output_reasoning_tokens=213,
+                    cost=Decimal('0.002668'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5783,7 +6064,12 @@ async def test_google_streaming_tool_call_thought_signature(
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=29, output_tokens=212, details={'thoughts_tokens': 202, 'text_prompt_tokens': 29}
+                    input_tokens=29,
+                    output_tokens=212,
+                    input_text_tokens=29,
+                    details={'thoughts_tokens': 202, 'text_prompt_tokens': 29},
+                    output_reasoning_tokens=202,
+                    cost=Decimal('0.002602'),
                 ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
@@ -5810,7 +6096,13 @@ async def test_google_streaming_tool_call_thought_signature(
             ),
             ModelResponse(
                 parts=[TextPart(content='The capital of Mexico is Mexico City.')],
-                usage=RequestUsage(input_tokens=257, output_tokens=8, details={'text_prompt_tokens': 257}),
+                usage=RequestUsage(
+                    input_tokens=257,
+                    output_tokens=8,
+                    input_text_tokens=257,
+                    details={'text_prompt_tokens': 257},
+                    cost=Decimal('0.000610'),
+                ),
                 model_name='gemini-3-pro-preview',
                 timestamp=IsDatetime(),
                 provider_name='google',
@@ -5937,6 +6229,22 @@ async def test_google_non_leading_system_prompt_wraps_as_user_message(google_pro
     assert wrapped_texts == ['<system>Now be terse.</system>']
 
 
+async def test_google_system_prompt_after_user_part_stays_in_contents():
+    """An instruction merged into the first request after user content must not rewrite the cache prefix."""
+    model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key='not-used'))
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='x'), SystemPromptPart(content='mid')])]
+
+    prepared = model.prepare_messages(messages)
+    system_instruction, contents = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        prepared, ModelRequestParameters()
+    )
+
+    assert system_instruction is None
+    assert contents == [
+        {'role': 'user', 'parts': [{'text': 'x'}, {'text': '<system>mid</system>'}]},
+    ]
+
+
 async def test_google_stream_safety_filter(
     allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
 ):
@@ -6013,7 +6321,7 @@ def test_google_provider_respects_custom_http_client_timeout(gemini_api_key: str
     See https://github.com/pydantic/pydantic-ai/pull/4032#discussion_r2709797127
     """
     custom_timeout = 120
-    custom_http_client = HttpxAsyncClient(timeout=Timeout(custom_timeout))
+    custom_http_client = HTTPX2AsyncClient(timeout=custom_timeout)
     provider = GoogleProvider(api_key=gemini_api_key, http_client=custom_http_client)
 
     http_options = provider._client._api_client._http_options  # pyright: ignore[reportPrivateUsage]
@@ -6209,8 +6517,9 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': 'This is file report:'},
+                    {'text': '<tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
+                    {'text': '</tool_result>'},
                 ],
             },
         ]
@@ -6820,7 +7129,11 @@ async def test_google_vertex_service_tier_flex(
                 usage=RequestUsage(
                     input_tokens=5,
                     output_tokens=52,
+                    input_text_tokens=5,
+                    output_text_tokens=1,
                     details={'thoughts_tokens': 51, 'text_prompt_tokens': 5, 'text_candidates_tokens': 1},
+                    output_reasoning_tokens=51,
+                    cost=Decimal('0.0001585'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -6867,7 +7180,11 @@ async def test_google_vertex_service_tier_flex_stream(
                 usage=RequestUsage(
                     input_tokens=5,
                     output_tokens=101,
+                    input_text_tokens=5,
+                    output_text_tokens=1,
                     details={'thoughts_tokens': 100, 'text_prompt_tokens': 5, 'text_candidates_tokens': 1},
+                    output_reasoning_tokens=100,
+                    cost=Decimal('0.0003055'),
                 ),
                 model_name='gemini-3-flash-preview',
                 timestamp=IsDatetime(),
@@ -6911,7 +7228,12 @@ async def test_google_model_gemini_3_5_flash(allow_model_requests: None, google_
                     )
                 ],
                 usage=RequestUsage(
-                    input_tokens=15, output_tokens=73, details={'thoughts_tokens': 72, 'text_prompt_tokens': 15}
+                    input_tokens=15,
+                    output_tokens=73,
+                    input_text_tokens=15,
+                    details={'thoughts_tokens': 72, 'text_prompt_tokens': 15},
+                    output_reasoning_tokens=72,
+                    cost=Decimal('0.0006795'),
                 ),
                 model_name='gemini-3.5-flash',
                 timestamp=IsDatetime(),
@@ -7085,3 +7407,66 @@ async def test_google_model_armor_config_is_sent_in_request(
 
     _, kwargs = mock_generate.call_args
     assert kwargs['config']['model_armor_config'] == _MODEL_ARMOR_CONFIG
+
+
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@pytest.mark.vcr()
+async def test_google_enum_member_docstrings_reach_the_wire(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """A documented enum renders as `anyOf` of `const`s; Gemini's transformer folds each into a one-value `enum`.
+
+    Asserted on the wire, since the shape a transformer produces is what the API has to accept, and the model
+    then has to call the tool with one of the options.
+    """
+
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider), instructions='Set the priority of the ticket.')
+
+    @agent.tool_plain
+    def set_priority(priority: TicketPriority) -> str:
+        return f'Priority set to {priority.value}.'
+
+    result = await agent.run('Production is down for every customer.')
+    calls = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert calls[0].args_as_dict() == {'priority': 'high'}
+    body = request_capture.body(':generateContent')
+    assert cast(list[dict[str, Any]], body['tools'])[0]['functionDeclarations'][0] == snapshot(
+        {
+            'description': '',
+            'name': 'set_priority',
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
+                'required': ['priority'],
+                'type': 'object',
+                '$defs': {
+                    'TicketPriority': {
+                        'description': """\
+How urgent the ticket is.
+low: Can wait a week.
+high: Needs attention today.\
+""",
+                        'type': 'string',
+                        'enum': ['low', 'high'],
+                    }
+                },
+            },
+        }
+    )

@@ -1,0 +1,127 @@
+interactions:
+- request:
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - '120'
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    method: POST
+    parsed_body:
+      input:
+      - content: What is the capital of France?
+        role: user
+      model: deepseek-v4-flash
+      stream: true
+    uri: https://api.deepseek.com/responses
+  response:
+    body:
+      string: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"bf5e7791-6c05-44ca-b7e0-56aa217150b1","object":"response","created_at":1785967715,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-v4-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"bf5e7791-6c05-44ca-b7e0-56aa217150b1","object":"response","created_at":1785967715,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-v4-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","status":"in_progress","content":[],"summary":[]},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","output_index":0,"part":{"type":"reasoning_text","text":""},"sequence_number":3}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"We","item_id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","output_index":0,"sequence_number":4}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" need","item_id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","output_index":0,"sequence_number":5}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" answer","item_id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","output_index":0,"sequence_number":6}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" capital","item_id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","output_index":0,"sequence_number":7}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" of","item_id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","output_index":0,"sequence_number":8}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" France","item_id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","output_index":0,"sequence_number":9}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","output_index":0,"sequence_number":10}
+
+        event: response.reasoning_text.done
+        data: {"type":"response.reasoning_text.done","content_index":0,"item_id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","output_index":0,"sequence_number":11,"text":"We need answer capital of France."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","output_index":0,"part":{"type":"reasoning_text","text":"We need answer capital of France."},"sequence_number":12}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","status":"completed","content":[{"type":"reasoning_text","text":"We need answer capital of France."}],"summary":[]},"output_index":0,"sequence_number":13}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"message","id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":14}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":15}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"The","item_id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","logprobs":[],"output_index":1,"sequence_number":16}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" capital","item_id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","logprobs":[],"output_index":1,"sequence_number":17}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" of","item_id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","logprobs":[],"output_index":1,"sequence_number":18}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" France","item_id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","logprobs":[],"output_index":1,"sequence_number":19}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" is","item_id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","logprobs":[],"output_index":1,"sequence_number":20}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" Paris","item_id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","logprobs":[],"output_index":1,"sequence_number":21}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":".","item_id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","logprobs":[],"output_index":1,"sequence_number":22}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","logprobs":[],"output_index":1,"sequence_number":23,"text":"The capital of France is Paris."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"The capital of France is Paris."},"sequence_number":24}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"message","id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"The capital of France is Paris."}],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":25}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"bf5e7791-6c05-44ca-b7e0-56aa217150b1","object":"response","created_at":1785967715,"status":"completed","background":false,"completed_at":1785967716,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-v4-flash","moderation":null,"output":[{"type":"reasoning","id":"b594b7e1-3dbb-4b65-b8c2-f4f5aae4ee80","status":"completed","content":[{"type":"reasoning_text","text":"We need answer capital of France."}],"summary":[]},{"type":"message","id":"f9be6778-cb0b-4264-8d37-24af0349d7ef","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"The capital of France is Paris."}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":null,"summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":90,"input_tokens_details":{"cached_tokens":0},"output_tokens":15,"output_tokens_details":{"reasoning_tokens":7},"total_tokens":105},"user":null,"metadata":{}},"sequence_number":26}
+
+    headers:
+      access-control-allow-credentials:
+      - 'true'
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - origin, access-control-request-method, access-control-request-headers
+    status:
+      code: 200
+      message: OK
+version: 1
+...

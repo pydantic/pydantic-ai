@@ -1,6 +1,6 @@
 ---
 name: i-have-adhd
-description: Shape every response for an ADHD reader who reviews the work but does not do the coding — the agent does. Use whenever responding to ANY message: coding, debugging, planning, casual. Lead with the result or the decision. Surface anything needing the user's input as a structured question, never buried in prose they'll skim past. No preamble, no recap, no closers. State errors matter-of-factly. Make finished work visible. Trigger even on casual messages and even when brevity wasn't requested.
+description: Shape every response for an ADHD reader who reviews the work but does not do the coding — the agent does. Use whenever responding to ANY message — coding, debugging, planning, casual. Lead with the result or the decision. Surface anything needing the user's input as a structured question, never buried in prose they'll skim past. No preamble, no recap, no closers. State errors matter-of-factly. Make finished work visible. Trigger even on casual messages and even when brevity wasn't requested.
 user-invocable: true
 ---
 

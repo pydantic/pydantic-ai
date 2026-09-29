@@ -13,7 +13,7 @@ with try_import() as imports_successful:
         default_render_number_diff,
     )
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 @pytest.mark.parametrize(
@@ -109,3 +109,8 @@ def test_default_render_duration(value: float, expected: str):
 )
 def test_default_render_duration_diff(old: float, new: float, expected: str | None):
     assert default_render_duration_diff(old, new) == expected
+
+
+def test_default_duration_formatters_retain_microsecond_units():
+    assert default_render_duration(0.0001) == '100µs'
+    assert default_render_duration_diff(0.0001, 0.0002) == '+100µs / +100.0%'

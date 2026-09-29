@@ -11,20 +11,35 @@ except ImportError as _import_error:
 import warnings
 from collections.abc import Sequence
 from dataclasses import replace
+from importlib.util import find_spec
 from typing import Any
 
 from pydantic.errors import PydanticUserError
-from temporalio.contrib.pydantic import PydanticPayloadConverter, pydantic_data_converter
+from temporalio import workflow
+from temporalio.contrib.pydantic import PydanticPayloadConverter
 from temporalio.converter import DataConverter, DefaultPayloadConverter
 from temporalio.plugin import SimplePlugin
 from temporalio.worker import WorkerConfig, WorkflowRunner
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
+from pydantic_graph.exceptions import UnsupportedEventLoopError
+
+from ..._event_registry import set_replay_isolation_guard
 from ...agent.abstract import AbstractAgent
 from ...exceptions import AgentRunError, UserError
+from ...workspaces import WorkspaceError
 from ._agent import TemporalAgent  # pyright: ignore[reportDeprecated]
 from ._durability import TemporalDurability
+from ._event_stream import (
+    AgentEventStream,
+    DurableAgentRunEvents,
+    WorkflowStreamTopic,
+    stream_agent_events,
+    workflow_stream_event_handler,
+)
 from ._logfire import LogfirePlugin
+from ._operation_names import TemporalOperationNamer
+from ._payload_converter import PydanticAIPayloadConverter
 from ._run_context import TemporalRunContext
 from ._toolset import TemporalWrapperToolset
 from ._workflow import PydanticAIWorkflow
@@ -37,12 +52,19 @@ __all__ = [
     'AgentPlugin',
     'TemporalRunContext',
     'TemporalWrapperToolset',
+    'TemporalOperationNamer',
     'PydanticAIWorkflow',
+    'PydanticAIPayloadConverter',
+    'AgentEventStream',
+    'WorkflowStreamTopic',
+    'DurableAgentRunEvents',
+    'workflow_stream_event_handler',
+    'stream_agent_events',
 ]
 
 # We need eagerly import the anyio backends or it will happens inside workflow code and temporal has issues
 # Note: It's difficult to add a test that covers this because pytest presumably does these imports itself
-# when you have a @pytest.mark.anyio somewhere.
+# when running async tests via the anyio pytest plugin.
 # I suppose we could add a test that runs a python script in a separate process, but I have not done that...
 import anyio._backends._asyncio  # pyright: ignore[reportUnusedImport]  #noqa: F401
 
@@ -54,22 +76,25 @@ except ImportError:
 
 def _data_converter(converter: DataConverter | None) -> DataConverter:
     if converter is None:
-        return pydantic_data_converter
+        return DataConverter(payload_converter_class=PydanticAIPayloadConverter)
 
-    # If the payload converter class is already a subclass of PydanticPayloadConverter,
-    # the converter is already compatible with Pydantic AI - return it as-is.
-    if issubclass(converter.payload_converter_class, PydanticPayloadConverter):
+    # Preserve genuine subclasses because replacing one could silently discard custom behavior. Authors
+    # can inherit from `PydanticAIPayloadConverter` when they also want memoized adapter construction.
+    if converter.payload_converter_class is not PydanticPayloadConverter and issubclass(
+        converter.payload_converter_class, PydanticPayloadConverter
+    ):
         return converter
 
     # If using a non-Pydantic payload converter, warn and replace just the payload converter class,
     # preserving any custom payload_codec or failure_converter_class.
-    if converter.payload_converter_class is not DefaultPayloadConverter:
+    if converter.payload_converter_class not in (DefaultPayloadConverter, PydanticPayloadConverter):
         warnings.warn(
-            'A non-Pydantic Temporal payload converter was used which has been replaced with PydanticPayloadConverter. '
-            'To suppress this warning, ensure your payload_converter_class inherits from PydanticPayloadConverter.'
+            'A non-Pydantic Temporal payload converter was used which has been replaced with '
+            '`PydanticAIPayloadConverter`. To suppress this warning and retain memoized `TypeAdapter` construction, '
+            'ensure your `payload_converter_class` inherits from `PydanticAIPayloadConverter`.'
         )
 
-    return replace(converter, payload_converter_class=PydanticPayloadConverter)
+    return replace(converter, payload_converter_class=PydanticAIPayloadConverter)
 
 
 def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
@@ -79,12 +104,33 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
     if not isinstance(runner, SandboxedWorkflowRunner):
         return runner
 
+    # The sandbox re-executes application modules while `pydantic_ai` is passed through, so an event
+    # class defined in a workflow module is redefined against the host's registry on every validation
+    # cycle. Telling the registry to keep the host's class means workflow and activity code both hold
+    # the class they imported, and `isinstance` works on either side of the boundary.
+    #
+    # Installed here rather than at import: this runs on the host while a worker that will actually
+    # sandbox workflows is being configured, which is the only situation the guard is for, and always
+    # before the first sandboxed module is executed. Importing this module, or a test that touches
+    # Temporal without running a sandboxed worker, then leaves the registry alone.
+    set_replay_isolation_guard(workflow.unsafe.in_sandbox)
+
+    # Harness file-tool orchestration runs workflow-side for pre-write vetoes; importing it
+    # again inside Temporal's restricted sandbox would fail on import-time filesystem calls.
+    # Harness CodeMode imports `opentelemetry.context` via `_monty_exec` on first use; passing
+    # harness through alone leaves that dependency sandbox-local and triggers a late-import error.
+    harness_modules = ('pydantic_ai_harness', 'opentelemetry') if find_spec('pydantic_ai_harness') is not None else ()
     return replace(
         runner,
         restrictions=runner.restrictions.with_passthrough_modules(
+            *harness_modules,
             'pydantic_ai',
+            'pydantic_graph',
             'pydantic',
             'pydantic_core',
+            # Pydantic imports `annotated_types` lazily, on the first schema with constraints; decoding
+            # a workspace result in workflow code can be that first use, after initial workflow load.
+            'annotated_types',
             'pydantic_monty',
             'logfire',
             'rich',
@@ -109,6 +155,12 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # e.g. a `gateway/anthropic:` or `anthropic:` model resolved lazily via `infer_model`.
             # Safe to pass through: a deterministic, read-only config lookup.
             'anthropic',
+            # The OpenAI SDK defers importing its large generated resource tree until a model constructor
+            # accesses `client.chat.completions` or `client.responses`. Without passthrough, Temporal reloads
+            # that tree in every isolated workflow sandbox. Pass through the whole SDK so resource classes and
+            # their base classes come from one coherent module graph. Pydantic AI does not use the SDK's global
+            # client configuration: it creates per-model clients and invokes their request methods in activities.
+            'openai',
             # The `google-genai` SDK lazily imports `google.auth` submodules (e.g.
             # `google.auth.aio.credentials`) while constructing its client, which Temporal flags as
             # "imported after initial workflow load" when a `gateway/google-cloud:` (or `google-*:`)
@@ -121,12 +173,14 @@ def _workflow_runner(runner: WorkflowRunner | None) -> WorkflowRunner:
             # Imported inside `logfire._internal.json_schema` when running `logfire.info` inside an activity with attributes to serialize
             'numpy',
             'pandas',
-            # `response.cost()` lazily imports `genai_prices` (and its `httpx2` dependency) on first call.
-            # When cost is calculated inside a workflow, the sandbox re-imports that chain and `httpx2._models`
-            # subclasses `urllib.request.Request`, which is restricted unless `genai_prices`/`httpx2` are passed
+            # `response.cost()` lazily imports `genai_prices` (and its httpx2 dependencies) on first call.
+            # When cost is calculated or an httpx2-backed model is constructed inside a workflow, the sandbox
+            # re-imports that chain and touches restricted request/lock types unless these modules are passed
             # through alongside the rest of the HTTP stack.
             'genai_prices',
             'httpx2',
+            'httpcore2',
+            'truststore',
         ),
     )
 
@@ -144,7 +198,20 @@ class PydanticAIPlugin(SimplePlugin):
             # continuation ceilings raised by the workflow-side continuation loop: they
             # must fail the workflow (preserving the exception type for the caller)
             # rather than fail the workflow *task*, which Temporal would retry forever.
-            workflow_failure_exception_types=[UserError, PydanticUserError, AgentRunError],
+            # `UnsupportedEventLoopError` is raised by `pydantic_graph`'s sync entry points
+            # (e.g. `Graph.run_sync()`), which don't go through the `pydantic_ai` wrapper that
+            # would otherwise turn it into a `UserError`; without it those would hang the same way.
+            # `WorkspaceError` covers a workspace that is gone or refused a call, re-raised in
+            # workflow code by `DurableWorkspace`; no redeploy can fix it. Builtin errors a workspace
+            # call re-raises (`FileNotFoundError` and the like) are left to Temporal's default, like
+            # any other exception in workflow code: the task retries until a code fix is deployed.
+            workflow_failure_exception_types=[
+                UserError,
+                PydanticUserError,
+                AgentRunError,
+                UnsupportedEventLoopError,
+                WorkspaceError,
+            ],
         )
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
