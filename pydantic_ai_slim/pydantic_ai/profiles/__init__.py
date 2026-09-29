@@ -469,10 +469,15 @@ _CACHE_POINT_TTLS: dict[str, timedelta] = {'5m': timedelta(minutes=5), '1h': tim
 
 
 def _max_cache_point_ttl(messages: Sequence[ModelMessage]) -> timedelta | None:
-    """The largest [`CachePoint`][pydantic_ai.messages.CachePoint] TTL in the history, or `None` if there are none."""
+    """The largest [`CachePoint`][pydantic_ai.messages.CachePoint] TTL in the served history, or `None` if there are none.
+
+    Like the idle clock, this only counts requests with a response after them: a cache point on a
+    request that hasn't been sent yet hasn't written anything to the provider's cache.
+    """
+    served = next((index for index in range(len(messages), 0, -1) if isinstance(messages[index - 1], ModelResponse)), 0)
     ttls = [
         _CACHE_POINT_TTLS[content.ttl]
-        for message in messages
+        for message in messages[:served]
         if isinstance(message, ModelRequest)
         for part in message.parts
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
