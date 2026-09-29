@@ -243,8 +243,13 @@ class OpenAILifecycle:
         item_id = InputAudioBufferSpeechStartedEvent.model_validate(data).item_id
         if not item_id or item_id in self._speaking:
             return []
+        # A start while an earlier one never stopped: semantic VAD heard a burst of starts, and commits only
+        # the last, so the earlier ones merged into it (unless one already joined the conversation).
+        merged = [turn_id for turn_id in self._speaking if turn_id not in self._committed]
+        for turn_id in merged:
+            del self._speaking[turn_id]
         self._speaking[item_id] = None
-        return [UserTurnStarted(turn_id=item_id)]
+        return [*(UserTurnDiscarded(turn_id=turn_id) for turn_id in merged), UserTurnStarted(turn_id=item_id)]
 
     def audio_committed(self, data: dict[str, Any]) -> list[LifecycleEvent]:
         """The input audio buffer was committed: the spoken turn joins the conversation here, if it hadn't."""
@@ -271,14 +276,8 @@ class OpenAILifecycle:
             # An idle timeout's empty audio item: the server nudges the model to speak, nobody said anything.
             self._unclaimed_turn = None
             return []
-        # Semantic VAD can hear several starts and commit only the last: the ones before it merged into it.
-        merged = [turn_id for turn_id in self._speaking if turn_id != item_id and turn_id not in self._committed]
-        events: list[LifecycleEvent] = [UserTurnDiscarded(turn_id=turn_id) for turn_id in merged]
-        for turn_id in merged:
-            del self._speaking[turn_id]
         # Push-to-talk reports no speech start: the commit both starts and ends the turn.
-        if item_id not in self._speaking:
-            events.append(UserTurnStarted(turn_id=item_id))
+        events: list[LifecycleEvent] = [] if item_id in self._speaking else [UserTurnStarted(turn_id=item_id)]
         events.append(UserTurnEnded(turn_id=item_id))
         self._unclaimed_turn = item_id
         return events

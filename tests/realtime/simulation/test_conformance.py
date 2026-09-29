@@ -135,7 +135,11 @@ def test_lifecycle_contract_rules() -> None:
         ['lifecycle.content_outside_response', 'lifecycle.input_settled_twice', 'lifecycle.input_added_twice']
     )
     turn = UserTurnStarted(turn_id='item_u1')
-    assert feed_lifecycle(turn, UserTurnEnded(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u1')) == snapshot(
-        ['lifecycle.turn_end_without_start']
-    )
+    # A turn that joined the conversation can still be discarded (it gets no more audio), but only once.
+    assert feed_lifecycle(
+        turn,
+        UserTurnEnded(turn_id='item_u1'),
+        UserTurnDiscarded(turn_id='item_u1'),
+        UserTurnDiscarded(turn_id='item_u1'),
+    ) == snapshot(['lifecycle.turn_end_without_start'])
     assert feed_lifecycle(turn, turn) == snapshot(['lifecycle.turn_started_twice', 'lifecycle.turn_unended_at_close'])

@@ -807,15 +807,18 @@ class Checker:
         )
 
 
-SHADOW_PENDING: frozenset[str] = frozenset({'SIM-1', 'SIM-4', 'SIM-15'})
+SHADOW_PENDING: frozenset[str] = frozenset({'SIM-1', 'SIM-4', 'SIM-10', 'SIM-15', 'SIM-22', 'SIM-23'})
 """Known findings the new session core does not fix yet, which the shadow checks tolerate like the others.
 
-They are the session's and the connection's to fix, not the core's:
+They are the session's and the connection's to fix, not the core's, since the core only sees what the
+connection reports:
 
 - `SIM-1`: a reply lost with a dropped connection is not asked for again by the reconnect;
-- `SIM-4`: the connection drops a whole frame when a request it sends from its receive loop fails, so the
-  core never sees that response's usage or terminal either;
-- `SIM-15`: a tool that raises leaves the session unable to get the replies still owed after it.
+- `SIM-4`, `SIM-23`: the connection drops a whole frame when a request it sends from its receive loop fails,
+  or is cancelled by a close, so the core never sees that response's usage or terminal either;
+- `SIM-10`: the connection drops what a response said after a cancel that reached the server too late;
+- `SIM-15`: a tool that raises leaves the session unable to get the replies still owed after it;
+- `SIM-22`: a terminal read as the connection drops is discarded with it.
 """
 
 

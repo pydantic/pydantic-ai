@@ -758,8 +758,24 @@ NON_AUDIO_SEND_DURING_RECONNECT = Finding(
 )
 
 
+FRAME_CUT_OFF_BY_CLOSE = Finding(
+    id='SIM-23',
+    title=(
+        'closing the session while the connection is handling a `response.done` that sends a deferred '
+        "`response.create` cancels it mid-frame: the whole frame is dropped, so that response's usage and "
+        'terminal never reach the session, though it was billed'
+    ),
+    tracked_by='an ordered outbox, so the receive loop never awaits a send; found by exploration on the refactor branch',
+    evidence='simulated',
+    codes=frozenset({'usage.total', 'usage.attribution', 'response.missing', 'response.truncated', 'usage.requests'}),
+    providers=OPENAI_PROTOCOL,
+    matches=lambda sim, violation: sim.close_requested is not None and getattr(sim, 'deferred_requests', 0) > 0,
+)
+
+
 KNOWN_FINDINGS.extend(
     [
+        FRAME_CUT_OFF_BY_CLOSE,
         NON_AUDIO_SEND_DURING_RECONNECT,
         LOST_REFUSAL,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,
