@@ -17539,10 +17539,6 @@ async def test_codex_incomplete_response(allow_model_requests: None, stream: boo
 async def test_responses_provider_details_hook_none_leaves_builtins(allow_model_requests: None):
     """A default `_process_provider_details` hook leaves built-in provider details untouched."""
 
-    class NoneHookModel(OpenAIResponsesModel):
-        def _process_provider_details(self, response: resp.Response) -> dict[str, Any] | None:
-            return None
-
     c = response_message(
         [
             ResponseOutputMessage(
@@ -17555,7 +17551,7 @@ async def test_responses_provider_details_hook_none_leaves_builtins(allow_model_
         ]
     )
     mock_client = MockOpenAIResponses.create_mock(c)
-    model = NoneHookModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
     agent = Agent(model=model)
 
     result = await agent.run('hello')
