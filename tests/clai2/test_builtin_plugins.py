@@ -28,8 +28,9 @@ CURATED = {
     'notifications',
     'mcp',
     'github',
+    'pylon',
 }
-OPT_IN = {'github'}
+OPT_IN = {'github', 'pylon'}
 
 
 class Menu:
