@@ -36,7 +36,7 @@ result = agent.run_sync('Write a script that prints the first 10 primes, and run
 
 ## Working on a project
 
-The container starts empty. To let the agent work on a directory on your machine, mount it with `docker_args`, which go after the capability's own `docker run` arguments:
+The container starts empty. To let the agent work on a directory on your machine, mount it with `docker_args`, extra `docker run` arguments that can override defaults like `--network`:
 
 ```python {test="skip"}
 from pathlib import Path
@@ -51,7 +51,7 @@ sandbox = DockerSandbox(
 )
 ```
 
-The mount is the only part of your machine the commands can change. `network=False` runs the container with `--network none`.
+The mount is the only part of your machine the commands can change. `network=False` runs the container with `--network none`. The capability sets the container's name, its `ai.pydantic.workspace=true` label, working directory and entrypoint after `docker_args`, because it relies on them: set the directory with `working_dir`.
 
 ## How commands run
 

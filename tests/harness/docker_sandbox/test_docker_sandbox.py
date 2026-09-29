@@ -59,8 +59,21 @@ async def test_first_use_creates_one_container_with_the_configured_options(
     assert backend.ref is not None and backend.ref.provider == 'docker'
     assert docker.containers() == [backend.ref.id]
     run_call = docker.calls[0]
-    assert run_call.startswith(f'run --detach --init --name {backend.ref.id} --label ai.pydantic.workspace=true')
-    assert run_call.endswith('--network none --memory 2g -- python:3.13-slim -c while :; do sleep 86400; done')
+    assert run_call == (
+        f'run --detach --init --network none --memory 2g --name {backend.ref.id} '
+        f'--label ai.pydantic.workspace=true --workdir {container_dir} --entrypoint sh '
+        '-- python:3.13-slim -c while :; do sleep 86400; done'
+    )
+
+
+async def test_docker_args_cannot_override_what_the_backend_relies_on(docker: FakeDocker, container_dir: Path) -> None:
+    overrides = ['--name', 'mine', '--label', 'ai.pydantic.workspace=false', '--workdir', '/other']
+    backend = DockerSandboxBackend('image', working_dir=str(container_dir), docker_args=overrides)
+
+    assert (await backend.run(['pwd', '-P'])).stdout.strip() == str(container_dir.resolve())
+    assert backend.ref is not None and docker.containers() == [backend.ref.id]
+    await DockerSandbox('image').destroy(backend.ref)
+    assert docker.containers() == []
 
 
 async def test_a_failed_create_is_unavailable_but_keeps_the_ref(docker: FakeDocker) -> None:

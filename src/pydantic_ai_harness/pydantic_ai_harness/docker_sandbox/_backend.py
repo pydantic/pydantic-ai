@@ -163,7 +163,8 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
         env: Environment variables for every command, on top of the image's; the per-call `env` goes on top.
         network: Whether a new container can reach the network; `False` runs it with `--network none`.
         docker_args: Extra `docker run` arguments for a new container, such as `['--memory', '2g']` or
-            `['--volume', f'{project}:/workspace']`, placed after the defaults so they can override them.
+            `['--volume', f'{project}:/workspace']`. They can override defaults like `--network`, but not the
+            container's name, workspace label, working directory or entrypoint, which the backend relies on.
         executable: The container CLI to run, such as `'podman'`.
     """
 
@@ -233,6 +234,9 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             'run',
             '--detach',
             '--init',
+            *([] if self._network else ['--network', 'none']),
+            *self._docker_args,
+            # After `docker_args`, whose later values would otherwise win: the backend relies on these.
             '--name',
             name,
             '--label',
@@ -241,8 +245,6 @@ class DockerSandboxBackend(WorkspaceBackend, SupportsCommands):
             self._working_dir,
             '--entrypoint',
             'sh',
-            *([] if self._network else ['--network', 'none']),
-            *self._docker_args,
             '--',
             self._image,
             '-c',
