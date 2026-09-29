@@ -47,7 +47,8 @@ def test_builtins_are_the_curated_enabled_set() -> None:
 
 def test_menu_offers_no_uncurated_harness_capabilities(tmp_path: Path) -> None:
     menu = PluginMenu(_loader(SettingsStore(tmp_path / 'settings.db'), DEFAULT_PLUGINS), apply=_apply)
-    assert {item.value for item in menu.items()} == CURATED
+    *rows, _save_and_close = menu.items()
+    assert {item.value for item in rows} == CURATED
 
 
 def test_capability_saved_from_the_old_catalog_still_loads(tmp_path: Path) -> None:
@@ -63,7 +64,7 @@ def test_capability_saved_from_the_old_catalog_still_loads(tmp_path: Path) -> No
     asyncio.run(plugins.load_all())
     assert len(plugins.capabilities()) == 1
     menu = PluginMenu(plugins, apply=_apply)
-    [item] = menu.items()
+    item, _save_and_close = menu.items()
     assert '(built-in)' not in menu.details(item)
     assert 'enabled, loaded' in menu.details(item)
     menu.remove(Menu(), item)

@@ -130,7 +130,13 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
   tests drive it headless, no terminal), and a thin async runner that owns the
   screen and calls `menu.run` in a thread.
 - Every key mutates immediately and `replace_items` redraws. No pending-changes
-  state, no save/cancel pair.
+  state, no save/cancel pair. Settings menus still end with a **Save & close**
+  row (`save_and_close_item()`, recognized by `picked(result)`) that only
+  leaves; `FieldMenu`, `/keys`, and `/plugins` add it for you.
+- Turning a plugin on opens its `@host.configure` menu. A widget cannot open
+  from inside another menu's key handler, so `PluginMenu` closes with a
+  `Configure` result and `open_plugins_menu` runs the settings menu, then
+  reopens the list.
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
 - Esc and Ctrl-C close cleanly. They are not errors.
