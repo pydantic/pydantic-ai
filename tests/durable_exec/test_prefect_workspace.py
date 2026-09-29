@@ -222,3 +222,32 @@ async def test_prefect_base_workspace_error_is_not_retried_by_task_engine() -> N
     with pytest.raises(WorkspaceError, match='workspace failed'):
         await run_agent()
     assert starts == 1
+
+
+async def test_prefect_custom_workspace_error_subclass_uses_configured_retries() -> None:
+    """Custom subclasses of the base error keep their configured retry behavior."""
+
+    class CustomWorkspaceError(WorkspaceError):
+        pass
+
+    starts = 0
+
+    def fail_workspace() -> str:
+        nonlocal starts
+        starts += 1
+        raise CustomWorkspaceError('temporary workspace failure')
+
+    agent = Agent(
+        TestModel(call_tools=['fail_workspace']),
+        name='prefect_custom_workspace_error',
+        tools=[fail_workspace],
+        capabilities=[PrefectDurability(tool_task_config=TaskConfig(retries=2, retry_delay_seconds=0))],
+    )
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(CustomWorkspaceError, match='temporary workspace failure'):
+        await run_agent()
+    assert starts == 3

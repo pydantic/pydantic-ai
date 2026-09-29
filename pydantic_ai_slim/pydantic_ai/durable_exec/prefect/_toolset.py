@@ -32,7 +32,6 @@ _NON_RETRYABLE_ERRORS = (
     PydanticUserError,
     UnexpectedModelBehavior,
     # As on Temporal: a retry cannot fix these, and restarting a command could repeat its completed side effects.
-    WorkspaceError,
     WorkspaceTimeoutError,
     WorkspaceOutputLimitError,
     WorkspaceReadOnlyError,
@@ -49,7 +48,7 @@ def with_non_retryable_errors(config: TaskConfig) -> TaskConfig:
         result = state.result(raise_on_failure=False)
         if inspect.isawaitable(result):
             result = await result
-        if isinstance(result, _NON_RETRYABLE_ERRORS):
+        if type(result) is WorkspaceError or isinstance(result, _NON_RETRYABLE_ERRORS):
             return False
         if configured_condition is None:
             return True

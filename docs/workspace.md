@@ -375,12 +375,13 @@ activities.
 - On DBOS, a run with a workspace runs its tool calls one at a time: DBOS numbers steps as they
   start, so parallel tools making several workspace calls each could not be replayed reliably.
 - A workspace call may run again if a worker dies mid-call: inside a tool it retries with the tool,
-  and from workflow code it follows the engine's activity or step settings. Prefect never retries
-  [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] exceptions. Temporal marks the built-in
-  workspace error types as non-retryable by name; a custom `WorkspaceError` subclass needs its own
-  entry in `non_retryable_error_types`. Other exceptions, such as `FileNotFoundError`, follow the
-  retry policy, which on Temporal retries without limit by default: catch them and raise `ModelRetry`,
-  or set `maximum_attempts`.
+  and from workflow code it follows the engine's activity or step settings. Prefect does not retry
+  direct [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] instances or instances of its
+  built-in subclasses; other custom subclasses follow the configured retry condition. Temporal
+  marks the built-in workspace error types as non-retryable by name; a custom `WorkspaceError`
+  subclass needs its own entry in `non_retryable_error_types`. Other exceptions, such as
+  `FileNotFoundError`, follow the retry policy, which on Temporal retries without limit by default:
+  catch them and raise `ModelRetry`, or set `maximum_attempts`.
 - On Temporal, a command runs within an activity's `start_to_close_timeout`, 60 seconds by default,
   whatever its own `timeout`. Inside a tool that is the tool's activity; raise it with
   `metadata={'temporal': ActivityConfig(start_to_close_timeout=...)}`. From workflow code it is
