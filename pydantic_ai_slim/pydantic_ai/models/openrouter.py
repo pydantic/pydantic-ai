@@ -703,12 +703,12 @@ class OpenRouterModel(OpenAIChatModel):
         return cast(OpenRouterModelProfile, self.profile)
 
     @override
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest explicit retention accepted by OpenRouter's downstream model."""
         settings = merge_model_settings(self.settings, model_settings) or {}
         if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
             return None
-        return self._max_prompt_cache_retention(
+        return self._max_cache_retention(
             settings.get('openrouter_cache_instructions')
             if self._resolved_profile.get('openrouter_supports_cache_control', False)
             else None,

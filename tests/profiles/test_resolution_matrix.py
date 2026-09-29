@@ -25,6 +25,7 @@ To regenerate after an intentional change: `pytest tests/profiles/test_resolutio
 
 from __future__ import annotations
 
+from datetime import timedelta
 from textwrap import dedent
 from typing import Any
 
@@ -113,6 +114,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     ),
     'native_output_requires_schema_in_instructions': False,
     'json_schema_transformer': None,
+    'default_cache_retention': None,
     'supports_thinking': False,
     'thinking_always_enabled': False,
     'thinking_enabled_by_default': False,
@@ -198,6 +200,7 @@ def test_anthropic_claude_sonnet_4_6():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
@@ -224,6 +227,7 @@ def test_anthropic_claude_opus_4_7():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'anthropic_supports_fast_speed': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
@@ -255,6 +259,7 @@ def test_anthropic_claude_haiku_4_5():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
+            'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
@@ -277,6 +282,7 @@ def test_anthropic_claude_3_5_sonnet_legacy():
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
+            'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -349,6 +355,7 @@ def test_openai_gpt_5_6():
             'openai_supports_prompt_cache_breakpoints': True,
             'tool_deferral_mode': 'with_tool_search',
             'openai_supports_minimal_reasoning_effort': False,
+            'default_cache_retention': timedelta(seconds=1800),
         }
     )
 
@@ -385,6 +392,7 @@ def test_openai_gpt_6_astra():
             'openai_supports_prompt_cache_breakpoints': True,
             'tool_deferral_mode': 'with_tool_search',
             'openai_supports_minimal_reasoning_effort': False,
+            'default_cache_retention': timedelta(seconds=1800),
         }
     )
 
@@ -554,6 +562,7 @@ def test_openai_codex_gpt_5_6():
             ),
             'tool_addition_mode': 'with_definitions',
             'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
+            'default_cache_retention': timedelta(seconds=1800),
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -757,6 +766,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_send_back_thinking_parts': True,
+            'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supports_prompt_caching': True,
             'forced_tool_choice_disables_thinking': True,
@@ -826,6 +836,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
+            'default_cache_retention': timedelta(seconds=300),
             'supports_json_schema_output': True,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'forced_tool_choice_disables_thinking': True,
@@ -858,6 +869,7 @@ def test_bedrock_anthropic_legacy_claude_3():
             'bedrock_supports_effort': False,
             'bedrock_top_k_variant': 'anthropic',
             'bedrock_supports_tool_caching': True,
+            'default_cache_retention': timedelta(seconds=300),
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document', 'image'}),
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
@@ -1056,6 +1068,7 @@ def test_openrouter_anthropic_claude_sonnet_4_6():
         {
             'supports_json_schema_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'default_cache_retention': timedelta(seconds=300),
             'supports_thinking': True,
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
@@ -1146,6 +1159,7 @@ def test_openrouter_google_gemini_3_pro():
             'openrouter_supports_tool_cache': False,
             'openrouter_supports_dynamic_instruction_cache': False,
             'openrouter_max_cache_points': None,
+            'default_cache_retention': timedelta(seconds=300),
         }
     )
 
@@ -1187,6 +1201,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'supports_json_schema_output': True,
             'supports_thinking': True,
             'supports_tool_return_schema': True,
+            'default_cache_retention': timedelta(seconds=300),
         }
     )
 
@@ -1980,6 +1995,7 @@ def test_anthropic_unknown_model_returns_some_profile():
         {
             'json_schema_transformer': AnthropicJsonSchemaTransformer,
             'supports_thinking': True,
+            'default_cache_retention': timedelta(seconds=300),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'forced_tool_choice_disables_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,

@@ -72,7 +72,7 @@ from ._tool_choice import resolve_tool_choice
 
 try:
     from mistralai.client import Mistral
-    from mistralai.client.errors import SDKError
+    from mistralai.client.errors import MistralError
     from mistralai.client.models import (
         AudioChunk as MistralAudioChunk,
         ChatCompletionChoiceFinishReason as MistralFinishReason,
@@ -124,7 +124,9 @@ from httpx import Timeout
 def _map_api_errors(model_name: str) -> Generator[None]:
     try:
         yield
-    except SDKError as e:
+    except MistralError as e:
+        # The SDK's base class also covers the `HTTPValidationError` it raises for a 422 and the
+        # `ResponseValidationError` it raises for a 200 body it can't parse, not just `SDKError`.
         if (status_code := e.status_code) >= 400:
             try:
                 error = pydantic_core.from_json(e.body)
@@ -143,7 +145,7 @@ def _map_api_errors(model_name: str) -> Generator[None]:
                 provider_error_code=code,
                 provider_error_type=error_type if isinstance(error_type, str) else None,
             ) from e
-        raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
 
 
 LatestMistralModelNames = Literal[

@@ -315,6 +315,66 @@ wins while enabled; disabling it restores the supplied agent's own tracing
 behavior. Custom launchers must pass `builtin_plugins=DEFAULT_PLUGINS` to opt in
 to stock built-ins. See [telemetry](README.md#telemetry-and-references).
 
+## Notion: workspace tools
+
+The built-in `notion` plugin (`pydantic_clai2.notion`) starts disabled. It adds
+harness `Notion`: the tools of Notion's hosted MCP server, acting with the
+permissions of the Notion account it connects as. That includes tools that
+change pages.
+
+`/plugins enable notion` loads it and opens its settings menu. To change the
+settings later, run `/plugins configure notion` or press `C` on it in
+`/plugins`; you never need to reinstall it. The menu is the shared field editor
+`/set` uses: type to filter, Enter to edit a row, `R` to reset one, Esc to close.
+Each change is saved as soon as you make it, and the plugin loads again when the
+menu closes, so the next turn uses the new settings.
+
+| Row | Default | Does |
+|---|---|---|
+| Key | none | the `/keys` entry to connect with: pick a saved key from a searchable list, or type a new one into a masked field; `R` clears the choice |
+| Sign-in | automatic | automatic uses the key when one is chosen and otherwise signs in through the browser; key only never opens a browser; browser always does |
+| Tools | read and write | read-only keeps only the tools the server marks as read-only |
+| Server instructions | forwarded | whether the Notion server's own instructions reach the agent |
+
+Notion's server has one fixed URL, and the workspace is the one the connected
+account belongs to, so there is no URL or workspace row. The settings JSON uses
+`auth` (`"key"`, `"oauth"`, or unset), `read_only`, and `include_instructions`:
+
+```text
+/plugins add notion pydantic_clai2.notion '{"auth": "key", "read_only": true}'
+```
+
+### Secrets live in `/keys`
+
+Plugin settings are plaintext SQLite, so they never hold the token, and a
+declaration that tries to is rejected. The token lives in the named keystore
+you manage with `/keys`:
+
+- A new token typed in the menu is saved in `/keys` as `NOTION_API_KEY`. If
+  that name already exists, the menu asks before replacing it, because other
+  plugins and connections may share it.
+- The plugin keeps only the key's name, in CLAI's credential store. Each run
+  looks the key up again, so replacing it in `/keys` reaches every plugin that
+  uses it. Several plugins can share one named key, the way the GitHub and
+  Copilot integrations can both use `GITHUB_TOKEN`.
+- Deleting the key makes Notion runs fail until you restore it or choose
+  another. A key Notion uses cannot be renamed.
+- `NOTION_API_KEY` is a label in `/keys`, not an environment variable; the
+  plugin does not read `NOTION_ACCESS_TOKEN` either. Notion integration tokens do
+  not work with the hosted server; use a Notion OAuth access token.
+
+With no key chosen, the first run that connects opens your browser to sign in.
+Those OAuth tokens go to the OS keyring, or CLAI's private credential file when
+there is no keyring, so later launches reuse and refresh them. `/notion logout`
+forgets the browser sign-in and the chosen key name; the key itself stays in
+`/keys`.
+
+The browser sign-in needs a browser on the machine CLAI runs on. For headless
+runs or remote machines, choose a key and set Sign-in to key only: without a
+key, CLAI warns at startup and runs fail with a message instead of waiting for a
+sign-in. The plugin emits no telemetry of its own; tool calls appear in core's
+spans.
+
 ## Where plugins live
 
 Plugins are trusted Python code. Drop-in files execute automatically at startup;
@@ -393,7 +453,9 @@ hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
 CLAI plugins written for them, such as the disabled built-ins
 [`day_ai`](#day_ai-day-ai-crm-tools),
-[`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools), and
+[`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
+[`notion`](#notion-workspace-tools),
+[`ordinal`](#ordinal-social-posts-in-ordinal), and
 [`pylon`](#pylon-support-issues-and-accounts-in-pylon).
 
 To run any other capability, declare it on purpose under an id of your choice,
@@ -410,8 +472,9 @@ as `filesystem` or `shell` alongside `coder`.
 
 Earlier releases listed every harness capability here, disabled. If you enabled
 one of those, it was saved as your own declaration, so it keeps loading and now
-shows as a saved plugin; `/plugins remove NAME` forgets it. The exception is
-`google_workspace`, which now loads its built-in plugin instead.
+shows as a saved plugin; `/plugins remove NAME` forgets it. The exception is a
+saved copy of an entry that now has its own built-in under the same id, such as
+`google_workspace` or `ordinal`: it becomes that built-in, keeping whether it was enabled.
 
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
@@ -772,6 +835,55 @@ If you enabled `day_ai` from the earlier harness catalog, your saved
 `pydantic_ai_harness.day_ai:DayAI` declaration still takes precedence and reads
 `DAY_AI_ACCESS_TOKEN` from the environment. `/plugins remove day_ai` switches to
 this plugin.
+
+### `ordinal`: social posts in Ordinal
+
+`ordinal` (`pydantic_clai2.ordinal`) gives the model harness
+[`Ordinal`](../pydantic_ai_harness/pydantic_ai_harness/ordinal/README.md), which drafts, schedules,
+and analyzes social posts through Ordinal's hosted MCP server. It starts disabled;
+`/plugins enable ordinal` turns it on. Ordinal MCP needs the Pro plan or higher.
+If you had enabled or disabled the former `pydantic_ai_harness.ordinal:Ordinal`
+catalog entry, that choice carries over to this plugin.
+
+Set it up in its settings menu. Turning it on (Space in `/plugins`,
+`/plugins enable ordinal`, or `/plugins add`) opens the menu, and so do `/plugins configure ordinal` and `C` in `/plugins`
+later, so you can change anything without reinstalling. It is the same field
+editor `/set` uses: type to filter, Enter edits a row, `R` resets it, and
+**Save & close** or Esc closes.
+Each change is saved as soon as you make it, and the plugin loads again when the
+menu closes.
+
+| Row | Default | Does |
+|---|---|---|
+| Sign-in | Automatic | which credential runs use: Automatic (a `/keys` entry, else `ORDINAL_ACCESS_TOKEN`, else the browser), or only a saved key, only the environment variable, or only the browser |
+| `/keys` entry | none | opens the `/keys` picker: choose a saved key, or type a new token masked; `R` stops using the key |
+| Server instructions | Included | pass Ordinal's own server instructions to the model |
+
+Harness `Ordinal` has one endpoint and reaches every workspace the token's user
+belongs to, so there is no base URL or workspace to set.
+
+The token never goes in plugin settings, which are plaintext SQLite; the settings
+hold only the two options above, and a declaration with any other field, such as
+a pasted token, fails to load. A token typed in the menu is saved in `/keys` as
+`ORDINAL_ACCESS_TOKEN`, after asking if that would replace an existing key, since
+other plugins and connections may share it. CLAI keeps only the chosen key's name
+and looks it up on every run. Replacing the key in `/keys` applies to the next
+run, and deleting it makes runs fail instead of connecting without it. `/keys`
+will not rename a key while Ordinal uses it. Several plugins and providers can
+name the same key, as GitHub and Copilot can both use `GITHUB_TOKEN`.
+
+A browser sign-in opens your browser on the first run that uses Ordinal. CLAI
+keeps the OAuth tokens in the OS keyring (the private credential file when no
+keyring exists), as `/mcp` does for OAuth servers, so later launches reuse them.
+It only works on the machine you run CLAI on. With no credential for the chosen
+sign-in and no terminal (a headless run from CI, say), the plugin fails to load
+with a message naming `/plugins configure ordinal`, rather than adding tools that
+cannot connect.
+
+`/ordinal` shows which credential the next run uses. `/ordinal logout` forgets the
+saved browser sign-in and drops the one in use, so the next browser run signs in
+again; it does not touch a `/keys` entry or the environment variable. Disabling
+the plugin does not sign you out.
 
 ## Managing plugins
 
@@ -1243,8 +1355,16 @@ async def configure() -> str:
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
 
-The built-in `github` and [`pylon`](#configuring-pylon) plugins are complete
+The built-in `github`, `notion`, and [`pylon`](#configuring-pylon) plugins are complete
 examples; `pylon` also steps out of the menu worker to run the async key picker.
+
+Plugin settings are plaintext SQLite. Never save a token, API key, or client
+secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
+its name as a `KeyReference`, and call `resolve_key` when connecting, so a key
+replaced in `/keys` applies and a deleted one fails closed. Name a new key with
+the conventional environment-style label (`GITHUB_TOKEN`, `ORDINAL_ACCESS_TOKEN`)
+so plugins that need the same credential share it. The label is only a name; it
+does not export or read an environment variable.
 
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
@@ -1366,8 +1486,8 @@ name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not p
 the secret on the command line.
 
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
-and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools)
-and [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
+and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
+[`notion`](#notion-workspace-tools), and [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
 searchable list of names. Choose one, enter a different key privately, or
 choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
 login flows are unchanged. Select keys only for endpoints you trust.
