@@ -1525,16 +1525,21 @@ async def test_dataset_evaluate_with_non_finite_evaluator_result(
 
 
 async def test_nonfinite_metric_renders_in_report():
-    """Non-finite metric values render in the report instead of raising in the default number formatter."""
+    """Non-finite metric values render in the report, and against a finite baseline, instead of raising."""
     dataset = Dataset[str, str, None](
         name='non_finite',
         cases=[Case(name=name, inputs=name) for name in ('inf', '-inf', 'nan')],
     )
 
+    async def baseline_task(inputs: str) -> str:
+        increment_eval_metric('ratio', 1.5)
+        return inputs
+
     async def task(inputs: str) -> str:
         increment_eval_metric('ratio', float(inputs))
         return inputs
 
+    baseline = await dataset.evaluate(baseline_task)
     report = await dataset.evaluate(task)
 
     assert render_table(report.console_table(include_durations=False)) == snapshot("""\
@@ -1550,6 +1555,21 @@ async def test_nonfinite_metric_renders_in_report():
 ├──────────┼─────────────┤
 │ Averages │ ratio: nan  │
 └──────────┴─────────────┘
+""")
+    assert render_table(report.console_table(baseline=baseline, include_durations=False)) == snapshot("""\
+Evaluation Diff: baseline_task →
+              task
+┏━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┓
+┃ Case ID  ┃ Metrics            ┃
+┡━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━┩
+│ -inf     │ ratio: 1.50 → -inf │
+├──────────┼────────────────────┤
+│ inf      │ ratio: 1.50 → inf  │
+├──────────┼────────────────────┤
+│ nan      │ ratio: 1.50 → nan  │
+├──────────┼────────────────────┤
+│ Averages │ ratio: 1.50 → nan  │
+└──────────┴────────────────────┘
 """)
 
 

@@ -69,6 +69,7 @@ def default_render_number_diff(old: float | int, new: float | int) -> str | None
 
     Rules:
       - If the two values are equal, return None.
+      - If the difference is not finite (`inf` or `nan` on either side), return None.
       - For integers, return the raw difference (with a leading sign), e.g.:
             _default_format_number_diff(3, 4) -> '+1'
       - For floats (or a mix of float and int):
@@ -91,6 +92,9 @@ def default_render_number_diff(old: float | int, new: float | int) -> str | None
         return f'{diff_int:+d}'
 
     delta = new - old
+    # A non-finite difference has no meaningful absolute or relative form; the `old → new` values already show it.
+    if not math.isfinite(delta):
+        return None
     abs_diff_str = _render_signed(delta, ABS_SIG_FIGS)
     rel_diff_str = _render_relative(new, old, BASE_THRESHOLD)
     if rel_diff_str is None:
