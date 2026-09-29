@@ -7031,6 +7031,7 @@ async def test_agent_realtime_session_dispatches_run_error_for_setup_failure(fai
     expected_error = f'{failure} setup failed'
     toolsets: list[AbstractToolset[None]] = [FailingToolset()] if failure == 'toolset' else []
     agent: Agent[None, str] = Agent[None, str](deps_type=type(None), capabilities=[SetupCapability()])
+    agent.instrument = True
     model = FakeRealtimeModel(FakeRealtimeConnection([]))
 
     with pytest.raises(RuntimeError, match=expected_error):
