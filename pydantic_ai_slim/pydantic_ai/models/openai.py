@@ -3880,7 +3880,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         such an id without an explicit `image/*` media type also maps to `input_file`.
         """
         self._validate_uploaded_file_provider(item)
-        return _map_uploaded_file_to_response_content(item)
+        return _uploaded_file_to_response_content(item)
 
     @staticmethod
     async def _map_file_to_response_content(
@@ -5699,7 +5699,7 @@ def _build_tool_search_return_part(
     )
 
 
-def _map_uploaded_file_to_response_content(
+def _uploaded_file_to_response_content(
     item: UploadedFile,
 ) -> ResponseInputImageContentParam | ResponseInputFileContentParam:
     """Map an `UploadedFile` whose provider has already been checked to its OpenAI Responses API content param."""

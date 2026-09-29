@@ -76,8 +76,8 @@ from ..models import Model, ModelRequestParameters, infer_model, parse_model_id
 from ..models.openai import (
     OpenAIResponsesModel,
     _map_api_errors as map_openai_api_errors,  # pyright: ignore[reportPrivateUsage]
-    _map_uploaded_file_to_response_content,  # pyright: ignore[reportPrivateUsage]
     _map_usage as map_openai_usage,  # pyright: ignore[reportPrivateUsage]
+    _uploaded_file_to_response_content,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
 from ..providers.gateway import normalize_gateway_provider
@@ -1111,7 +1111,7 @@ async def _tool_result_media(
         # An opaque Files-API id reports `application/octet-stream` and goes as `input_file`, as it does on
         # `OpenAIResponsesModel`: the backend reads what the id actually holds.
         _utils.validate_uploaded_file_provider(item, system=provider_name, model_type_name='OpenAILiveModel')
-        return _map_uploaded_file_to_response_content(item)
+        return _uploaded_file_to_response_content(item)
     else:
         return await OpenAIResponsesModel._map_file_to_response_content(item, 'tool returns')  # pyright: ignore[reportPrivateUsage]
     raise UserError(
