@@ -130,7 +130,7 @@ agent = Agent(model)
 
 ## LiteLLM
 
-[`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] connects to a [LiteLLM](https://www.litellm.ai/) proxy, or to any upstream API LiteLLM can call. Pass the base URL as `api_base` and the matching key as `api_key`: for a local LiteLLM proxy, that's `http://localhost:<port>` and your LiteLLM key (or a placeholder); to call OpenAI through LiteLLM, it's `https://api.openai.com/v1` and your OpenAI key. See LiteLLM's [key configuration docs](https://docs.litellm.ai/docs/set_keys) for details, and use the `custom/` model name prefix for custom LLMs.
+[`LiteLLMProvider`][pydantic_ai.providers.litellm.LiteLLMProvider] connects to a [LiteLLM proxy](https://docs.litellm.ai/docs/simple_proxy), which translates requests for the upstream providers it is configured with. Pass the proxy URL (for example `http://localhost:<port>`) as `api_base` and your LiteLLM key (or a placeholder) as `api_key`. Requests are sent as Chat Completions to `api_base` as-is, so you can also point it at an OpenAI-compatible upstream directly, such as `https://api.openai.com/v1` with your OpenAI key, but not at an API that only LiteLLM can translate. Use the `custom/` model name prefix for custom LLMs.
 
 ```python
 from pydantic_ai import Agent

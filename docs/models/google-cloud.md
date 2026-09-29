@@ -37,7 +37,7 @@ Whichever way you authenticate, you'll need to have the Vertex AI API (now brand
 
 ### Application Default Credentials
 
-If you have the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud) installed and configured, you can use the `GoogleCloudProvider` by name:
+If you've set up [application default credentials](https://cloud.google.com/docs/authentication/set-up-adc-local-dev-environment), for example by running `gcloud auth application-default login` with the [`gcloud` CLI](https://cloud.google.com/sdk/gcloud), or you're running on Google Cloud, you can use the `GoogleCloudProvider` by name:
 
 ```python {test="ci_only"}
 from pydantic_ai import Agent
