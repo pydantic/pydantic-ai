@@ -499,7 +499,7 @@ async def test_session_span_leaves_a_delegates_usage_to_its_own_span() -> None:
     sub = Agent(TestModel(), name='sub')
     sub.instrument = settings
 
-    agent: Agent[None, str] = Agent(name='assistant')
+    agent = Agent[None, str](name='assistant', deps_type=type(None))
 
     @agent.tool
     async def analyze(ctx: RunContext[None]) -> str:
@@ -523,9 +523,8 @@ async def test_session_span_leaves_a_delegates_usage_to_its_own_span() -> None:
     assert sess.attributes is not None and delegate.attributes is not None
     assert sess.attributes['gen_ai.aggregated_usage.input_tokens'] == 10
     assert sess.attributes['gen_ai.aggregated_usage.output_tokens'] == 4
-    delegate_input_tokens = delegate.attributes['gen_ai.aggregated_usage.input_tokens']
-    assert delegate_input_tokens == snapshot(51)
-    assert session.usage.input_tokens == 10 + delegate_input_tokens
+    assert delegate.attributes['gen_ai.aggregated_usage.input_tokens'] == snapshot(51)
+    assert session.usage.input_tokens == 10 + 51
 
 
 async def test_session_and_chat_spans_carry_request_config() -> None:
