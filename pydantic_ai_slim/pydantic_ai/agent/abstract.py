@@ -41,7 +41,7 @@ from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._run_context import set_current_run_context
 from ..capabilities import AgentCapability
-from ..conversation import Conversation
+from ..conversation import Conversation, resolve_conversation
 from ..exceptions import RunCancelled
 from ..output import OutputDataT, OutputSpec
 from ..result import AgentStream, FinalResult, StreamedRunResult
@@ -1787,6 +1787,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         metadata: AgentMetadata[AgentDepsT] | None = None,
         conversation_id: str | None = None,
         run_id: str | None = None,
+        conversation: Conversation | None = None,
         message_history: Sequence[_messages.ModelMessage] | None = None,
     ) -> AgentRealtime[AgentDepsT]:
         """Bind this agent's configuration to a realtime `model`, returning an accessor for realtime operations.
@@ -1853,6 +1854,10 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 exchange. Never inherited from `message_history`; passing an empty or previously used ID
                 raises `UserError`. If omitted, a fresh UUID7 is generated and stamped on session-built
                 messages, while seeded messages are left unchanged.
+            conversation: The conversation to continue, in place of passing its `message_history`, `usage` and
+                `conversation_id` separately, so a text run's
+                [`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation] can be spoken
+                in directly. Passing both raises `UserError`.
             message_history: Prior conversation to seed the session with. Replayable text, transcripts,
                 thinking, tool rounds, images, and supported retained user audio are projected to the
                 provider's initial conversation items; unrepresentable content raises `UserError`. The
@@ -1860,6 +1865,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 (but not `new_messages()`). Hand off from a prior session or a standard
                 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] by passing its messages here.
         """
+        message_history, usage, conversation_id = resolve_conversation(
+            conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
+        )
         # Infer the agent name from the calling frame like `run`/`iter` do, so an unnamed agent's
         # realtime session span is labelled with the variable name (e.g. `agent`) rather than a
         # generic fallback — the name is what backends use to tell agent runs apart.

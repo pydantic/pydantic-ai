@@ -496,11 +496,32 @@ print(conversation.conversation_id == conversation.messages[-1].conversation_id)
 
 _(This example is complete, it can be run "as is")_
 
-Pass its pieces to the next run — `message_history=conversation.messages` alongside
-`usage=conversation.usage` — and the running total carries; pass the history alone and it restarts.
+Hand it to the next run as `conversation=`, in place of `message_history`, `usage` and `conversation_id`, and all
+three carry together:
 
-A [realtime session][pydantic_ai.realtime.RealtimeSession] exposes the same bundle, so a spoken conversation
-can be continued as a text run and handed back again without losing its running total.
+```python {title="continue a conversation"}
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2', instructions='Be a helpful assistant.')
+
+first = agent.run_sync('Tell me a joke.')
+second = agent.run_sync('Tell me another.', conversation=first.conversation)
+print(second.usage.requests)
+#> 2
+print(second.conversation_id == first.conversation_id)
+#> True
+```
+
+_(This example is complete, it can be run "as is")_
+
+`conversation=` stands in for the three arguments it carries, so passing it alongside any of them raises
+[`UserError`][pydantic_ai.exceptions.UserError]. The run works on a copy of the conversation's `usage`, so the
+same `Conversation` can be continued more than once, as a point to branch from.
+
+[`agent.realtime()`][pydantic_ai.agent.AbstractAgent.realtime] takes `conversation=` too, and a
+[realtime session][pydantic_ai.realtime.RealtimeSession] exposes the same bundle as
+[`conversation`][pydantic_ai.realtime.RealtimeSession.conversation], so a conversation can move between text and
+speech in either direction without losing its running total.
 
 For a chat application that is usually the whole design: load a thread's history, pass it as `message_history`, and write back [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] once the run finishes. Appending each run's new messages rather than rewriting the full list keeps each write proportional to the turn instead of to the conversation, and leaves the stored order intact.
 

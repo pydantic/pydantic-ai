@@ -9499,6 +9499,35 @@ async def test_agent_realtime_session_resolves_conversation_id_like_a_run() -> N
     assert await recorded_conversation_id()
 
 
+async def test_agent_realtime_continues_a_text_runs_conversation() -> None:
+    """A text run's `conversation` is spoken in directly: its history, running total and id all carry."""
+    agent: Agent[None, str] = Agent(TestModel(custom_output_text='A joke.'))
+    text = agent.run_sync('Tell me a joke.')
+
+    async with agent.realtime(
+        FakeRealtimeModel(FakeRealtimeConnection([])), conversation=text.conversation
+    ).session() as session:
+        await session.send('And another.')
+
+        assert session.all_messages()[: len(text.all_messages())] == text.all_messages()
+        assert session.usage.requests == text.usage.requests
+        assert session.new_messages()[0].conversation_id == text.conversation_id
+        # Handed back, the bundle still carries the text run's total, not a restarted one.
+        assert session.conversation.usage.requests == text.usage.requests
+
+
+def test_agent_realtime_rejects_a_conversation_alongside_its_pieces() -> None:
+    agent: Agent[None, str] = Agent(TestModel())
+    conversation = agent.run_sync('Hi').conversation
+
+    with pytest.raises(UserError, match='`conversation` already carries `message_history`'):
+        agent.realtime(
+            FakeRealtimeModel(FakeRealtimeConnection([])),
+            conversation=conversation,
+            message_history=conversation.messages,
+        )
+
+
 async def test_agent_realtime_session_run_id_matches_a_run() -> None:
     seen_run_ids: list[str | None] = []
     agent: Agent[None, str] = Agent(deps_type=type(None))
