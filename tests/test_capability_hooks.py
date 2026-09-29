@@ -2217,6 +2217,52 @@ class TestRunErrorHooks:
 
         assert observed == ['cleaned']
 
+    async def test_context_preparation_failure_runs_cleanup_once(self):
+        error = RuntimeError('context preparation failed')
+        observed: list[BaseException] = []
+        preparations = 0
+
+        class FailingPreparation(AbstractCapability[object]):
+            def _prepare_run_context(self, ctx: RunContext[object]) -> None:
+                nonlocal preparations
+                preparations += 1
+                raise error
+
+        class Cleanup(AbstractCapability[object]):
+            async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+                observed.append(error)
+                raise error
+
+        with pytest.raises(RuntimeError, match='context preparation failed') as exc_info:
+            await Agent(TestModel(), capabilities=[Cleanup(), FailingPreparation()]).run('hello')
+
+        assert exc_info.value is error
+        assert observed == [error]
+        assert preparations == 1
+
+    async def test_setup_failure_runs_cleanup_when_context_preparation_also_fails(self):
+        error = ValueError('capability setup failed')
+        observed: list[BaseException] = []
+
+        class FailingSetup(AbstractCapability[object]):
+            async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+                raise error
+
+        class FailingPreparation(AbstractCapability[object]):
+            def _prepare_run_context(self, ctx: RunContext[object]) -> None:
+                raise RuntimeError('context preparation failed')
+
+        class Cleanup(AbstractCapability[object]):
+            async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+                observed.append(error)
+                raise error
+
+        with pytest.raises(ValueError, match='capability setup failed') as exc_info:
+            await Agent(TestModel(), capabilities=[Cleanup(), FailingPreparation(), FailingSetup()]).run('hello')
+
+        assert exc_info.value is error
+        assert observed == [error]
+
     async def test_on_run_error_not_called_when_wrap_run_recovers(self):
         @dataclass
         class WrapRecoveryCap(AbstractCapability[Any]):

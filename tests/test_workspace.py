@@ -1222,6 +1222,96 @@ async def test_setup_failure_cleans_root_replacement_of_partial_dynamic() -> Non
     assert cleaned == ['resolved']
 
 
+async def test_setup_failure_cleans_each_shared_dynamic_child_occurrence() -> None:
+    cleaned: list[int] = []
+    second_done = asyncio.Event()
+    next_instance = 0
+
+    class Stateful(AbstractCapability[object]):
+        def __init__(self, instance: int) -> None:
+            self.instance = instance
+
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            nonlocal next_instance
+            next_instance += 1
+            return Stateful(next_instance)
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            cleaned.append(self.instance)
+            raise error
+
+    shared = Stateful(0)
+
+    async def first_factory(ctx: RunContext[object]) -> AbstractCapability[object]:
+        await second_done.wait()
+        return shared
+
+    class FirstDynamic(DynamicCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            await super().for_run(ctx)
+            raise RuntimeError('later setup failed')
+
+    class SecondDynamic(DynamicCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            result = await super().for_run(ctx)
+            second_done.set()
+            return result
+
+    first = FirstDynamic(first_factory)
+    second = SecondDynamic(lambda ctx: shared)
+    with pytest.raises(RuntimeError, match='later setup failed'):
+        await Agent(TestModel(), capabilities=[CombinedCapability([first, second])]).run('go')
+
+    assert sorted(cleaned) == [1, 2]
+
+
+async def test_setup_failure_cleans_nested_shared_dynamic_child_occurrence() -> None:
+    cleaned: list[int] = []
+    second_done = asyncio.Event()
+    next_instance = 0
+    setup_calls = 0
+
+    class Stateful(AbstractCapability[object]):
+        def __init__(self, instance: int) -> None:
+            self.instance = instance
+
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            nonlocal next_instance
+            next_instance += 1
+            return Stateful(next_instance)
+
+        async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+            cleaned.append(self.instance)
+            raise error
+
+    class FailsSecond(AbstractCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            nonlocal setup_calls
+            setup_calls += 1
+            if setup_calls == 2:
+                raise RuntimeError('nested child setup failed')
+            return self
+
+    shared = CombinedCapability([Stateful(0), FailsSecond()])
+
+    async def first_factory(ctx: RunContext[object]) -> AbstractCapability[object]:
+        await second_done.wait()
+        return shared
+
+    class SecondDynamic(DynamicCapability[object]):
+        async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+            result = await super().for_run(ctx)
+            second_done.set()
+            return result
+
+    first = DynamicCapability(first_factory)
+    second = SecondDynamic(lambda ctx: shared)
+    with pytest.raises(RuntimeError, match='nested child setup failed'):
+        await Agent(TestModel(), capabilities=[CombinedCapability([first, second])]).run('go')
+
+    assert sorted(cleaned) == [1, 2]
+
+
 async def test_setup_failure_calls_on_run_error_for_each_repeated_resolved_capability() -> None:
     cleanup_order: list[int] = []
     second_resolution_complete = asyncio.Event()

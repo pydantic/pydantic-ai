@@ -242,7 +242,11 @@ def _is_run_control_error(error: BaseException) -> bool:
 
 
 async def _run_setup_error_hook(
-    resolved_layers: Sequence[AbstractCapability[AgentDepsT]], run_ctx: RunContext[AgentDepsT], error: BaseException
+    resolved_layers: Sequence[AbstractCapability[AgentDepsT]],
+    run_ctx: RunContext[AgentDepsT],
+    error: BaseException,
+    *,
+    context_preparation_failed: bool = False,
 ) -> None:
     """Dispatch error hooks when setup fails before a run result can be built."""
     if _is_run_control_error(error):
@@ -257,11 +261,12 @@ async def _run_setup_error_hook(
         # A failed `for_run` may leave duplicate ids in the partial tree; cleanup still needs
         # the public registry without replacing the setup error with an id validation error.
         run_ctx.capabilities = _build_run_capabilities(run_capability, validate_ids=False)
-    try:
-        _prepare_run_capability_context(run_capability, run_ctx)
-    except exceptions.UserError:
-        # A partial tree can fail durable ID validation; cleanup still belongs to the setup error.
-        pass
+    if not context_preparation_failed:
+        try:
+            _prepare_run_capability_context(run_capability, run_ctx)
+        except Exception:
+            # A partial tree can fail context preparation; cleanup still belongs to the setup error.
+            pass
     # There is no run result to recover here, so preserve the setup error if the hook returns.
     setup_traceback = error.__traceback__
     try:
@@ -341,7 +346,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     try:
         _prepare_run_capability_context(run_capability, run_ctx)
     except BaseException as error:
-        await _run_setup_error_hook(resolved_layers, run_ctx, error)
+        await _run_setup_error_hook(resolved_layers, run_ctx, error, context_preparation_failed=True)
         raise
 
     outer_context = contextvars.copy_context()
