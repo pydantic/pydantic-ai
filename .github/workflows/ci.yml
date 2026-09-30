@@ -45,7 +45,8 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      docs_only: ${{ steps.classify.outputs.docs_only }}
+      content_only: ${{ steps.classify.outputs.content_only }}
+      docs_changed: ${{ steps.classify.outputs.docs_changed }}
       clai2_only: ${{ steps.classify.outputs.clai2_only }}
       pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
     steps:
@@ -56,7 +57,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           run_all_checks() {
-            echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            echo 'content_only=false' >> "$GITHUB_OUTPUT"
+            echo 'docs_changed=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
             echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
           }
@@ -71,6 +73,16 @@ jobs:
             run_all_checks
             exit 0
           fi
+          if ! [[ "$total" =~ ^[0-9]+$ ]]; then
+            echo "::warning::PR changed-file count is not numeric ($total); running full CI."
+            run_all_checks
+            exit 0
+          fi
+          if [ "$total" -eq 0 ] || [ "$total" -ge 3000 ]; then
+            echo "::warning::PR changed-file count is $total; running full CI."
+            run_all_checks
+            exit 0
+          fi
           if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
             --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
             echo '::warning::Could not list the PR changed files; running full CI.'
@@ -79,13 +91,13 @@ jobs:
           fi
 
           mapfile -t changed_files < "$RUNNER_TEMP/changed-files.txt"
-          if [ "$total" -eq 0 ] || [ "${#changed_files[@]}" -ne "$total" ]; then
+          if [ "${#changed_files[@]}" -ne "$total" ]; then
             echo "::warning::Expected $total changed files, received ${#changed_files[@]}; running full CI."
             run_all_checks
             exit 0
           fi
 
-          is_docs_markdown() {
+          is_published_docs_markdown() {
             case "$1" in
               README.md|docs/*.md|examples/*.md) ;;
               *) return 1 ;;
@@ -93,6 +105,10 @@ jobs:
             case "$1" in
               AGENTS.md|CLAUDE.md|*/AGENTS.md|*/CLAUDE.md) return 1 ;;
             esac
+          }
+
+          is_instruction_skill() {
+            [[ "$1" =~ ^\.agents/skills/[^/]+/SKILL\.md$ ]]
           }
 
           # Nothing outside `pydantic-clai2` imports it, so a change confined to these paths cannot
@@ -115,14 +131,19 @@ jobs:
             esac
           }
 
-          docs_only=true
+          content_only=true
+          docs_changed=false
           clai2_only=true
           pyright_changed=false
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
-            if ! is_docs_markdown "$filename" || \
-              { [ -n "$previous_filename" ] && ! is_docs_markdown "$previous_filename"; }; then
-              docs_only=false
+            if { ! is_published_docs_markdown "$filename" && ! is_instruction_skill "$filename"; } || \
+              { [ -n "$previous_filename" ] && ! is_published_docs_markdown "$previous_filename" && ! is_instruction_skill "$previous_filename"; }; then
+              content_only=false
+            fi
+            if is_published_docs_markdown "$filename" || \
+              { [ -n "$previous_filename" ] && is_published_docs_markdown "$previous_filename"; }; then
+              docs_changed=true
             fi
             if ! is_clai2 "$filename" || \
               { [ -n "$previous_filename" ] && ! is_clai2 "$previous_filename"; }; then
@@ -133,14 +154,15 @@ jobs:
               pyright_changed=true
             fi
           done
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "content_only=$content_only" >> "$GITHUB_OUTPUT"
+          echo "docs_changed=$docs_changed" >> "$GITHUB_OUTPUT"
           echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
           echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
 
   quality:
     name: quality checks
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: ubuntu-latest
     # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
     # it works today on `contents: read` alone only because this repo is public; declaring
@@ -182,6 +204,7 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          .github/scripts/test_ci_content_classifier.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -332,7 +355,7 @@ jobs:
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -352,6 +375,8 @@ jobs:
   # The unified-docs repository renders and validates published documentation.
   # Keep this source-repository check for assets that live alongside Pydantic AI docs.
   docs-assets:
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true' || needs.classify.outputs.docs_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -381,7 +406,7 @@ jobs:
   docs-only:
     name: docs-only checks on Python 3.13
     needs: classify
-    if: needs.classify.outputs.docs_only == 'true'
+    if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -414,10 +439,27 @@ jobs:
       - name: Test documentation snippets
         run: uv run --no-sync pytest tests/test_examples.py -n logical --dist=loadgroup
 
+  instructions-only:
+    name: instruction text checks
+    needs: classify
+    if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+        with:
+          extra_args: --all-files --verbose
+        env:
+          SKIP: no-commit-to-branch,check-yaml,check-toml,check-added-large-files,zizmor,clai-help,format,lint,check-cassettes
+
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -551,7 +593,7 @@ jobs:
   test-all-extras:
     name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/2)
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -704,7 +746,7 @@ jobs:
   test-durable-exec:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -824,7 +866,7 @@ jobs:
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/2)
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -944,7 +986,7 @@ jobs:
   test-temporal-latest:
     name: test Temporal latest on Python 3.10
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -970,7 +1012,7 @@ jobs:
   test-examples:
     name: test examples on ${{ matrix.python-version }}
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -999,7 +1041,7 @@ jobs:
   test-harness-browser-use:
     name: test harness browser-use
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1028,7 +1070,7 @@ jobs:
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1252,7 +1294,7 @@ jobs:
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4]
     # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
     # otherwise skip this job too.
-    if: ${{ !failure() && !cancelled() && needs.classify.outputs.docs_only != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1297,6 +1339,7 @@ jobs:
       - mypy
       - docs-assets
       - docs-only
+      - instructions-only
       - test
       - test-all-extras
       - test-durable-exec
@@ -1319,21 +1362,25 @@ jobs:
         with:
           # The canary is advisory because it tests dependency versions we do not lock; its failures
           # signal upstream drift rather than release blockers. It runs on tag refs only, and
-          # `docs-only` runs only for Markdown-only PRs, and a PR confined to `pydantic-clai2` skips the
-          # jobs that exercise the rest of the workspace.
-          # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
+          # `docs-only` covers published Markdown changes; `instructions-only` covers skill-only
+          # changes. Each lightweight path must run its selected check, while full CI jobs may skip
+          # only on either reduced PR path.
           # The harness integration jobs run only when their paths change (always on tags), and
           # LocalStack also skips where its secret is unreadable.
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
-              needs.classify.outputs.docs_only == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage'
+              needs.classify.outputs.content_only == 'true'
+              && needs.classify.outputs.docs_changed == 'true'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,instructions-only'
+              || needs.classify.outputs.content_only == 'true'
+              && needs.classify.outputs.docs_changed != 'true'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,instructions-only,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || github.ref_type == 'tag'
-              && 'docs-only,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,instructions-only,harness-integration-changes,harness-localstack-integration'
+              || 'docs-only,instructions-only,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
