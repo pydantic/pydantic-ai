@@ -10,6 +10,7 @@ that explicitly.
 
 from __future__ import annotations
 
+import asyncio
 import warnings
 
 import pytest
@@ -26,6 +27,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness.warn_on_cache_busts import (
     CacheBustWarning,
     WarnOnCacheBusts,
+    ignore_cache_busts,
 )
 
 
@@ -525,6 +527,74 @@ async def test_collapse_latch_carries_across_runs() -> None:
     with warnings.catch_warnings():
         warnings.simplefilter('error', CacheBustWarning)
         await agent.run('second', message_history=first.all_messages())
+
+
+async def test_ignore_cache_busts_silences_only_inside_the_block() -> None:
+    """`ignore_cache_busts()` silences a collapse even under an `'error'` filter, and only while active.
+
+    The marks keep updating while silenced, so the latch carries: the still-collapsed next run stays
+    quiet, and a fresh collapse after a healthy read-back warns again once the block has exited.
+    """
+    agent = _agent_for_runs(
+        [
+            [_usage(read=0, write=8000), _usage(read=8000)],
+            [_usage(read=100)],  # intentional bust, silenced
+            [_usage(read=100)],  # same collapse, latched
+            [_usage(read=8000)],  # re-stabilized
+            [_usage(read=100)],  # a new collapse, outside the block
+        ],
+        WarnOnCacheBusts(),
+    )
+    result = await agent.run('1')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', CacheBustWarning)
+        with ignore_cache_busts():
+            result = await agent.run('2', message_history=result.all_messages())
+        result = await agent.run('3', message_history=result.all_messages())
+        result = await agent.run('4', message_history=result.all_messages())
+    with pytest.warns(CacheBustWarning, match='request 1'):
+        await agent.run('5', message_history=result.all_messages())
+
+
+async def test_ignore_cache_busts_does_not_silence_concurrent_runs() -> None:
+    """A run silenced by `ignore_cache_busts()` leaves a concurrent run's warning intact.
+
+    The silenced run is parked mid-run, inside its block, while the other run collapses: a
+    `warnings.catch_warnings()` block would have silenced both, since warning filters are global.
+    """
+    parked = asyncio.Event()
+    release = asyncio.Event()
+
+    async def park() -> str:
+        parked.set()
+        await release.wait()
+        return 'ok'
+
+    silenced_usages = [_usage(read=0, write=8000), _usage(read=100)]
+
+    def silenced_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        usage = silenced_usages.pop(0)
+        if silenced_usages:
+            return ModelResponse(parts=[ToolCallPart('park', {})], usage=usage)
+        return ModelResponse(parts=[TextPart('done')], usage=usage)
+
+    silenced = Agent(FunctionModel(silenced_fn), capabilities=[WarnOnCacheBusts()], tools=[park])
+    noisy = _agent([_usage(read=0, write=8000), _usage(read=100)], WarnOnCacheBusts())
+
+    async def run_silenced() -> None:
+        with ignore_cache_busts():
+            await silenced.run('quiet')
+
+    async def run_noisy() -> None:
+        await parked.wait()
+        try:
+            await noisy.run('loud')
+        finally:
+            release.set()
+
+    with pytest.warns(CacheBustWarning) as record:
+        await asyncio.gather(run_silenced(), run_noisy())
+    assert len([w for w in record if issubclass(w.category, CacheBustWarning)]) == 1
 
 
 def test_invalid_config_rejected() -> None:

@@ -100,24 +100,30 @@ belongs at the wire level in tests, not here.
 
 ## Silencing and escalation
 
-There is no bespoke suppression API. Use the stdlib `warnings` machinery, exactly
-as you would manage any other `UserWarning`:
+Process-wide silencing and escalation use the stdlib `warnings` machinery, exactly
+as you would manage any other `UserWarning`. To silence one intentional bust, wrap
+the run that causes it in `ignore_cache_busts()`:
 
 ```python
 import warnings
-from pydantic_ai_harness.warn_on_cache_busts import CacheBustWarning
+from pydantic_ai_harness.warn_on_cache_busts import CacheBustWarning, ignore_cache_busts
 
 # Silence the whole category:
 warnings.filterwarnings('ignore', category=CacheBustWarning)
 
 # Silence one intentional bust, scoped to the operation that causes it:
-with warnings.catch_warnings():
-    warnings.simplefilter('ignore', CacheBustWarning)
+with ignore_cache_busts():
     result = agent.run_sync('...')  # e.g. a step that switches models or adds a file
 
 # Treat every bust as an error (dev/CI enforcement):
 warnings.filterwarnings('error', category=CacheBustWarning)
 ```
+
+Use `ignore_cache_busts()` rather than a `warnings.catch_warnings()` block for
+scoped silencing: warning filters are process-global, so a `catch_warnings()` block
+around one run also silences every concurrent run while it is active.
+`ignore_cache_busts()` holds its suppression in a `ContextVar`, so it applies only to
+the runs made inside the block, in that task or thread; concurrent runs keep warning.
 
 In tests, assert an intentional bust with `pytest.warns(CacheBustWarning)`, or
 silence a legitimately-busting test with
