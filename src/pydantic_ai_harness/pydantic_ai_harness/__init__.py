@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from .researcher import DEFAULT_RESEARCHER_INSTRUCTIONS, Researcher
     from .shell import LLM_API_KEY_ENV_PATTERNS, Shell
     from .skills import Skills
+    from .smart_file_search import SmartFileSearch
     from .spend import SpendLimits
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
     from .ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
@@ -124,6 +125,7 @@ __all__ = [
     'Shell',
     'Skills',
     'SlidingWindowCompaction',
+    'SmartFileSearch',
     'SpendLimits',
     'SpritesSandbox',
     'SpritesSandboxBackend',
@@ -181,6 +183,7 @@ _CAPABILITY_EXPORTS = {
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
+    'SmartFileSearch': 'smart_file_search',
     'SpendLimits': 'spend',
     'SpritesSandbox': 'sprites_sandbox',
     'SSHWorkspace': 'ssh_workspace',

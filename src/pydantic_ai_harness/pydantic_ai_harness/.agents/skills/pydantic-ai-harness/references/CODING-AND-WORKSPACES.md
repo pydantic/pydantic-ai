@@ -168,6 +168,37 @@ descendants), `read_only=False` (`True` registers only read tools), `content_has
 - Veto writes with `@agent.on_event(FileChangeRequestEvent)` + `event.cancel(reason)` (from
   `pydantic_ai_harness.filesystem`); the event carries a unified `diff`.
 
+
+## SmartFileSearch
+
+Plain-English code search (`.smart_file_search`, `[smart-file-search]` for tree-sitter chunking beyond
+Python). One tool, `smart_file_search(query, directory='.', glob=None, limit=5, candidates=128)`, returns a
+`SmartFileSearchResult` (`matches`, `omitted_matches`, `coverage`, `warnings`). Files are listed with
+`rg --files` in the workspace (needs `rg` on the workspace `PATH`; hidden on a workspace that cannot run
+commands), shortlisted with BM25, and each shortlisted snippet is judged by a model.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import SmartFileSearch
+
+agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartFileSearch(model='test')])
+```
+
+- `model` is **any** Pydantic AI model or name. Unset: `'typesafe:jev-latest'` if the `typesafe` SDK is
+  installed and `TYPESAFE_API_KEY` is set (recommended), else the run's own model. Never TypeSafe-only.
+- `threshold=0.5` (tuned for Jev; retune for a language-model judge), `concurrency=8`, `guidance=None`
+  (default discovery instructions; `''` for none).
+- `cache_index=False`: on, keeps up to four directories' indexes (per `glob`) in memory for the agent's
+  life; later searches re-read files but re-chunk only changed ones (content hash), and parallel searches
+  of one directory build it once. A search is capped at 200,000 files (after `glob`), 50M lines and 2 GiB
+  (`ModelRetry`).
+- Judge usage is not added to the run's usage or limits; bound cost with `candidates`. A failed judgment
+  fails the search as a tool failure the model sees.
+- Sends the query, snippets and paths to the judge's provider; `directory` must be inside the working
+  directory (symlinks followed), else `ModelRetry`.
+
 ## Shell
 
 Default tools `run_command`, `start_command`, `check_command`, `stop_command`; `tools=['shell']`
