@@ -9,10 +9,10 @@ from pydantic import ValidationError
 
 from pydantic_clai2.commands import config_command
 from pydantic_clai2.config import PluginSettings, Settings
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.model_menu import ModelSettingsSource
-from pydantic_clai2.model_settings import model_settings_from_json
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.model_settings import model_settings_from_json
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 
 
 @pytest.mark.parametrize(('version', 'has_model_settings'), [(0, False), (1, False), (1, True)])

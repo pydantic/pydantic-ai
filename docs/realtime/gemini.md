@@ -173,9 +173,6 @@ those a [`local=` fallback](tools.md#native-tools) and the session runs the loca
 `CodeExecutionTool(local=...)`, or `WebFetch(native=False, local=True)`, which requires the
 `web-fetch` optional group (`pip/uv-add "pydantic-ai-slim[google-realtime,web-fetch]"`).
 
-Gemini 2.5 also cannot combine native Google Search grounding with function tools; choose native
-grounding or local function-tool fallbacks unless using a model that supports the combination.
-
 ### Specialist streaming models
 
 The built-in profile describes the speech-to-speech Live models. Gemini also serves specialist
@@ -185,16 +182,12 @@ facts with [`profile=`](overview.md#provider-support), which resolves like a
 [standard model profile](../models/overview.md#inspecting-a-models-profile), e.g.
 `GoogleRealtimeModel('gemini-robotics-er-2-streaming-preview', profile={'supports_text_output': True})`.
 
-The Vertex half-cascade model `gemini-live-2.5-flash` is another exception: it accepts `TEXT`, but
-the built-in speech-to-speech profile rejects `output_modality='text'` before connecting for every
-Gemini ID. Opt in explicitly with `profile={'supports_text_output': True}`.
-
 ## Feature support and limitations
 
 | Feature | Support | Notes |
 | --- | --- | --- |
 | Audio format | Full feature support | Mono PCM16, 16 kHz input and 24 kHz output |
-| Text output | Unsupported | Every speech-to-speech Live model rejects a `TEXT` response modality, so `output_modality='text'` raises. Read the answer from the transcript on the `SpeechPart` |
+| Text output | Vertex `gemini-live-2.5-flash` only | The other Live models reject a `TEXT` response modality, so `output_modality='text'` raises; read the answer from the transcript on the `SpeechPart` |
 | Image/live video input | Full feature support | [Images](audio.md#images); `google_turn_coverage='all_video'` keeps streamed frames in context |
 | Manual turns | Unsupported | [Automatic turn detection](turns.md#automatic-turn-detection) is required |
 | Explicit interruption/truncation | Unsupported | Gemini [interrupts server-side](turns.md#barge-in) and emits `RealtimeResponseInterruptedEvent` |
@@ -245,8 +238,10 @@ drop cut off an exchange the resumed session no longer has (see
 - Gemini reports response interruption but not user speech-start/end events, so local playback is
   flushed on `RealtimeResponseInterruptedEvent`, and Gemini sessions record no `user speech` span (see
   [Logfire instrumentation](observability.md#logfire-instrumentation)).
-- [Seeded](history.md#seeding-a-session) function calls/results are represented as readable text
-  because Live cannot accept function parts in seeded turns.
+- When Gemini says why it ended a turn, the response records it the way a
+  [`GoogleModel`][pydantic_ai.models.google.GoogleModel] response does: a malformed function call is
+  `finish_reason='error'`, refused input or unsafe output is `'content_filter'`, and the raw reason
+  (such as `MALFORMED_FUNCTION_CALL`) is kept in `provider_details['finish_reason']`.
 - `send()` sends an [image](audio.md#images) as a live video frame. Spoken turns see video frames,
   but typed turns don't on the Live models. So a typed turn (`send('...')`) also carries the most
   recent image sent in the last 10 seconds in its own content, ahead of the text. That image is sent,

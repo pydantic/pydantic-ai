@@ -13,8 +13,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session, chat
 from pydantic_clai2.config import Settings
-from pydantic_clai2.set_menu import SettingsSource
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.menus.set_menu import SettingsSource
 from tests.clai2.menu_script import make_context
 from tests.clai2.test_app_edges import inputs
 

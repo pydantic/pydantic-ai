@@ -51,6 +51,8 @@ That is the whole setup. `run_id` is always per-`Agent.run` call, matching pydan
 - **`agent_name` set, `run_id` unset** derives a path-safe base64url encoding of the complete `(agent_name, ctx.run_id)` pair. The encoding is injective within `FileStepStore`'s 200-character limit, so replay addresses the same stored run without collisions between distinct accepted context ids. A longer derived id raises `ValueError` before backend selection, including with the memory, SQLite, and Mongo stores.
 - **Neither set** uses `ctx.run_id` unchanged. A missing context run id raises `RuntimeError` because inventing one would disconnect replayed writes.
 
+The run record, events, and snapshots carry `agent_name`. When it is unset, they record the running agent's `name` instead (which Pydantic AI infers from the variable name when `Agent(name=...)` is not passed). That fallback does not feed the `run_id` derivation above, so the store key stays `ctx.run_id` and runs can still be looked up by the id passed to or returned from `Agent.run`.
+
 ## Durable execution
 
 `StepPersistence` has the stable capability id `step_persistence`, so it can be attached alongside a Pydantic AI durability capability without passing `id=`. Pass an explicit id only when the same agent has more than one `StepPersistence` instance.

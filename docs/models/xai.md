@@ -35,6 +35,9 @@ agent = Agent('xai:grok-4.3')
 ...
 ```
 
+!!! tip
+    For voice agents, use Grok Voice with a [realtime session](../realtime/xai.md) instead.
+
 Or initialise the model directly:
 
 ```python
