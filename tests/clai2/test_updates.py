@@ -12,12 +12,12 @@ from rich.console import Console
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2 import updates
 from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
+from pydantic_clai2.builtin_plugins import updates
 from pydantic_clai2.config import Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
 
 
 def host(*, terminal: bool = True) -> PluginHost[None]:

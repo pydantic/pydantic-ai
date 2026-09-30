@@ -18,14 +18,16 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.pylon import Pylon
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys, pylon
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins import pylon
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
-from pydantic_clai2.field_menu import FieldMenu
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAUTH_TIMEOUT
-from pydantic_clai2.plugin_loader import PluginLoader
 from pydantic_clai2.plugins import PluginHost, SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from tests.clai2.menu_script import Script, pick
 
 pytestmark = pytest.mark.anyio
@@ -111,7 +113,7 @@ def pylon_tools(host: PluginHost[None]) -> list[str]:
 class TestDeclarationAndConnection:
     def test_declared_as_disabled_clai_built_in(self) -> None:
         [declaration] = [plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'pylon']
-        assert declaration.factory == 'pydantic_clai2.pylon'
+        assert declaration.factory == 'pydantic_clai2.builtin_plugins.pylon'
         assert not declaration.enabled
         assert declaration.settings == {}, 'nothing secret, or otherwise, is declared'
 

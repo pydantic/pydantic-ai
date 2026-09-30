@@ -13,8 +13,83 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  classify:
+    name: classify changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      content_only: ${{ steps.classify.outputs.content_only }}
+    steps:
+      - name: Classify pull request changes
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          run_benchmarks() {
+            echo 'content_only=false' >> "$GITHUB_OUTPUT"
+          }
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            run_benchmarks
+            exit 0
+          fi
+
+          if ! total=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.changed_files'); then
+            echo '::warning::Could not read the PR changed-file count; running benchmarks.'
+            run_benchmarks
+            exit 0
+          fi
+          if ! [[ "$total" =~ ^[0-9]+$ ]] || [ "$total" -eq 0 ] || [ "$total" -ge 3000 ]; then
+            echo "::warning::PR changed-file count is $total; running benchmarks."
+            run_benchmarks
+            exit 0
+          fi
+          if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
+            echo '::warning::Could not list the PR changed files; running benchmarks.'
+            run_benchmarks
+            exit 0
+          fi
+
+          mapfile -t changed_files < "$RUNNER_TEMP/changed-files.txt"
+          if [ "${#changed_files[@]}" -ne "$total" ]; then
+            echo "::warning::Expected $total changed files, received ${#changed_files[@]}; running benchmarks."
+            run_benchmarks
+            exit 0
+          fi
+
+          is_published_docs_markdown() {
+            case "$1" in
+              README.md|docs/*.md|examples/*.md) ;;
+              *) return 1 ;;
+            esac
+            case "$1" in
+              AGENTS.md|CLAUDE.md|*/AGENTS.md|*/CLAUDE.md) return 1 ;;
+            esac
+          }
+
+          is_instruction_skill() {
+            [[ "$1" =~ ^\.agents/skills/[^/]+/SKILL\.md$ ]]
+          }
+
+          content_only=true
+          for changed_file in "${changed_files[@]}"; do
+            IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
+            if ! is_published_docs_markdown "$filename" && ! is_instruction_skill "$filename" || \
+              { [ -n "$previous_filename" ] && ! is_published_docs_markdown "$previous_filename" && ! is_instruction_skill "$previous_filename"; }; then
+              content_only=false
+              break
+            fi
+          done
+          echo "content_only=$content_only" >> "$GITHUB_OUTPUT"
+
   benchmarks:
     name: Run benchmarks
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: codspeed-macro-arm64-graviton-ubuntu-22-04
     timeout-minutes: 10
     permissions:

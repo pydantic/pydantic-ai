@@ -11,11 +11,11 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, is_silent
 from pydantic_clai2.config import Settings
-from pydantic_clai2.menu_worker import run_worker
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.menus.menu_worker import run_worker
 from tests.clai2.test_app_edges import inputs
 
 
