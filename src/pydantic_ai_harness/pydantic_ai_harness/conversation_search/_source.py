@@ -21,7 +21,9 @@ search layer.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import replace
+from collections import OrderedDict
+from dataclasses import dataclass, replace
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from pydantic_ai.messages import (
@@ -57,8 +59,13 @@ class HistorySource(Protocol):
     snapshot stores; an event-sourced substrate can implement it via replay.
     """
 
-    async def list_runs(self) -> list[RunRecord]:
-        """Return all persisted runs, sorted by `started_at` ascending."""
+    async def list_runs(self, *, conversation_id: str | None = None) -> list[RunRecord]:
+        """Return persisted runs, sorted by `started_at` ascending.
+
+        With `conversation_id`, return only that conversation's runs, so a
+        conversation-scoped search never enumerates other conversations. `None`
+        returns every run.
+        """
         ...  # pragma: no cover
 
     async def run_history(self, *, run_id: str) -> list[ModelMessage]:
@@ -77,6 +84,8 @@ class SnapshotStore(Protocol):
 
     A structural subset of the step-persistence stores: `InMemoryStepStore`,
     `FileStepStore`, `SqliteStepStore`, and `MongoStepStore` all satisfy it.
+    `latest_snapshot` lets `SnapshotHistorySource` confirm a cached run is
+    unchanged without reloading every snapshot.
     `list_snapshots` is not part of the `StepStore` protocol yet -- the shipped
     stores implement it as a plain method; promoting it into the protocol is
     proposed alongside the session-tree evolution (pydantic-ai-harness#321).
@@ -90,6 +99,29 @@ class SnapshotStore(Protocol):
     ) -> list[RunRecord]: ...  # pragma: no cover
 
     async def list_snapshots(self, *, run_id: str) -> list[ContinuableSnapshot]: ...  # pragma: no cover
+
+    async def latest_snapshot(self, *, run_id: str) -> ContinuableSnapshot | None: ...  # pragma: no cover
+
+
+_SnapshotKey = tuple[int, datetime, str | None]
+"""Identity of a persisted snapshot: `(step_index, timestamp, idempotency_key)`.
+
+`step_index` alone is not unique, since it restarts when a `run_id` is reused across
+`Agent.run` calls; the save timestamp tells those snapshots apart.
+"""
+
+
+def _snapshot_key(snapshot: ContinuableSnapshot) -> _SnapshotKey:
+    return (snapshot.step_index, snapshot.timestamp, snapshot.idempotency_key)
+
+
+@dataclass(frozen=True)
+class _ReconstructedRun:
+    """A run's durable record, and the snapshots it was reconstructed from."""
+
+    snapshot_keys: tuple[_SnapshotKey, ...]
+    history: tuple[ModelMessage, ...]
+    hashes: tuple[str, ...]
 
 
 def _canonical_message(message: ModelMessage) -> ModelMessage:
@@ -153,9 +185,18 @@ class SnapshotHistorySource:
     The shipped stores' `list_snapshots` defaults to `complete` snapshots only
     (mirroring `latest_snapshot`), so `interrupted` captures -- which can carry
     unsettled tool work and synthesized tool returns -- stay out of the corpus.
+
+    Reconstruction is cached per run, because every search would otherwise reload
+    and rehash every snapshot of every run in scope. Snapshots are write-once and a
+    run's snapshot list only changes when a save appends one (bounded retention
+    prunes on that same save), so the cache is checked against the run's latest
+    snapshot: unchanged, the cached record is returned without reloading; changed,
+    only snapshots appended since are folded in, and anything else (a pruned or
+    replaced snapshot) rebuilds the record from scratch. `max_cached_runs` bounds
+    how many runs are kept, least recently searched first out; `0` disables the cache.
     """
 
-    def __init__(self, store: SnapshotStore) -> None:
+    def __init__(self, store: SnapshotStore, *, max_cached_runs: int = 128) -> None:
         # Fail at construction, not mid-search, when a store lacks the read seam.
         # `list_snapshots` is not part of the `StepStore` protocol, so a
         # third-party store can satisfy `StepStore` without it; without this
@@ -164,23 +205,53 @@ class SnapshotHistorySource:
         if not isinstance(store, SnapshotStore):
             raise TypeError(
                 f'{type(store).__name__} is not a supported search substrate: SnapshotHistorySource '
-                'needs a store providing both `list_runs` and `list_snapshots`. The shipped '
+                'needs a store providing `list_runs`, `list_snapshots`, and `latest_snapshot`. The shipped '
                 'InMemoryStepStore, FileStepStore, SqliteStepStore, and MongoStepStore satisfy this.'
             )
+        if max_cached_runs < 0:
+            raise ValueError(f'max_cached_runs must be non-negative, got {max_cached_runs!r}.')
         self._store = store
+        self._max_cached_runs = max_cached_runs
+        self._cache: OrderedDict[str, _ReconstructedRun] = OrderedDict()
 
-    async def list_runs(self) -> list[RunRecord]:
-        """Return all persisted runs, sorted by `started_at` ascending."""
-        return await self._store.list_runs()
+    async def list_runs(self, *, conversation_id: str | None = None) -> list[RunRecord]:
+        """Return persisted runs, optionally only one conversation's, sorted by `started_at` ascending."""
+        return await self._store.list_runs(conversation_id=conversation_id)
 
     async def run_history(self, *, run_id: str) -> list[ModelMessage]:
         """Union one run's snapshots into its durable message record."""
+        cached = self._cache.get(run_id)
+        if cached is not None:
+            latest = await self._store.latest_snapshot(run_id=run_id)
+            if latest is not None and _snapshot_key(latest) == cached.snapshot_keys[-1]:
+                self._remember(run_id, cached)
+                return list(cached.history)
+
+        snapshots = await self._store.list_snapshots(run_id=run_id)
+        keys = tuple(_snapshot_key(snapshot) for snapshot in snapshots)
         history: list[ModelMessage] = []
         history_hashes: list[str] = []
-        for snapshot in await self._store.list_snapshots(run_id=run_id):
+        start = 0
+        if cached is not None and keys[: len(cached.snapshot_keys)] == cached.snapshot_keys:
+            history.extend(cached.history)
+            history_hashes.extend(cached.hashes)
+            start = len(cached.snapshot_keys)
+        for snapshot in snapshots[start:]:
             messages = [message for message in snapshot.messages if not is_summary_artifact(message)]
             snapshot_hashes = [message_hash(message) for message in messages]
             overlap = _overlap_length(history_hashes, snapshot_hashes)
             history.extend(messages[overlap:])
             history_hashes.extend(snapshot_hashes[overlap:])
+
+        if keys:
+            self._remember(run_id, _ReconstructedRun(keys, tuple(history), tuple(history_hashes)))
+        else:
+            self._cache.pop(run_id, None)
         return history
+
+    def _remember(self, run_id: str, run: _ReconstructedRun) -> None:
+        """Cache `run` as the most recently searched, evicting the least recent past the bound."""
+        self._cache[run_id] = run
+        self._cache.move_to_end(run_id)
+        while len(self._cache) > self._max_cached_runs:
+            self._cache.popitem(last=False)

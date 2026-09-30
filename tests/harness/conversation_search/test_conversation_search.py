@@ -125,7 +125,7 @@ class _StubSource:
     def __init__(self, histories: dict[str, list[ModelMessage]]) -> None:
         self._histories = histories
 
-    async def list_runs(self) -> list[RunRecord]:
+    async def list_runs(self, *, conversation_id: str | None = None) -> list[RunRecord]:
         return [RunRecord(run_id=run_id) for run_id in self._histories]
 
     async def run_history(self, *, run_id: str) -> list[ModelMessage]:

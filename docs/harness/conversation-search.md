@@ -56,6 +56,8 @@ Overlap matching keys off a content hash of each serialized message, not object 
 
 `HistorySource` is deliberately substrate-neutral ("enumerate runs, yield each run's durable message record"): a persistence substrate that keeps an append-only entry log can implement it directly by replay, replacing the snapshot-union adapter without touching the search layer.
 
+`SnapshotHistorySource` caches each run's reconstructed record, so repeated searches do not reload and rehash every snapshot. Snapshots are write-once, so a cached run is checked against its latest snapshot: an unchanged run is served from the cache, a run that has gained snapshots (an active run, or one another process resumed) folds in only the new ones, and a run whose snapshots were pruned or replaced is rebuilt. The cache keeps the `max_cached_runs` most recently searched runs (default `128`); pass `SnapshotHistorySource(store, max_cached_runs=0)` to disable it.
+
 ## Scope
 
 `scope='conversation'` restricts the corpus to runs whose `conversation_id` matches the calling run. Pass an authenticated, tenant-scoped value as `conversation_id` when running the agent:
@@ -83,7 +85,7 @@ That order has two consequences for this scope. A follow-up run that threads `me
 
 A `RunContext` whose `conversation_id` is unset searches nothing under this scope and the tool says why. Matching on "conversation id is unset" would pool every unlabelled run in the store into one corpus, which is the exposure the scope exists to prevent, so it fails closed instead.
 
-Scoping is applied to the `RunRecord`s a `HistorySource` returns, so a custom source must populate `conversation_id` on them for the default scope to match anything. Set `scope='all'` only when the store is already isolated to one principal. This opt-in mode searches every run the source enumerates and can return verbatim excerpts from any of them.
+Scoping is applied to the `RunRecord`s a `HistorySource` returns, so a custom source must populate `conversation_id` on them for the default scope to match anything. Its `list_runs(conversation_id=...)` receives the calling run's id so it can list only that conversation's runs instead of the whole store; the search still checks every returned run's `conversation_id` itself. A source whose `list_runs` does not accept `conversation_id` keeps working but emits a `HarnessDeprecationWarning`. Set `scope='all'` only when the store is already isolated to one principal. This opt-in mode searches every run the source enumerates and can return verbatim excerpts from any of them.
 
 ### Migrating from the `scope='all'` default
 
