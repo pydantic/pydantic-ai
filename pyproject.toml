@@ -272,6 +272,9 @@ dev = [
     "redis>=8.1.0",
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
     "cassetter>=0.13.0",
+    # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
+    # interleavings of client operations and provider events, shrunk to a minimal failing trace.
+    "hypothesis>=6.153.2",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --

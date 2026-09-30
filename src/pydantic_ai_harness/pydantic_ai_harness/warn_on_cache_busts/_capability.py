@@ -192,7 +192,7 @@ class WarnOnCacheBusts(AbstractCapability[AgentDepsT]):
     providers with a shorter cache lifetime; raise it when the model is configured for a longer
     one (e.g. Anthropic's 1-hour cache).
     """
-    # TODO(#6337): once ModelProfile.prompt_cache_retention ships, prefer the per-model profile
+    # TODO(#6337): once ModelProfile.default_cache_retention ships, prefer the per-model profile
     # value over this single default -- the monitor is already keyed per model.
 
     _conversations: dict[str, _ConversationState] = field(

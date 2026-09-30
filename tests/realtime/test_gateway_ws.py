@@ -103,3 +103,29 @@ async def test_gateway_gemini_text_in_audio_out(
     assert isinstance(speech, SpeechPart)
     assert speech.transcript == snapshot('Hello there.')
     assert speech.audio is not None and len(speech.audio.data) > 0
+
+
+async def test_gateway_gemini_half_cascade_text_output(
+    gateway_gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+) -> None:
+    """Vertex's half-cascade `gemini-live-2.5-flash` answers in text, which its profile allows by default.
+
+    The other Live models reject a `TEXT` response modality, so this is the one Gemini model a text
+    session opens on without a `profile=` override.
+    """
+    provider, _cassette = gateway_gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-live-2.5-flash', provider=provider)
+    assert model.profile.get('supports_text_output') is True
+    agent = Agent(instructions='Answer in one word.')
+
+    async with agent.realtime(model, model_settings={'output_modality': 'text'}).session() as session:
+        await session.send('What is two plus two?')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    response = session.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    assert [type(part).__name__ for part in response.parts] == ['TextPart']
+    assert response.text == snapshot('Four.')

@@ -13,8 +13,8 @@ from rich.console import Console
 from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import NativeToolCallPart, TextPart, ToolCallPart, ToolCallPartDelta, ToolReturnPart
 from pydantic_clai2._app import _reset_status  # pyright: ignore[reportPrivateUsage]
-from pydantic_clai2.status import Status, StatusLine
-from pydantic_clai2.theme import MUTED, WARNING, sgr
+from pydantic_clai2.ui.rendering.status import Status, StatusLine
+from pydantic_clai2.ui.rendering.theme import MUTED, WARNING, sgr
 
 
 def test_estimate_includes_tool_argument_deltas() -> None:
@@ -115,7 +115,7 @@ async def test_shimmer_without_spinner(monkeypatch: pytest.MonkeyPatch, truecolo
             raise asyncio.CancelledError
         await original_sleep(0)
 
-    monkeypatch.setattr('pydantic_clai2.status.asyncio.sleep', tick)
+    monkeypatch.setattr('pydantic_clai2.ui.rendering.status.asyncio.sleep', tick)
     async with StatusLine(
         Console(file=output, force_terminal=True, width=40, height=24),
         Status(model='test\x1b\n'),

@@ -7,11 +7,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "744"
+      - "745"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 4096
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -40,7 +40,7 @@ interactions:
               type: tool_reference
               name: lookup_refund_policy
         model: claude-sonnet-5-5
-        stream: false
+        stream: true
         tool_choice:
           type: auto
         tools:
@@ -59,50 +59,53 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-24a562ca6101ef614e04cc385f9f29ac-58edc1c5c443fd1d-01
+      - 00-dd51f4ab01240d3a8fbfe8200c2aa0bd-de8a58ef17bf6fe1-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-sonnet-5-5
-        id: msg_011CfWLR9XaoVC6rTCAKFH2Z
-        type: message
-        role: assistant
-        content:
-        - type: tool_use
-          id: toolu_01BUP9w6Zmq7De1f8gnKtLEB
-          name: lookup_refund_policy
-          input:
-            order_id: A-4417
-          caller:
-            type: direct
-        container: null
-        stop_reason: tool_use
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 800
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 58
-          output_tokens_details:
-            thinking_tokens: 0
-          service_tier: standard
-          inference_geo: global
-        diagnostics: null
-  recorded_at: 2026-09-28T18:47:17.360543+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CfY6paHs3QPEGV15yrH1G","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":800,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01LGKY3GgpsbqBYLKV8XJRF3","name":"lookup_refund_policy","input":{},"caller":{"type":"direct"}}     }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"order"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"_id\": \""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"A-4417\"}"}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":800,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":58,"output_tokens_details":{"thinking_tokens":0}} }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-09-29T17:10:11.883577+00:00

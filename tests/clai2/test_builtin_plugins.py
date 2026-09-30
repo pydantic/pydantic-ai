@@ -13,12 +13,45 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugin_loader import PluginLoader
-from pydantic_clai2.plugin_menu import PluginMenu
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.ui.menus.plugin_menu import PluginMenu
 
-CURATED = {'coder', 'ask_user', 'repo_context', 'compaction', 'persistence', 'logfire', 'notifications', 'mcp'}
+CURATED = {
+    'coder',
+    'ask_user',
+    'repo_context',
+    'compaction',
+    'persistence',
+    'logfire',
+    'notifications',
+    'mcp',
+    'day_ai',
+    'ordinal',
+    'github',
+    'google_workspace',
+    'pylon',
+    'notion',
+    'slack',
+    'logfire_mcp',
+    'posthog',
+    'grain',
+    'linear',
+}
+OPT_IN = {
+    'day_ai',
+    'github',
+    'google_workspace',
+    'grain',
+    'linear',
+    'logfire_mcp',
+    'notion',
+    'ordinal',
+    'posthog',
+    'pylon',
+    'slack',
+}
 
 
 class Menu:
@@ -40,15 +73,15 @@ def _apply(action: Coroutine[object, object, object]) -> None:
     asyncio.run(action)
 
 
-def test_builtins_are_the_curated_enabled_set() -> None:
+def test_builtins_are_the_curated_set_with_opt_in_integrations_off() -> None:
     assert sorted(plugin.id for plugin in DEFAULT_PLUGINS) == sorted(CURATED)
-    assert all(plugin.enabled for plugin in DEFAULT_PLUGINS)
+    assert {plugin.id for plugin in DEFAULT_PLUGINS if not plugin.enabled} == OPT_IN
 
 
 def test_menu_offers_no_uncurated_harness_capabilities(tmp_path: Path) -> None:
     menu = PluginMenu(_loader(SettingsStore(tmp_path / 'settings.db'), DEFAULT_PLUGINS), apply=_apply)
     *rows, _save_and_close = menu.items()
-    assert {item.value for item in rows} == CURATED
+    assert {item.value for item in rows} == CURATED | OPT_IN
 
 
 def test_capability_saved_from_the_old_catalog_still_loads(tmp_path: Path) -> None:

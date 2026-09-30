@@ -21,8 +21,8 @@ from pydantic_ai.capabilities import Capability, Hooks, ValidatedToolArgs
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.commands import Command
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import CoreHookName, PluginHost, SessionEnd, SessionStart, Transcript, TurnEnd, TurnStart
-from pydantic_clai2.settings_store import SettingsStore
 
 
 @dataclass(kw_only=True)
@@ -170,6 +170,18 @@ def test_saved_settings_round_trip_through_aliases() -> None:
     plugin.save_settings(AliasedSettings.model_validate({'api-key-name': 'NEW'}))
     assert saved == [{'api-key-name': 'NEW'}]
     assert plugin.settings(AliasedSettings).api_key_name == 'NEW'
+
+
+def test_settings_that_fail_to_persist_are_not_kept() -> None:
+    def refuse(settings: dict[str, JsonValue]) -> None:
+        raise OSError('read-only database')
+
+    plugin = PluginHost[None](
+        name='test', console=Console(file=io.StringIO()), settings={'api-key-name': 'OLD'}, save_settings=refuse
+    )
+    with pytest.raises(OSError, match='read-only database'):
+        plugin.save_settings(AliasedSettings.model_validate({'api-key-name': 'NEW'}))
+    assert plugin.settings(AliasedSettings).api_key_name == 'OLD'
 
 
 def test_host_outside_the_loader_keeps_saved_settings_for_this_load() -> None:
