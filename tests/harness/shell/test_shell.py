@@ -1670,7 +1670,9 @@ class TestSignalling:
         target = f'-{job.pgid}' if job.pgid is not None else str(job.pid)
         stop_file = posixpath.join(job.directory, 'stop')
         assert signals[0] == ['sh', '-c', _KILL_SCRIPT, 'kill', 'TERM', target, stop_file]
-        assert all(argv[-3:] == ['0', target, stop_file] for argv in signals[1:])
+        # The group is probed until it is empty; a member still in it once the wrapper has published
+        # its status (the wrapper itself on its way out, or its unreaped zombie) is sent `SIGKILL`.
+        assert all(argv[-3:] in (['0', target, stop_file], ['KILL', target, stop_file]) for argv in signals[1:])
         assert all(argv[0] != 'kill' for argv in backend.argv)
         await _wait_for_exit(job.pid)
 
