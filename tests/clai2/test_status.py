@@ -164,9 +164,9 @@ async def test_status_accents_follow_the_theme(
         assert ''.join(text for _, text in fragments) == status.text()
         async with StatusLine(Console(file=output, force_terminal=True, width=160, height=24), status):
             pass
-        painted = output.getvalue().split('\x1b[160;1H')[-1]
+        painted = output.getvalue().partition('\x1b[24;1H\x1b[2K')[2].partition('\x1b8')[0]
         expected = ''.join(sgr(role) + char for role, text in fragments for char in text)
-        assert expected in painted
+        assert painted == expected + '\x1b[0m'
 
 
 async def test_row_reserved_before_margins_and_again_on_resize() -> None:

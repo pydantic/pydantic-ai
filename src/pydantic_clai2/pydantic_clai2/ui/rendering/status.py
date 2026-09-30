@@ -71,17 +71,19 @@ class Status:
         elif isinstance(event, FunctionToolResultEvent):
             self.activity = 'working'
 
-    def segments(self, frame: str = '') -> tuple[str, str, str, str]:
-        """The row as (head, context figure, tail, plugins), so the figure and fragments paint on their own."""
+    def segments(self, frame: str = '') -> tuple[str, str, str, str, str, str, str]:
+        """Separate figures from labels so plain text and both painters share the same boundaries."""
         context = '?' if self.context_tokens is None else f'{self.context_tokens:,}'
-        output = f'~{math.ceil(self.streamed_chars / 4):,} streamed tokens'
+        output = f'~{math.ceil(self.streamed_chars / 4):,}'
+        output_label = 'streamed tokens'
         if self.output_tokens is not None:
-            output = f'{self.output_tokens:,} output tokens'
+            output = f'{self.output_tokens:,}'
+            output_label = 'output tokens'
         cost = '' if self.cost is None else f' | {format_cost(self.cost)}'
         # A POSIX directory name may hold a newline or an escape sequence; keep it inert on every painter.
         workspace = f' | {_short_path(terminal_text(self.workspace, keep=""))}' if self.workspace else ''
         head = f'{frame} {self.model}{workspace} | context: '.lstrip()
-        return head, context, f' tokens | {output}{cost} | {self.activity}', self._plugin_text()
+        return head, context, ' tokens | ', output, f' {output_label}{cost} | ', self.activity, self._plugin_text()
 
     def _plugin_text(self) -> str:
         """Plugin fragments, separated and prefixed; a fragment that raises or returns a non-string is reported."""
@@ -106,17 +108,13 @@ class Status:
 
     def toolbar(self) -> list[tuple[str, str]]:
         """Accent output counts and tool names, keeping chrome muted and context alerts visible."""
-        head, figure, tail, plugins = self.segments()
-        prefix, _, output = tail.partition(' | ')
-        count, _, rest = output.partition(' ')
-        activity = self.activity
-        details = rest.removesuffix(' | ' + activity)
+        head, figure, prefix, count, details, activity, plugins = self.segments()
         painted = [
             (theme.MUTED, head),
             (theme.WARNING if self.context_alert else theme.MUTED, figure),
-            (theme.MUTED, prefix + ' | '),
+            (theme.MUTED, prefix),
             (theme.LITHIUM, count),
-            (theme.MUTED, ' ' + details + ' | '),
+            (theme.MUTED, details),
         ]
         if activity.startswith(('tool: ', 'running: ')):
             label, _, tool = activity.partition(': ')
