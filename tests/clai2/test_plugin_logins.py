@@ -29,7 +29,7 @@ def activate(host: PluginHost) -> None:
     async def sign_in() -> str:
         return '{MESSAGE}'
 
-    host.login('claude', sign_in, description='Claude Code subscription')
+    host.login('claude', sign_in)
 """
 
 
@@ -43,9 +43,9 @@ def host() -> PluginHost[None]:
 
 async def test_host_records_a_login() -> None:
     plugin = host()
-    login = plugin.login('claude', signed_in, description='Claude Code subscription')
+    login = plugin.login('claude', signed_in)
     assert plugin.logins == [login]
-    assert login == PluginLogin(name='claude', handler=signed_in, description='Claude Code subscription')
+    assert login == PluginLogin(name='claude', handler=signed_in)
     assert await login.handler() == 'Signed in.'
 
 

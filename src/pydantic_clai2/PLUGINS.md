@@ -1916,7 +1916,7 @@ wins. Unloading the plugin removes the prefix; a saved model under it stays in
 `/model`, and runs with it fail as an unknown provider until the plugin is enabled
 again.
 
-### Add a sign-in to `/login`: `host.login(name, handler, *, description)`
+### Add a sign-in to `/login`: `host.login(name, handler)`
 
 `/login NAME` signs in to a subscription: `codex` (bare `/login`) and `copilot`
 ship with CLAI, and `openai-codex` and `github-copilot` still work. A plugin whose
@@ -1931,7 +1931,7 @@ def activate(host: PluginHost) -> None:
         ...  # run the OAuth flow, save tokens to the keyring
         return 'Signed in to My Service.'
 
-    host.login('my-service', sign_in, description='My Service subscription')
+    host.login('my-service', sign_in)
 ```
 
 `/login my-service` awaits `sign_in` and shows the message it returns, and `/login`

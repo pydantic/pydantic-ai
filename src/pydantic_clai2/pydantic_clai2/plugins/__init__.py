@@ -179,7 +179,6 @@ class PluginLogin:
     name: str
     handler: Callable[[], Awaitable[str]]
     """Sign in and return the message to show."""
-    description: str = ''
 
 
 _PROVIDER_PREFIX = re.compile(r'[a-z][a-z0-9-]*')
@@ -454,7 +453,7 @@ class PluginHost(Generic[DepsT]):
         self._model_providers.append(provider)
         return provider
 
-    def login(self, name: str, handler: Callable[[], Awaitable[str]], /, *, description: str = '') -> PluginLogin:
+    def login(self, name: str, handler: Callable[[], Awaitable[str]], /) -> PluginLogin:
         """Add `/login NAME`, which awaits `handler` and shows the message it returns.
 
         For sign-ins that store credentials, such as the subscription behind a `model_provider`. Keep
@@ -465,7 +464,7 @@ class PluginHost(Generic[DepsT]):
         _require_name('Login name', name)
         if name in LOGINS or name in LOGIN_ALIASES:
             raise ValueError(f'Login name {name!r} is a sign-in CLAI already has; choose your own.')
-        login = PluginLogin(name=name, handler=handler, description=description)
+        login = PluginLogin(name=name, handler=handler)
         self._logins.append(login)
         return login
 
