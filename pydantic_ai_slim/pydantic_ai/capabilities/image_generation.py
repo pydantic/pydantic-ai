@@ -81,7 +81,11 @@ def _routed_profiles(model: AbstractModel | None) -> Iterator[tuple[str, ModelPr
         try:
             profile = model.profile
         except NotImplementedError:
-            yield from _routed_profiles(model.wrapped)
+            # Forwarded to a model with no profile. That is `wrapped` unless the wrapper selected
+            # another one for this run, which nothing public exposes, so a `wrapped` that can't be
+            # the source says nothing rather than standing in for the model that is.
+            if isinstance(model.wrapped, FallbackModel | WrapperModel):
+                yield from _routed_profiles(model.wrapped)
         else:
             yield model.model_name, profile
     elif isinstance(model, Model):

@@ -74,6 +74,7 @@ from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import ImageGenerationTool
@@ -3273,6 +3274,21 @@ async def test_image_generation_prepare_function_reads_the_model_temporal_select
             prepared = dimensions.prepare_func(ctx, [tool_def])
         assert inspect.isawaitable(prepared)
         await prepared
+
+    # A selected `FallbackModel` has no profile, and nothing public says which model was selected, so
+    # the notice says nothing rather than reading the default `no_native` in its place.
+    registry_model = TemporalModel(
+        no_native,
+        activity_name_prefix='image_generation_selected_fallback',
+        activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)),
+        deps_type=type(None),
+        models={'fallback': FallbackModel(native)},
+    )
+    registry_ctx = RunContext(deps=None, model=registry_model, usage=RunUsage(), run_id='run-123')
+    with registry_model.using_model('fallback'):
+        prepared = quality.prepare_func(registry_ctx, [tool_def])
+    assert inspect.isawaitable(prepared)
+    assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
 
 
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
