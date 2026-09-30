@@ -2350,3 +2350,17 @@ async def test_ending_the_session_stops_when_the_socket_closes() -> None:
     connection = _LiveSink(_ClosingSocket([]))
 
     assert await connection.end_session() == []
+
+
+async def test_a_session_whose_socket_closed_is_not_asked_to_end_again() -> None:
+    class _ClosingSocket(_FakeWebSocket):
+        async def recv(self) -> str:
+            raise websockets.ConnectionClosedOK(Close(1000, ''), Close(1000, ''), True)
+
+    ws = _ClosingSocket([])
+    connection = _LiveSink(ws)
+    async for _ in connection:
+        pass  # pragma: no cover
+
+    assert await connection.end_session() == []
+    assert ws.sent == []

@@ -11383,20 +11383,20 @@ async def test_a_sideband_does_not_end_the_provider_session() -> None:
     assert conn.ended == 0
 
 
-async def test_a_session_whose_provider_went_away_does_not_end_it_again() -> None:
-    conn = FakeRealtimeConnection([])
-    ended: list[bool] = []
+async def test_a_session_stopped_by_a_usage_limit_still_ends_the_provider_session() -> None:
+    """A limit stops the session reading, not the provider: its session is still open, and still bills."""
+    conn = _EndingConnection(
+        [SessionUsage(RequestUsage(audio_seconds=3), response_scoped=False)],
+        events=[SessionUsage(RequestUsage(input_tokens=10), response_scoped=False)],
+    )
+    session = RealtimeSession(conn, _noop_runner, usage_limits=UsageLimits(input_tokens_limit=5))
+    with pytest.raises(UsageLimitExceeded):
+        async with session:
+            async for _ in session:
+                pass  # pragma: no cover
 
-    async def end_session() -> list[SessionUsage]:  # pragma: no cover
-        ended.append(True)
-        return []
-
-    conn.end_session = end_session
-    async with RealtimeSession(conn, _noop_runner) as session:
-        async for _ in session:  # the connection ends at once, as a provider hanging up does
-            pass
-
-    assert ended == []
+    assert conn.ended == 1
+    assert session.usage.audio_seconds == 3
 
 
 @pytest.mark.parametrize('failure', ['fails', 'hangs'])

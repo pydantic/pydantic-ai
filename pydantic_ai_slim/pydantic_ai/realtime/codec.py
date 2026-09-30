@@ -502,10 +502,12 @@ class RealtimeConnection(ABC):
         """End the provider session, and return the usage the provider reports only as it ends.
 
         A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] calls this once while closing, after it
-        has stopped reading the connection and before it reports the session's usage, when the connection
-        is still healthy and the session owns it (not a WebRTC sideband, where ending the provider session
-        would end the browser's call). Only session-scoped usage belongs here: there is no response left
-        to attribute anything else to. The session bounds how long it waits.
+        has stopped reading the connection and before it reports the session's usage, whenever the session
+        owns the provider session (not on a WebRTC sideband, where ending it would end the browser's call).
+        A provider that already ended the session, or went away, has nothing more to report: return what
+        it reported that the session hasn't taken yet, if anything. Only session-scoped usage belongs here:
+        there is no response left to attribute anything else to. The session bounds how long it waits, and
+        a transport error is treated as nothing to report.
 
         The default does nothing, for providers that report all usage as it happens or that end the
         session by closing the transport.

@@ -683,6 +683,8 @@ class OpenAILiveConnection(RealtimeConnection):
                 except websockets.ConnectionClosedOK:
                     # The read started above can no longer complete, and nothing will await it.
                     self._cancel_read()
+                    # The session is over, so there is nothing left for `end_session()` to ask Live for.
+                    self._session_ended = True
                     # A graceful close ends whatever was in flight. Live never says a turn is over,
                     # so without this the last reply would be settled as interrupted even though the
                     # model had finished speaking and the session closed normally.

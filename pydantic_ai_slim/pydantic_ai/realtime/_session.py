@@ -984,8 +984,6 @@ class RealtimeSession:
         self._pump_task: asyncio.Task[None] | None = None
         self._pump_error: Exception | None = None
         self._pump_finished = False
-        # Whether closing ends the provider session through the still-healthy connection; see `close()`.
-        self._end_provider_session = False
         self._receive_ending = False
         self._iterator_active = False
         self._stream_exhausted = False
@@ -1055,10 +1053,6 @@ class RealtimeSession:
             self._closed = True
             self._finish_taps(discard_pending=True)
             self._release_exchange()
-            # Decided before the pump is cancelled, while a pump that stopped on its own (the provider
-            # went away) still tells apart from one this close stops. A WebRTC sideband doesn't own the
-            # provider session: ending it would end the browser's call.
-            self._end_provider_session = self._owns_media and (self._pump_task is None or not self._pump_task.done())
             # A session closed without ever sending, subscribing, or iterating never started one.
             # Cancelled before state is settled below so it can't mutate state mid-settlement; the
             # task is awaited together with the rest afterwards.
@@ -1106,7 +1100,9 @@ class RealtimeSession:
         # may be nothing here but the background tasks.
         pump_tasks = (self._pump_task,) if self._pump_task is not None else ()
         await cancel_and_drain(*self._background_tasks, *pump_tasks, msg='Realtime session exited')
-        if self._end_provider_session:
+        # A WebRTC sideband doesn't own the provider session: ending it would end the browser's call. A
+        # provider that already went away is the connection's to recognize, which it can do for certain.
+        if self._owns_media:
             await self._record_final_usage()
 
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
