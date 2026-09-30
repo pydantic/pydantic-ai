@@ -261,28 +261,44 @@ class TestImageGenerationCapability:
 
         assert [warning.filename for warning in recorded] == [inspect.getsourcefile(ImageGeneration)]
 
-    def test_image_generation_native_false_with_a_custom_local_tool_warns_for_every_setting_it_ignores(self):
+    @pytest.mark.parametrize('aspect_ratio', ['16:9', '2:1'])
+    def test_image_generation_native_false_with_a_custom_local_tool_warns_for_every_setting_it_ignores(
+        self, aspect_ratio: Literal['16:9', '2:1']
+    ):
         """With `native=False` the tool you supply is the only implementation, and the capability hands it nothing.
 
         No native tool is built and the capability passes no settings to a tool it didn't build, so
-        none of the capability's settings reach anything.
+        every setting goes unapplied for that one reason and one notice names them all, whether or
+        not the native tool could have expressed the aspect ratio. The `dimensions` docstring sends
+        users to `native=False` to guarantee the setting takes effect, so the one arrangement that
+        applies nothing at all cannot be the silent one. The notice blames the caller's line, which
+        its `filename` pins.
 
         It warns at construction, before any request, so this is not a VCR test.
         """
-        with pytest.warns(
-            UserWarning,
-            match=r'`ImageGeneration` ignored setting\(s\): `quality`, `size`, `action`, `image_model`, `aspect_ratio`',
-        ) as recorded:
+        with pytest.warns(UserWarning) as recorded:
             ImageGeneration(
                 native=False,
                 local=_custom_local_tool,
+                background='transparent',
+                input_fidelity='high',
+                moderation='low',
+                output_compression=80,
+                output_format='webp',
                 quality='high',
                 size='1024x1024',
                 action='generate',
                 image_model='gpt-image-2',
-                aspect_ratio='16:9',
+                dimensions=(1280, 720),
+                aspect_ratio=aspect_ratio,
             )
 
+        assert [str(warning.message) for warning in recorded] == [
+            '`ImageGeneration` ignored setting(s): `background`, `input_fidelity`, `moderation`, '
+            '`output_compression`, `output_format`, `quality`, `size`, `action`, `image_model`, '
+            '`dimensions`, `aspect_ratio`. With `native=False` the `local` tool you supplied is the only '
+            'implementation, and the capability passes it no settings; configure that tool instead.'
+        ]
         assert [warning.filename for warning in recorded] == [__file__]
 
     def test_image_generation_native_only_settings_are_not_ignored_when_native_is_enabled(self):
@@ -919,34 +935,6 @@ class TestImageGenerationCapability:
 
         with pytest.warns(UserWarning, match='ignored direct-only setting.*dimensions'):
             ImageGeneration(local=Tool(my_gen, name='generate_image'), dimensions=(1280, 720))
-
-    @pytest.mark.parametrize('aspect_ratio', ['16:9', '2:1'])
-    def test_image_generation_native_false_with_a_local_of_the_users_own_gives_one_notice(
-        self, aspect_ratio: Literal['16:9', '2:1']
-    ):
-        """`native=False` builds no native tool, and a local tool the capability didn't build carries no settings.
-
-        Every setting goes unapplied for that one reason, so one notice names them all, whether or not
-        the native tool could have expressed the aspect ratio. The `dimensions` docstring sends users
-        to `native=False` to guarantee the setting takes effect, so the one arrangement that applies
-        nothing at all cannot be the silent one.
-
-        It warns at construction, before any request, so this is not a VCR test.
-        """
-        with pytest.warns(UserWarning) as recorded:
-            ImageGeneration(
-                native=False,
-                local=Tool(_custom_local_tool, name='generate_image'),
-                quality='high',
-                dimensions=(1280, 720),
-                aspect_ratio=aspect_ratio,
-            )
-
-        assert [str(warning.message) for warning in recorded] == [
-            '`ImageGeneration` ignored setting(s): `quality`, `dimensions`, `aspect_ratio`. With `native=False` '
-            'the `local` tool you supplied is the only implementation, and the capability passes it no settings; '
-            'configure that tool instead.'
-        ]
 
     async def test_image_generation_callable_native_does_not_warn_about_direct_only_geometry(
         self, allow_model_requests: None
