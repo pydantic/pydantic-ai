@@ -4560,16 +4560,16 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 graph_deps.cancellation.attach_token(self.cancellation_token)
 
             self.model_resources.bind_stack(stack)
-            await stack.enter_async_context(
-                _concurrency.get_concurrency_context(self.concurrency_limiter, f'agent:{self.agent_name}')
-            )
-            if self.capability_owns_current_model:
-                try:
+            try:
+                await stack.enter_async_context(
+                    _concurrency.get_concurrency_context(self.concurrency_limiter, f'agent:{self.agent_name}')
+                )
+                if self.capability_owns_current_model:
                     await self.model_resources.enter_model(self.model)
-                except BaseException as error:
-                    run_ctx = _agent_graph.build_run_context(GraphRunContext(state=state, deps=graph_deps))
-                    await _run_setup_error_hook(self.resolved_layers, run_ctx, error)
-                    raise
+            except BaseException as error:
+                run_ctx = _agent_graph.build_run_context(GraphRunContext(state=state, deps=graph_deps))
+                await _run_setup_error_hook(self.resolved_layers, run_ctx, error)
+                raise
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,

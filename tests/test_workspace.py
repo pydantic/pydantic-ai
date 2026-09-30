@@ -28,7 +28,8 @@ from pydantic_ai.capabilities import (
     LocalWorkspace,
     WrapperCapability,
 )
-from pydantic_ai.exceptions import ApprovalRequired
+from pydantic_ai.concurrency import ConcurrencyLimiter
+from pydantic_ai.exceptions import ApprovalRequired, ConcurrencyLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
@@ -1465,6 +1466,31 @@ async def test_setup_failure_cleans_resolved_child_when_wrapper_for_run_fails() 
         await Agent(TestModel(), capabilities=[FailingWrapper(Child('original'))]).run('go')
 
     assert cleaned == ['resolved']
+
+
+async def test_concurrency_rejection_dispatches_setup_cleanup() -> None:
+    events: list[str] = []
+
+    class Cleanup(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            events.append('setup')
+            return self
+
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[None]:
+            assert isinstance(error, ConcurrencyLimitExceeded)
+            events.append('cleanup')
+            raise error
+
+    limiter = ConcurrencyLimiter(max_running=1, max_queued=0)
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[Cleanup()], max_concurrency=limiter)
+    await limiter.acquire('occupied')
+    try:
+        with pytest.raises(ConcurrencyLimitExceeded):
+            await asyncio.create_task(agent.run('go'))
+    finally:
+        limiter.release()
+
+    assert events == ['setup', 'cleanup']
 
 
 async def test_capability_model_entry_failure_dispatches_setup_cleanup() -> None:
