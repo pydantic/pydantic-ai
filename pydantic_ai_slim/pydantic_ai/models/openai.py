@@ -4043,7 +4043,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     # stream opens a new part instead of sending a delta to the ended one. `'content'` rotates only
     # while it names a `TextPart`, so a `</think>` arriving after another part still closes its tag.
     _vendor_part_id: str = field(default='content', init=False)
-    _thinking_vendor_part_suffix: str = field(default='', init=False)
+    _thinking_vendor_part_generation: int = field(default=0, init=False)
     _held_text_whitespace: str = field(default='', init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
@@ -4181,7 +4181,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 )
                 continue
             for event in self._parts_manager.handle_thinking_delta(
-                vendor_part_id=f'{field_name}{self._thinking_vendor_part_suffix}',
+                vendor_part_id=(field_name, self._thinking_vendor_part_generation),
                 id=field_name,
                 content=reasoning,
                 provider_name=self.provider_name,
@@ -4210,7 +4210,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             ):
                 emitted = True
                 if isinstance(event, PartStartEvent):
-                    self._thinking_vendor_part_suffix = f'-{event.index}'
+                    self._thinking_vendor_part_generation += 1
                     if isinstance(event.part, ThinkingPart):
                         event.part.id = 'content'
                         event.part.provider_name = self.provider_name
@@ -4237,7 +4237,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             )
             if maybe_event is not None:
                 if isinstance(maybe_event, PartStartEvent):
-                    self._thinking_vendor_part_suffix = f'-{maybe_event.index}'
+                    self._thinking_vendor_part_generation += 1
                     if isinstance(self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart):
                         self._vendor_part_id = f'{self._vendor_part_id}-{maybe_event.index}'
                 yield maybe_event

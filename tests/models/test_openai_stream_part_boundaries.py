@@ -10,7 +10,7 @@ from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.profiles.openai import OpenAIModelProfile
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsStr, try_import
@@ -36,7 +37,6 @@ with try_import() as imports_successful:
     from openai.types.chat.chat_completion_chunk import ChoiceDelta
 
     from pydantic_ai.models.openai import OpenAIChatModel
-    from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
     from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
@@ -273,7 +273,7 @@ class ResumedContentCase:
     id: str
     stream: Callable[[], list[ChatCompletionChunk]]
     expected_parts: list[ModelResponsePart]
-    ignore_streamed_leading_whitespace: bool = False
+    profile: OpenAIModelProfile = field(default_factory=OpenAIModelProfile)
 
 
 RESUMED_CONTENT_CASES = [
@@ -312,6 +312,23 @@ RESUMED_CONTENT_CASES = [
         ),
     ),
     ResumedContentCase(
+        id='custom-field-does-not-collide-with-a-resumed-reasoning-key',
+        stream=lambda: [
+            chunk([ChoiceDelta.model_validate({'role': 'assistant', 'reasoning-1': 'Think.'})]),
+            text_chunk('Answer.'),
+            chunk([ChoiceDelta.model_construct(role='assistant', reasoning='Again.')]),
+            chunk([ChoiceDelta()], finish_reason='stop'),
+        ],
+        expected_parts=snapshot(
+            [
+                ThinkingPart(content='Think.', id='reasoning-1', provider_name='openai'),
+                TextPart(content='Answer.'),
+                ThinkingPart(content='Again.', id='reasoning', provider_name='openai'),
+            ]
+        ),
+        profile=OpenAIModelProfile(openai_chat_thinking_field='reasoning-1'),
+    ),
+    ResumedContentCase(
         id='resumed-text-keeps-leading-whitespace-after-reasoning',
         stream=lambda: [
             _reasoning_chunk('Think.'),
@@ -329,7 +346,7 @@ RESUMED_CONTENT_CASES = [
                 TextPart(content='\n\nMore.'),
             ]
         ),
-        ignore_streamed_leading_whitespace=True,
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
     ),
     ResumedContentCase(
         id='resumed-text-keeps-leading-whitespace-after-tool',
@@ -347,7 +364,7 @@ RESUMED_CONTENT_CASES = [
                 TextPart(content='\n\nDone.'),
             ]
         ),
-        ignore_streamed_leading_whitespace=True,
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
     ),
     ResumedContentCase(
         id='trailing-whitespace-after-tool-is-dropped',
@@ -362,7 +379,7 @@ RESUMED_CONTENT_CASES = [
                 ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
             ]
         ),
-        ignore_streamed_leading_whitespace=True,
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
     ),
     ResumedContentCase(
         id='leading-whitespace-before-tool-is-dropped',
@@ -378,7 +395,7 @@ RESUMED_CONTENT_CASES = [
                 ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
             ]
         ),
-        ignore_streamed_leading_whitespace=True,
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
     ),
 ]
 
@@ -392,7 +409,7 @@ async def test_resumed_content_starts_a_new_part(allow_model_requests: None, cas
     model = OpenAIChatModel(
         'test',
         provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(case.stream())),
-        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=case.ignore_streamed_leading_whitespace),
+        profile=case.profile,
     )
     ended: set[int] = set()
     async with model.request_stream(
