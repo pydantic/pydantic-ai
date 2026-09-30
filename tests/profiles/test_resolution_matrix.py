@@ -626,6 +626,7 @@ def test_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': False,
         }
     )
 
@@ -642,6 +643,7 @@ def test_google_gemini_2_5_flash():
             'supports_thinking': True,
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': True,
         }
     )
 
@@ -662,6 +664,7 @@ def test_google_gemini_2_5_flash_image():
             'supports_tools': False,
             'supports_thinking': True,
             'google_supports_thinking_level': False,
+            'google_web_search_billed_per_prompt': True,
         }
     )
 
@@ -690,6 +693,7 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
             'supports_thinking': True,
+            'google_web_search_billed_per_prompt': False,
             'supports_tool_return_schema': True,
         }
     )
@@ -1186,6 +1190,7 @@ def test_openrouter_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_web_search': True,
@@ -1226,6 +1231,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'openai_chat_send_back_thinking_parts': 'field',
             'openai_chat_supports_file_urls': True,
             'openai_chat_supports_max_completion_tokens': False,
+            'google_web_search_billed_per_prompt': False,
             'openai_chat_supports_web_search': True,
             'openai_chat_thinking_field': 'reasoning',
             'openrouter_max_cache_points': None,
@@ -1364,6 +1370,7 @@ def test_github_copilot_google_gemini_3_pro():
                 'text/plain',
             ),
             'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': False,
             'openai_chat_supports_max_completion_tokens': True,
             'openai_chat_thinking_field': 'reasoning_text',
         }
@@ -2195,6 +2202,7 @@ def test_vercel_vertex_gemini():
                 'text/plain',
             ),
             'google_supports_strict_tool_definition': True,
+            'google_web_search_billed_per_prompt': False,
         }
     )
 
