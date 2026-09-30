@@ -123,7 +123,7 @@ orchestrator = Agent(
 ```
 
 `SubAgent(agent, name=None, description=None, models=None, usage_limits=None, timeout_seconds=None,
-max_calls=None, on_failure=None, child_failure=None, contain_errors=None)` sets per-delegate controls.
+max_calls=None, on_failure=None, contain_errors=None, child_failure=None)` sets per-delegate controls.
 
 `SubAgents` parameters that change behaviour:
 

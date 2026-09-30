@@ -159,18 +159,6 @@ class SubAgent(Generic[AgentDepsT]):
     `Sub-agent '<name>' failed: ...` line, so the cause stays visible, and
     `child_failure` decides whether that is raised as a retry or returned."""
 
-    child_failure: Literal['retry', 'return'] | None = None
-    """How a child's soft model error (`ModelRetry`, `UnexpectedModelBehavior`)
-    reaches the parent. `'retry'` raises a parent `ModelRetry`, bounded by
-    `SubAgents.tool_retries`, which invites re-delegating. `'return'` hands the
-    same message back as a normal tool result, so the parent decides from existing
-    evidence. Either way the message names the failure.
-
-    Unset means `'retry'`, except for a delegate with `on_failure` set, which keeps
-    the earlier `'return'` behavior and emits a `HarnessDeprecationWarning`: setting
-    `on_failure` used to make child failures soft as a side effect. Timeouts and
-    budgets are always soft, and crashes follow `contain_errors`."""
-
     contain_errors: bool | None = None
     """Whether an unexpected sub-agent crash is contained instead of aborting the
     parent run. When `True`, an exception the child raises that is not an expected
@@ -183,6 +171,18 @@ class SubAgent(Generic[AgentDepsT]):
     propagate regardless. Unset inherits `SubAgents.contain_errors` (default off).
     Orthogonal to `on_failure` and `child_failure`, which only cover expected soft
     degradations; a contained crash always raises the loud `ModelRetry`."""
+
+    child_failure: Literal['retry', 'return'] | None = None
+    """How a child's soft model error (`ModelRetry`, `UnexpectedModelBehavior`)
+    reaches the parent. `'retry'` raises a parent `ModelRetry`, bounded by
+    `SubAgents.tool_retries`, which invites re-delegating. `'return'` hands the
+    same message back as a normal tool result, so the parent decides from existing
+    evidence. Either way the message names the failure.
+
+    Unset means `'retry'`, except for a delegate with `on_failure` set, which keeps
+    the earlier `'return'` behavior and emits a `HarnessDeprecationWarning`: setting
+    `on_failure` used to make child failures soft as a side effect. Timeouts and
+    budgets are always soft, and crashes follow `contain_errors`."""
 
     def __post_init__(self) -> None:
         """Warn once, at construction, when `on_failure` still implies `child_failure='return'`."""

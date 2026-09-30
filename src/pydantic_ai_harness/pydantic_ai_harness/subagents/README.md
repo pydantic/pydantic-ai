@@ -103,8 +103,8 @@ orchestrator = Agent(
 | `timeout_seconds` | A wall-clock budget for one delegation. When the child exceeds it, its run is cancelled and the parent gets a soft steering message instead of hanging on the child. The cancelled child's `event_stream_handler` (if any) stops receiving events without a terminal event. |
 | `max_calls` | The maximum number of delegations to this sub-agent per parent run. Once reached, further delegations return a soft budget-exhausted message without running the child. Counts are scoped to one `Agent.run` (a `run_id`) and cleared when it ends, so each parent run and each level of a nested tree budgets independently. |
 | `on_failure` | Steering text the parent gets when this delegate degrades, in place of the built-in default. It only sets the text; for a child failure it follows the failure line, so the cause stays visible (see below). |
-| `child_failure` | `'retry'` or `'return'`: whether a child's soft model error is raised to the parent as a `ModelRetry` or returned as a normal tool result (see below). Unset means `'retry'`, except that `on_failure` without `child_failure` still means `'return'` and is deprecated. |
 | `contain_errors` | Whether an unexpected crash in this delegate is caught and returned to the parent as a bounded `ModelRetry` instead of aborting the parent run (see below). Unset inherits the `SubAgents(contain_errors=...)` default (off). |
+| `child_failure` | `'retry'` or `'return'`: whether a child's soft model error is raised to the parent as a `ModelRetry` or returned as a normal tool result (see below). Unset means `'retry'`, except that `on_failure` without `child_failure` still means `'return'` and is deprecated. |
 
 ## Per-delegation model selection
 
@@ -326,8 +326,8 @@ SubAgent(
     timeout_seconds=None,  # per-delegation wall-clock budget
     max_calls=None,        # max delegations to this sub-agent per parent run
     on_failure=None,       # steering message for soft degradations of this delegate
-    child_failure=None,    # 'retry' | 'return' -- how a child's soft model error reaches the parent
     contain_errors=None,   # contain an unexpected crash as a bounded retry; None inherits the SubAgents default
+    child_failure=None,    # 'retry' | 'return' -- how a child's soft model error reaches the parent
 )
 ```
 
