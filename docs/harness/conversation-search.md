@@ -85,7 +85,13 @@ That order has two consequences for this scope. A follow-up run that threads `me
 
 A `RunContext` whose `conversation_id` is unset searches nothing under this scope and the tool says why. Matching on "conversation id is unset" would pool every unlabelled run in the store into one corpus, which is the exposure the scope exists to prevent, so it fails closed instead.
 
-Scoping is applied to the `RunRecord`s a `HistorySource` returns, so a custom source must populate `conversation_id` on them for the default scope to match anything. Its `list_runs(conversation_id=...)` receives the calling run's id so it can list only that conversation's runs instead of the whole store; the search still checks every returned run's `conversation_id` itself. A source whose `list_runs` does not accept `conversation_id` keeps working but emits a `HarnessDeprecationWarning`. Set `scope='all'` only when the store is already isolated to one principal. This opt-in mode searches every run the source enumerates and can return verbatim excerpts from any of them.
+Scoping is applied to the `RunRecord`s a `HistorySource` returns, so a custom source must populate `conversation_id` on them for the default scope to match anything. Its `list_runs(conversation_id=...)` receives the calling run's conversation id so it can list only that conversation's runs instead of the whole store; the search still checks every returned run's `conversation_id` itself. Set `scope='all'` only when the store is already isolated to one principal. This opt-in mode searches every run the source enumerates and can return verbatim excerpts from any of them.
+
+### Migrating a custom `HistorySource`
+
+A source whose `list_runs` does not accept `conversation_id` keeps working at runtime and emits a `HarnessDeprecationWarning`, but no longer satisfies the `HistorySource` protocol in static type checks. This affects passing it to `ConversationSearch` or `ConversationSearchToolset`, as well as assigning it to a `HistorySource` variable.
+
+Update the method signature to `async def list_runs(self, *, conversation_id: str | None = None) -> list[RunRecord]`. Return all runs when `conversation_id` is `None`, and only that conversation's runs otherwise. `SnapshotHistorySource` already implements this signature and needs no migration.
 
 ### Migrating from the `scope='all'` default
 
