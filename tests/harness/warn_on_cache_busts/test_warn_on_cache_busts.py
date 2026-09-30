@@ -559,8 +559,8 @@ async def test_ignore_cache_busts_silences_only_inside_the_block() -> None:
 async def test_ignore_cache_busts_does_not_silence_concurrent_runs() -> None:
     """A run silenced by `ignore_cache_busts()` leaves a concurrent run's warning intact.
 
-    The silenced run is parked mid-run, inside its block, while the other run collapses: a
-    `warnings.catch_warnings()` block would have silenced both, since warning filters are global.
+    The silenced run is parked mid-run, inside its block, while the other run collapses. Without
+    context-aware warnings, `warnings.catch_warnings()` would have silenced both through global filters.
     """
     parked = asyncio.Event()
     release = asyncio.Event()

@@ -307,8 +307,9 @@ Gotchas: reuse one instance across runs (marks are per `conversation_id`, held i
 it only fires when the provider reports cache tokens; route to Logfire with
 `logging.captureWarnings(True)`. It cannot tell a moved prefix from an expired cache. To silence
 one intentional bust, wrap that run in `with ignore_cache_busts():` (from
-`pydantic_ai_harness.warn_on_cache_busts`), not `warnings.catch_warnings()`: warning filters are
-process-global, so `catch_warnings()` would also silence concurrent runs.
+`pydantic_ai_harness.warn_on_cache_busts`), not `warnings.catch_warnings()`: on runtimes without
+context-aware warnings, `catch_warnings()` changes process-global filters and can also silence
+unrelated concurrent runs.
 
 ## Media externalization (not a capability)
 

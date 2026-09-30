@@ -44,9 +44,9 @@ _SILENCE_HINT = (
     '    with ignore_cache_busts(): ...  # silence one intentional bust, concurrency-safe'
 )
 
-# Task- and thread-local suppression set by `ignore_cache_busts()`. A `ContextVar` rather than a
-# `warnings` filter because filters are process-global: a `catch_warnings()` block around one run
-# would also silence (or escalate) every concurrent run while it is active.
+# Task- and thread-local suppression set by `ignore_cache_busts()`. Unlike `warnings` filters on
+# runtimes without context-aware warnings, this does not change the warning policy for unrelated
+# concurrent runs.
 _ignoring: ContextVar[bool] = ContextVar('pydantic_ai_harness.warn_on_cache_busts.ignoring', default=False)
 
 
@@ -62,9 +62,9 @@ def ignore_cache_busts() -> Generator[None]:
         with ignore_cache_busts():
             result = await agent.run('...', message_history=rewritten_history)
 
-    Unlike a `warnings.catch_warnings()` block, which mutates the process-global warning filters
-    while it is active, the suppression is held in a `ContextVar`: concurrent runs in other
-    asyncio tasks or threads keep warning as usual. It covers the requests whose hooks run in
+    On runtimes without context-aware warnings, `warnings.catch_warnings()` changes process-global
+    warning filters. This helper holds its suppression in a `ContextVar` instead: concurrent runs
+    in other asyncio tasks or threads keep warning as usual. It covers the requests whose hooks run in
     this context (including tasks started from it, which copy the context), so wrap the whole
     `agent.run`/`agent.iter` call. The monitor still records the marks while silenced, so the
     suppressed collapse is not reported again once the block exits.
@@ -142,8 +142,8 @@ class CacheBustWarning(UserWarning):
         warnings.filterwarnings('error', category=CacheBustWarning)
 
     Prefer `ignore_cache_busts()` over a `warnings.catch_warnings()` block for scoped silencing:
-    warning filters are process-global, so a `catch_warnings()` block around one run also
-    silences every concurrent run in the process while it is active.
+    on runtimes without context-aware warnings, `catch_warnings()` changes process-global filters
+    and can also silence unrelated concurrent runs.
 
     In tests, assert an intentional bust with `pytest.warns(CacheBustWarning)`, or silence
     a legitimately-busting test with

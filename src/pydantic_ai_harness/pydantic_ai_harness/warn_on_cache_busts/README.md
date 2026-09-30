@@ -120,8 +120,10 @@ warnings.filterwarnings('error', category=CacheBustWarning)
 ```
 
 Use `ignore_cache_busts()` rather than a `warnings.catch_warnings()` block for
-scoped silencing: warning filters are process-global, so a `catch_warnings()` block
-around one run also silences every concurrent run while it is active.
+scoped silencing across supported Python runtimes. Without context-aware warnings,
+`catch_warnings()` changes process-global filters and can also silence unrelated
+concurrent runs. Python 3.14 can keep warning filters context-local when
+`sys.flags.context_aware_warnings` is enabled.
 `ignore_cache_busts()` holds its suppression in a `ContextVar`, so it applies only to
 the runs made inside the block, in that task or thread; concurrent runs keep warning.
 
