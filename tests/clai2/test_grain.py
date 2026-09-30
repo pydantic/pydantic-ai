@@ -3,13 +3,11 @@
 import io
 from pathlib import Path
 
-import keyring
 import pytest
 from fastmcp import Client
 from fastmcp.client.auth import OAuth
 from fastmcp.client.auth.oauth import TokenStorageAdapter
 from fastmcp.client.transports import StreamableHttpTransport
-from keyring.errors import PasswordDeleteError
 from mcp.shared.auth import OAuthToken
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
@@ -53,24 +51,9 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture(autouse=True)
-def keyring_vault(monkeypatch: pytest.MonkeyPatch) -> None:
-    """No token in the environment, and a keyring that can also forget, for `/grain logout`."""
+def no_grain_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No token in the environment, so only saved credentials count."""
     monkeypatch.delenv('GRAIN_ACCESS_TOKEN', raising=False)
-    entries: dict[tuple[str, str], str] = {}
-
-    def set_value(service: str, account: str, value: str) -> None:
-        entries[service, account] = value
-
-    def delete(service: str, account: str) -> None:
-        if entries.pop((service, account), None) is None:
-            raise PasswordDeleteError('Not found')  # pragma: no cover -- `forget` deletes only what it read.
-
-    def get(service: str, account: str) -> str | None:
-        return entries.get((service, account))
-
-    monkeypatch.setattr(keyring, 'get_password', get)
-    monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
 
 
 def host(

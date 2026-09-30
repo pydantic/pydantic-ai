@@ -10,7 +10,7 @@ from fastmcp import Client
 from fastmcp.client.auth import OAuth
 from fastmcp.client.auth.oauth import TokenStorageAdapter
 from fastmcp.client.transports import StreamableHttpTransport
-from keyring.errors import KeyringLocked, PasswordDeleteError
+from keyring.errors import KeyringLocked
 from mcp.shared.auth import OAuthToken
 from pydantic import JsonValue
 from rich.console import Console
@@ -44,7 +44,7 @@ from pydantic_clai2.builtin_plugins.ordinal import (
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.api_keys import KeyReference, delete_key, load_keys, rename_key, save_key
-from pydantic_clai2.config.credential_store import delete_credentials, save_codex_credentials
+from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore
@@ -67,7 +67,7 @@ Picked = str | KeyReference | None
 
 @pytest.fixture
 def vault(monkeypatch: pytest.MonkeyPatch) -> Vault:
-    """A keyring that can also delete, and a terminal on stdin unless a test says otherwise."""
+    """A fresh keyring, and a terminal on stdin unless a test says otherwise."""
     entries: Vault = {}
 
     def get(service: str, account: str) -> str | None:
@@ -76,14 +76,8 @@ def vault(monkeypatch: pytest.MonkeyPatch) -> Vault:
     def set_value(service: str, account: str, value: str) -> None:
         entries[service, account] = value
 
-    def delete(service: str, account: str) -> None:
-        if (service, account) not in entries:
-            raise PasswordDeleteError('Not found')  # pragma: no cover
-        del entries[service, account]
-
     monkeypatch.setattr(keyring, 'get_password', get)
     monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
     monkeypatch.delenv(KEY_NAME, raising=False)
     terminal(monkeypatch, attached=True)
     return entries
@@ -208,7 +202,7 @@ async def test_enable_opens_the_menu_and_every_option_saves_immediately(
     assert load_keys()[KEY_NAME].get_secret_value() == 'ord_new'
     assert shell.saved() == {'sign_in': 'key', 'include_instructions': False}
     assert b'ord_new' not in shell.path.read_bytes()
-    assert all('ord_new' not in value for (_, account), value in vault.items() if account == KEY_ACCOUNT)
+    assert 'ord_new' not in (load_codex_credentials(account=KEY_ACCOUNT) or '')
     ordinal = await shell.next_run()
     assert ordinal.auth == 'ord_new' and not ordinal.include_instructions
 

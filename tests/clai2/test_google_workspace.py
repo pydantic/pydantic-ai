@@ -5,7 +5,6 @@ import io
 from collections.abc import Coroutine, Sequence
 from pathlib import Path
 
-import keyring
 import pytest
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
@@ -53,23 +52,6 @@ class Redraw:
 
 def host(settings: dict[str, JsonValue] | None = None) -> PluginHost[None]:
     return PluginHost(name='google_workspace', console=Console(file=io.StringIO()), settings=settings or {})
-
-
-def deletable_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
-    entries: dict[tuple[str, str], str] = {}
-
-    def get(service: str, account: str) -> str | None:
-        return entries.get((service, account))
-
-    def set_value(service: str, account: str, value: str) -> None:
-        entries[service, account] = value
-
-    def delete(service: str, account: str) -> None:
-        del entries[service, account]
-
-    monkeypatch.setattr(keyring, 'get_password', get)
-    monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
 
 
 def context() -> RunContext[None]:
@@ -173,7 +155,6 @@ async def test_menu_saves_an_entered_token_under_the_conventional_label(monkeypa
 
 
 async def test_menu_repicks_a_shared_saved_key_and_resets_to_the_label(monkeypatch: pytest.MonkeyPatch) -> None:
-    deletable_keyring(monkeypatch)
     api_keys.save_key(name='WORK_GOOGLE', value='shared-token')
     plugin = host()
     activate_quietly(plugin)

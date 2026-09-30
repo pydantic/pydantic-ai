@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 from typing import Protocol, TypeGuard
 
-import keyring
 import pytest
 from fastmcp import Client
 from fastmcp.client.auth import OAuth
@@ -55,26 +54,6 @@ def press(monkeypatch: pytest.MonkeyPatch) -> Press:
 
     script()
     return script
-
-
-@pytest.fixture
-def vault(monkeypatch: pytest.MonkeyPatch) -> Vault:
-    """A keyring that can also delete, so signing out and deleting keys are observable."""
-    entries: Vault = {}
-
-    def get(service: str, account: str) -> str | None:
-        return entries.get((service, account))
-
-    def set_value(service: str, account: str, value: str) -> None:
-        entries[service, account] = value
-
-    def delete(service: str, account: str) -> None:
-        del entries[service, account]
-
-    monkeypatch.setattr(keyring, 'get_password', get)
-    monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
-    return entries
 
 
 class Prompt:
