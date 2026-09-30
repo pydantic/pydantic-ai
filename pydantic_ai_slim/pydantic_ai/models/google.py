@@ -448,11 +448,6 @@ def _google_cloud_service_tier_headers(service_tier: GoogleCloudServiceTier) -> 
     assert_never(service_tier)  # pragma: no cover
 
 
-_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
-    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
-}
-
-
 def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     """Normalize unified thinking effort to a Gemini thinking level."""
     level_by_effort: dict[ThinkingEffort, GoogleThinkingLevel] = {
@@ -465,12 +460,41 @@ def _thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
     return level_by_effort[thinking]
 
 
-def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
-    """Map unified thinking to the closest thinking level the model supports.
+_GOOGLE_THINKING_LEVEL_ORDER: dict[GoogleThinkingLevel, int] = {
+    level: order for order, level in enumerate(GOOGLE_THINKING_LEVEL_SCALE)
+}
 
-    Snaps to the nearest supported level on the `MINIMAL < LOW < MEDIUM < HIGH` scale;
-    equidistant levels round down to the cheaper one.
+
+def _snap_thinking_level(
+    level: GoogleThinkingLevel, levels: frozenset[GoogleThinkingLevel] | None
+) -> GoogleThinkingLevel:
+    """Snap a thinking level to the nearest one the model accepts, on the `MINIMAL < LOW < MEDIUM < HIGH` scale.
+
+    Equidistant levels round down to the cheaper one. `None` means the model takes the whole scale, so
+    the level passes through. Shared with the Live path, which differs only in where its level set
+    comes from.
     """
+    if levels is None:
+        return level
+    if not levels:
+        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
+    if unknown := levels - GOOGLE_THINKING_LEVELS:
+        raise UserError(
+            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
+            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
+        )
+    requested = _GOOGLE_THINKING_LEVEL_ORDER[level]
+    return min(
+        levels,
+        key=lambda candidate: (
+            abs(_GOOGLE_THINKING_LEVEL_ORDER[candidate] - requested),
+            _GOOGLE_THINKING_LEVEL_ORDER[candidate],
+        ),
+    )
+
+
+def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleModelProfile) -> GoogleThinkingLevel:
+    """Map unified thinking to the closest thinking level the model supports."""
     levels = profile.get('google_thinking_levels')
     if levels is None:
         # Sparse profile without a level set: fall back to the boolean floor flag.
@@ -479,21 +503,7 @@ def _resolve_google_thinking_level(thinking: ThinkingEffort, profile: GoogleMode
             if profile.get('google_supports_minimal_thinking_level', True)
             else GOOGLE_THINKING_LEVELS - {'MINIMAL'}
         )
-    if not levels:
-        raise UserError('`google_thinking_levels` must contain at least one level when `thinking` is set')
-    if unknown := levels - GOOGLE_THINKING_LEVELS:
-        raise UserError(
-            f'`google_thinking_levels` contains unknown levels: {sorted(unknown)!r}; '
-            f'expected a subset of {sorted(GOOGLE_THINKING_LEVELS)!r}'
-        )
-    requested = _GOOGLE_THINKING_LEVEL_ORDER[_thinking_effort_to_level(thinking)]
-    return min(
-        levels,
-        key=lambda level: (
-            abs(_GOOGLE_THINKING_LEVEL_ORDER[level] - requested),
-            _GOOGLE_THINKING_LEVEL_ORDER[level],
-        ),
-    )
+    return _snap_thinking_level(_thinking_effort_to_level(thinking), levels)
 
 
 @dataclass(init=False)
@@ -678,11 +688,14 @@ class GoogleModel(Model[Client]):
                 ),
             )
 
-        response = await self.client.aio.models.count_tokens(
-            model=self._model_name,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response = await self.client.aio.models.count_tokens(
+                model=self._model_name,
+                contents=contents,
+                config=config,
+            )
+        except errors.APIError as e:
+            raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if response.total_tokens is None:
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Total tokens missing from Gemini response', str(response)
@@ -1103,6 +1116,13 @@ class GoogleModel(Model[Client]):
             provider_details['avg_logprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
+        web_search_queries, returned_web_source = _grounding_searches(response)
+        _set_web_search_usage(
+            usage,
+            web_search_queries,
+            returned_web_source,
+            billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
+        )
         grounding_metadata = candidate.grounding_metadata if candidate else None
         url_context_metadata = candidate.url_context_metadata if candidate else None
 
@@ -1144,6 +1164,7 @@ class GoogleModel(Model[Client]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
+            _web_search_billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
         )
 
     async def _map_messages(  # noqa: C901
@@ -1424,6 +1445,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
+    _web_search_billed_per_prompt: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
@@ -1445,6 +1467,17 @@ class GeminiStreamedResponse(StreamedResponse):
         try:
             async for chunk in self._response:
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
+                # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
+                # fields in `_usage_metadata_as_usage`: Gemini sends all grounding metadata once, on the final chunk,
+                # with the last `usage_metadata`. Seen in every grounded stream cassette and in live streams on
+                # Gemini 3, 3.1 Pro and 2.5, with and without server-side tool invocations (2026-09-30).
+                web_search_queries, returned_web_source = _grounding_searches(chunk)
+                _set_web_search_usage(
+                    self._usage,
+                    web_search_queries,
+                    returned_web_source,
+                    billed_per_prompt=self._web_search_billed_per_prompt,
+                )
 
                 if (
                     chunk.sdk_http_response
@@ -2069,6 +2102,35 @@ def _metadata_as_usage(
     )
 
 
+def _grounding_searches(response: GenerateContentResponse) -> tuple[set[str], bool]:
+    """Return the unique non-empty Google Search grounding queries and whether any web source came back."""
+    grounding = [c.grounding_metadata for c in response.candidates or [] if c.grounding_metadata is not None]
+    queries = {query for g in grounding for query in g.web_search_queries or [] if query.strip()}
+    returned_web_source = any(chunk.web and chunk.web.uri for g in grounding for chunk in g.grounding_chunks or [])
+    return queries, returned_web_source
+
+
+def _set_web_search_usage(
+    request_usage: usage.RequestUsage, queries: set[str], returned_web_source: bool, *, billed_per_prompt: bool
+) -> None:
+    """Record Google Search grounding on `request_usage` as the count Google bills.
+
+    Gemini 3 bills each unique non-empty query; Gemini 2.5 and older bill once per grounded prompt, and only when it
+    returned a web source. See https://ai.google.dev/gemini-api/docs/google-search#pricing and
+    https://cloud.google.com/vertex-ai/generative-ai/pricing. genai-prices can't extract either from the raw payload,
+    so the billed count is set as first-class `web_searches` and the query count as a `web_search_requests` detail.
+    """
+    if not queries:
+        return
+    request_usage.details['web_search_requests'] = len(queries)
+    if billed_per_prompt:
+        web_searches = 1 if returned_web_source else 0
+    else:
+        web_searches = len(queries)
+    if web_searches:
+        request_usage.web_searches = web_searches  # pyright: ignore[reportAttributeAccessIssue]
+
+
 def _usage_metadata_as_usage(
     *,
     prompt_token_count: int | None,
@@ -2094,6 +2156,21 @@ def _usage_metadata_as_usage(
     [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
     speaks the generate-content field names, so a Live caller translates before handing it over.
     """
+    if not any(
+        (
+            prompt_token_count,
+            output_token_count,
+            cached_content_token_count,
+            thoughts_token_count,
+            tool_use_prompt_token_count,
+            prompt_tokens_details,
+            cache_tokens_details,
+            output_tokens_details,
+            tool_use_prompt_tokens_details,
+        )
+    ):
+        return existing_usage or usage.RequestUsage()
+
     details: dict[str, int] = {}
     if cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count

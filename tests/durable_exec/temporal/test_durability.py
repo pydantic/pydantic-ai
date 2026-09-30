@@ -5,7 +5,7 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, Sequence
+from collections.abc import AsyncIterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
@@ -13,6 +13,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
+from pydantic import TypeAdapter
 
 from pydantic_ai import (
     Agent,
@@ -94,6 +95,7 @@ from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceBackend, WorkspaceRef, WrapperWorkspace
 from pydantic_graph import GraphBuilder, StepContext
 
 from ..._inline_snapshot import snapshot
@@ -104,12 +106,13 @@ try:
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
     from temporalio.client import Client, WorkflowFailureError
     from temporalio.common import RetryPolicy
-    from temporalio.worker import UnsandboxedWorkflowRunner, Worker
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
     )
@@ -167,6 +170,8 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsInt, IsList, IsStr
+    from ...workspace_fakes import FakeWorkspace
+    from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 
     # `_shared` loads the same sandbox-sensitive modules, so import it passed-through as well.
     from ._shared import (
@@ -210,7 +215,6 @@ with workflow.unsafe.imports_passed_through():
 warnings.filterwarnings('ignore', message='`TemporalAgent` is deprecated', category=PydanticAIDeprecationWarning)
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.vcr,
     pytest.mark.xdist_group(name='temporal-durability'),
     pytest.mark.filterwarnings(
@@ -386,6 +390,62 @@ async def test_durability_agent_with_tools_in_workflow(client: Client):
             task_queue=TASK_QUEUE,
         )
         assert output == 'The country is: France'
+
+
+# --- `RunContext.in_durable_context` ---
+
+
+def _in_durable_context_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=f'activity: {part.content}')])
+    return ModelResponse(parts=[ToolCallPart(tool_name='tool_in_durable_context', args='{}')])
+
+
+async def tool_in_durable_context(ctx: RunContext[None]) -> bool:
+    return ctx.in_durable_context
+
+
+class _ReportInDurableContext(AbstractCapability[Any]):
+    async def after_run(self, ctx: RunContext[Any], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        return replace(result, output=f'workflow: {ctx.in_durable_context}, {result.output}')
+
+
+_in_durable_context_agent = Agent(
+    FunctionModel(_in_durable_context_model_fn),
+    name='durability_in_durable_context',
+    toolsets=[FunctionToolset(tools=[tool_in_durable_context], id='in_durable_context')],
+    capabilities=[_ReportInDurableContext(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class InDurableContextWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _in_durable_context_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_run_context_in_durable_context(client: Client):
+    """`ctx.in_durable_context` is `True` in workflow code only, not in activities or outside a workflow."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[InDurableContextWorkflow],
+        plugins=[AgentPlugin(_in_durable_context_agent)],
+    ):
+        output = await client.execute_workflow(
+            InDurableContextWorkflow.run,
+            args=['Hello'],
+            id=InDurableContextWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'workflow: True, activity: False'
+
+    result = await _in_durable_context_agent.run('Hello')
+    assert result.output == 'workflow: False, activity: False'
 
 
 # --- Durability outside workflow (transparent passthrough) ---
@@ -643,6 +703,10 @@ def test_durability_activity_config_not_mutated():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -686,6 +750,10 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -701,6 +769,10 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -724,6 +796,10 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'WorkspaceTimeoutError',
+        'WorkspaceOutputLimitError',
+        'WorkspaceReadOnlyError',
+        'WorkspaceUnavailableError',
         'PayloadsTooLarge',
         'PayloadSizeError',
     ]
@@ -4672,3 +4748,195 @@ async def test_durability_prepare_renamed_tool_runs_in_activity(client: Client):
     assert output == snapshot('the registered function ran')
     # The model only ever saw the renamed tool, in both steps.
     assert _renamed_tool_names == snapshot([['exposed_tool'], ['exposed_tool']])
+
+
+_workspace_probe_backends: list[FakeWorkspace] = []
+
+
+@dataclass
+class WorkspaceProbeDeps:
+    prefix: str
+
+
+class WorkspaceProbePolicy(WrapperWorkspace):
+    def __init__(self, wrapped: Workspace, deps: WorkspaceProbeDeps):
+        super().__init__(wrapped)
+        self.deps = deps
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert activity.in_activity()
+        result = await self.wrapped.run(command, shell=shell, env=env, timeout=timeout)
+        assert self.ref is not None
+        return replace(result, stdout=f'policy:{self.deps.prefix}:{self.ref.id}:{result.stdout}')
+
+
+class WorkspaceProbeCapability(AbstractCapability[WorkspaceProbeDeps]):
+    def get_workspace(self, ctx: RunContext[WorkspaceProbeDeps], *, ref: WorkspaceRef | None) -> WorkspaceBackend:
+        assert ref is not None and ref.provider == 'probe'
+        return WorkspaceProbePolicy(Workspace(FakeWorkspace(ref.id, ref=ref)), ctx.deps)
+
+
+class WorkspaceProbeContext(TemporalRunContext[WorkspaceProbeDeps]):
+    @classmethod
+    def deserialize_run_context(cls, ctx: dict[str, Any], deps: WorkspaceProbeDeps) -> WorkspaceProbeContext:
+        data = dict(ctx)
+        raw_ref: Any = data.pop('workspace_ref')
+        assert isinstance(raw_ref, dict), f'expected JSON object, got {type(raw_ref)}'
+        ref = TypeAdapter(WorkspaceRef).validate_python(raw_ref)
+        backend = FakeWorkspace(ref.id, ref=ref)
+        _workspace_probe_backends.append(backend)
+        workspace = WorkspaceProbePolicy(Workspace(backend), deps)
+        return cls(**{**data, 'workspace': workspace}, deps=deps)
+
+
+_workspace_probe_agent = Agent(
+    TestModel(call_tools=['probe_workspace']),
+    name='workspace_probe_agent',
+    deps_type=WorkspaceProbeDeps,
+    capabilities=[
+        Instrumentation(),
+        WorkspaceProbeCapability(),
+        TemporalDurability(run_context_type=WorkspaceProbeContext, activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+decide_durable_agent = Agent(
+    ShipItDecisionModel(),
+    output_type=ShipIt,
+    name='durability_decide_agent',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+decide_durable_agent_without_content = Agent(
+    ShipItDecisionModel(),
+    output_type=ShipIt,
+    name='durability_decide_agent_without_content',
+    capabilities=[
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        Instrumentation(settings=InstrumentationSettings(include_content=False)),
+    ],
+)
+
+
+@_workspace_probe_agent.tool
+async def probe_workspace(ctx: RunContext[WorkspaceProbeDeps]) -> str:
+    assert isinstance(ctx, WorkspaceProbeContext)
+    first = await ctx.workspace.run(['first'])
+    second = await ctx.workspace.run(['second'])
+    return f'{first.stdout}|{second.stdout}'
+
+
+@workflow.defn
+class WorkspaceProbeWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _workspace_probe_agent.run(
+            'Use the probe_workspace tool.',
+            deps=WorkspaceProbeDeps(prefix='worker'),
+            workspace=WorkspaceRef(provider='probe', id='existing-123'),
+        )
+        assert result.workspace.ref == WorkspaceRef(provider='probe', id='existing-123')
+        return result.output
+
+
+async def test_temporal_workspace_restores_ref_and_replays_without_side_effects(client: Client):
+    """A real sandboxed worker restores a typed workspace ref in an activity and replay skips it."""
+    _workspace_probe_backends.clear()
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[WorkspaceProbeWorkflow],
+        plugins=[AgentPlugin(_workspace_probe_agent)],
+    ):
+        handle = await client.start_workflow(
+            WorkspaceProbeWorkflow.run,
+            id=f'{WorkspaceProbeWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        output = await handle.result()
+        history = await handle.fetch_history()
+
+    before_replay = [
+        (backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends
+    ]
+    backend_count = len(_workspace_probe_backends)
+    replay = await Replayer(workflows=[WorkspaceProbeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    after_replay = [
+        (backend.attach_calls, backend.create_calls, list(backend.commands)) for backend in _workspace_probe_backends
+    ]
+
+    assert replay.replay_failure is None
+    expected = 'policy:worker:existing-123:connected|policy:worker:existing-123:connected'
+    assert TypeAdapter(dict[str, str]).validate_json(output) == {'probe_workspace': expected}
+    # The `ensure` activity attaches once at run start, the tool activity once more; nothing creates.
+    assert sum(backend.attach_calls for backend in _workspace_probe_backends) == 2
+    assert sum(backend.create_calls for backend in _workspace_probe_backends) == 0
+    assert len(_workspace_probe_backends) == backend_count
+    assert [command for backend in _workspace_probe_backends for command in backend.commands] == [['first'], ['second']]
+    assert before_replay == after_replay
+
+
+@workflow.defn
+class DecideDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, mode: str) -> ShipIt:
+        if mode == 'per_run_without_content':
+            # The agent itself records content; this one run asks not to.
+            result = await decide_durable_agent.run(
+                prompt, capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=False))]
+            )
+        else:
+            agent = decide_durable_agent if mode == 'with_content' else decide_durable_agent_without_content
+            result = await agent.run(prompt)
+        return result.output
+
+
+@pytest.mark.parametrize('mode', ['with_content', 'agent_without_content', 'per_run_without_content'])
+async def test_durability_decide_span_in_activity(
+    allow_model_requests: None, client_with_logfire: Client, capfire: CaptureLogfire, mode: str
+):
+    """A decision model's `decide` span lands inside the model activity, under the workflow's `chat` span.
+
+    The context variable the `chat` span sets its policy in does not cross into the activity, so the unit rebuilds
+    it from the agent's own instrumentation: the one `Agent.instrument_all()` set up (by `LogfirePlugin`), or an
+    `Instrumentation` capability on the agent, which the run lets win and so does the activity. An `Instrumentation`
+    passed to one run is out of the activity's sight, so its content policy is carried in with the run context.
+    """
+    async with Worker(
+        client_with_logfire,
+        task_queue=TASK_QUEUE,
+        workflows=[DecideDurableAgentWorkflow],
+        plugins=[AgentPlugin(decide_durable_agent), AgentPlugin(decide_durable_agent_without_content)],
+    ):
+        output = await client_with_logfire.execute_workflow(
+            DecideDurableAgentWorkflow.run,
+            args=['The migration is reviewed and the tests pass.', mode],
+            id=f'{DecideDurableAgentWorkflow.__name__}_{mode}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == ShipIt(ship=True)
+
+    lineage, attributes = decide_span_lineage(capfire.exporter.exported_spans_as_dict())
+    include_content = mode == 'with_content'
+    agent_name = (
+        'durability_decide_agent_without_content' if mode == 'agent_without_content' else 'durability_decide_agent'
+    )
+    assert lineage[:4] == [
+        f'RunActivity:agent__{agent_name}__model_request',
+        f'StartActivity:agent__{agent_name}__model_request',
+        'chat ship-it',
+        f'invoke_agent {agent_name}',
+    ]
+    assert ('pydantic_ai.decision.state' in attributes) is include_content
+    # Without content an answer keeps its numbers, which a yes/no's answer is all of.
+    assert attributes['pydantic_ai.decision.answers'] == '{"ship":{"type":"noul","noul":0.9}}'
+    assert ('instructions' in attributes['pydantic_ai.decision.questions']) is include_content

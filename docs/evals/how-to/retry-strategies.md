@@ -1,3 +1,7 @@
+---
+description: "Retry rate-limited or timed-out tasks and LLM judge evaluators in Pydantic Evals, with Tenacity stop conditions and exponential backoff passed to evaluate()."
+---
+
 # Retry Strategies
 
 Handle transient failures in tasks and evaluators with automatic retry logic.

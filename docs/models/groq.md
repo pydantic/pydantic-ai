@@ -1,3 +1,7 @@
+---
+description: "Use models hosted on Groq with Pydantic AI: install the groq optional group, set your API key, configure the provider, and tune the SDK's retry behavior."
+---
+
 # Groq
 
 ## Install

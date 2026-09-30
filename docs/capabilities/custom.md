@@ -1,3 +1,7 @@
+---
+description: "Write your own Pydantic AI capability by subclassing AbstractCapability to bundle tools, instructions, settings and hooks, for guardrails or middleware."
+---
+
 # Building Custom Capabilities
 
 To build your own [capability](overview.md), subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] and override the methods you need. There are two categories: **configuration methods** that are called at agent construction — and re-run at run setup on the replacement instance when [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] returns one (see [Per-run state isolation](#per-run-state-isolation)); [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] is always called per-run — and **lifecycle hooks** that fire during each run.
@@ -328,7 +332,7 @@ class AdaptiveModel(AbstractCapability[Deps]):
 agent = Agent(deps_type=Deps, capabilities=[AdaptiveModel()])
 ```
 
-[`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, message history, and usage. Keep `get_model()` itself cheap; perform I/O in an async selector.
+[`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] is a synchronous configuration method, but the [`ModelSelector`][pydantic_ai.capabilities.ModelSelector] it returns may be synchronous or asynchronous. [`ModelSelectionContext`][pydantic_ai.models.ModelSelectionContext] is separate from [`RunContext`][pydantic_ai.tools.RunContext] because a complete run context requires the model currently being selected. It includes dependencies, the request step, the run's prompt, the messages the selected model will be sent (ending with the request being routed), and usage. Keep `get_model()` itself cheap; perform I/O in an async selector.
 
 A model or model ID returned directly from `get_model()` is resolved once per run. A selector returned from `get_model()` is evaluated before every logical model request step.
 
@@ -408,6 +412,7 @@ Dynamic selection is not currently supported by durable execution capabilities. 
 | [`get_wrapper_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset] | [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset] `| None` | [Wrap the agent's assembled toolset](#toolset-wrapping) |
 | [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] | [`AgentInstructions`][pydantic_ai.agent.AgentInstructions] `| None` | [Instructions](../agent.md#instructions) (static strings, [template strings](../agent-spec.md#template-strings), or callables) |
 | [`get_model_settings()`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] | [`AgentModelSettings`][pydantic_ai.agent.AgentModelSettings] `| None` | [Model settings](../agent.md#model-run-settings) dict, or a callable for per-step settings |
+| [`get_workspace()`][pydantic_ai.capabilities.AbstractCapability.get_workspace] | [`WorkspaceBackend`][pydantic_ai.workspaces.WorkspaceBackend] `| None` | The run's [workspace](../workspace.md#supplying-a-workspace-from-a-capability): a backend for `ref` (fresh when `ref` is `None`), or `None` for a `ref` you don't recognize. Synchronous, no I/O. With several workspace capabilities, the first that returns one wins |
 | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] | [`AgentModel`][pydantic_ai.capabilities.AgentModel] `| None` | Static or per-step [model selection](#selecting-the-model) |
 | [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] | [`Model`][pydantic_ai.models.Model] `| None` | [Resolve a selected model ID](#resolving-model-ids) using the agent and run dependencies |
 
@@ -458,12 +463,12 @@ Capabilities passed directly to [`run()`][pydantic_ai.agent.AbstractAgent.run] o
 
 Binding hooks establish which capability participates in a run; lifecycle hooks then intercept the work it performs. The high-level order is:
 
-`for_agent()` → bootstrap model selection and resolution → `for_run()` → per-step selection and preparation → model request → tool/output processing → run completion
+`for_agent()` → bootstrap model selection and resolution → `get_workspace()` → `for_run()` → per-step selection and preparation → model request → tool/output processing → run completion
 
 | Phase | Capability work | What is available |
 |---|---|---|
 | Agent binding | [`for_agent()`][pydantic_ai.capabilities.AbstractCapability.for_agent] | Agent name, raw constructor model, toolsets, and other constructor configuration; no run dependencies or `RunContext` |
-| Run bootstrap | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], then [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] if the selection is a string | Dependencies, message history, usage, and the lower-precedence model through selection/resolution contexts; no complete `RunContext` yet |
+| Run bootstrap | [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], then [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] if the selection is a string; then [`get_workspace()`][pydantic_ai.capabilities.AbstractCapability.get_workspace] | Dependencies, message history, usage, and the lower-precedence model through selection/resolution contexts. `get_workspace()` gets a `RunContext` with the bootstrap model but no tools yet |
 | Run binding | [`for_run()`][pydantic_ai.capabilities.AbstractCapability.for_run] | A complete [`RunContext`][pydantic_ai.tools.RunContext] containing the bootstrap model; may return a run-scoped replacement capability |
 | Each logical model step | Post-`for_run()` model selection/resolution, model settings, tool preparation, and message preparation | The selected model is installed in `RunContext` before its settings, profile-sensitive tools, and model-specific message preparation are evaluated |
 | Model request and response | Model request, tool, output, node, and event-stream [hooks](#hooking-into-the-lifecycle) | The fully prepared request and the live run state appropriate to each hook |
@@ -909,6 +914,8 @@ A [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] override may 
 
 Arguments and results must follow the same serialization rules as durable tools. Temporal sends them through its data converter; JSON-journal engines require JSON-compatible values. Operation names are scoped by capability ID. Changing either identity creates a different persisted operation, and on Prefect it also creates a different cache key.
 
+To branch on whether a hook is running in durable workflow code, check [`ctx.in_durable_context`][pydantic_ai.tools.RunContext.in_durable_context]. It is `True` inside a durable workflow or flow (like a Temporal or DBOS workflow) when the agent has a durability capability. It is `False` outside durable execution and inside the Temporal activities and DBOS steps where tools and model requests run. Prefect tasks inherit their flow's context, so it is `True` inside a Prefect task too.
+
 The live-value hooks `get_toolset`, `get_wrapper_toolset`, `wrap_run`, `wrap_node_run`, `wrap_model_request`, `wrap_tool_validate`, `wrap_tool_execute`, `wrap_output_validate`, `wrap_output_process`, and `wrap_run_event_stream` cannot be decorated because their handlers or values cannot cross a durable boundary. Pydantic AI raises a `UserError` naming the incompatible hook during agent construction.
 
 ## Wrapping capabilities
@@ -974,7 +981,7 @@ print(counter.count)
 #> 0
 ```
 
-When `for_run` returns a new instance, the capability's configuration is re-extracted from that replacement at run setup: [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], [`get_native_tools`][pydantic_ai.capabilities.AbstractCapability.get_native_tools], and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] are re-invoked on it, and [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset], [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description], and all lifecycle hooks always run on it. The exception is model selection: [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model] and bootstrap [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id] run *before* `for_run` on the original instance, and the bootstrap selection is reused unless the replacement actually changes the model contribution — see [Model selection lifecycle and limitations](#model-selection-lifecycle-and-limitations).
+When `for_run` returns a new instance, the capability's configuration is re-extracted from that replacement at run setup: [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions], [`get_toolset`][pydantic_ai.capabilities.AbstractCapability.get_toolset], [`get_native_tools`][pydantic_ai.capabilities.AbstractCapability.get_native_tools], and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] are re-invoked on it, and [`get_wrapper_toolset`][pydantic_ai.capabilities.AbstractCapability.get_wrapper_toolset], [`get_description`][pydantic_ai.capabilities.AbstractCapability.get_description], and all lifecycle hooks always run on it. The exceptions are model and workspace selection: [`get_model()`][pydantic_ai.capabilities.AbstractCapability.get_model], bootstrap [`resolve_model_id()`][pydantic_ai.capabilities.AbstractCapability.resolve_model_id], and [`get_workspace()`][pydantic_ai.capabilities.AbstractCapability.get_workspace] run *before* `for_run` on the original instance, so `for_run` can already use `ctx.workspace`. The bootstrap model selection is reused unless the replacement actually changes the model contribution — see [Model selection lifecycle and limitations](#model-selection-lifecycle-and-limitations). `for_run` can't change the workspace selected before it; to use a different one for a run, pass it as `workspace=`.
 
 Never mutate `self` inside `for_run` — return a new instance instead. When `for_run` returns the original unchanged, the configuration cached at agent construction is reused, so mutations to `self` would not be picked up.
 

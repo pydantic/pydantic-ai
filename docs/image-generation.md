@@ -1,3 +1,7 @@
+---
+description: "Generate and edit images from Python with the Pydantic AI ImageGenerator API, using GPT Image, Gemini and Grok Imagine models from OpenAI, Google and xAI."
+---
+
 # Image Generation
 
 Pydantic AI provides a provider-agnostic API for generating and editing images with dedicated image models.
@@ -163,7 +167,7 @@ export GOOGLE_API_KEY='your-api-key'
 
 The `google-cloud:` prefix uses Google Cloud instead, which authenticates with Application Default Credentials rather
 than an API key. See the [Google image-generation notes](models/google.md#image-generation) for provider-specific
-behavior and [Google Cloud configuration](models/google.md#google-cloud-enterprise) for the credential options.
+behavior and [Google Cloud configuration](models/google-cloud.md#authentication) for the credential options.
 
 ### xAI
 

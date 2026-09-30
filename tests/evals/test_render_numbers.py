@@ -13,7 +13,7 @@ with try_import() as imports_successful:
         default_render_number_diff,
     )
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 
 @pytest.mark.parametrize(

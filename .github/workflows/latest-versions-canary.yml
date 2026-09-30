@@ -84,9 +84,9 @@ jobs:
         python-version: ['3.10', '3.14']
     env:
       CI: true
-      # Both as on `ci.yml`'s all-extras test job, for the reasons documented there: blocking
-      # detection is exercised by the slimmer jobs, and Temporal's deadlock detector reads
-      # runner contention as a blocking call.
+      # `BLOCKBUSTER_ENABLED` as on `ci.yml`'s all-extras shards, whose time budget can't absorb its
+      # stack-inspection overhead; blocking detection runs in `ci.yml`'s slimmer jobs.
+      # `TEMPORAL_DEBUG` as on `ci.yml`'s `test-durable-exec` job, for the reasons documented there.
       BLOCKBUSTER_ENABLED: false
       TEMPORAL_DEBUG: '1'
     steps:

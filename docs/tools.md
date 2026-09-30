@@ -1,3 +1,7 @@
+---
+description: "Give a Pydantic AI agent function tools for LLM tool calling with @agent.tool, validating arguments from type hints and using docstrings as descriptions."
+---
+
 # Function Tools
 
 Function tools provide a mechanism for models to perform actions and retrieve extra information to help them generate a response.

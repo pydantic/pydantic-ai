@@ -1,4 +1,4 @@
-import cProfile
+import gc
 import json
 import os
 import re
@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from types import FrameType
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
@@ -648,6 +649,7 @@ def test_pre_usage_refactor_messages_deserializable():
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {},
             'cost': None,
         }
@@ -693,6 +695,7 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
             'input_audio_tokens': 0,
             'cache_audio_read_tokens': 0,
             'output_audio_tokens': 0,
+            'audio_seconds': 0.0,
             'details': {'reasoning_tokens': 3},
             'cost': None,
             'future_tokens': 42,
@@ -712,7 +715,6 @@ def test_usage_arbitrary_fields_serialization_roundtrip():
     assert loaded.usage.__dict__['future_tokens'] == 42
 
 
-@pytest.mark.anyio
 async def test_legacy_vendor_message_history_replays_through_agent():
     """1.x message history serialized with `vendor_details` / `vendor_id` keys still routes through `agent.run(message_history=...)`.
 
@@ -845,6 +847,7 @@ def test_file_part_serialization_roundtrip():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -860,6 +863,7 @@ def test_file_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -2004,15 +2008,14 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     thousands of Rust→Python crossings, paid on every message-history load, UI adapter round-trip, and
     Temporal activity resolution and replay.
 
-    Counting Python calls rather than timing is what makes this pin usable in CI: the count is far
-    steadier than a wall-clock threshold, which would either flake on a noisy runner or be loose
-    enough to catch nothing. It is not perfectly machine-independent, though — the delta is 0 on a
-    developer machine but around 110 on some CI runners, from something ambient that has never been
-    tracked down — so the bound has to clear that. The gap it separates is enormous: a per-node
-    Python call costs ~2,770 extra calls here, one per JSON value node in the larger payload, so a
-    bound of 1,000 sits an order of magnitude above the noise and well under the regression. `cProfile` rather than a `sys.setprofile` callback
-    because the interpreter does not trace the callback's own body, leaving it unmeasurable by
-    coverage.
+    Counting Python calls rather than timing is what makes this pin usable in CI: a slow or loaded
+    runner changes how long the calls take, not how many there are. Only the (de)serializer's own
+    calls may count, though. The count comes from a `sys.setprofile` hook because that sees only
+    this thread, whereas `cProfile` also counts other threads' calls on Python 3.12+. Garbage
+    collection is held off during the measurement because a collection runs `gc.callbacks` (Hypothesis
+    installs one) and the finalizers of garbage that earlier tests left behind, all on this thread.
+    A per-node Python call costs over 2,000 extra calls here, about one per JSON value node in the
+    larger payload, so a bound of 1,000 catches it with headroom for anything ambient.
 
     `dump_json` is pinned alongside `validate_json` because it is the leg that notices the two ways
     the `_StrPassthrough` arm can be lost: `pydantic.InstanceOf[str]` builds the same validator but
@@ -2036,18 +2039,26 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
         messages = ModelMessagesTypeAdapter.validate_json(raw)  # build the (de)serializer outside the measurement
         ModelMessagesTypeAdapter.dump_json(messages)
 
-        profiler = cProfile.Profile()
-        profiler.enable()
+        calls = 0
+
+        def count_call(frame: FrameType, event: str, arg: object) -> None:
+            nonlocal calls
+            # The interpreter never traces a profile function, so coverage can't see this line.
+            calls += event == 'call'  # pragma: no cover
+
+        gc.disable()
+        sys.setprofile(count_call)
         try:
             if dump:
                 ModelMessagesTypeAdapter.dump_json(messages)
             else:
                 ModelMessagesTypeAdapter.validate_json(raw)
         finally:
-            profiler.disable()
-        return sum(entry.callcount for entry in profiler.getstats())
+            sys.setprofile(None)
+            gc.enable()
+        return calls
 
-    # 100x the nodes: a per-node Python call turns a handful of calls into tens of thousands.
+    # 100x the nodes: a per-node Python call adds thousands of calls.
     for dump in (False, True):
         small, large = python_calls(payload(2), dump), python_calls(payload(200), dump)
         direction = 'dump_json' if dump else 'validate_json'
@@ -2888,6 +2899,7 @@ def test_speech_part_serialization_roundtrip():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -2902,6 +2914,7 @@ def test_speech_part_serialization_roundtrip():
                 'run_id': None,
                 'conversation_id': None,
                 'metadata': None,
+                'workspace_ref': None,
                 'state': 'complete',
             },
         ]
@@ -3062,7 +3075,6 @@ def test_prepare_messages_passes_through_without_speech_parts():
     assert prepared[1] is history[1]
 
 
-@pytest.mark.anyio
 async def test_agent_run_with_speech_history():
     """History from a realtime session (containing both speaker variants) replays through
     `agent.run(message_history=...)` against a standard model: the seam converts the parts before the
@@ -3103,7 +3115,6 @@ async def test_agent_run_with_speech_history():
     )
 
 
-@pytest.mark.anyio
 async def test_agent_run_with_speech_only_response():
     """A custom model returning only realtime `SpeechPart`s yields their transcript as text output.
 
@@ -3120,7 +3131,6 @@ async def test_agent_run_with_speech_only_response():
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
-@pytest.mark.anyio
 async def test_openai_mapping_of_prepared_speech_history():
     """A real provider model's message mapping handles realtime session history once it has passed
     through `prepare_messages`, which the framework applies before every request.
@@ -3139,7 +3149,6 @@ async def test_openai_mapping_of_prepared_speech_history():
 
 
 @pytest.mark.skipif(not openai_import_successful(), reason='openai not installed')
-@pytest.mark.anyio
 async def test_unprepared_speech_history_raises():
     """A `SpeechPart` that reaches an adapter unconverted raises rather than silently vanishing.
 
@@ -3153,7 +3162,6 @@ async def test_unprepared_speech_history_raises():
         await model._map_messages(history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
 
 
-@pytest.mark.anyio
 async def test_function_model_estimates_usage_from_unprepared_speech():
     """`FunctionModel.request()` doesn't run `prepare_messages`, so user speech can arrive unconverted;
     its transcript still counts toward estimated usage — the same as its converted text form — rather
@@ -3368,7 +3376,6 @@ def test_user_content_types_matches_union():
     assert set(_USER_CONTENT_TYPES) == union_members
 
 
-@pytest.mark.anyio
 async def test_agent_run_rejects_non_sequence_user_prompt():
     """The same guard reached through the public API, where the prompt becomes a `UserPromptPart` inside the run."""
     agent = Agent(TestModel())

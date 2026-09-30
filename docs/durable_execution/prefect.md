@@ -1,3 +1,7 @@
+---
+description: "Make Pydantic AI agents durable with Prefect, running model requests and tool calls as cached, retryable tasks in a flow you can deploy and run on a schedule."
+---
+
 # Durable Execution with Prefect
 
 [Prefect](https://www.prefect.io/) is a workflow orchestration framework for building resilient data pipelines in Python, natively integrated with Pydantic AI.
@@ -153,6 +157,17 @@ Toolsets that implement their own tool listing and calling (i.e. [`FunctionTools
 ### Capabilities at Runtime
 
 Unlike Temporal and DBOS, Prefect creates a task per call rather than registering its durable units up front, so [capabilities](../capabilities/overview.md) passed to `agent.run(capabilities=[...])` inside a flow are accepted. A capability that contributes an executing toolset is still rejected, by the same guard that rejects `run(toolsets=...)`: the toolset arrives after the agent's toolsets were wrapped. Attach those at agent construction time.
+
+### Workspaces
+
+Attach the [workspace](../workspace.md) capability, such as `LocalWorkspace`, when you construct the agent, and use `ctx.workspace` as in any run. Each workspace call made in flow code (capability hooks, output functions, `result.workspace`) runs as a task; inside a task, such as a tool, calls go straight to the provider.
+
+Adding a workspace to an agent changes the tasks its flows run, so let running flows finish before
+you deploy the change.
+
+Event stream handler and capability tasks include the agent's name in their cache key, so two agents in one
+flow never share a cached result. A flow retried across the upgrade that introduced this re-runs those tasks
+once instead of reading them from the cache.
 
 ### Model Selection at Runtime
 

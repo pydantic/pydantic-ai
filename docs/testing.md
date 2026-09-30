@@ -1,3 +1,7 @@
+---
+description: "Unit test Pydantic AI agents with pytest by swapping in TestModel or FunctionModel via Agent.override, for fast, deterministic tests with no real LLM calls."
+---
+
 # Unit testing
 
 Writing unit tests for Pydantic AI code is just like unit tests for any other Python code.

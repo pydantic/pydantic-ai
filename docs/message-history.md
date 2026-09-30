@@ -1,3 +1,7 @@
+---
+description: "Continue multi-turn conversations with Pydantic AI message history: reuse and store messages as JSON, inject messages mid-run, and trim or summarize history."
+---
+
 # Messages and chat history
 
 Pydantic AI provides access to messages exchanged during an agent run. These messages can be used both to continue a coherent conversation, and to understand how an agent performed.
@@ -441,7 +445,7 @@ async with agent.run_stream('Tell me a joke.') as streamed:
 
 The `message_history` parameter is trusted server-side state. If you load history that came from a browser request or another untrusted boundary, sanitize it before passing it to the agent.
 
-[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, and removes unresolved tool calls at the end of the history.
+[`sanitize_messages`][pydantic_ai.messages.sanitize_messages] applies the same default message sanitization used by the [UI adapters](ui/overview.md): it strips client-supplied system prompts, drops non-HTTP file URL schemes, resets non-allowlisted [`FileUrl.force_download`][pydantic_ai.messages.FileUrl.force_download] values to `False`, drops uploaded file references, resets [workspace](workspace.md) references so a client can't point your agent at another environment, and removes unresolved tool calls at the end of the history.
 
 Client-supplied [`CompactionPart`][pydantic_ai.messages.CompactionPart]s are kept, so the conversation stays [compacted](capabilities/compaction.md) — but they are never trusted to stand in for the system prompt. Whether that prompt is a [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] already in the history or one re-injected by [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt], it is re-sent to the model even where a provider's own compaction state would normally let it be skipped. If you combine the sanitized history with trusted server-side `message_history`, also pass `strip_compaction_parts=True`: everything before a compaction item is hidden from the model, so a client-supplied one would hide the server's history — see [Client-held history](capabilities/compaction.md#client-held-history). The [UI adapters](ui/overview.md) apply this rule automatically when a run combines server-side `message_history` with client-submitted messages.
 
@@ -458,11 +462,11 @@ message_history = sanitize_messages(loaded_history)
 result = agent.run_sync('Tell me a different joke.', message_history=message_history)
 ```
 
-Each sanitization can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False`, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, or set `allow_uploaded_files=True`. See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
+Each sanitization can be turned off individually when the corresponding parts were created by trusted server-side code: pass `strip_system_prompts=False`, add schemes to `allowed_file_url_schemes`, add values to `allowed_file_url_force_download`, set `allow_uploaded_files=True`, or set `strip_workspace_refs=False`. To continue client-supplied history in the same workspace, pass a reference you saved server-side as `workspace=` (see [Continuing in the same workspace](workspace.md#continuing-in-the-same-workspace)). See [file URL input security](input.md#user-side-download-vs-direct-file-url) for the file input trust model.
 
 ## Persisting sessions
 
-[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application, and [Storage](storage.md) lays out the choice, including the cases a stored history doesn't answer. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
+[Serializing a history](#storing-and-loading-messages-to-json) turns it into bytes and back, but that is only the primitive. Deciding where those bytes live, which conversation they belong to, and when to reload them is left to your application, and [Persistence](persistence.md) lays out the choice, including the cases a stored history doesn't answer. [`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) is the key to store them under: pass your own chat thread ID, or let Pydantic AI resolve one, and read the resolved value back off the result as [`AgentRunResult.conversation_id`][pydantic_ai.agent.AgentRunResult.conversation_id].
 
 For a chat application that is usually the whole design: load a thread's history, pass it as `message_history`, and write back [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] once the run finishes. Appending each run's new messages rather than rewriting the full list keeps each write proportional to the turn instead of to the conversation, and leaves the stored order intact.
 
@@ -935,7 +939,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import ProcessHistory
 
 
 def compact_when_window_fills(
@@ -960,16 +964,83 @@ def compact_when_window_fills(
 
 agent = Agent(
     'openai:gpt-5.2',
-    system_prompt='You are a helpful assistant.',
-    capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
+    instructions='You are a helpful assistant.',
+    capabilities=[ProcessHistory(compact_when_window_fills)],
 )
 ```
 
 Treat `None` as unknown, not as an empty context window. It is returned before the first model response and when the model's window or response usage is unknown. The example leaves history unchanged in these cases. A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] measures against the smallest window among its candidates, so compaction happens early enough for whichever candidate answers.
 
-Keep [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor, as shown, so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
+[Instructions](agent.md#instructions) are sent with every request rather than stored in the history, so compaction can't drop them. If you use [`system_prompt`](agent.md#system-prompts) instead, add [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] after the compaction processor so the system prompt dropped with the old history is put back. The example keeps everything from the latest plain user turn onward; a turn that pairs tool results with a new prompt is kept whole, so a run started that way may keep more history than needed.
 
 Pydantic AI fills the window size from [genai-prices](https://github.com/pydantic/genai-prices) where its data records one. For a custom or local model, or one genai-prices doesn't cover yet, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
+
+#### Scheduling maintenance into cache-cold windows
+
+History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
+
+Providers publish retention windows for their prompt caches. Pydantic AI records the documented default at the provider layer as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]: 5 minutes for Anthropic, 30 minutes for OpenAI's GPT-5.6 and later. Where a provider's retention depends on account configuration rather than the model — as OpenAI's does for earlier models, where the default hinges on whether the organization has zero data retention enabled — the default is left unset, and the outlook is `'unknown'` unless you pass `retention=` yourself. [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses it to predict, from a message history alone, whether the next request is likely to hit a warm cache:
+
+```python {title="cache_cold_maintenance.py"}
+from datetime import datetime, timedelta, timezone
+
+from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.profiles import prompt_cache_outlook
+
+profile = AnthropicModel('claude-sonnet-4-6').profile
+
+now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+history = [
+    ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=now - timedelta(minutes=30)),
+    ModelResponse(parts=[TextPart(content='Hello!')], timestamp=now - timedelta(minutes=30)),
+]
+
+# The last exchange was 30 minutes ago, well past Anthropic's 5-minute default.
+outlook = prompt_cache_outlook(history, profile=profile, now=now)
+print(outlook)
+#> cold
+```
+
+A `'cold'` outlook is the signal to flush pending maintenance for free; `'warm'` means the mutation would sacrifice a live cache hit, so defer it if it can wait; `'unknown'` (no documented retention, or a history without timestamps) should be treated like `'warm'` — never mutate on a guess.
+
+Retention you request through model settings, such as `anthropic_cache='1h'` or `openai_prompt_cache_retention='24h'`, replaces the provider's default. [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention] works it out from the settings a request is made with, returning `None` when they don't ask for anything, so passing its result as `retention=` keeps the profile's default in that case. A [`before_model_request`](hooks.md) hook has both the model and the request's settings at hand, so it can decide whether to do the expensive work this turn:
+
+```python {title="cache_cold_hook.py"}
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+from pydantic_ai.profiles import prompt_cache_outlook
+
+hooks = Hooks()
+
+
+@hooks.on.before_model_request
+async def compact_when_cold(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+    messages = request_context.messages
+    model = request_context.model
+    outlook = prompt_cache_outlook(
+        messages,
+        profile=model.profile,
+        retention=model.resolve_cache_retention(request_context.model_settings),
+    )
+    over_budget = ctx.usage.total_tokens > 100_000
+    if len(messages) > 10 and (over_budget or outlook == 'cold'):
+        # Expensive: replace with your real summarization/pruning pass.
+        request_context.messages = messages[:1] + messages[-4:]
+    return request_context
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    model_settings=AnthropicModelSettings(anthropic_cache='1h'),  # (1)!
+    capabilities=[hooks],
+)
+```
+
+1. With the 1-hour cache requested, the outlook only turns `'cold'` after an hour of idleness rather than Anthropic's default 5 minutes.
+
+`CachePoint(ttl='1h')` markers in history extend the boundary in the same way, when the provider supports them. Azure and providers without a single documented default leave the field `None`, producing `'unknown'` unless the settings request a retention or you pass one explicitly.
 
 ### Testing History Processors
 

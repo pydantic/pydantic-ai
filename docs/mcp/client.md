@@ -1,3 +1,7 @@
+---
+description: "Connect Pydantic AI agents to MCP servers over Streamable HTTP, SSE or stdio, load them from config, and use sampling, elicitation, resources and auth."
+---
+
 # Client
 
 Pydantic AI can act as an [MCP client](https://modelcontextprotocol.io/quickstart/client), connecting to MCP servers to use their tools as part of an agent run. The [`MCPToolset`][pydantic_ai.mcp.MCPToolset] [toolset](../toolsets.md) wraps the [FastMCP Client](https://gofastmcp.com/clients/) and works with both local (stdio) and remote (Streamable HTTP, SSE) MCP servers.

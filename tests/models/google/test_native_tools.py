@@ -312,7 +312,6 @@ def _file_search_return_start_parts(events: list[ModelResponseStreamEvent]) -> l
     return _file_search_returns([e.part for e in events if isinstance(e, PartStartEvent)])
 
 
-@pytest.mark.anyio
 async def test_file_search_grounding_fills_empty_tool_response_streaming():
     """Streaming: grounding arrives several chunks after the empty `tool_response`, which is then filled in
     place — a single `PartStartEvent` (no empty-then-filled duplicate), ordered ahead of the grounded text.
@@ -337,7 +336,6 @@ async def test_file_search_grounding_fills_empty_tool_response_streaming():
     assert len(_file_search_return_start_parts(events)) == 1
 
 
-@pytest.mark.anyio
 async def test_file_search_multiple_calls_all_filled_streaming():
     """Every reserved file_search return is filled from the aggregate grounding, not just the last."""
     events, parts = await _drive_stream(
@@ -356,7 +354,6 @@ async def test_file_search_multiple_calls_all_filled_streaming():
     assert len(_file_search_return_start_parts(events)) == 2
 
 
-@pytest.mark.anyio
 async def test_file_search_grounding_absent_leaves_empty_content_streaming():
     """If grounding never arrives, the reserved return keeps its empty content and its deferred event is
     flushed at the end of the stream, so event consumers still see every part present in the final response."""

@@ -434,6 +434,9 @@ def _map_usage(response: V2ChatResponse, provider: str, provider_url: str, model
         if isinstance(cached_tokens := usage_data.get('cached_tokens'), int | float):
             usage_data['cached_tokens'] = int(cached_tokens)
 
+        if not tokens and not cached_tokens:
+            return usage.RequestUsage(details=details)
+
         return usage.RequestUsage.extract(
             dict(model=model, usage=usage_data),
             provider=provider,
