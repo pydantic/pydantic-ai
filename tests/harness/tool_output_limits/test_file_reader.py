@@ -41,6 +41,7 @@ async def test_workspace_spill_uses_read_file(tmp_path: Path) -> None:
 
     agent: Agent[None, str] = Agent(
         FunctionModel(respond),
+        deps_type=type(None),
         capabilities=[
             ToolOutputLimits[None](bands=[Band(over=100, action=Spill())]),
             LocalWorkspace(tmp_path),
@@ -75,6 +76,7 @@ async def test_reader_stays_for_spills_file_tools_cannot_return_whole(tmp_path: 
 
     agent: Agent[None, str] = Agent(
         FunctionModel(respond),
+        deps_type=type(None),
         capabilities=[
             ToolOutputLimits[None](bands=[Band(over=100, action=Spill())]),
             LocalWorkspace(tmp_path),
@@ -104,6 +106,7 @@ async def test_exact_spill_access_is_checked_before_reader_is_dropped(tmp_path: 
 
     agent: Agent[None, str] = Agent(
         FunctionModel(respond),
+        deps_type=type(None),
         capabilities=[
             ToolOutputLimits[None](bands=[Band(over=100, action=Spill())]),
             LocalWorkspace(tmp_path),
@@ -144,6 +147,7 @@ async def test_read_tool_result_stays_when_file_tools_cannot_replace_it(tmp_path
 
     agent: Agent[None, str] = Agent(
         FunctionModel(respond),
+        deps_type=type(None),
         capabilities=[
             ToolOutputLimits[None](store=store),
             LocalWorkspace(tmp_path),

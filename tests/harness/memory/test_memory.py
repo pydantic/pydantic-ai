@@ -450,6 +450,7 @@ class TestPublicAgentPath:
 
         agent: Agent[None, str] = Agent(
             FunctionModel(model),
+            deps_type=type(None),
             capabilities=[
                 Memory[None](store=store, guidance=guidance),
                 LocalWorkspace(tmp_path),
