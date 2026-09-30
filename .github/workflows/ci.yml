@@ -997,6 +997,26 @@ jobs:
 
       - run: uv run --all-extras --no-extra mcp-tasks python tests/import_examples.py
 
+      - name: cover documentation examples
+        if: matrix.python-version == '3.14'
+        run: |
+          mkdir .coverage
+          export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
+          uv run --all-extras --no-extra mcp-tasks --group lint coverage run -p -m pytest \
+            tests/test_examples.py -n logical --dist=loadgroup
+          uv run --no-sync coverage combine
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.3.14-examples
+          TYPECHECK_EXAMPLES: "true"
+
+      - name: store documentation coverage
+        if: matrix.python-version == '3.14'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-3.14-examples
+          path: .coverage
+          include-hidden-files: true
+
   # `browser-use` pins every one of its dependencies exactly, so the workspace lock excludes it
   # (`exclude-dependencies` in pyproject.toml) and no other job installs it. This one installs it on
   # top of the locked environment, getting the versions `pydantic-ai-harness[browser-use]` users get,
@@ -1254,7 +1274,7 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4]
+    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-examples, test-fastmcp-4]
     # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
     # otherwise skip this job too.
     if: ${{ !failure() && !cancelled() && needs.classify.outputs.docs_only != 'true' }}
