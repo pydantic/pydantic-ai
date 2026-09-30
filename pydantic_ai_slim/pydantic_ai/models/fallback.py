@@ -19,10 +19,11 @@ from pydantic_ai._instrumentation import (
     model_request_parameters_attributes,
     span_include_content,
 )
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import await_maybe, get_first_param_type
 
 from .._genai_prices import fill_response_cost
+from .._warnings import warn_if_usage_not_reported
 from ..exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from ..messages import ModelResponse
 from ..profiles import ModelProfile
@@ -305,6 +306,14 @@ class FallbackModel(Model):
                 continue
 
             if rejected_cost is not None:
+                # The graph checks token limits later, but adding rejected costs would hide
+                # missing usage from its cost-only warning. Check before changing the cost.
+                if (
+                    (ctx := get_current_run_context()) is not None
+                    and ctx.usage_limits is not None
+                    and not ctx.usage_limits.has_token_limits()
+                ):
+                    warn_if_usage_not_reported(ctx.usage_limits, response)
                 fill_response_cost(response)
                 usage = copy(response.usage)
                 usage.cost = (usage.cost or Decimal()) + rejected_cost

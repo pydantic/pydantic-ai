@@ -4,7 +4,6 @@ import asyncio
 import dataclasses
 import inspect
 import time
-import warnings
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
@@ -70,7 +69,8 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
-from .exceptions import ToolRetryError, UsageNotReportedWarning
+from ._warnings import warn_if_usage_not_reported
+from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
 # `_continuation` module (see its `__all__`); the leading underscore is a module-privacy
@@ -1055,30 +1055,6 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
 
 
-def _warn_if_usage_not_reported(usage_limits: _usage.UsageLimits, response: _messages.ModelResponse) -> None:
-    """Warn when token or cost limits are set but the model's response reported no token usage.
-
-    Providers, and OpenAI-compatible servers in particular, can omit the usage object, which is then
-    recorded as zero tokens and would otherwise let the run pass those limits without any signal.
-    Tokens are checked rather than `has_values()`, since units counted from the response itself (like
-    `web_searches`) can be present when the provider reported no usage. A cost the provider reported
-    itself still lets `cost_limit` count the response.
-    Only responses the model produced are checked: a `SkipModelRequest` response rightly has no usage.
-    """
-    usage = response.usage
-    if usage.total_tokens:
-        return
-    if usage_limits.has_token_limits() or (usage_limits.cost_limit is not None and usage.cost is None):
-        warnings.warn(
-            UsageNotReportedWarning(
-                f'A token or cost limit is set, but the response from {response.model_name!r} reported no token '
-                'usage, so it counts as zero tokens toward the limits. This usually means the provider or '
-                'OpenAI-compatible server did not return a usage object.'
-            ),
-            stacklevel=2,
-        )
-
-
 async def _check_resume_seed_usage(
     model: models.Model, run_context: RunContext[Any], seed: _messages.ModelResponse | None
 ) -> None:
@@ -1424,7 +1400,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # kind are recorded), so this is symmetry rather than an observable fix.
                     time_to_first_chunk_ctx.set(sr.time_to_first_chunk(request_start))
             response = sr.get()
-            _warn_if_usage_not_reported(ctx.deps.usage_limits, response)
+            warn_if_usage_not_reported(ctx.deps.usage_limits, response)
             _handler_response = response
             return response
 
@@ -1630,7 +1606,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             response = await model_request(
                 req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
             )
-            _warn_if_usage_not_reported(ctx.deps.usage_limits, response)
+            warn_if_usage_not_reported(ctx.deps.usage_limits, response)
             _handler_response = response
             return response
 
