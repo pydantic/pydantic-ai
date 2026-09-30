@@ -120,6 +120,18 @@ def test_provider_reads_the_environment(env: TestEnv):
     assert provider.name == 'system-one'
 
 
+@pytest.mark.parametrize('base_url', ['https://system-one.dev', 'https://system-one.dev/v1/'])
+async def test_base_url_with_or_without_v1(env: TestEnv, allow_model_requests: None, base_url: str):
+    env.set('SYSTEM_ONE_BASE_URL', base_url)
+    captured = Captured(ticket_answers)
+    client = httpx2.AsyncClient(transport=httpx2.MockTransport(captured))
+    agent = Agent(SystemOneModel('clm-latest', provider=SystemOneProvider(http_client=client)), output_type=Ticket)
+
+    await agent.run('Charged twice.')
+
+    assert captured.requests[0].url == 'https://system-one.dev/v1/systemone'
+
+
 def test_provider_needs_a_base_url(env: TestEnv):
     env.remove('SYSTEM_ONE_BASE_URL')
     with pytest.raises(UserError, match='SYSTEM_ONE_BASE_URL'):
@@ -307,6 +319,19 @@ async def test_settings_are_forwarded(allow_model_requests: None):
     assert request.extensions['timeout'] == {'connect': 3, 'read': 3, 'write': 3, 'pool': 3}
     assert captured.body['temperature'] == 0.5
     assert captured.body['trace'] is True
+
+
+@pytest.mark.parametrize('header_name', ['Authorization', 'authorization'])
+async def test_extra_headers_override_provider_api_key(allow_model_requests: None, header_name: str):
+    captured = Captured(ticket_answers)
+    agent = Agent(mock_model(captured, api_key='provider'), output_type=Ticket)
+
+    await agent.run('Charged twice.', model_settings={'extra_headers': {header_name: 'Bearer override'}})
+
+    authorization_headers = [
+        (name.lower(), value) for name, value in captured.requests[0].headers.raw if name.lower() == b'authorization'
+    ]
+    assert authorization_headers == [(b'authorization', b'Bearer override')]
 
 
 async def test_extra_body_must_be_a_mapping(allow_model_requests: None):

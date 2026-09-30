@@ -51,8 +51,8 @@ class SystemOneProvider(Provider[httpx2.AsyncClient]):
         """Create a new System One provider.
 
         Args:
-            base_url: The URL of the API, without the `/v1/systemone` path. If not provided, the
-                `SYSTEM_ONE_BASE_URL` environment variable is used.
+            base_url: The URL of the API, with or without a trailing `/v1`. If not provided,
+                the `SYSTEM_ONE_BASE_URL` environment variable is used.
             api_key: The API key, sent as a bearer token. If not provided, the
                 `SYSTEM_ONE_API_KEY` environment variable is used if set.
             http_client: An existing `httpx2.AsyncClient` to use for making HTTP requests.

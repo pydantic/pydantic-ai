@@ -58,7 +58,7 @@ Nimble picks one label in one request, and reports how sure it is of each in [`p
 
 ## Configuration
 
-To use any other server, set the API's URL, and its key if it has one, as environment variables:
+To use any other server, set the API's URL, with or without a trailing `/v1`, and its key if it has one, as environment variables:
 
 ```bash
 export SYSTEM_ONE_BASE_URL='https://decisions.example.com'
