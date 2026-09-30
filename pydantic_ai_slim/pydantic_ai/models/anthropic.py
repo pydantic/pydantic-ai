@@ -1351,7 +1351,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             try:
                 return cast(BetaMessage, await send(False))
             except ValueError as e:
-                if 'Streaming is required' not in str(e):  # pragma: no cover
+                if 'Streaming is required' not in str(e):
                     raise
                 return await open_stream()
 
