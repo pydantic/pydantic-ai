@@ -594,7 +594,23 @@ class GoogleModel(Model[Client]):
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
-        return cast(GoogleModelProfile, super().profile)
+        profile = cast(GoogleModelProfile, super().profile)
+        # Google documents `minimal, high` only for this model, but only the Gemini API enforces it:
+        # verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` while Vertex (`global`)
+        # accepts them. So the level set follows the client's transport, and a level set already on
+        # the profile (from the provider or a user `profile=`) wins.
+        # https://ai.google.dev/gemini-api/docs/image-generation
+        if (
+            not self._is_google_cloud
+            and self._model_name.startswith('gemini-3.1-flash-image')
+            and 'google_thinking_levels' not in profile
+        ):
+            gemini_api_profile: GoogleModelProfile = {
+                **profile,
+                'google_thinking_levels': frozenset(('MINIMAL', 'HIGH')),
+            }
+            return gemini_api_profile
+        return profile
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:

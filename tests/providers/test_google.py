@@ -354,18 +354,3 @@ def test_google_cloud_model_string_uses_adc_from_env(env: TestEnv):
     api_client = model.client._api_client  # pyright: ignore[reportPrivateUsage]
     assert api_client.api_key is None
     assert api_client._credentials is credentials  # pyright: ignore[reportPrivateUsage]
-
-
-@pytest.mark.parametrize('model_name', ['gemini-3.1-flash-image', 'gemini-3.1-flash-image-preview'])
-def test_flash_image_thinking_levels_scoped_to_gemini_api(model_name: str):
-    """Only `GoogleProvider` narrows the levels: the Gemini API rejects `LOW`/`MEDIUM` here, Vertex accepts them.
-
-    The wire-contract cassettes pin the Gemini API side; the Vertex side is a profile fact with no request to record.
-    """
-    gemini_api_profile = GoogleProvider.model_profile(model_name)
-    assert gemini_api_profile is not None
-    assert gemini_api_profile.get('google_thinking_levels') == frozenset(('MINIMAL', 'HIGH'))
-
-    google_cloud_profile = GoogleCloudProvider.model_profile(model_name)
-    assert google_cloud_profile is not None
-    assert 'google_thinking_levels' not in google_cloud_profile

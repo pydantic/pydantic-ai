@@ -12,8 +12,7 @@ from pydantic_ai._http import (
     warn_if_legacy_httpx_client,
 )
 from pydantic_ai.models import get_user_agent
-from pydantic_ai.profiles import merge_profile
-from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile, google_realtime_model_profile
+from pydantic_ai.profiles.google import google_model_profile, google_realtime_model_profile
 from pydantic_ai.providers import Provider, missing_api_key_error
 
 if TYPE_CHECKING:
@@ -104,17 +103,6 @@ class GoogleProvider(BaseGoogleProvider):
     def name(self) -> str:
         # Must not change: persisted in ModelMessage.provider_name and checked during history replay.
         return 'google'
-
-    @staticmethod
-    def model_profile(model_name: str) -> ModelProfile | None:
-        profile = google_model_profile(model_name)
-        if model_name.startswith('gemini-3.1-flash-image'):
-            # Google documents `minimal, high` only, on both the Gemini API and Vertex. Verified live
-            # 2026-09-30: the Gemini API 400s `LOW` and `MEDIUM`, while Vertex (`global`) accepts
-            # them, so the level set is scoped to this provider and Vertex keeps the full scale.
-            # https://ai.google.dev/gemini-api/docs/image-generation
-            return merge_profile(profile, GoogleModelProfile(google_thinking_levels=frozenset(('MINIMAL', 'HIGH'))))
-        return profile
 
     @overload
     def __init__(
