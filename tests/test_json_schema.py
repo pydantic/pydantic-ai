@@ -571,8 +571,8 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
     assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
 
 
-PAYLOAD_REF = {'$ref': '#/$defs/Payload'}
-PAYLOAD = {'type': 'object', 'properties': {'value': {'type': 'string'}}}
+PAYLOAD_REF: dict[str, Any] = {'$ref': '#/$defs/Payload'}
+PAYLOAD: dict[str, Any] = {'type': 'object', 'properties': {'value': {'type': 'string'}}}
 
 
 @pytest.mark.parametrize(
@@ -599,7 +599,8 @@ def test_inline_defs_typeless_object_keywords_are_inlined(object_keywords: dict[
     """A typeless node carrying object keywords must not strand `$ref`s when `$defs` is dropped.
 
     Object keywords apply without an explicit `type`, so the node is walked as an object, and no
-    `type` is added: that would narrow the instances the schema accepts.
+    `type` is added: that would narrow the instances the schema accepts. The walk is internal;
+    `test_tool_definition_typeless_properties_inlined_for_model` pins the provider-bound shape.
     """
     schema = {'$defs': {'Payload': PAYLOAD}, **object_keywords}
 
@@ -610,7 +611,8 @@ def test_inline_defs_typeless_object_with_union_is_walked_once():
     """A typeless node with both object and composition keywords is walked exactly once.
 
     The object-keyword walk and the union walk cover disjoint keys, so each subschema is visited
-    once, and a definition referenced from both sides is walked once and deepcopied per site.
+    once, and a definition referenced from both sides is walked once. Counting `transform()` calls
+    needs a transformer subclass, which no provider request can observe.
     """
     transformed: list[str] = []
 
@@ -635,24 +637,26 @@ def test_inline_defs_typeless_object_with_union_is_walked_once():
     result = _TitleRecordingTransformer(deepcopy(schema)).walk()
 
     assert transformed == ['B', 'Extra', 'C']  # children first, each exactly once
-    assert result == {
-        'properties': {
-            'a': {
-                'title': 'Extra',
-                'type': 'object',
-                'properties': {'b': {'type': 'integer', 'title': 'B'}},
+    assert result == snapshot(
+        {
+            'properties': {
+                'a': {
+                    'title': 'Extra',
+                    'type': 'object',
+                    'properties': {'b': {'type': 'integer', 'title': 'B'}},
+                },
+                'c': {'type': 'string', 'title': 'C'},
             },
-            'c': {'type': 'string', 'title': 'C'},
-        },
-        'anyOf': [
-            {
-                'title': 'Extra',
-                'type': 'object',
-                'properties': {'b': {'type': 'integer', 'title': 'B'}},
-            },
-            {'type': 'string'},
-        ],
-    }
+            'anyOf': [
+                {
+                    'title': 'Extra',
+                    'type': 'object',
+                    'properties': {'b': {'type': 'integer', 'title': 'B'}},
+                },
+                {'type': 'string'},
+            ],
+        }
+    )
 
 
 @pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
@@ -674,6 +678,6 @@ def test_tool_definition_typeless_properties_inlined_for_model():
     model = OpenAIChatModel('llama3.2', provider=OllamaProvider(base_url='http://localhost:11434/v1'))
     result = model.customize_request_parameters(ModelRequestParameters(function_tools=[tool_definition]))
 
-    assert result.function_tools[0].parameters_json_schema == {
-        'properties': {'payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}}
-    }
+    assert result.function_tools[0].parameters_json_schema == snapshot(
+        {'properties': {'payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}}}
+    )
