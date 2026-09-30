@@ -24,6 +24,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UploadedFileProviderName, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.tools import ToolDefinition
 
 from ...conftest import try_import
@@ -32,7 +33,6 @@ with try_import() as imports_successful:
     from google.genai import Client
 
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
-    from pydantic_ai.profiles.google import GoogleModelProfile
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
