@@ -607,6 +607,16 @@ def test_inline_defs_typeless_object_keywords_are_inlined(object_keywords: dict[
     assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == expected
 
 
+def test_inline_defs_object_in_type_list_properties_are_inlined():
+    """A `type` list that includes `object` walks the node's object keywords like `type: 'object'` does."""
+    schema = {'$defs': {'Payload': PAYLOAD}, 'type': ['object', 'null'], 'properties': {'payload': PAYLOAD_REF}}
+
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == {
+        'type': ['object', 'null'],
+        'properties': {'payload': PAYLOAD},
+    }
+
+
 def test_inline_defs_typeless_object_with_union_is_walked_once():
     """A typeless node with both object and composition keywords is walked exactly once.
 
