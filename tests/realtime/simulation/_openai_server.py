@@ -61,7 +61,8 @@ def conversation_fingerprint(item: dict[str, Any]) -> str | None:
     """What identifies a conversation item across sessions, whoever sent it (see `Restoration`)."""
     if item.get('type') in ('function_call', 'function_call_output'):
         return f'{item["type"]}:{item.get("call_id")}'
-    part: dict[str, Any] = (item.get('content') or [{}])[0]
+    content: list[dict[str, Any]] = item.get('content') or [{}]
+    part = content[0]
     text = part.get('text') or part.get('transcript')
     if item.get('type') != 'message' or not text:
         return None

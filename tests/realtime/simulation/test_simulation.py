@@ -34,6 +34,7 @@ with try_import() as imports_successful:
     from ._gemini import GeminiBehavior, GeminiMachine, GeminiSimulation
     from ._live import LiveMachine, LiveSimulation
     from ._machine import KNOWN_HIT_COUNTS
+    from ._openai_server import Dialect
     from ._openai_simulation import AzureMachine, OpenAIMachine, OpenAIOptions, OpenAISimulation, XaiMachine
     from ._simulation import FindingReproduced, SessionOptions, Simulation
 
@@ -1268,7 +1269,7 @@ def test_baseline_openai_tool_result_with_media(dialect: str) -> None:
 
 
 @pytest.mark.parametrize('dialect', ['openai', 'azure'])
-def test_baseline_reconnect_replays_the_conversation(dialect: str) -> None:
+def test_baseline_reconnect_replays_the_conversation(dialect: Dialect) -> None:
     """A re-dial starts an empty conversation: the local replay is what gives it the tool round back."""
 
     def scenario(sim: OpenAISimulation) -> None:
