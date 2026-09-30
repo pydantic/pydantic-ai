@@ -743,11 +743,12 @@ Discriminated = Annotated[Cat | Dog, Field(discriminator='kind')]
 
 
 def test_tool_output_oneof_discriminated_union():
-    agent = Agent(model=TestModel(), output_type=ToolOutput(Discriminated))
+    outputs = [
+        Agent(model=TestModel(seed=seed), output_type=ToolOutput(Discriminated)).run_sync('hello').output
+        for seed in (0, 1)
+    ]
 
-    result = agent.run_sync('hello')
-
-    assert result.output == snapshot(Cat(kind='cat', name='a'))
+    assert outputs == snapshot([Cat(kind='cat', name='a'), Dog(kind='dog', breed='b')])
 
 
 def test_function_tool_oneof_discriminated_union_arg():
@@ -826,14 +827,17 @@ def test_tool_output_oneof_nested_callable_discriminator_defaulted_tag():
     assert result.output == snapshot(DefaultedCat(color='black'))
 
 
-def test_structured_dict_oneof_without_discriminator():
-    """A `oneOf` without a `discriminator` keyword picks a member like `anyOf`."""
+@pytest.mark.parametrize(
+    'discriminator', [pytest.param({}, id='absent'), pytest.param({'discriminator': 'value'}, id='swagger-2-string')]
+)
+def test_structured_dict_oneof_without_discriminator(discriminator: dict[str, str]):
+    """A `oneOf` without an OpenAPI `discriminator` object picks a member like `anyOf`."""
     agent = Agent(
         model=TestModel(),
         output_type=StructuredDict(
             {
                 'type': 'object',
-                'properties': {'value': {'oneOf': [{'type': 'integer'}, {'type': 'string'}]}},
+                'properties': {'value': {'oneOf': [{'type': 'integer'}, {'type': 'string'}], **discriminator}},
                 'required': ['value'],
             }
         ),

@@ -505,7 +505,8 @@ class _JsonSchemaTestData:
         # Pydantic leaves a defaulted discriminator tag out of `required`, but validation needs it to pick the
         # member. A nested union passes on the `required` its parent union added.
         required = schema.get('required', [])
-        if tag := schema.get('discriminator', {}).get('propertyName'):
+        discriminator = schema.get('discriminator')
+        if _utils.is_str_dict(discriminator) and (tag := discriminator.get('propertyName')):
             required = [*required, tag]
         if required:
             if ref := member.get('$ref'):
