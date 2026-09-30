@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TaskStatus(str, Enum):
@@ -39,6 +39,8 @@ class PlanItem(BaseModel):
         depends_on: Ids of steps that must complete before this one (subtasks mode only).
     """
 
+    model_config = ConfigDict(extra='forbid')
+
     id: str = Field(default_factory=lambda: uuid4().hex[:8], description='Step id. Auto-generated if omitted.')
     content: str = Field(description='Imperative description of the step, e.g. "Add the database migration".')
     status: TaskStatus = Field(
@@ -61,7 +63,9 @@ class PlanItem(BaseModel):
 class PlanStatusUpdate(BaseModel):
     """One entry of the `update_task_statuses` batch tool."""
 
-    task_id: str = Field(description='Id of the step to update (from `read_plan`).')
+    model_config = ConfigDict(extra='forbid')
+
+    task_id: str = Field(description='Id of the step to update (from `write_plan` or `read_plan`).')
     status: TaskStatus = Field(
         description='New status: pending, in_progress, completed, or cancelled -- '
         'or blocked, when subtasks are enabled.'

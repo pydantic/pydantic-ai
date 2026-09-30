@@ -24,12 +24,13 @@ WRITE_PLAN_DESCRIPTION = """\
 Create or replace the entire plan. Pass the whole ordered list every time -- \
 including steps that are unchanged, completed, or cancelled -- so there are no \
 indices to track. Keep exactly one step `in_progress`. Call this first for \
-multi-step work, then again as you start and finish steps.\
+multi-step work, then again as you start and finish steps. The result shows each \
+step's stable id for use with the granular tools.\
 """
 
 READ_PLAN_DESCRIPTION = """\
 Read the current plan: each step's id, content, and status, plus a progress \
-summary. Use it before granular edits (the ids come from here) and to check \
+summary. Use it before granular edits to refresh the ids returned by `write_plan` and to check \
 what is left.\
 """
 
@@ -123,6 +124,16 @@ def render_plan(items: list[PlanItem]) -> str:
     if not items:
         return 'No plan yet.'
     lines = [f'{index}. {status_icon(item.status)} {item.content}' for index, item in enumerate(items, 1)]
+    completed = sum(1 for item in items if item.status is TaskStatus.completed)
+    lines.append(f'({completed}/{len(items)} completed)')
+    return '\n'.join(lines)
+
+
+def _render_plan_with_ids(items: list[PlanItem]) -> str:
+    """Render the compact checklist with stable ids for an immediate tool result."""
+    if not items:
+        return 'No plan yet.'
+    lines = [f'{index}. {status_icon(item.status)} [{item.id}] {item.content}' for index, item in enumerate(items, 1)]
     completed = sum(1 for item in items if item.status is TaskStatus.completed)
     lines.append(f'({completed}/{len(items)} completed)')
     return '\n'.join(lines)
@@ -434,7 +445,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
         await self._emit_changes(ctx, before, await store.get_items())
         in_progress = sum(1 for item in new_items if item.status is TaskStatus.in_progress)
         note = '' if in_progress <= 1 else _MULTI_IN_PROGRESS_NOTE
-        return f'Plan updated: {len(new_items)} step(s).\n\n{render_plan(new_items)}{note}'
+        return f'Plan updated: {len(new_items)} step(s).\n\n{_render_plan_with_ids(new_items)}{note}'
 
     async def read_plan(self, ctx: RunContext[AgentDepsT]) -> str:
         """Read the current plan."""

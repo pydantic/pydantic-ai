@@ -33,7 +33,8 @@ _WRITE_PLAN_GUIDANCE = (
 
 _GRANULAR_GUIDANCE = (
     'Use `add_task` to append a single step, `update_task_status`/`update_task_statuses` to move '
-    'steps between statuses, and `read_plan` to see step ids before a granular edit.'
+    'steps between statuses, and `read_plan` to refresh the stable step ids also shown in plan tool results before '
+    'granular edits.'
 )
 
 _SUBTASK_GUIDANCE = (

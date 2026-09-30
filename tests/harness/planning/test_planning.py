@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pydantic import ValidationError
 
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
@@ -13,9 +15,11 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    RetryPromptPart,
     TextContent,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -107,6 +111,10 @@ class TestTypes:
         update = PlanStatusUpdate(task_id='abc', status=TaskStatus.completed)
         assert update.task_id == 'abc'
         assert update.status is TaskStatus.completed
+
+    def test_status_update_rejects_unknown_fields(self) -> None:
+        with pytest.raises(ValidationError, match='extra_forbidden'):
+            PlanStatusUpdate.model_validate({'task_id': 'abc', 'status': 'completed', 'id': 'wrong-field'})
 
 
 # --- Events -----------------------------------------------------------------
@@ -299,9 +307,19 @@ class TestGraphHelpers:
 class TestWritePlan:
     async def test_replaces_and_reports(self) -> None:
         ts = _toolset()
-        result = await ts.write_plan(_ctx(), [PlanItem(content='A'), PlanItem(content='B')])
+        result = await ts.write_plan(_ctx(), [PlanItem(id='a', content='A'), PlanItem(id='b', content='B')])
         assert result.startswith('Plan updated: 2 step(s).')
-        assert '2. [ ] B' in result
+        assert '2. [ ] [b] B' in result
+
+    async def test_empty_plan_clears_existing_items(self) -> None:
+        store = InMemoryPlanStore()
+        ts = _toolset(store=store)
+        await ts.write_plan(_ctx(), [PlanItem(id='a', content='A')])
+
+        result = await ts.write_plan(_ctx(), [])
+
+        assert result == 'Plan updated: 0 step(s).\n\nNo plan yet.'
+        assert await store.get_items() == []
 
     async def test_multi_in_progress_note(self) -> None:
         ts = _toolset()
@@ -943,7 +961,7 @@ class TestReminder:
     async def test_reminder_behind_cachepoint(self) -> None:
         store = InMemoryPlanStore()
         cap = Planning[None](store=store, cache_ttl='1h')
-        await store.add_item(PlanItem(content='Do X', status=TaskStatus.in_progress))
+        await store.add_item(PlanItem(id='step-x', content='Do X', status=TaskStatus.in_progress))
         original = ModelRequest(parts=[UserPromptPart('hi')])
         seen, _ = await self._run_hook(cap, [original])
         assert len(original.parts) == 1  # append-only
@@ -959,7 +977,9 @@ class TestReminder:
         assert isinstance(content, list)
         assert content[0] == '<plan-reminder>\n'
         assert not any(isinstance(item, CachePoint) for item in content)
-        assert 'Do X' in cast(str, content[1])
+        reminder_text = cast(str, content[1])
+        assert '1. [~] Do X' in reminder_text
+        assert 'step-x' not in reminder_text
 
     async def test_breakpoint_anchors_list_content(self) -> None:
         store = InMemoryPlanStore()
@@ -1021,6 +1041,80 @@ class TestEndToEnd:
         agent = Agent(TestModel(), capabilities=[Planning()])
         result = await agent.run('plan the work')
         assert result.output is not None
+
+    async def test_rejects_unknown_plan_fields_and_exposes_generated_id(self) -> None:
+        store = InMemoryPlanStore()
+        calls = 0
+        generated_id = ''
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            nonlocal calls, generated_id
+            calls += 1
+            if calls == 1:
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            'write_plan',
+                            {'items': [{'content': 'Step A', 'status': 'in_progress', 'task_id': '1'}]},
+                            tool_call_id='write-invalid',
+                        )
+                    ]
+                )
+            if calls == 2:
+                retry = next(
+                    part for message in messages for part in message.parts if isinstance(part, RetryPromptPart)
+                )
+                assert 'task_id' in str(retry.content)
+                assert 'extra_forbidden' in str(retry.content)
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            'write_plan',
+                            {'items': [{'content': 'Step A', 'status': 'in_progress'}]},
+                            tool_call_id='write-valid',
+                        )
+                    ]
+                )
+            if calls == 3:
+                write_result = next(
+                    str(part.content)
+                    for message in messages
+                    for part in message.parts
+                    if isinstance(part, ToolReturnPart) and part.tool_call_id == 'write-valid'
+                )
+                id_match = re.search(r'\[([0-9a-f]{8})\] Step A', write_result)
+                assert id_match is not None
+                generated_id = id_match.group(1)
+                reminder = next(
+                    part
+                    for message in messages
+                    for part in message.parts
+                    if isinstance(part, UserPromptPart)
+                    and not isinstance(part.content, str)
+                    and part.content[0] == '<plan-reminder>\n'
+                )
+                assert generated_id not in str(reminder.content)
+                assert '1. [~] Step A' in str(reminder.content)
+                return ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            'update_task_status',
+                            {'task_id': generated_id, 'status': 'completed'},
+                            tool_call_id='complete',
+                        )
+                    ]
+                )
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[Planning(store=store)])
+        result = await agent.run('go')
+
+        assert result.output == 'done'
+        assert calls == 4
+        assert generated_id
+        item = await store.get_item(generated_id)
+        assert item is not None
+        assert item.status is TaskStatus.completed
 
     async def test_reminder_reaches_model_but_is_ephemeral(self) -> None:
         captured: dict[str, list[ModelMessage]] = {}
