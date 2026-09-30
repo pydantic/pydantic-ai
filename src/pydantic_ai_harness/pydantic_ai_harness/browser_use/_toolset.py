@@ -412,6 +412,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self,
         *,
+        id: str | None = None,
         browser_agent: BrowserAgentFactory,
         llm: BaseChatModel | None,
         browser_profile: BrowserProfile | None,
@@ -427,7 +428,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         session_scope: Literal['call', 'agent'],
         cdp_url: str | None,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         self._browser_agent = browser_agent
         self._llm = llm
         self._browser_profile = browser_profile

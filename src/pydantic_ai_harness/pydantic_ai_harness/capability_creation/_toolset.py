@@ -16,8 +16,8 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
 
     # The store is synchronous disk I/O (and imports the authored module), so each tool runs it
     # in a worker thread rather than on the event loop.
-    def __init__(self, store: CapabilityStore) -> None:
-        super().__init__()
+    def __init__(self, store: CapabilityStore, *, id: str | None = None) -> None:
+        super().__init__(id=id)
         self._store = store
         # Parallel tool calls would otherwise overlap the manifest's read-modify-write cycles
         # (losing an update) and the import's process-global `sys.dont_write_bytecode` toggle.

@@ -100,6 +100,7 @@ class PydanticAIDocs(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Toolset providing `read_pyai_docs` over the resolved local path and shared cache."""
         return PydanticAIDocsToolset[AgentDepsT](
+            id='pydantic_ai_docs' if self.id is None else self.id,
             local_docs_path=self._resolved_local_path(),
             cache=self._cache if self.cache else None,
         )

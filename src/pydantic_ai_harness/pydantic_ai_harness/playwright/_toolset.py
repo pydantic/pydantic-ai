@@ -1585,6 +1585,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self,
         *,
+        id: str | None = 'playwright',
         session: PlaywrightBrowserSession,
         screenshot_on_navigate: bool = False,
         max_content_tokens: int = DEFAULT_MAX_CONTENT_TOKENS,
@@ -1597,7 +1598,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             raise ValueError('action_timeout_ms must be greater than or equal to 0')
         if navigation_timeout_ms < 0:
             raise ValueError('navigation_timeout_ms must be greater than or equal to 0')
-        super().__init__(id='playwright')
+        super().__init__(id=id)
         self._session = session
         # The session's policy, never a separate one. These checks and the route
         # guard the session installs are two layers of one decision: a toolset

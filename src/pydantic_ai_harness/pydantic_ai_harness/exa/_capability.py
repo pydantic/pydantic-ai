@@ -141,6 +141,7 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> ExaSearchToolset[AgentDepsT]:
         """Build the toolset providing `web_search`, `get_page`, and the optional `deep_search` tool."""
         return ExaSearchToolset[AgentDepsT](
+            id='exa_search' if self.id is None else self.id,
             client=self.client,
             num_results=self.num_results,
             max_text_chars=self.max_text_chars,

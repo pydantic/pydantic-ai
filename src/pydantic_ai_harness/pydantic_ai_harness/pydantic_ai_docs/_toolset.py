@@ -58,10 +58,11 @@ class PydanticAIDocsToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self,
         *,
+        id: str | None = None,
         local_docs_path: Path | None,
         cache: dict[PydanticAIDocsTopic, str] | None,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         self._local_docs_path = local_docs_path
         # Shared with the run-scoped capability; `None` disables caching entirely.
         self._cache = cache

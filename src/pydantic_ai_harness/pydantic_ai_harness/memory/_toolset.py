@@ -284,8 +284,8 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
     step, so applications requiring DBOS durability must provide that wrapper.
     """
 
-    def __init__(self, capability: Memory[AgentDepsT]) -> None:
-        super().__init__(id='memory')
+    def __init__(self, capability: Memory[AgentDepsT], *, id: str | None = 'memory') -> None:
+        super().__init__(id=id)
         self._capability = capability
         self.add_function(self.write_memory, name='write_memory')
         self.add_function(self.read_memory, name='read_memory')

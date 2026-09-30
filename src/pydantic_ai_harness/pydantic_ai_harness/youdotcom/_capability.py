@@ -125,6 +125,7 @@ class YouSearch(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> YouSearchToolset[AgentDepsT]:
         """Build the toolset providing `web_search` and `get_page`."""
         return YouSearchToolset[AgentDepsT](
+            id='you_search' if self.id is None else self.id,
             client=self.client,
             num_results=self.num_results,
             extraction_mode=self.extraction_mode,

@@ -306,8 +306,8 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
     and `get_available_tasks` are added and the `blocked` status becomes valid.
     """
 
-    def __init__(self, capability: Planning[AgentDepsT]) -> None:
-        super().__init__(id='planning')
+    def __init__(self, capability: Planning[AgentDepsT], *, id: str | None = 'planning') -> None:
+        super().__init__(id=id)
         self._capability = capability
         self._subtasks = capability.enable_subtasks
         descriptions = capability.descriptions or {}

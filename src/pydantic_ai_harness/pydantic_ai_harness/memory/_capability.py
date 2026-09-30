@@ -152,7 +152,7 @@ class Memory(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the stable `memory` toolset."""
-        return MemoryToolset(self)
+        return MemoryToolset(self, id='memory' if self.id is None else self.id)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Provide trusted static guidance about using memory.

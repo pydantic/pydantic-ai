@@ -27,4 +27,7 @@ def build_toolset(limits: SpendLimits[AgentDepsT]) -> FunctionToolset[AgentDepsT
             for s in statuses
         )
 
-    return FunctionToolset[AgentDepsT]([get_spend], id='spend')
+    toolset_id = limits.id
+    if toolset_id is None or toolset_id == 'spend_limits':
+        toolset_id = 'spend'
+    return FunctionToolset[AgentDepsT]([get_spend], id=toolset_id)

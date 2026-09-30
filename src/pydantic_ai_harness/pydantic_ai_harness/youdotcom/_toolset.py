@@ -282,6 +282,7 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self,
         *,
+        id: str | None = None,
         client: YouClient | None,
         num_results: int,
         extraction_mode: ExtractionModeName,
@@ -293,7 +294,7 @@ class YouSearchToolset(FunctionToolset[AgentDepsT]):
         country: str | None = None,
         timeout_ms: int = DEFAULT_SEARCH_TIMEOUT_MS,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         self._client = client if client is not None else default_client(timeout_ms)
         self._num_results = num_results
         self._extraction_mode: ExtractionModeName = extraction_mode

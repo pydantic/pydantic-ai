@@ -176,5 +176,5 @@ class Shell(AbstractCapability[AgentDepsT]):
             env=self.env,
             denied_env_patterns=self.denied_env_patterns,
             tools=self.tools,
-            id=self.id or 'shell',
+            id='shell' if self.id is None else self.id,
         )

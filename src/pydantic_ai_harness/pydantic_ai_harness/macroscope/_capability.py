@@ -83,6 +83,7 @@ class Macroscope(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> MacroscopeToolset[AgentDepsT]:
         """Build the toolset that provides the `run_macroscope_review` tool."""
         return MacroscopeToolset[AgentDepsT](
+            id='macroscope' if self.id is None else self.id,
             command=self.command,
             base=self.base,
             timeout=self.timeout,

@@ -147,13 +147,14 @@ class ExaAgentToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self,
         *,
+        id: str | None = None,
         runs: ExaAgentRuns,
         effort: AgentEffort | None,
         output_schema: type[BaseModel] | dict[str, object] | None,
         system_prompt: str | None,
         owner_id: str,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         self._runs = runs
         self._effort: AgentEffort | None = effort
         self._output_schema = output_schema
@@ -268,6 +269,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> ExaAgentToolset[AgentDepsT]:
         """Build the toolset providing the `exa_agent` tool."""
         return ExaAgentToolset[AgentDepsT](
+            id='exa_agent' if self.id is None else self.id,
             runs=self._resolved_runs(),
             effort=self.effort,
             output_schema=self.output_schema,

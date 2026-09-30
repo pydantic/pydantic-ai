@@ -198,7 +198,9 @@ class RepoContext(AbstractCapability[AgentDepsT]):
             return None
         if self._toolset is None:
             self._toolset = RepoContextToolset[AgentDepsT](
-                self.asset_roots, self.inventory_tool_name, id=self.id or 'repo_context'
+                self.asset_roots,
+                self.inventory_tool_name,
+                id='repo_context' if self.id is None else self.id,
             )
         return self._toolset
 

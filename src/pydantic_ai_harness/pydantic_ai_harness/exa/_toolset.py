@@ -157,6 +157,7 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self,
         *,
+        id: str | None = None,
         client: ExaClient | None,
         num_results: int,
         max_text_chars: int,
@@ -165,7 +166,7 @@ class ExaSearchToolset(FunctionToolset[AgentDepsT]):
         exclude_domains: Sequence[str] = (),
         text_summary: bool | str = False,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         self._client = client if client is not None else _default_client()
         self._num_results = num_results
         self._max_text_chars = max_text_chars

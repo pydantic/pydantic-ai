@@ -57,6 +57,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self,
         *,
+        id: str | None = None,
         endpoint_url: str,
         region: str,
         access_key_id: str,
@@ -76,7 +77,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         docker_path: str = 'docker',
         startup_timeout: float = 120.0,
     ) -> None:
-        super().__init__()
+        super().__init__(id=id)
         if allowed_services and denied_services:
             raise ValueError('Specify allowed_services or denied_services, not both.')
         if max_output_chars <= 0:
@@ -113,6 +114,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         run gets its own instance (and its own container) that `__aexit__` can stop.
         """
         return LocalStackToolset[AgentDepsT](
+            id=self.id,
             endpoint_url=self._endpoint_url,
             region=self._region,
             access_key_id=self._access_key_id,

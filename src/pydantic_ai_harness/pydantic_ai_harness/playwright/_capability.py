@@ -266,6 +266,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             launch_timeout_ms=self.navigation_timeout_ms,
         )
         self._toolset = PlaywrightBrowserToolset[AgentDepsT](
+            id='playwright' if self.id is None else self.id,
             session=self._session,
             screenshot_on_navigate=self.screenshot_on_navigate,
             max_content_tokens=self.max_content_tokens,

@@ -145,7 +145,7 @@ class Planning(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide the `planning` toolset over this run's resolved store."""
-        return PlanningToolset[AgentDepsT](self)
+        return PlanningToolset[AgentDepsT](self, id='planning' if self.id is None else self.id)
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Provide static, cache-stable guidance on using the planning tools.

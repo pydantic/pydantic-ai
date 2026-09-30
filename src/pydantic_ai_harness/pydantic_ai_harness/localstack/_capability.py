@@ -113,6 +113,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> AgentToolset[AgentDepsT]:
         """Build and return the LocalStack toolset."""
         return LocalStackToolset[AgentDepsT](
+            id='local_stack' if self.id is None else self.id,
             endpoint_url=self.endpoint_url,
             region=self.region,
             access_key_id=self.access_key_id,

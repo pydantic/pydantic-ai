@@ -139,8 +139,16 @@ class MacroscopeToolset(FunctionToolset[AgentDepsT]):
     not start with a `base` the model chose) raise `ModelRetry`.
     """
 
-    def __init__(self, *, command: str, base: str | None, timeout: float, cwd: Path | None = None) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        *,
+        command: str,
+        base: str | None,
+        timeout: float,
+        cwd: Path | None = None,
+        id: str | None = None,
+    ) -> None:
+        super().__init__(id=id)
         if cwd is not None:
             warn_argument_ignored('MacroscopeToolset', 'cwd', SET_WORKING_DIR_ON_THE_WORKSPACE, stacklevel=3)
         self._command = command

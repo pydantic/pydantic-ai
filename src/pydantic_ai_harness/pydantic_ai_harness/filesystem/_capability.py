@@ -191,7 +191,7 @@ class FileSystem(AbstractCapability[AgentDepsT]):
                 max_list_results=self.max_list_results,
                 max_search_results=self.max_search_results,
                 max_find_results=self.max_find_results,
-                id=self.id or 'file_system',
+                id='file_system' if self.id is None else self.id,
                 content_hashes=self.content_hashes,
                 tools=self.tools,
                 max_retries=self.max_retries,

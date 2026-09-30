@@ -535,7 +535,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
 
     @property
     def id(self) -> str | None:
-        return self.toolset_id or self.tool_name
+        return self.tool_name if self.toolset_id is None else self.toolset_id
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> Self:
         """Fresh instance per run so the sub-agent-call budget is per-run.

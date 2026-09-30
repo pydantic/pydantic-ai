@@ -96,7 +96,9 @@ class CapabilityCreation(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Toolset providing the authoring tools over this capability's store."""
-        return CapabilityCreationToolset[AgentDepsT](self.store)
+        return CapabilityCreationToolset[AgentDepsT](
+            self.store, id='capability_creation' if self.id is None else self.id
+        )
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
