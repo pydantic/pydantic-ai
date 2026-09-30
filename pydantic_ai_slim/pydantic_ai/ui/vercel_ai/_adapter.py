@@ -1194,8 +1194,9 @@ def _normalize_client_file_shapes(value: Any) -> Any:
     - `{kind: 'image-url', url: ...}` and its three siblings with no `media_type`: the union requires
       one of a URL item, so we infer it here the way the type itself would, by building the item and
       reading back the media type it derived from the URL. A URL the type cannot derive one from is
-      left alone, and reaches the agent as the ordinary mapping it is rather than as a file that would
-      raise the moment the history is dumped.
+      left as the client sent it: with `media_type` absent or empty it reaches the agent as the
+      ordinary mapping it is, and with `null`, the value our own dump writes for such a URL, as a file
+      with no media type.
 
     Everything else is passed through, and a plain user mapping that merely reuses one of our `kind`
     values keeps the values its tool put in it: the binary branch is gated on the `media_type` a real

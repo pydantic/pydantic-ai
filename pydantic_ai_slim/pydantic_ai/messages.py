@@ -306,10 +306,10 @@ class FileUrl(ABC):
     def _media_type_or_none(self) -> str | None:
         """The media type `media_type` would return, or `None` where that would raise.
 
-        Serialization and the UI adapters read the media type through this instead of
-        [`media_type`][pydantic_ai.messages.FileUrl.media_type], so that a URL Pydantic AI cannot read
-        a media type out of is dumped rather than raised over. Everything that hands the file to a
-        provider keeps reading `media_type`, and keeps raising.
+        Serialization, the UI adapters and OpenTelemetry message parts read the media type through this
+        instead of [`media_type`][pydantic_ai.messages.FileUrl.media_type], so that a URL Pydantic AI
+        cannot read a media type out of is dumped rather than raised over. Everything that hands the file
+        to a provider keeps reading `media_type`, and keeps raising.
         """
         try:
             return self.media_type
@@ -1212,10 +1212,9 @@ class UserPromptPart:
                     modality = _kind_to_modality_lookup.get(part.kind)
                     if modality is not None:
                         uri_part['modality'] = modality
-                    try:  # don't fail the whole message if media type can't be inferred for some reason, just omit it
-                        uri_part['mime_type'] = part.media_type
-                    except ValueError:
-                        pass
+                    # don't fail the whole message if media type can't be inferred, just omit it
+                    if (media_type := part._media_type_or_none()) is not None:  # pyright: ignore[reportPrivateUsage]
+                        uri_part['mime_type'] = media_type
                     if settings.include_content:
                         uri_part['uri'] = part.url
                     parts.append(uri_part)
@@ -1292,11 +1291,10 @@ class _RequireUrlMediaType:
     A tool return is arbitrary user data, so this arm has to separate a multimodal item we serialized
     from a mapping a tool happened to build ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)).
     For the four [`FileUrl`][pydantic_ai.messages.FileUrl] kinds, the `media_type` key draws that line,
-    because every dump of ours writes it: the media type given or inferred from the URL, or `null` for a
-    URL with no usable extension ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)),
+    because a default dump of ours always writes it: the media type given or inferred from the URL, or
+    `null` for a URL with no usable extension ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)),
     which reconstructs into an item with no media type and dumps `null` again. A URL mapping without the
-    key wasn't dumped by us: it stays a plain `Mapping` and reaches the caller with the keys its tool put
-    in it.
+    key stays a plain `Mapping` and reaches the caller with the keys its tool put in it.
 
     Nothing is required of the other two kinds, which keep rehydrating from the fields they declare:
     `media_type` is a required field on `BinaryContent`, and `UploadedFile.media_type` falls back to
@@ -1333,12 +1331,12 @@ class _RequireUrlMediaType:
         for kind in _FILE_URL_KINDS:
             choice = schema['choices'][kind]
             assert isinstance(choice, dict), choice
-            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._names_a_media_type(), choice])
+            schema['choices'][kind] = pydantic_core.core_schema.chain_schema([cls._carries_media_type(), choice])
         return schema
 
     @staticmethod
-    def _names_a_media_type() -> pydantic_core.CoreSchema:
-        mapping_naming_its_media_type = pydantic_core.core_schema.typed_dict_schema(
+    def _carries_media_type() -> pydantic_core.CoreSchema:
+        mapping_carrying_media_type = pydantic_core.core_schema.typed_dict_schema(
             {
                 'media_type': pydantic_core.core_schema.typed_dict_field(
                     pydantic_core.core_schema.nullable_schema(pydantic_core.core_schema.str_schema(min_length=1))
@@ -1347,11 +1345,11 @@ class _RequireUrlMediaType:
             extra_behavior='allow',
         )
         return pydantic_core.core_schema.json_or_python_schema(
-            json_schema=mapping_naming_its_media_type,
+            json_schema=mapping_carrying_media_type,
             # An instance is already one of ours and reaches the arm as itself, not as a mapping.
             python_schema=pydantic_core.core_schema.union_schema(
                 [
-                    mapping_naming_its_media_type,
+                    mapping_carrying_media_type,
                     pydantic_core.core_schema.is_instance_schema(FileUrl),
                 ],
                 mode='left_to_right',

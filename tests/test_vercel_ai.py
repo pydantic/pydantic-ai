@@ -5432,6 +5432,21 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
             id='file-url-media-type-not-inferable',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://e.com/report', 'media_type': None},
+            snapshot(ImageUrl(url='https://e.com/report')),
+            snapshot(
+                {
+                    'url': 'https://e.com/report',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'media_type': None,
+                    'kind': 'image-url',
+                    'identifier': '41cafe',
+                }
+            ),
+            id='file-url-media-type-not-inferable-null',
+        ),
+        pytest.param(
             {'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'},
             snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
             snapshot({'kind': 'image-url', 'url': 'https://example.com/x.png', 'vendor_metadata': 'nope'}),
@@ -5468,9 +5483,10 @@ async def test_adapter_load_tool_return_completes_documented_file_shapes(
     A URL shape is documented without a `media_type`, so the adapter completes it from the URL the way
     the type itself would — including when the client left the key `null` or empty, which is what
     `File.type` gives a browser that cannot tell — and an `uploaded-file` shape needs nothing
-    completed. The dump is asserted for every case because it is the leg the completion protects: a
-    URL with no readable media type is left as the mapping it is, where reconstructing it would raise
-    `Could not infer media type` here. A mapping the type rejects keeps exactly the keys the client
+    completed. The dump is asserted for every case, so every file reconstructed here is proven to dump
+    again. A URL with no readable media type is left as the client sent it: a mapping when `media_type`
+    is absent or empty, and a file with no media type when it is `null`, the value our own dump writes
+    for such a URL. A mapping the type rejects keeps exactly the keys the client
     sent: the completion validates the mapping as it stands, so it never writes a `media_type` into
     something that stays a plain mapping.
     """
