@@ -5,7 +5,6 @@ import io
 from collections.abc import Coroutine, Sequence
 from pathlib import Path
 
-import keyring
 import pytest
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
@@ -19,16 +18,17 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.google_workspace import GoogleWorkspace
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys, google_workspace
-from pydantic_clai2.api_keys import KeyReference
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins import google_workspace
+from pydantic_clai2.builtin_plugins.google_workspace import GoogleWorkspaceSettings
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
-from pydantic_clai2.google_workspace import GoogleWorkspaceSettings
-from pydantic_clai2.plugin_loader import PluginLoader
-from pydantic_clai2.plugin_menu import Configure, PluginMenu
+from pydantic_clai2.config import PluginSettings, api_keys
+from pydantic_clai2.config.api_keys import KeyReference
+from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu
 from tests.clai2.menu_script import Script, pick
 
 
@@ -52,23 +52,6 @@ class Redraw:
 
 def host(settings: dict[str, JsonValue] | None = None) -> PluginHost[None]:
     return PluginHost(name='google_workspace', console=Console(file=io.StringIO()), settings=settings or {})
-
-
-def deletable_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
-    entries: dict[tuple[str, str], str] = {}
-
-    def get(service: str, account: str) -> str | None:
-        return entries.get((service, account))
-
-    def set_value(service: str, account: str, value: str) -> None:
-        entries[service, account] = value
-
-    def delete(service: str, account: str) -> None:
-        del entries[service, account]
-
-    monkeypatch.setattr(keyring, 'get_password', get)
-    monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
 
 
 def context() -> RunContext[None]:
@@ -172,7 +155,6 @@ async def test_menu_saves_an_entered_token_under_the_conventional_label(monkeypa
 
 
 async def test_menu_repicks_a_shared_saved_key_and_resets_to_the_label(monkeypatch: pytest.MonkeyPatch) -> None:
-    deletable_keyring(monkeypatch)
     api_keys.save_key(name='WORK_GOOGLE', value='shared-token')
     plugin = host()
     activate_quietly(plugin)
@@ -309,7 +291,7 @@ def loader(store: SettingsStore, builtin: Sequence[PluginSettings] = DEFAULT_PLU
 
 def test_declared_as_a_disabled_builtin_that_enables_from_the_menu(tmp_path: Path) -> None:
     [declaration] = [plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'google_workspace']
-    assert declaration.factory == 'pydantic_clai2.google_workspace'
+    assert declaration.factory == 'pydantic_clai2.builtin_plugins.google_workspace'
     assert not declaration.enabled
     assert declaration.settings == {}
     plugins = loader(SettingsStore(tmp_path / 'settings.db'), builtin=(declaration,))
@@ -341,13 +323,13 @@ def test_the_former_catalog_entry_saved_by_the_menu_loads_the_builtin(tmp_path: 
     former = PluginSettings(id='google_workspace', factory='pydantic_ai_harness.google_workspace:GoogleWorkspace')
     store.save_plugin(former)
     [entry] = [entry for entry in loader(store).entries() if entry.name == 'google_workspace']
-    assert entry.declaration.factory == 'pydantic_clai2.google_workspace'
+    assert entry.declaration.factory == 'pydantic_clai2.builtin_plugins.google_workspace'
     assert entry.declaration.enabled
     assert entry.builtin
 
     store.save_plugin(former.model_copy(update={'enabled': False}))
     [entry] = [entry for entry in loader(store).entries() if entry.name == 'google_workspace']
-    assert entry.declaration.factory == 'pydantic_clai2.google_workspace'
+    assert entry.declaration.factory == 'pydantic_clai2.builtin_plugins.google_workspace'
     assert not entry.declaration.enabled
 
 

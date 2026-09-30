@@ -23,9 +23,9 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ConversationSummary,
     SqliteConversationStore,
 )
-from pydantic_clai2._session import Session
 from pydantic_clai2.plugins import PluginHost
-from pydantic_clai2.sessions import activate
+from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.sessions import activate
 
 
 def saved_session(tmp_path: Path) -> Session[None, str]:

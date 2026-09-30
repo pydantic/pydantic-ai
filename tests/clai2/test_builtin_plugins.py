@@ -13,10 +13,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugin_loader import PluginLoader
-from pydantic_clai2.plugin_menu import PluginMenu
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.ui.menus.plugin_menu import PluginMenu
 
 CURATED = {
     'coder',
@@ -26,6 +26,7 @@ CURATED = {
     'persistence',
     'logfire',
     'notifications',
+    'herdr',
     'mcp',
     'day_ai',
     'ordinal',
@@ -35,8 +36,24 @@ CURATED = {
     'notion',
     'slack',
     'logfire_mcp',
+    'posthog',
+    'grain',
+    'linear',
 }
-OPT_IN = {'day_ai', 'github', 'google_workspace', 'logfire_mcp', 'notion', 'ordinal', 'pylon', 'slack'}
+OPT_IN = {
+    'herdr',
+    'day_ai',
+    'github',
+    'google_workspace',
+    'grain',
+    'linear',
+    'logfire_mcp',
+    'notion',
+    'ordinal',
+    'posthog',
+    'pylon',
+    'slack',
+}
 
 
 class Menu:

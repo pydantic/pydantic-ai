@@ -90,7 +90,7 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   own. `coder` is declared with `repo_context: false` because `repo_context`
   binds harness `RepoContext` itself; keep it that way or `AGENTS.md` reaches
   the model twice. When a built-in takes the id of a row the former harness
-  catalog offered, add that old row to `_RETIRED_BUILTINS` in `plugin_loader.py`, so a
+  catalog offered, add that old row to `_RETIRED_BUILTINS` in `plugins/loader.py`, so a
   user's saved toggle of it maps to the built-in instead of outranking it.
 - **Project declarations rank just above built-ins and start off.**
   `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
@@ -188,58 +188,86 @@ foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
 streamed fences and theme previews. Default diff colours stay unchanged, while
 bundled palettes use Termflow defaults.
 
+## Source layout
+
+The package root composes the shell (`_app.py`, `__main__.py`) and keeps the
+plugin-author imports `pydantic_clai2.plugins` and `pydantic_clai2.commands`
+stable. Other code is grouped by responsibility:
+
+- `cli/` owns argument handling, command context, headless output, and shell passthrough.
+- `config/` owns settings, credential storage, and project declarations. `config/__init__.py` provides the existing `pydantic_clai2.config` settings API.
+- `runtime/` owns sessions, forks, worktrees, reload, and speculative turns.
+- `models/` owns model discovery, settings validation, and optional provider adapters. Pure model parameter expansion belongs here, not in a menu.
+- `ui/prompt/` owns editing, terminal input, surface painting, and resize.
+- `ui/menus/` owns widgets and command-specific pickers; `ui/rendering/` owns themes, streaming, status, and output formatting.
+- `plugins/` owns the host API, loading, and credential picker helpers. `builtin_plugins/` and `mcp/` retain their plugin and server boundaries.
+
+Move a capability to core or harness if it does not need a terminal. Keep UI
+imports out of reusable validation code. The CLI and app may compose these
+packages; new package initializers should not eagerly import the app or heavy UI.
+Do not add broad backwards-compatibility shim modules for internal file moves.
+Keep documented plugin-author paths (`pydantic_clai2.plugins` and
+`pydantic_clai2.commands`) intact; update example imports when moving UI helpers.
+
 ## File map
 
 | File | Holds |
 |---|---|
-| `_cli.py` | argument parsing, startup, `--agent` |
-| `agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
+| `cli/_cli.py` | argument parsing, startup, `--agent` |
+| `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `_app.py` | the prompt loop and built-in `/commands` |
-| `_session.py` | conversation state, revision-checked saves, restore-only resume, per-run plugins |
-| `sessions.py` | resume command and background namer ownership; built-in step capture |
-| `forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
-| `session_browser.py` | project/session browser using Termflow layout and terminal primitives |
-| `_rendering.py` | streaming Markdown and thinking |
-| `plugins.py` | `PluginHost`, hook names, event dataclasses |
-| `plugin_loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
-| `plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
-| `ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
-| `screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
-| `field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
-| `set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
-| `model_menu.py` | `/add_model`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
-| `model_picker.py` | `/model`: selection and completion of saved models |
-| `model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
-| `model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
-| `logfire.py` | the default-enabled, locally configured Logfire plugin over core `Instrumentation` |
-| `compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
+| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, per-run plugins |
+| `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
+| `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
+| `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
+| `ui/rendering/_rendering.py` | streaming Markdown and thinking |
+| `plugins/__init__.py` | `PluginHost`, hook names, event dataclasses |
+| `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
+| `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
+| `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
+| `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
+| `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
+| `ui/menus/set_menu.py` | `/set`: `SettingsSource` over `CommandContext` |
+| `ui/menus/model_menu.py` | `/add_model`: provider discovery, `ModelSettingsSource`, `run_model_flow` |
+| `ui/menus/model_picker.py` | `/model`: selection and completion of saved models |
+| `models/model_catalog.py` | model sources (genai-prices today) merged by `catalog()` |
+| `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
+| `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
+| `ui/menus/custom_params.py` | the editor for custom model parameters |
+| `builtin_plugins/logfire.py` | the default-enabled, locally configured Logfire plugin over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry |
+| `builtin_plugins/logfire_setup.py` | the `logfire` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), project pick, write token saved in `/keys` |
+| `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content |
+| `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
 | `commands.py` | `Command`, the registry, completion |
-| `usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
-| `status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
-| `live_prompt.py` | pinned editor lifecycle, completion worker, submission queue and menu handoff |
-| `prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
-| `prompt_transcript.py` | bounded styled transcript tail for viewport replay |
-| `prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
-| `prompt_buffer.py` | pure draft editing, history navigation, search and cell-width wrapping |
-| `prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
-| `prompt_keys.py` | keyboard decoder attachment only; no prompt-toolkit Application or renderer |
-| `config.py` | `Settings`, `PluginSettings` |
-| `settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
-| `project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
-| `repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
-| `slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
+| `ui/rendering/usage_report.py` | `/usage`, `/cost`, and the footer cost, derived from `Session.messages` |
+| `ui/rendering/status.py` | the footer `Status` fields, `StatusSegment`, and the `StatusLine` row painter |
+| `ui/prompt/live_prompt.py` | pinned editor lifecycle, completion worker, submission queue and menu handoff |
+| `ui/prompt/prompt_surface.py` | scroll-region ownership, serialized transcript writes and changed-row painting |
+| `ui/prompt/prompt_transcript.py` | bounded styled transcript tail for viewport replay |
+| `ui/prompt/prompt_resize.py` | scoped resize notifications, without terminal IO in signal handlers |
+| `ui/prompt/prompt_buffer.py` | pure draft editing, history navigation, search and cell-width wrapping |
+| `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
+| `ui/prompt/prompt_keys.py` | keyboard decoder attachment only; no prompt-toolkit Application or renderer |
+| `config/__init__.py` | `Settings`, `PluginSettings` |
+| `config/theme_names.py` | theme choices shared by settings validation and the picker |
+| `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
+| `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
+| `builtin_plugins/repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
+| `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
 | `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
-| `plugin_keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
+| `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
 | `pkce.py` | `PKCESignIn`: browser sign-in for a registered public OAuth client (PKCE, no secret), with tokens in the credential store and locked refresh; built on core's `OAuthFlow` |
-| `speculation.py` | the `run.speculative_code_mode` switch, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
-| `speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
-| `eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
-| `sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
-| `theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()` |
-| `theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
-| `spinners.py` | the working-animation catalogue: builtins, plugin `host.spinner`, the user's `spinners.json`, `Spinners` |
-| `spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
-| `spinner_picker.py` | `/spinner`: animated picker, by-name selection with speed, `init` |
+| `runtime/speculation.py` | the `run.speculative_code_mode` switch, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
+| `runtime/speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
+| `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
+| `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
+| `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()` |
+| `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
+| `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `host.spinner`, the user's `spinners.json`, `Spinners` |
+| `ui/rendering/spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
+| `ui/menus/spinner_picker.py` | `/spinner`: animated picker, by-name selection with speed, `init` |
+
+The other built-in plugin implementations (`notifications`, `github`, `pylon`, `google_workspace`, `day_ai`, `ordinal`, `notion`, `logfire_mcp`, `posthog`, `grain`, and `linear`) also live in `builtin_plugins/`. The loader redirects old factory paths in saved declarations to this package.
 
 Keep files concise - we don't need any 10,000 line files. Single responsibility.
 
