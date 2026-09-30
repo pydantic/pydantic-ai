@@ -863,6 +863,15 @@ asks you a question can open its picker from a fork.
 
 ## Saved sessions and `/resume`
 
+The project pane groups existing Git worktrees and their subdirectories under
+one repository name. Session cards show each checkout's current branch, or its
+worktree directory name for detached HEAD. These labels are read when the browser
+opens, not historical branch names. Missing directories, non-Git workspaces, and
+unavailable Git fall back to directory labels. Separate repositories with the
+same name remain separate and use paths to distinguish them. Transcript previews
+and cross-directory confirmations keep the original saved path; resuming does
+not change directories or migrate saved data.
+
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
 replacement immediately, even if you exit before another prompt. `/new` switches
