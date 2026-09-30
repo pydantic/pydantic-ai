@@ -9,6 +9,7 @@ Client ID.
 import asyncio
 import os
 import webbrowser
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Generic, Literal
 
@@ -16,6 +17,7 @@ from anyio import to_thread
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from termflow.tui import TextInputBuilder
 
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.slack import Slack
@@ -23,7 +25,7 @@ from pydantic_clai2 import slack_app
 from pydantic_clai2.config.api_keys import KeyReference, load_keys, resolve_key, save_key_connection
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
 from pydantic_clai2.pkce import PKCESignIn
-from pydantic_clai2.plugins import DepsT, PluginHost, SessionStart, TurnStart
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart, TurnStart
 from pydantic_clai2.plugins.keys import browser_sign_in, choose_key, on_loop
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
@@ -69,48 +71,49 @@ class _NotSetUp(UserError):
     """Slack was never set up: no key chosen, or no app for browser sign-in. Turns skip Slack without a warning."""
 
 
-def activate(host: PluginHost[DepsT]) -> None:
-    """Add `Slack` with a token resolved from `/keys` before each turn; without one, the turn has no Slack tools."""
-    settings = host.settings(SlackSettings)
-    token: str | None = None
+class SlackPlugin(Plugin[SlackSettings, DepsT]):
+    """`Slack` with a token resolved from `/keys` before each turn; without one, the turn has no Slack tools."""
 
-    def current_token(ctx: RunContext[DepsT]) -> str | None:
-        return token
+    def __init__(self, host: PluginHost[DepsT], settings: SlackSettings) -> None:
+        super().__init__(host, settings)
+        self.token: str | None = None
 
-    async def refresh() -> None:
-        nonlocal token
-        try:
-            if settings.auth == 'browser':
-                token = await signed_in_token(settings)
-            else:
-                # `/keys` takes a cross-process lock that can wait up to 20 seconds; keep it off the event loop.
-                token = await to_thread.run_sync(connected_token)
-        except _NotSetUp:
-            token = None  # Not set up yet: `/plugins` and the settings menu say so, so turns stay quiet.
-        except UserError as exc:
-            token = None
-            host.console.print(f'Slack tools are off. {exc}', style=theme.color(theme.WARNING), markup=False)
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        return (
+            Slack[DepsT](
+                auth=self._current_token,
+                read_only=self.settings.read_only,
+                include_instructions=self.settings.include_instructions,
+            ),
+        )
 
-    @host.on('session_start')
-    async def start(event: SessionStart) -> None:
-        await refresh()
-
-    @host.on('turn_start')
-    async def turn(event: TurnStart) -> None:
-        await refresh()
-
-    @host.configure
-    async def configure() -> str:
-        message = await configure_menu(SlackSource(host))
+    async def configure(self) -> str:
+        message = await configure_menu(SlackSource(self.host))
         # A token change needs no reload; the loader reloads for settings changes, which refreshes again.
-        await refresh()
+        await self._refresh()
         return message
 
-    host.add(
-        Slack[DepsT](
-            auth=current_token, read_only=settings.read_only, include_instructions=settings.include_instructions
-        )
-    )
+    async def on_session_start(self, event: SessionStart) -> None:
+        await self._refresh()
+
+    async def on_turn_start(self, event: TurnStart) -> None:
+        await self._refresh()
+
+    def _current_token(self, ctx: RunContext[DepsT]) -> str | None:
+        return self.token
+
+    async def _refresh(self) -> None:
+        try:
+            if self.settings.auth == 'browser':
+                self.token = await signed_in_token(self.settings)
+            else:
+                # `/keys` takes a cross-process lock that can wait up to 20 seconds; keep it off the event loop.
+                self.token = await to_thread.run_sync(connected_token)
+        except _NotSetUp:
+            self.token = None  # Not set up yet: `/plugins` and the settings menu say so, so turns stay quiet.
+        except UserError as exc:
+            self.token = None
+            self.host.console.print(f'Slack tools are off. {exc}', style=theme.color(theme.WARNING), markup=False)
 
 
 async def signed_in_token(settings: SlackSettings) -> str:

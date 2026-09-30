@@ -1,65 +1,29 @@
-"""Everything a plugin can register, recorded on one host per plugin."""
+"""The declarative plugin API: subclass `Plugin` and override what it contributes, as with `AbstractCapability`."""
 
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from dataclasses import dataclass
-from typing import Generic, Literal, Protocol, TypeVar, get_args, overload
+from dataclasses import dataclass, replace
+from typing import ClassVar, Generic, Literal, Protocol, TypeVar, cast, get_args, get_origin
 
-from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 from rich.console import Console, RenderableType
-from typing_extensions import Never, TypeVar as DefaultTypeVar
+from typing_extensions import Never, Self, TypeVar as DefaultTypeVar, get_original_bases
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AgentCapability, Hooks
-from pydantic_ai.capabilities.hooks import (
-    AfterModelRequestHookFunc,
-    AfterNodeRunHookFunc,
-    AfterOutputProcessHookFunc,
-    AfterOutputValidateHookFunc,
-    AfterRunHookFunc,
-    AfterToolExecuteHookFunc,
-    AfterToolValidateHookFunc,
-    BeforeModelRequestHookFunc,
-    BeforeNodeRunHookFunc,
-    BeforeOutputProcessHookFunc,
-    BeforeOutputValidateHookFunc,
-    BeforeRunHookFunc,
-    BeforeToolExecuteHookFunc,
-    BeforeToolValidateHookFunc,
-    HandleDeferredToolCallsHookFunc,
-    OnEventHookFunc,
-    OnModelRequestErrorHookFunc,
-    OnNodeRunErrorHookFunc,
-    OnOutputProcessErrorHookFunc,
-    OnOutputValidateErrorHookFunc,
-    OnRunErrorHookFunc,
-    OnToolExecuteErrorHookFunc,
-    OnToolValidateErrorHookFunc,
-    PrepareOutputToolsHookFunc,
-    PrepareToolsHookFunc,
-    WrapModelRequestHookFunc,
-    WrapNodeRunHookFunc,
-    WrapOutputProcessHookFunc,
-    WrapOutputValidateHookFunc,
-    WrapRunEventStreamHookFunc,
-    WrapRunHookFunc,
-    WrapToolExecuteHookFunc,
-    WrapToolValidateHookFunc,
-)
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai_harness.step_persistence import StepStore
-from pydantic_clai2.commands import Commands
+from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.models import CLAI_PROVIDERS
-from pydantic_clai2.ui.rendering.spinners import Spinner, make_spinner
+from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
 
 DepsT = DefaultTypeVar('DepsT', default=None)
-EventT = TypeVar('EventT', bound=AgentStreamEvent)
 ModelT = TypeVar('ModelT', bound=BaseModel)
 _SAVED_SETTINGS = TypeAdapter(dict[str, JsonValue])
 
@@ -158,13 +122,30 @@ class TurnEnd:
 
 @dataclass(frozen=True, kw_only=True)
 class ModelProvider:
-    """Models a plugin runs under its own `PREFIX:`; see `PluginHost.model_provider`."""
+    """Models a plugin runs under its own `PREFIX:`; return it from `Plugin.get_model_providers`.
+
+    `resolve` gets NAME without the prefix. CLAI calls it in a worker thread before every run with
+    one of these models, so it may read the keyring; raise `UserError` saying how to set up when it
+    cannot build the model. A prefix Pydantic AI or CLAI already runs is rejected; when two plugins
+    offer one prefix, the later one wins. Unloading the plugin removes the prefix, and a run with
+    a model under it then fails as an unknown provider until the plugin is enabled again.
+    """
 
     prefix: str
     resolve: Callable[[str], Model]
     """Build the model for a name given without its prefix."""
     models: tuple[str, ...] = ()
     """Names without the prefix, offered by `/add_model` and `/set model`."""
+
+    def __post_init__(self) -> None:
+        """Reject a malformed prefix, or one CLAI already runs, before any plugin can offer it."""
+        if not _PROVIDER_PREFIX.fullmatch(self.prefix):
+            raise ValueError(
+                f'Model prefix {self.prefix!r} must start with a lowercase letter, followed by lowercase letters, '
+                'digits, and hyphens.'
+            )
+        if _runs_already(self.prefix):
+            raise ValueError(f'Model prefix {self.prefix!r} is a provider CLAI already runs; choose your own.')
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -194,9 +175,8 @@ def _runs_already(prefix: str) -> bool:
 
 
 HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd
-HostEventT = TypeVar('HostEventT', bound=HostEvent)
-HostHandler = Callable[[HostEventT], Awaitable[None]]
-Renderer = Callable[[EventT], RenderableType | None]
+Renderer = Callable[[AgentStreamEvent], RenderableType | None]
+"""Draws an event, or returns `None` to fall back to the default display; see `Plugin.render`."""
 FullScreen = Callable[[], AbstractAsyncContextManager[None]]
 """Enter it to own the whole terminal for a widget while the agent runs; see `PluginHost.full_screen`."""
 
@@ -207,53 +187,11 @@ async def bare_screen() -> AsyncGenerator[None]:
     yield
 
 
-HostHookName = Literal['session_start', 'session_end', 'turn_start', 'turn_end']
-CoreHookName = Literal[
-    'before_run',
-    'after_run',
-    'run',
-    'run_error',
-    'before_node_run',
-    'after_node_run',
-    'node_run',
-    'node_run_error',
-    'run_event_stream',
-    'event',
-    'before_model_request',
-    'after_model_request',
-    'model_request',
-    'model_request_error',
-    'prepare_tools',
-    'prepare_output_tools',
-    'before_tool_validate',
-    'after_tool_validate',
-    'tool_validate',
-    'tool_validate_error',
-    'before_tool_execute',
-    'after_tool_execute',
-    'tool_execute',
-    'tool_execute_error',
-    'before_output_validate',
-    'after_output_validate',
-    'output_validate',
-    'output_validate_error',
-    'before_output_process',
-    'after_output_process',
-    'output_process',
-    'output_process_error',
-    'deferred_tool_calls',
-]
-HOST_HOOKS: dict[str, type[HostEvent]] = {
-    'session_start': SessionStart,
-    'session_end': SessionEnd,
-    'turn_start': TurnStart,
-    'turn_end': TurnEnd,
-}
-CORE_HOOK_NAMES: frozenset[str] = frozenset(get_args(CoreHookName))
-
-
 class PluginHost(Generic[DepsT]):
-    """The one object a plugin talks to. Discarding the host unloads the plugin."""
+    """What CLAI gives a plugin to talk to: the terminal, the conversation, and its saved settings.
+
+    A plugin declares what it contributes on its `Plugin` subclass; the host only carries context.
+    """
 
     def __init__(
         self,
@@ -268,7 +206,7 @@ class PluginHost(Generic[DepsT]):
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
-        `persist` writes changed settings back to the plugin's declaration; without it they
+        `save_settings` writes changed settings back to the plugin's declaration; without it they
         last until the plugin unloads.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
@@ -285,59 +223,11 @@ class PluginHost(Generic[DepsT]):
         """
         self.conversation: Conversation = conversation if conversation is not None else Transcript()
         self.status = status if status is not None else Status()
-        self.commands = Commands()
         self._settings = settings
         self._persist = save_settings
-        self._configurer: Callable[[], Awaitable[str]] | None = None
-        self._hooks: Hooks[DepsT] = Hooks()
-        self._hooks_used = False
-        self._capabilities: list[AgentCapability[DepsT]] = []
-        self._handlers: list[Callable[[HostEvent], Awaitable[None]]] = []
-        self._renderers: list[Renderer[AgentStreamEvent]] = []
-        self._segments: list[StatusSegment] = []
-        self._spinners: list[Spinner] = []
-        self._model_providers: list[ModelProvider] = []
-
-    @property
-    def capabilities(self) -> list[AgentCapability[DepsT]]:
-        """Capabilities to bind on every run while this plugin is loaded."""
-        return [*self._capabilities, *([self._hooks] if self._hooks_used else [])]
-
-    @property
-    def handlers(self) -> list[Callable[[HostEvent], Awaitable[None]]]:
-        """Host-hook handlers; each ignores events it was not registered for."""
-        return list(self._handlers)
-
-    @property
-    def renderers(self) -> list[Renderer[AgentStreamEvent]]:
-        """Renderers; each returns `None` for events it was not registered for."""
-        return list(self._renderers)
-
-    @property
-    def status_segments(self) -> list[StatusSegment]:
-        """Footer fragments; the shell appends them to the built-in status figures."""
-        return list(self._segments)
-
-    @property
-    def spinners(self) -> list[Spinner]:
-        """Working animations added with `spinner`."""
-        return list(self._spinners)
-
-    @property
-    def model_providers(self) -> list[ModelProvider]:
-        """Model prefixes added with `model_provider`."""
-        return list(self._model_providers)
-
-    def summary(self) -> str:
-        """One line for the `/plugins` menu."""
-        return (
-            f'{len(list(self.commands))} commands, {len(self._handlers)} hooks, '
-            f'{len(self._capabilities)} capabilities, {len(self._renderers)} renderers, '
-            f'{len(self._segments)} status segments'
-        )
 
     def settings(self, model: type[ModelT], /) -> ModelT:
-        """Validate the JSON given to `plugins add` against the plugin's own model."""
+        """Validate the JSON saved for this plugin right now, as a settings menu needs after each save."""
         return model.model_validate(self._settings)
 
     def save_settings(self, settings: BaseModel, /) -> None:
@@ -359,228 +249,182 @@ class PluginHost(Generic[DepsT]):
         self._persist(saved)
         self._settings = saved
 
+
+class NoSettings(BaseModel):
+    """The settings of a plugin that takes none: any key in its declaration is an error."""
+
+    model_config = ConfigDict(extra='forbid', frozen=True)
+
+
+SettingsT = DefaultTypeVar('SettingsT', bound=BaseModel, default=NoSettings, covariant=True)
+
+
+class Plugin(Generic[SettingsT, DepsT]):
+    """A CLAI plugin, declared by overriding what it contributes, as an `AbstractCapability` is.
+
+    Parametrize with the settings model, `class Linear(Plugin[LinearSettings])`: the loader validates
+    the declaration's JSON against it and passes the result as `settings`. When the plugin loads,
+    CLAI calls every `get_*` method once and keeps what they return until it unloads, so build
+    tools, commands, and other contributions there or in `__init__`, not per call. Every method has
+    a default that contributes nothing, so a plugin overrides only what it needs.
+
+    Hooks into the agent run itself (`before_model_request`, typed events, and the rest) belong on
+    a capability returned from `get_capabilities`: `Hooks`, or an `AbstractCapability` subclass.
+    """
+
+    settings_type: ClassVar[type[BaseModel]] = NoSettings
+    """The settings model, read from the class's `Plugin[...]` parameter; there is no need to set it."""
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Record the settings model named in `Plugin[SettingsModel, ...]`."""
+        super().__init_subclass__(**kwargs)
+        for base in get_original_bases(cls):
+            origin = get_origin(base)
+            if isinstance(origin, type) and issubclass(origin, Plugin):
+                settings = next(iter(get_args(base)), None)
+                if isinstance(settings, type) and issubclass(settings, BaseModel):
+                    cls.settings_type = settings
+                return
+
+    def __init__(self, host: PluginHost[DepsT], settings: SettingsT) -> None:
+        """Keep the host and validated settings; override to set up state the `get_*` methods share."""
+        self.host = host
+        self._settings = settings
+
+    @classmethod
+    def from_host(cls, host: PluginHost[DepsT]) -> Self:
+        """Build the plugin from the settings saved in its declaration, as the loader does."""
+        return cls(host, cast(SettingsT, host.settings(cls.settings_type)))
+
     @property
-    def configurer(self) -> Callable[[], Awaitable[str]] | None:
-        """The settings menu registered with `configure`, if any."""
-        return self._configurer
+    def settings(self) -> SettingsT:
+        """The settings the plugin loaded with. A settings menu reads fresh ones with `host.settings`."""
+        return self._settings
 
-    def configure(self, func: Callable[[], Awaitable[str]], /) -> Callable[[], Awaitable[str]]:
-        """Offer a settings menu, opened by `/plugins configure NAME`, `C` in `/plugins`, and on enable or add.
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        """Tools, instructions, hooks, or a capability chosen per run, bound on every run."""
+        return ()
 
-        Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
-        change with `save_settings` as the user makes it and return a line to show. When the settings
-        changed, the loader loads the plugin again afterwards, so `activate` builds from them.
+    def get_commands(self) -> Sequence[Command]:
+        """Slash commands, registered while the plugin is loaded."""
+        return ()
+
+    def get_status_segments(self) -> Sequence[StatusSegment]:
+        """Short fragments for the status row, such as the working directory.
+
+        The shell repaints the row about ten times a second, so keep each fragment cheap and
+        synchronous: it is called for every frame, not once per turn. Fragments are appended in
+        load order, painted `MUTED`, and truncated from the right on a narrow terminal.
         """
-        self._configurer = func
-        return func
+        return ()
 
-    def add(self, capability: AgentCapability[DepsT], /) -> None:
-        """Give the agent tools, instructions, or a capability chosen per run."""
-        self._capabilities.append(capability)
+    def get_spinners(self) -> Sequence[Spinner]:
+        """Working animations for `/spinner`; build each with `make_spinner`.
 
-    def render(self, event_type: type[EventT], /) -> Callable[[Renderer[EventT]], Renderer[EventT]]:
-        """Draw an event yourself; return `None` to fall back to the default display."""
-
-        def decorator(func: Renderer[EventT]) -> Renderer[EventT]:
-            def erased(event: AgentStreamEvent) -> RenderableType | None:
-                return func(event) if isinstance(event, event_type) else None
-
-            self._renderers.append(erased)
-            return func
-
-        return decorator
-
-    def status_segment(self, func: StatusSegment, /) -> StatusSegment:
-        """Add a short fragment to the status row, such as the working directory.
-
-        The shell repaints the row about ten times a second, so keep the fragment cheap
-        and synchronous: it is called for every frame, not once per turn. Fragments are
-        appended in registration order, painted `MUTED`, and truncated from the right on
-        a narrow terminal. Unloading the plugin discards them with the rest of its host.
-        """
-        self._segments.append(func)
-        return func
-
-    def spinner(self, name: str, frames: Iterable[str], /, *, interval: float = 0.2, description: str = '') -> Spinner:
-        """Offer a working animation in `/spinner`; select it there or with `/set display.spinner NAME`.
-
-        Frames are padded to one width and `interval` is clamped to 0.02-1 seconds per frame. A
-        plugin spinner replaces a builtin of the same name, and the user's `spinners.json` replaces
+        A plugin spinner replaces a builtin of the same name, and the user's `spinners.json` replaces
         both. Unloading the plugin removes it; a selected spinner that is gone shows `working`.
         """
-        spinner = make_spinner(name, frames, interval=interval, description=description, source='plugin')
-        self._spinners.append(spinner)
-        return spinner
+        return ()
 
-    def model_provider(
-        self, prefix: str, resolve: Callable[[str], Model], /, *, models: Iterable[str] = ()
-    ) -> ModelProvider:
-        """Run `PREFIX:NAME` models with `resolve`, and offer `models` in `/add_model` and `/set model`.
+    def get_model_providers(self) -> Sequence[ModelProvider]:
+        """Model prefixes this plugin runs, offered in `/add_model` and `/set model`."""
+        return ()
 
-        `resolve` gets NAME without the prefix. CLAI calls it in a worker thread before every run with
-        one of these models, so it may read the keyring; raise `UserError` saying how to set up when it
-        cannot build the model. A prefix Pydantic AI or CLAI already runs is rejected; when two plugins
-        register one prefix, the later one wins. Unloading the plugin removes the prefix, and a run with
-        a model under it then fails as an unknown provider until the plugin is enabled again.
+    def render(self, event: AgentStreamEvent) -> RenderableType | None:
+        """Draw an event yourself; return `None` to fall back to the default display."""
+        return None
+
+    async def configure(self) -> str:
+        """A settings menu, opened by `/plugins configure NAME`, `C` in `/plugins`, and on enable or add.
+
+        Build it on `FieldMenu` and `run_flow` so it ends with the shared Save & close row. Save each
+        change with `host.save_settings` as the user makes it and return a line to show. When the
+        settings changed, the loader loads the plugin again afterwards, so it builds from them.
         """
-        if not _PROVIDER_PREFIX.fullmatch(prefix):
-            raise ValueError(
-                f'Model prefix {prefix!r} must start with a lowercase letter, followed by lowercase letters, '
-                'digits, and hyphens.'
-            )
-        if _runs_already(prefix):
-            raise ValueError(f'Model prefix {prefix!r} is a provider CLAI already runs; choose your own.')
-        provider = ModelProvider(prefix=prefix, resolve=resolve, models=tuple(models))
-        self._model_providers.append(provider)
-        return provider
+        raise NotImplementedError(f'{type(self).__name__} has no settings menu.')
 
-    @overload
-    def on(
-        self, name: Literal['session_start'], /
-    ) -> Callable[[HostHandler[SessionStart]], HostHandler[SessionStart]]: ...
-    @overload
-    def on(self, name: Literal['session_end'], /) -> Callable[[HostHandler[SessionEnd]], HostHandler[SessionEnd]]: ...
-    @overload
-    def on(self, name: Literal['turn_start'], /) -> Callable[[HostHandler[TurnStart]], HostHandler[TurnStart]]: ...
-    @overload
-    def on(self, name: Literal['turn_end'], /) -> Callable[[HostHandler[TurnEnd]], HostHandler[TurnEnd]]: ...
-    @overload
-    def on(self, name: Literal['before_run'], /) -> Callable[[BeforeRunHookFunc], BeforeRunHookFunc]: ...
-    @overload
-    def on(self, name: Literal['after_run'], /) -> Callable[[AfterRunHookFunc], AfterRunHookFunc]: ...
-    @overload
-    def on(self, name: Literal['run'], /) -> Callable[[WrapRunHookFunc], WrapRunHookFunc]: ...
-    @overload
-    def on(self, name: Literal['run_error'], /) -> Callable[[OnRunErrorHookFunc], OnRunErrorHookFunc]: ...
-    @overload
-    def on(self, name: Literal['before_node_run'], /) -> Callable[[BeforeNodeRunHookFunc], BeforeNodeRunHookFunc]: ...
-    @overload
-    def on(self, name: Literal['after_node_run'], /) -> Callable[[AfterNodeRunHookFunc], AfterNodeRunHookFunc]: ...
-    @overload
-    def on(self, name: Literal['node_run'], /) -> Callable[[WrapNodeRunHookFunc], WrapNodeRunHookFunc]: ...
-    @overload
-    def on(self, name: Literal['node_run_error'], /) -> Callable[[OnNodeRunErrorHookFunc], OnNodeRunErrorHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['run_event_stream'], /
-    ) -> Callable[[WrapRunEventStreamHookFunc], WrapRunEventStreamHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['event'], /
-    ) -> Callable[[OnEventHookFunc[AgentStreamEvent]], OnEventHookFunc[AgentStreamEvent]]: ...
-    @overload
-    def on(
-        self, name: Literal['before_model_request'], /
-    ) -> Callable[[BeforeModelRequestHookFunc], BeforeModelRequestHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['after_model_request'], /
-    ) -> Callable[[AfterModelRequestHookFunc], AfterModelRequestHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['model_request'], /
-    ) -> Callable[[WrapModelRequestHookFunc], WrapModelRequestHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['model_request_error'], /
-    ) -> Callable[[OnModelRequestErrorHookFunc], OnModelRequestErrorHookFunc]: ...
-    @overload
-    def on(self, name: Literal['prepare_tools'], /) -> Callable[[PrepareToolsHookFunc], PrepareToolsHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['prepare_output_tools'], /
-    ) -> Callable[[PrepareOutputToolsHookFunc], PrepareOutputToolsHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['before_tool_validate'], /
-    ) -> Callable[[BeforeToolValidateHookFunc], BeforeToolValidateHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['after_tool_validate'], /
-    ) -> Callable[[AfterToolValidateHookFunc], AfterToolValidateHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['tool_validate'], /
-    ) -> Callable[[WrapToolValidateHookFunc], WrapToolValidateHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['tool_validate_error'], /
-    ) -> Callable[[OnToolValidateErrorHookFunc], OnToolValidateErrorHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['before_tool_execute'], /
-    ) -> Callable[[BeforeToolExecuteHookFunc], BeforeToolExecuteHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['after_tool_execute'], /
-    ) -> Callable[[AfterToolExecuteHookFunc], AfterToolExecuteHookFunc]: ...
-    @overload
-    def on(self, name: Literal['tool_execute'], /) -> Callable[[WrapToolExecuteHookFunc], WrapToolExecuteHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['tool_execute_error'], /
-    ) -> Callable[[OnToolExecuteErrorHookFunc], OnToolExecuteErrorHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['before_output_validate'], /
-    ) -> Callable[[BeforeOutputValidateHookFunc], BeforeOutputValidateHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['after_output_validate'], /
-    ) -> Callable[[AfterOutputValidateHookFunc], AfterOutputValidateHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['output_validate'], /
-    ) -> Callable[[WrapOutputValidateHookFunc], WrapOutputValidateHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['output_validate_error'], /
-    ) -> Callable[[OnOutputValidateErrorHookFunc], OnOutputValidateErrorHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['before_output_process'], /
-    ) -> Callable[[BeforeOutputProcessHookFunc], BeforeOutputProcessHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['after_output_process'], /
-    ) -> Callable[[AfterOutputProcessHookFunc], AfterOutputProcessHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['output_process'], /
-    ) -> Callable[[WrapOutputProcessHookFunc], WrapOutputProcessHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['output_process_error'], /
-    ) -> Callable[[OnOutputProcessErrorHookFunc], OnOutputProcessErrorHookFunc]: ...
-    @overload
-    def on(
-        self, name: Literal['deferred_tool_calls'], /
-    ) -> Callable[[HandleDeferredToolCallsHookFunc], HandleDeferredToolCallsHookFunc]: ...
-    @overload
-    def on(self, name: type[EventT], /) -> Callable[[OnEventHookFunc[EventT]], OnEventHookFunc[EventT]]: ...
+    async def on_session_start(self, event: SessionStart) -> None:
+        """CLAI is ready for prompts; called once, when the plugin loads."""
 
-    def on(self, name: str | type[AgentStreamEvent], /) -> object:
-        """Register a handler for a named moment or a typed event. Use as a decorator."""
-        if isinstance(name, type):
-            self._hooks_used = True
-            return self._hooks.on.event(name)
-        host_event = HOST_HOOKS.get(name)
-        if host_event is not None:
-            return self._host_decorator(host_event)
-        if name not in CORE_HOOK_NAMES:
-            raise ValueError(f'Unknown hook {name!r}. See PLUGINS.md for the list.')
-        self._hooks_used = True
-        return getattr(self._hooks.on, name)
+    async def on_session_end(self, event: SessionEnd) -> None:
+        """CLAI is quitting, the plugin is unloading, or it failed to load after it was built."""
 
-    def _host_decorator(
-        self, event_type: type[HostEventT]
-    ) -> Callable[[HostHandler[HostEventT]], HostHandler[HostEventT]]:
-        def decorator(func: HostHandler[HostEventT]) -> HostHandler[HostEventT]:
-            async def erased(event: HostEvent) -> None:
-                if isinstance(event, event_type):
-                    await func(event)
+    async def on_turn_start(self, event: TurnStart) -> None:
+        """A prompt was submitted; edit `event.text` or call `event.cancel()`. A failure cancels the turn."""
 
-            self._handlers.append(erased)
-            return func
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        """The turn finished."""
 
-        return decorator
+    @property
+    def has_configure(self) -> bool:
+        """Whether this plugin overrides `configure`, offering a settings menu."""
+        return type(self).configure is not Plugin.configure
+
+    @property
+    def has_render(self) -> bool:
+        """Whether this plugin overrides `render`."""
+        return type(self).render is not Plugin.render
+
+    @property
+    def hook_count(self) -> int:
+        """How many host events this plugin overrides a handler for."""
+        return sum(getattr(type(self), name) is not getattr(Plugin, name) for name in _HANDLERS.values())
+
+
+_HANDLERS: dict[type[HostEvent], str] = {
+    SessionStart: 'on_session_start',
+    SessionEnd: 'on_session_end',
+    TurnStart: 'on_turn_start',
+    TurnEnd: 'on_turn_end',
+}
+
+
+@dataclass(frozen=True, kw_only=True)
+class LoadedPlugin(Generic[DepsT]):
+    """What a loaded plugin contributes, collected once from its `get_*` methods."""
+
+    plugin: Plugin[BaseModel, DepsT]
+    capabilities: tuple[AgentCapability[DepsT], ...]
+    commands: Commands
+    status_segments: tuple[StatusSegment, ...]
+    spinners: tuple[Spinner, ...]
+    model_providers: tuple[ModelProvider, ...]
+
+    @property
+    def host(self) -> PluginHost[DepsT]:
+        """The host the plugin was built with."""
+        return self.plugin.host
+
+    async def dispatch(self, event: HostEvent) -> None:
+        """Hand a host event to the plugin's matching `on_*` method."""
+        await getattr(self.plugin, _HANDLERS[type(event)])(event)
+
+    def summary(self) -> str:
+        """One line for the `/plugins` menu."""
+        return (
+            f'{len(list(self.commands))} commands, {self.plugin.hook_count} hooks, '
+            f'{len(self.capabilities)} capabilities, {int(self.plugin.has_render)} renderers, '
+            f'{len(self.status_segments)} status segments'
+        )
+
+
+def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:
+    """Call each of `plugin`'s `get_*` methods once; a command name collision raises `ValueError`."""
+    commands = Commands()
+    commands.register_many(plugin.get_commands())
+    return LoadedPlugin(
+        plugin=plugin,
+        capabilities=tuple(plugin.get_capabilities()),
+        commands=commands,
+        status_segments=tuple(plugin.get_status_segments()),
+        spinners=tuple(replace(spinner, source='plugin') for spinner in plugin.get_spinners()),
+        model_providers=tuple(plugin.get_model_providers()),
+    )
+
+
+def load_plugin(plugin_type: type[Plugin[BaseModel, DepsT]], host: PluginHost[DepsT]) -> LoadedPlugin[DepsT]:
+    """Build `plugin_type` from `host`'s settings and collect what it contributes, as the loader does.
+
+    This is also how a plugin's tests load it without a shell; fire host events with `dispatch`.
+    """
+    return collect(plugin_type.from_host(host))

@@ -1,6 +1,7 @@
 """Default-enabled Logfire instrumentation, owned by the plugin rather than the process."""
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
@@ -9,9 +10,9 @@ from anyio import CancelScope, to_thread
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
 from pydantic import BaseModel, ConfigDict, Field
 
-from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.capabilities import AgentCapability, Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
-from pydantic_clai2.plugins import PluginHost, SessionEnd
+from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
 from pydantic_clai2.ui.rendering import theme
 
 
@@ -25,47 +26,49 @@ class LogfireSettings(BaseModel):
     include_binary_content: bool = True
 
 
-def activate(host: PluginHost[None]) -> None:
-    """Add core instrumentation without changing the supplied agent or global OTel providers."""
-    config = host.settings(LogfireSettings)
-    config_home = Path(os.getenv('XDG_CONFIG_HOME', '')).expanduser()
-    if not config_home.is_absolute():
-        config_home = Path.home() / '.config'
-    private_dir = config_home / 'pydantic-clai2' / 'logfire'
-    propagator = get_global_textmap()
-    try:
-        instance = logfire.configure(
-            local=True,
-            send_to_logfire=config.send_to_logfire,
-            service_name=config.service_name,
-            console=False,
-            config_dir=private_dir,
-            data_dir=private_dir,
-        )
-    finally:
-        # Even local SDK configuration replaces the process-wide propagator.
-        set_global_textmap(propagator)
-    try:
-        host.add(
-            Instrumentation(
+class LogfirePlugin(Plugin[LogfireSettings]):
+    """Core instrumentation, without changing the supplied agent or global OTel providers."""
+
+    def __init__(self, host: PluginHost[None], settings: LogfireSettings) -> None:
+        super().__init__(host, settings)
+        config_home = Path(os.getenv('XDG_CONFIG_HOME', '')).expanduser()
+        if not config_home.is_absolute():
+            config_home = Path.home() / '.config'
+        private_dir = config_home / 'pydantic-clai2' / 'logfire'
+        propagator = get_global_textmap()
+        try:
+            self.instance = logfire.configure(
+                local=True,
+                send_to_logfire=settings.send_to_logfire,
+                service_name=settings.service_name,
+                console=False,
+                config_dir=private_dir,
+                data_dir=private_dir,
+            )
+        finally:
+            # Even local SDK configuration replaces the process-wide propagator.
+            set_global_textmap(propagator)
+        try:
+            self.instrumentation = Instrumentation(
                 settings=InstrumentationSettings(
-                    tracer_provider=instance.config.get_tracer_provider(),
-                    meter_provider=instance.config.get_meter_provider(),
-                    include_content=config.include_content,
-                    include_binary_content=config.include_binary_content,
+                    tracer_provider=self.instance.config.get_tracer_provider(),
+                    meter_provider=self.instance.config.get_meter_provider(),
+                    include_content=settings.include_content,
+                    include_binary_content=settings.include_binary_content,
                 )
             )
-        )
-    except BaseException:
-        _shutdown(instance)
-        raise
+        except BaseException:
+            _shutdown(self.instance)
+            raise
 
-    @host.on('session_end')
-    async def shutdown(event: SessionEnd) -> None:
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        return (self.instrumentation,)
+
+    async def on_session_end(self, event: SessionEnd) -> None:
         with CancelScope(shield=True):
-            finished = await to_thread.run_sync(_shutdown, instance)
+            finished = await to_thread.run_sync(_shutdown, self.instance)
             if not finished:
-                host.console.print(
+                self.host.console.print(
                     'Logfire shutdown timed out; some telemetry may not have been sent.',
                     style=theme.color(theme.WARNING),
                 )

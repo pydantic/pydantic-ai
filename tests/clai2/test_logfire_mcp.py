@@ -17,18 +17,19 @@ from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 from typing_extensions import TypeIs
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LogfireMCP
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.builtin_plugins.logfire_mcp import SETUP, LogfireMCPSource, activate
+from pydantic_clai2.builtin_plugins.logfire_mcp import SETUP, LogfireMCPPlugin, LogfireMCPSource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import api_keys
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, DeviceAuth, SignInError, Tokens
-from pydantic_clai2.plugins import PluginHost, SessionStart
+from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import CUSTOM, is_save_and_close
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
@@ -60,7 +61,9 @@ class Shell:
         return declaration.settings
 
     def capability(self) -> LogfireMCP[None]:
-        [capability] = self.loader.capabilities()
+        [factory] = self.loader.capabilities()
+        assert callable(factory)
+        capability = factory(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
         assert is_logfire_mcp(capability)
         return capability
 
@@ -318,8 +321,7 @@ def logfire_command(
 ) -> tuple[Callable[[list[str]], Awaitable[str]], io.StringIO]:
     output = io.StringIO()
     host = PluginHost[None](name='logfire_mcp', console=Console(file=output, width=200), settings=settings or {})
-    activate(host)
-    [command] = host.commands
+    [command] = load_plugin(LogfireMCPPlugin, host).commands
 
     async def run(args: list[str]) -> str:
         result = command.handler(args)
@@ -395,8 +397,8 @@ async def test_registers_the_logout_command(tmp_path: Path) -> None:
     api_keys.save_key(name='LOGFIRE_API_KEY', value='kept')
     shell = Shell(tmp_path)
     await shell.loader.enable('logfire_mcp')
-    [host] = [entry.host for entry in shell.loader.entries() if entry.host]
-    assert [c.name for c in host.commands] == ['logfire_mcp']
+    [loaded] = [entry.loaded for entry in shell.loader.entries() if entry.loaded]
+    assert [c.name for c in loaded.commands] == ['logfire_mcp']
 
 
 async def test_add_replacing_the_builtin_opens_the_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -508,8 +510,9 @@ async def test_keys_are_read_at_session_start_off_the_event_loop(
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.load_keys', load_keys)
     host = PluginHost[None](name='logfire_mcp', console=Console(file=io.StringIO()), settings={})
-    activate(host)
-    assert (host.capabilities, threads) == ([], [])
+    plugin = load_plugin(LogfireMCPPlugin, host)
+    assert isinstance(plugin.plugin, LogfireMCPPlugin) and plugin.plugin.capability is None
+    assert threads == []
     shell = Shell(tmp_path)
     await shell.loader.enable('logfire_mcp')
     assert len(threads) == 1

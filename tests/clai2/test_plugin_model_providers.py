@@ -1,6 +1,7 @@
-"""Plugins running models under their own prefix with `PluginHost.model_provider`."""
+"""Plugins running models under their own prefix with `Plugin.get_model_providers`."""
 
 import io
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -16,7 +17,7 @@ from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Commands, set_completions
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import ModelProvider, PluginHost, SessionStart
+from pydantic_clai2.plugins import ModelProvider, Plugin, PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.model_menu import ModelMenu
 
@@ -24,13 +25,18 @@ PromptT = TypeVar('PromptT')
 
 PLUGIN = """
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import ModelProvider, Plugin
 
 
-def activate(host: PluginHost) -> None:
-    host.model_provider(
-        'echo-test', lambda name: TestModel(custom_output_text=f'{PREFIX} resolved {name}'), models=('hello',)
-    )
+class Echo(Plugin):
+    def get_model_providers(self):
+        return [
+            ModelProvider(
+                prefix='echo-test',
+                resolve=lambda name: TestModel(custom_output_text=f'{PREFIX} resolved {name}'),
+                models=('hello',),
+            )
+        ]
 """
 
 
@@ -38,14 +44,17 @@ def echo(name: str) -> Model:
     return TestModel(custom_output_text=name)
 
 
-def host() -> PluginHost[None]:
-    return PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={})
+def provider(prefix: str) -> ModelProvider:
+    return ModelProvider(prefix=prefix, resolve=echo)
 
 
-def test_host_records_a_provider_and_its_prefixed_names() -> None:
-    plugin = host()
-    provider = plugin.model_provider('echo-test', echo, models=['fast', 'smart'])
-    assert plugin.model_providers == [provider]
+def test_plugin_declares_a_provider_and_its_prefixed_names() -> None:
+    class Echoes(Plugin):
+        def get_model_providers(self) -> Sequence[ModelProvider]:
+            return (ModelProvider(prefix='echo-test', resolve=echo, models=('fast', 'smart')),)
+
+    loaded = load_plugin(Echoes, PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={}))
+    [provider] = loaded.model_providers
     assert provider == ModelProvider(prefix='echo-test', resolve=echo, models=('fast', 'smart'))
     assert provider.names == ('echo-test:fast', 'echo-test:smart')
     model = provider.resolve('fast')
@@ -55,7 +64,7 @@ def test_host_records_a_provider_and_its_prefixed_names() -> None:
 @pytest.mark.parametrize('prefix', ['', 'Echo', 'echo:x', '1echo', 'echo_test'])
 def test_host_rejects_a_malformed_prefix(prefix: str) -> None:
     with pytest.raises(ValueError, match='must start with a lowercase letter, followed by lowercase letters'):
-        host().model_provider(prefix, echo)
+        provider(prefix)
 
 
 @pytest.mark.parametrize(
@@ -68,7 +77,7 @@ def test_host_rejects_a_malformed_prefix(prefix: str) -> None:
 )
 def test_host_rejects_a_prefix_clai_already_runs(prefix: str) -> None:
     with pytest.raises(ValueError, match='provider CLAI already runs'):
-        host().model_provider(prefix, echo)
+        provider(prefix)
 
 
 def test_host_rejects_a_known_provider_whose_sdk_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -77,12 +86,12 @@ def test_host_rejects_a_known_provider_whose_sdk_is_missing(monkeypatch: pytest.
 
     monkeypatch.setattr('pydantic_clai2.plugins.infer_provider_class', missing_sdk)
     with pytest.raises(ValueError, match='provider CLAI already runs'):
-        host().model_provider('echo-test', echo)
+        provider('echo-test')
 
 
 async def test_resolver_routes_only_prefixed_names_to_plugins() -> None:
-    provider = host().model_provider('echo-test', echo)
-    resolver = _ModelResolver(console=Console(file=io.StringIO()), plugins=lambda: {'echo-test': provider})
+    echo_test = provider('echo-test')
+    resolver = _ModelResolver(console=Console(file=io.StringIO()), plugins=lambda: {'echo-test': echo_test})
     assert await resolver.resolve('echo-test') == 'echo-test'
     assert await resolver.resolve('other:x') == 'other:x'
     model = await resolver.resolve('echo-test:fast')
