@@ -24,7 +24,7 @@ image_generator = ImageGenerator(
 )
 
 agent = Agent(
-    'anthropic:claude-sonnet-5-5',
+    'anthropic:claude-sonnet-4-6',
     capabilities=[
         ImageGeneration(
             native=False,
@@ -156,7 +156,7 @@ from pydantic_ai.capabilities import ImageGeneration
 from pydantic_ai.messages import ModelResponse, ToolReturnPart
 
 agent = Agent(
-    'anthropic:claude-sonnet-5-5',
+    'anthropic:claude-sonnet-4-6',
     capabilities=[ImageGeneration(fallback_image_model='openai:gpt-image-2')],
 )
 result = agent.run_sync('Generate an illustration of a cafe, then write alt text for it.')
@@ -239,7 +239,7 @@ exposing the same setting names. Write `dimensions` as the two-item array used b
 it to the `(width, height)` tuple used by the Python API:
 
 ```yaml
-model: anthropic:claude-sonnet-5-5
+model: anthropic:claude-sonnet-4-6
 capabilities:
   - ImageGeneration:
       native: false

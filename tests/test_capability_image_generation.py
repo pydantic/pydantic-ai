@@ -891,27 +891,33 @@ class TestImageGenerationCapability:
         with pytest.warns(UserWarning, match='ignored direct-only setting.*dimensions'):
             ImageGeneration(local=Tool(my_gen, name='generate_image'), dimensions=(1280, 720))
 
-    @pytest.mark.parametrize(
-        ('kwargs', 'ignored'),
-        [
-            ({'dimensions': (1280, 720)}, 'dimensions'),
-            ({'aspect_ratio': '2:1'}, 'aspect_ratio'),
-        ],
-    )
-    def test_image_generation_native_false_with_a_local_of_the_users_own_ignores_direct_only_geometry(
-        self, kwargs: dict[str, Any], ignored: str
+    @pytest.mark.parametrize('aspect_ratio', ['16:9', '2:1'])
+    def test_image_generation_native_false_with_a_local_of_the_users_own_gives_one_notice(
+        self, aspect_ratio: Literal['16:9', '2:1']
     ):
         """`native=False` builds no native tool, and a local tool the capability didn't build carries no settings.
 
-        The `dimensions` docstring sends users here to guarantee the setting takes effect, so the
-        one arrangement that applies nothing at all cannot be the silent one.
+        Every setting goes unapplied for that one reason, so one notice names them all, whether or not
+        the native tool could have expressed the aspect ratio. The `dimensions` docstring sends users
+        to `native=False` to guarantee the setting takes effect, so the one arrangement that applies
+        nothing at all cannot be the silent one.
+
+        It warns at construction, before any request, so this is not a VCR test.
         """
+        with pytest.warns(UserWarning) as recorded:
+            ImageGeneration(
+                native=False,
+                local=Tool(_custom_local_tool, name='generate_image'),
+                quality='high',
+                dimensions=(1280, 720),
+                aspect_ratio=aspect_ratio,
+            )
 
-        def my_gen(prompt: str) -> str:
-            return 'image_url'  # pragma: no cover
-
-        with pytest.warns(UserWarning, match=f'ignored direct-only setting.*{ignored}'):
-            ImageGeneration(native=False, local=my_gen, **kwargs)
+        assert [str(warning.message) for warning in recorded] == [
+            '`ImageGeneration` ignored setting(s): `quality`, `dimensions`, `aspect_ratio`. With `native=False` '
+            'the `local` tool you supplied is the only implementation, and the capability passes it no settings; '
+            'configure that tool instead.'
+        ]
 
     async def test_image_generation_callable_native_does_not_warn_about_direct_only_geometry(
         self, allow_model_requests: None
@@ -1032,7 +1038,10 @@ class TestImageGenerationCapability:
             capabilities=[ImageGeneration(local=ImageGenerator(image_model), output_format='webp', quality='high')],
         )
 
-        with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): `output_format`, `quality`'):
+        with pytest.warns(
+            UserWarning,
+            match=r"ignored native-tool setting\(s\) on 'function:outer_model_fn:': `output_format`, `quality`",
+        ):
             result = await agent.run('Generate an image')
 
         assert result.output == 'done'
@@ -1053,11 +1062,48 @@ class TestImageGenerationCapability:
         )
         agent = Agent(direct_generation_model, capabilities=[capability])
 
-        with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): `output_format`, `quality`'):
+        with pytest.warns(
+            UserWarning,
+            match=r"ignored native-tool setting\(s\) on 'function:outer_model_fn:': `output_format`, `quality`",
+        ):
             result = await agent.run('Generate an image')
 
         assert result.output == 'done'
         assert image_model.last_settings == snapshot({})
+
+    async def test_image_generation_native_only_notice_keeps_its_shipped_prefix(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """A `warnings.filterwarnings(message=...)` keyed to the notice's shipped text still matches both paths.
+
+        That filter matches from the start of the message, so the per-request notice names its model
+        after `setting(s)` rather than before `ignored`.
+
+        Neither notice depends on a provider response, so this is not a VCR test.
+        """
+        with pytest.warns(UserWarning) as recorded:
+            ImageGeneration(native=False, fallback_image_model=TestImageGenerationModel(), quality='high')
+            agent = Agent(
+                direct_generation_model,
+                capabilities=[ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high')],
+            )
+            await agent.run('Generate an image')
+
+        per_request = (
+            "The direct `ImageGeneration` fallback ignored native-tool setting(s) on 'function:outer_model_fn:': "
+            '`quality`. Configure provider-specific direct settings on the `ImageGenerator` or '
+            '`ImageGenerationModel` instead.'
+        )
+        messages = [str(warning.message) for warning in recorded]
+        # The run makes two model requests, the one that calls `generate_image` and the one that answers.
+        assert messages == [
+            'The direct `ImageGeneration` fallback ignored native-tool setting(s): `quality`. Configure '
+            'provider-specific direct settings on the `ImageGenerator` or `ImageGenerationModel` instead.',
+            per_request,
+            per_request,
+        ]
+        shipped_prefix = re.escape('The direct `ImageGeneration` fallback ignored native-tool setting(s)')
+        assert all(re.match(shipped_prefix, message) for message in messages)
 
     async def test_image_generation_direct_fallback_warns_for_a_native_instances_model(
         self, allow_model_requests: None, direct_generation_model: FunctionModel
@@ -1128,7 +1174,7 @@ class TestImageGenerationCapability:
             pytest.param(
                 agent_model,
                 ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high'),
-                r"""fallback on 'no_native' ignored native-tool setting\(s\): `quality`""",
+                r"""ignored native-tool setting\(s\) on 'no_native': `quality`""",
                 id=f'{agent_model}-native-only',
             )
             for agent_model in ('fallback', 'wrapped-fallback', 'wrapped')

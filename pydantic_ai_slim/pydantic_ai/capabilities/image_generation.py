@@ -57,9 +57,10 @@ _EDIT_ACTION_UNSUPPORTED = (
 
 # Shared by the construction-time notice (`native=False`, where the direct generator is the only
 # implementation) and the per-request one (a model with no native image generation drops the native
-# tool, and `on` names it), so both spellings of the same drop read identically.
+# tool, and `on` names that model), so both spellings of the same drop read identically. `on` follows
+# `setting(s)` so a `filterwarnings(message=...)`, which matches from the start, keeps matching both.
 _NATIVE_ONLY_SETTINGS_DROPPED = (
-    'The direct `ImageGeneration` fallback{on} ignored native-tool setting(s): {settings}. '
+    'The direct `ImageGeneration` fallback ignored native-tool setting(s){on}: {settings}. '
     'Configure provider-specific direct settings on the `ImageGenerator` or '
     '`ImageGenerationModel` instead.'
 )
@@ -491,10 +492,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             _, ignored = self._native_geometry()
         elif not self._has_direct_generator:
             # `native=False` with a local tool of the user's own: no native tool is built and the
-            # tool the capability didn't build carries no settings, so nothing is left to apply the
-            # geometry the native tool could never express, nor any setting it could.
-            ignored = self._direct_only_geometry()
-            native_ratio = self.aspect_ratio if self.aspect_ratio in _NATIVE_IMAGE_ASPECT_RATIOS else None
+            # tool the capability didn't build carries no settings, so every setting goes unapplied
+            # for that one reason, whichever path could otherwise have applied it, and one notice
+            # names them all.
             unapplied = [
                 *self._native_only_settings(),
                 *(
@@ -502,7 +502,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                     for name, value in (
                         ('action', self.action),
                         ('image_model', self.image_model),
-                        ('aspect_ratio', native_ratio),
+                        ('dimensions', self.dimensions),
+                        ('aspect_ratio', self.aspect_ratio),
                     )
                     if value is not None
                 ),

@@ -2303,8 +2303,9 @@ async def test_settings():
 def test_embedder_compares_by_identity():
     """An `Embedder` is a stateful client, so two are equal only when they are the same object.
 
-    Field equality made every `Embedder` equal to every other and left it unhashable. No request is
-    involved, so this is not a VCR test.
+    Field equality compared only `instrument`, so it made two `Embedder`s over different models equal
+    whenever their `instrument` matched, and left the class unhashable. No request is involved, so
+    this is not a VCR test.
     """
     model = TestEmbeddingModel('small')
     embedder = Embedder(model)
