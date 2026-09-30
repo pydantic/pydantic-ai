@@ -86,7 +86,8 @@ The `code-mode` extra is also supported as an alias.
 ## Selective tool sandboxing
 
 By default, `CodeMode(tools='all')` sandboxes every eligible regular tool. Framework control tools,
-undiscovered deferred tools, native fallbacks, and other code-execution tools remain native. Shell
+undiscovered deferred tools, approval-required and external tools, native fallbacks, and other
+code-execution tools remain native. Shell
 surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command` sit beside `run_code` rather than inside it, so the model never has
 to quote a shell command inside a generated Python string. `CapabilityCreation`'s
 `author_capability` stays native for the same reason: its argument is a complete Python module.
@@ -674,7 +675,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - No clock or randomness by default (`datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, unseeded `random`) -- they become available when an `os_access` handler implements them (the built-in `OSAccess` does); `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer
 - No `import *`
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv`/`os.environ` need an `os_access` handler
-- Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
+- Approval-required (`requires_approval=True`) and external (`kind='external'`) tools stay native under `tools='all'`, so their [deferred calls](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) work as usual. Tools an explicit selector sandboxes anyway, and tools that raise `ApprovalRequired` or `CallDeferred` from their body, need resolving inline once sandboxed: without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
 - Tool results reach the sandbox in the JSON shape their generated stub declares, since the stub is derived from the tool's JSON schema: `Decimal`, `UUID` and `datetime` arrive as strings, and mapping keys are stringified, so a `dict[int, str]` of `{1: 'a'}` arrives as `{'1': 'a'}`. `bytes` and `bytearray` are the exception: Monty carries binary natively, so they cross unchanged even though the stub declares `str` for them
 
 ## API

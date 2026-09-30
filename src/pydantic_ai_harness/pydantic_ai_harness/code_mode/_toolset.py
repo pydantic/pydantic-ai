@@ -741,6 +741,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.
 
+    Approval-required and external tools (`ToolDefinition.defer`) stay native under the
+    default `'all'` selector; an explicit selector can sandbox them for agents with a
+    `HandleDeferredToolCalls` handler.
+
     To keep a Tool Search corpus native even after discovery (e.g. for prompt-cache
     stability), pass a `tool_selector` that excludes tools with `with_native` set.
     """
@@ -929,6 +933,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             elif _is_code_execution_tool(tool.tool_def):
                 # A tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
                 # `run_workflow`) is a peer of `run_code`, not something to fold inside it.
+                native_tools[name] = tool
+            elif tool.tool_def.defer and self.tool_selector == 'all':
+                # Approval-required and external tools can't run inside the sandbox without a
+                # `HandleDeferredToolCalls` handler, so only an explicit selector sandboxes them.
                 native_tools[name] = tool
             elif await matches_tool_selector(self.tool_selector, ctx, tool.tool_def):
                 sandboxed_tools[name] = tool
