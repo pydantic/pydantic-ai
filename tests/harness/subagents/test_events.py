@@ -288,16 +288,19 @@ class TestOutcomes:
         assert "Sub-agent 'worker' reached its usage budget" in end.output
         assert isinstance(end.usage, RunUsage)
 
-    async def test_failed_with_on_failure_carries_the_steer(self) -> None:
+    async def test_failed_with_child_failure_return_carries_the_steer(self) -> None:
         def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise UnexpectedModelBehavior('kaboom')
 
         worker = Agent(FunctionModel(boom), name='worker')
-        listener, _ = await _run(_delegate_once(), SubAgents(agents=[SubAgent(worker, on_failure='use what you have')]))
+        listener, _ = await _run(
+            _delegate_once(),
+            SubAgents(agents=[SubAgent(worker, on_failure='use what you have', child_failure='return')]),
+        )
 
         _, end = _pair(listener)
         assert end.outcome == 'failed'
-        assert end.output == 'use what you have'
+        assert end.output == "Sub-agent 'worker' failed: kaboom\nuse what you have"
 
     async def test_failed_without_on_failure_carries_the_retry(self) -> None:
         def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:

@@ -669,32 +669,67 @@ class TestRunControls:
         # wrap_run clears each run's counts, so the store does not accumulate.
         assert capability._call_counts == {}  # pyright: ignore[reportPrivateUsage]
 
-    async def test_on_failure_makes_child_failure_soft(self) -> None:
-        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            raise UnexpectedModelBehavior('kaboom')
-
-        boomer = Agent(FunctionModel(boom), name='boomer')
+    async def test_child_failure_return_is_a_soft_result_naming_the_cause(self) -> None:
+        boomer = Agent(FunctionModel(_kaboom), name='boomer')
         parent: Agent[object, str] = Agent(
             _delegate_then_finish('boomer'),
-            capabilities=[SubAgents(agents=[SubAgent(boomer, on_failure='steer: use existing evidence')])],
+            capabilities=[SubAgents(agents=[SubAgent(boomer, child_failure='return')])],
         )
         result = await parent.run('go')
         assert result.output == 'all done'
-        # on_failure returns a normal tool result, so there is no RetryPrompt.
-        retries = [
-            part
-            for message in result.all_messages()
-            for part in message.parts
-            if isinstance(part, RetryPromptPart) and part.tool_name == 'delegate_task'
+        # A returned failure is a normal tool result, so there is no RetryPrompt.
+        assert _delegate_retries(result) == []
+        assert _delegate_returns(result) == [
+            "Sub-agent 'boomer' failed: kaboom\n"
+            'Treat this as a recoverable observation and decide from existing evidence.'
         ]
-        assert retries == []
-        assert _delegate_returns(result) == ['steer: use existing evidence']
+
+    async def test_child_failure_return_uses_on_failure_as_steering(self) -> None:
+        boomer = Agent(FunctionModel(_kaboom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('boomer'),
+            capabilities=[
+                SubAgents(agents=[SubAgent(boomer, on_failure='use existing evidence', child_failure='return')])
+            ],
+        )
+        result = await parent.run('go')
+        assert _delegate_retries(result) == []
+        assert _delegate_returns(result) == ["Sub-agent 'boomer' failed: kaboom\nuse existing evidence"]
+
+    async def test_child_failure_retry_keeps_on_failure_as_message_only(self) -> None:
+        boomer = Agent(FunctionModel(_kaboom), name='boomer')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('boomer'),
+            capabilities=[
+                SubAgents(agents=[SubAgent(boomer, on_failure='use existing evidence', child_failure='retry')])
+            ],
+        )
+        result = await parent.run('go')
+        # `on_failure` only sets the text: the failure is still a parent retry that names the cause.
+        assert _delegate_retries(result) == ["Sub-agent 'boomer' failed: kaboom\nuse existing evidence"]
+        assert _delegate_returns(result) == []
+
+    async def test_on_failure_without_child_failure_is_deprecated_but_still_soft(self) -> None:
+        boomer = Agent(FunctionModel(_kaboom), name='boomer')
+        with pytest.warns(HarnessDeprecationWarning, match=r"Pass `child_failure='return'` to keep"):
+            sub_agent = SubAgent(boomer, on_failure='use existing evidence')
+        parent: Agent[object, str] = Agent(
+            _delegate_then_finish('boomer'), capabilities=[SubAgents(agents=[sub_agent])]
+        )
+        result = await parent.run('go')
+        # The deprecated coupling keeps the old control flow, but the cause is no longer dropped.
+        assert _delegate_retries(result) == []
+        assert _delegate_returns(result) == ["Sub-agent 'boomer' failed: kaboom\nuse existing evidence"]
 
     async def test_on_failure_overrides_default_steering(self) -> None:
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
         parent: Agent[object, str] = Agent(
             _delegate_n_then_finish('worker', 2),
-            capabilities=[SubAgents(agents=[SubAgent(worker, max_calls=1, on_failure='custom budget note')])],
+            capabilities=[
+                SubAgents(
+                    agents=[SubAgent(worker, max_calls=1, on_failure='custom budget note', child_failure='retry')]
+                )
+            ],
         )
         result = await parent.run('go')
         assert result.output == 'all done'
@@ -747,6 +782,11 @@ class TestRunControls:
         assert len(returns) == 2
         assert 'W' in returns
         assert any("Delegate budget for 'worker' is exhausted" in r for r in returns)
+
+
+def _kaboom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """A sub-agent model function that fails softly with an `UnexpectedModelBehavior`."""
+    raise UnexpectedModelBehavior('kaboom')
 
 
 def _crash(message: str = 'provider down') -> FunctionModel:
@@ -855,11 +895,16 @@ class TestContainErrors:
         parent: Agent[object, str] = Agent(
             _delegate_two_then_finish('boomer', 'worker'),
             capabilities=[
-                SubAgents(agents=[SubAgent(boomer, contain_errors=True, on_failure='soft note'), SubAgent(worker)])
+                SubAgents(
+                    agents=[
+                        SubAgent(boomer, contain_errors=True, on_failure='soft note', child_failure='return'),
+                        SubAgent(worker),
+                    ]
+                )
             ],
         )
         result = await parent.run('go')
-        # A crash stays loud: it is a retry, and on_failure's soft message never becomes a delegate return.
+        # A crash stays loud: it is a retry, and a soft child-failure return never applies to it.
         assert any('crashed' in r for r in _delegate_retries(result))
         assert 'soft note' not in _delegate_returns(result)
 

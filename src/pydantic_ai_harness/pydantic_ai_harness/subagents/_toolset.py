@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import warnings
 from collections.abc import Coroutine, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import Any, Generic
+from typing import Any, Generic, Literal
 
 from typing_extensions import TypeIs
 
@@ -35,6 +36,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 # toolsets apart from the agent's own in `agent.toolsets`.
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.subagents._events import (
     DelegationEndEvent,
     DelegationOutcome,
@@ -87,6 +89,9 @@ def _is_request_response_model(model: object) -> TypeIs[Model]:
 # External cancellation (`asyncio.CancelledError`, a `BaseException`) is out of
 # `except Exception`'s reach already, and a shared `UsageLimitExceeded` has its
 # own clause.
+_RECOVERABLE = 'Treat this as a recoverable observation and decide from existing evidence.'
+"""Default steering text for a soft outcome, after the line saying what happened."""
+
 _ALWAYS_PROPAGATE: tuple[type[Exception], ...] = (
     CallDeferred,
     ApprovalRequired,
@@ -148,11 +153,23 @@ class SubAgent(Generic[AgentDepsT]):
     running the child."""
 
     on_failure: str | None = None
-    """Steering message returned to the parent for any soft degradation of this
-    delegate (timeout, child failure, usage budget reached, call budget
-    exhausted), in place of the built-in default. Setting it also makes child
-    failures soft: a child error returns this message as a normal tool result
-    instead of raising a parent `ModelRetry`."""
+    """Steering text the parent gets when this delegate degrades (timeout, usage
+    budget reached, call budget exhausted, child failure), in place of the
+    built-in default. It only sets the text: for a child failure it follows the
+    `Sub-agent '<name>' failed: ...` line, so the cause stays visible, and
+    `child_failure` decides whether that is raised as a retry or returned."""
+
+    child_failure: Literal['retry', 'return'] | None = None
+    """How a child's soft model error (`ModelRetry`, `UnexpectedModelBehavior`)
+    reaches the parent. `'retry'` raises a parent `ModelRetry`, bounded by
+    `SubAgents.tool_retries`, which invites re-delegating. `'return'` hands the
+    same message back as a normal tool result, so the parent decides from existing
+    evidence. Either way the message names the failure.
+
+    Unset means `'retry'`, except for a delegate with `on_failure` set, which keeps
+    the earlier `'return'` behavior and emits a `HarnessDeprecationWarning`: setting
+    `on_failure` used to make child failures soft as a side effect. Timeouts and
+    budgets are always soft, and crashes follow `contain_errors`."""
 
     contain_errors: bool | None = None
     """Whether an unexpected sub-agent crash is contained instead of aborting the
@@ -164,8 +181,21 @@ class SubAgent(Generic[AgentDepsT]):
     `tool_retries` still bounds consecutive crashes into an abort. Cancellation, a
     shared usage-limit, pydantic-ai control-flow signals, and `UserError` always
     propagate regardless. Unset inherits `SubAgents.contain_errors` (default off).
-    Orthogonal to `on_failure`, which only sets the message for expected soft
+    Orthogonal to `on_failure` and `child_failure`, which only cover expected soft
     degradations; a contained crash always raises the loud `ModelRetry`."""
+
+    def __post_init__(self) -> None:
+        """Warn once, at construction, when `on_failure` still implies `child_failure='return'`."""
+        if self.on_failure is not None and self.child_failure is None:
+            warnings.warn(
+                'Setting `SubAgent.on_failure` without `child_failure` makes child failures return a soft '
+                'result instead of raising a `ModelRetry`. This side effect is deprecated; `child_failure` will '
+                "default to `'retry'` regardless of `on_failure`. Pass `child_failure='return'` to keep the "
+                "current behavior, or `child_failure='retry'` to have the parent retry with `on_failure` as "
+                'its steering text.',
+                category=HarnessDeprecationWarning,
+                stacklevel=3,
+            )
 
     @property
     def resolved_name(self) -> str | None:
@@ -528,8 +558,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 outcome='timeout',
                 output=self._steer(
                     sub_agent.on_failure,
-                    f'Sub-agent {agent_name!r} exceeded its {timeout}s time budget. '
-                    f'Treat this as a recoverable observation and decide from existing evidence.',
+                    f'Sub-agent {agent_name!r} exceeded its {timeout}s time budget. {_RECOVERABLE}',
                 ),
             )
         except UsageLimitExceeded:
@@ -538,22 +567,29 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     outcome='budget',
                     output=self._steer(
                         sub_agent.on_failure,
-                        f'Sub-agent {agent_name!r} reached its usage budget. '
-                        f'Treat this as a recoverable observation and decide from existing evidence.',
+                        f'Sub-agent {agent_name!r} reached its usage budget. {_RECOVERABLE}',
                     ),
                 )
             # A shared/parent usage limit means the whole tree is out of budget.
             raise
         except (ModelRetry, UnexpectedModelBehavior) as exc:
-            if sub_agent.on_failure is not None:
-                return _Ended(outcome='failed', output=sub_agent.on_failure)
-            # Soft sub-agent failures come back to the parent as a retry it can react to.
-            return _Ended(outcome='failed', output=f'Sub-agent {agent_name!r} failed: {exc}', cause=exc)
+            return self._failure_outcome(agent_name, sub_agent, exc)
         except _ALWAYS_PROPAGATE:
             raise
         except Exception as exc:
             return self._crash_outcome(agent_name, sub_agent, exc)
         return _Ended(outcome='ok', output=str(result.output))
+
+    def _failure_outcome(self, agent_name: str, sub_agent: SubAgent[AgentDepsT], exc: Exception) -> _Ended:
+        """Report a child's soft model error as a parent retry or a returned result, naming it either way."""
+        # Unset `child_failure` keeps the deprecated coupling: `on_failure` alone meant 'return'.
+        mode = sub_agent.child_failure or ('return' if sub_agent.on_failure is not None else 'retry')
+        output = f'Sub-agent {agent_name!r} failed: {exc}'
+        if mode == 'retry':
+            if sub_agent.on_failure is not None:
+                output = f'{output}\n{sub_agent.on_failure}'
+            return _Ended(outcome='failed', output=output, cause=exc)
+        return _Ended(outcome='failed', output=f'{output}\n{self._steer(sub_agent.on_failure, _RECOVERABLE)}')
 
     def _crash_outcome(self, agent_name: str, sub_agent: SubAgent[AgentDepsT], exc: Exception) -> _Ended:
         """Contain an unexpected child crash, or let it abort the parent."""
