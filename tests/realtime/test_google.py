@@ -509,18 +509,22 @@ def test_tool_def_accepts_a_recursive_map(kids: dict[str, Any]) -> None:
     )
 
 
-def test_tool_def_keeps_a_recursive_ref_in_an_all_of_member_uninlined() -> None:
-    """A recursive `$ref` under a typeless `allOf` member is left for the declaration to drop, not refused.
+NAMED: dict[str, Any] = {'type': 'object', 'properties': {'name': {'type': 'string'}}}
 
-    The member is flattened into the typed one, so the field arrives unconstrained and the tool still works
-    (live-verified on `gemini-2.5-flash-native-audio-latest`); inlining it would refuse the whole tool, as
-    `test_tool_def_rejects_a_recursive_schema` shows for a typed one. Not a cassette test: the declaration is
-    built before a session opens.
-    """
-    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
-        ToolDefinition(
-            name='save_tree',
-            parameters_json_schema={
+
+@pytest.mark.parametrize(
+    ('parameters_json_schema', 'expected'),
+    [
+        pytest.param(
+            {
+                '$defs': {'Named': NAMED, 'Base': {'type': 'object', 'properties': {'id': {'type': 'string'}}}},
+                'allOf': [{'$ref': '#/$defs/Base'}, {'properties': {'item': {'$ref': '#/$defs/Named'}}}],
+            },
+            {'properties': {'id': {'type': 'STRING'}, 'item': {}}, 'type': 'OBJECT'},
+            id='in-all-of-member',
+        ),
+        pytest.param(
+            {
                 '$defs': {
                     'Node': {
                         'type': 'object',
@@ -530,52 +534,83 @@ def test_tool_def_keeps_a_recursive_ref_in_an_all_of_member_uninlined() -> None:
                 },
                 'allOf': [{'$ref': '#/$defs/Base'}, {'properties': {'tree': {'$ref': '#/$defs/Node'}}}],
             },
-        )
-    )
-    assert tool.parameters == genai_types.Schema(
-        type=genai_types.Type.OBJECT,
-        properties={'id': genai_types.Schema(type=genai_types.Type.STRING), 'tree': genai_types.Schema()},
-    )
-
-
-def test_tool_def_keeps_a_ref_back_to_the_definition_being_walked_uninlined() -> None:
-    """A `$ref` under untyped keywords that leads back to the definition being walked is left to be dropped too.
-
-    `x` walks `E` merged with its sibling `properties`, and from there `q` reaches `A`, which refers back to
-    `E`: recursion that `E` alone doesn't show. The field arrives unconstrained, as it did before `$ref`s under
-    untyped keywords were inlined. Not a cassette test: the declaration is built before a session opens.
-    """
-    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
-        ToolDefinition(
-            name='save_node',
-            parameters_json_schema={
+            {'properties': {'id': {'type': 'STRING'}, 'tree': {}}, 'type': 'OBJECT'},
+            id='recursive-in-all-of-member',
+        ),
+        pytest.param(
+            {
                 '$defs': {
-                    'E': {'type': 'object', 'properties': {'name': {'type': 'string'}}},
-                    'A': {'type': 'object', 'properties': {'e': {'$ref': '#/$defs/E'}}},
+                    'Named': NAMED,
+                    'Holder': {'type': 'object', 'properties': {'named': {'$ref': '#/$defs/Named'}}},
                 },
                 'type': 'object',
                 'properties': {
                     'x': {
-                        '$ref': '#/$defs/E',
+                        '$ref': '#/$defs/Named',
                         'properties': {
-                            'p': {'type': 'object', 'allOf': [{'properties': {'q': {'$ref': '#/$defs/A'}}}]}
+                            'p': {'type': 'object', 'allOf': [{'properties': {'q': {'$ref': '#/$defs/Holder'}}}]}
                         },
                     }
                 },
             },
-        )
-    )
-    assert tool.parameters == genai_types.Schema(
-        type=genai_types.Type.OBJECT,
-        properties={
-            'x': genai_types.Schema(
-                type=genai_types.Type.OBJECT,
-                properties={
-                    'p': genai_types.Schema(type=genai_types.Type.OBJECT, properties={'q': genai_types.Schema()})
+            {
+                'properties': {
+                    'x': {'properties': {'p': {'properties': {'q': {}}, 'type': 'OBJECT'}}, 'type': 'OBJECT'}
                 },
-            )
-        },
+                'type': 'OBJECT',
+            },
+            id='recursive-through-ref-siblings-above',
+        ),
+        pytest.param(
+            {
+                '$defs': {
+                    'Named': NAMED,
+                    'Holder': {'type': 'object', 'properties': {'named': {'$ref': '#/$defs/Named'}}},
+                },
+                'type': 'object',
+                'properties': {
+                    'p': {
+                        'type': 'object',
+                        'allOf': [
+                            {
+                                'properties': {
+                                    'y': {
+                                        '$ref': '#/$defs/Named',
+                                        'type': 'object',
+                                        'properties': {'r': {'$ref': '#/$defs/Holder'}},
+                                    }
+                                }
+                            }
+                        ],
+                    }
+                },
+            },
+            {
+                'properties': {
+                    'p': {'properties': {'y': {'properties': {'r': {}}, 'type': 'OBJECT'}}, 'type': 'OBJECT'}
+                },
+                'type': 'OBJECT',
+            },
+            id='recursive-through-ref-siblings-below',
+        ),
+    ],
+)
+def test_tool_def_leaves_untyped_keywords_uninlined(
+    parameters_json_schema: dict[str, Any], expected: dict[str, Any]
+) -> None:
+    """A `$ref` under keywords a node's `type` doesn't name is left for the declaration to drop, not inlined.
+
+    Gemini never sees it, so nothing dangles, and the field arrives unconstrained. Inlining could reach a
+    recursive definition, which would refuse the whole tool, as `test_tool_def_rejects_a_recursive_schema`
+    shows for a typed one; a typeless `allOf` member, flattened into a typed one, instead works (live-verified
+    on `gemini-2.5-flash-native-audio-latest`). Not a cassette test: the declaration is built before a
+    session opens.
+    """
+    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
+        ToolDefinition(name='save_node', parameters_json_schema=parameters_json_schema)
     )
+    assert tool.parameters is not None
+    assert tool.parameters.model_dump(mode='json', exclude_none=True) == expected
 
 
 @pytest.mark.parametrize('async_tool_calls', [False, True])

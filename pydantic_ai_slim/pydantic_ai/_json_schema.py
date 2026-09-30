@@ -170,10 +170,7 @@ class JsonSchemaTransformer(ABC):
         a `$ref` under them, or in a definition one points at, can't be resolved, since walking raises on it.
         When they are walked, it's all of them, exactly as under a matching `type`.
         """
-        return bool(self._reachable_defs([schema[keyword] for keyword in keywords if keyword in schema]))
-
-    def _reachable_defs(self, pending: list[JsonValue]) -> set[str] | None:
-        """The definitions the `$ref`s in `pending` reach, also through each other, or `None` if one can't be resolved."""
+        pending: list[JsonValue] = [schema[keyword] for keyword in keywords if keyword in schema]
         seen: set[str] = set()
         while pending:
             node = pending.pop()
@@ -184,12 +181,12 @@ class JsonSchemaTransformer(ABC):
                     key = _DEFS_REF_PREFIX.sub('', ref)
                     # A boolean definition is valid JSON Schema, but `_walk_def` can only merge a dict.
                     if not isinstance(definition := self.defs.get(key), dict):
-                        return None
+                        return False
                     if key not in seen:
                         seen.add(key)
                         pending.append(definition)
                 pending.extend(node.values())
-        return seen
+        return bool(seen)
 
     def _walked_def(self, key: str) -> JsonSchema:
         """The definition `key` refers to, walked once per transformer and cached.
