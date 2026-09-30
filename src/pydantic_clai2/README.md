@@ -891,8 +891,8 @@ clai2 --resume SESSION-ID      # restore one session
 
 Inside CLAI, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
-or execute pending tools. Background naming may make a separate, tool-free model
-request. Your current model, working directory, credentials, and approved plugins
+or execute pending tools. Opt-in background naming may make a separate, tool-free
+model request. Your current model, working directory, credentials, and approved plugins
 remain in effect. The saved model name is shown for reference.
 
 The browser follows Code Puppy's project/session design:
@@ -923,8 +923,8 @@ case-insensitive and includes text instructions in multimodal prompts.
 
 ### Background names
 
-A saved session immediately gets a fallback title from its first prompt. A
-single background worker can replace it with a short title, subtitle, and up to
+A saved session immediately gets a fallback title from its first prompt. When
+you opt in, a single background worker can replace it with a short title, subtitle, and up to
 four topic tags. The browser refreshes names while idle without moving selection.
 
 The worker uses the previous summary plus up to 2,400 characters of recent
@@ -935,13 +935,14 @@ backfills up to ten eligible sessions. Queue length, request count, output size,
 and a 60-second deadline bound the work. Exiting cancels and joins the worker.
 
 ```text
-/set sessions.naming false
+/set sessions.naming true
 /set sessions.naming_model openai:gpt-5-mini
 /set sessions.naming_model null
 ```
 
-Naming is enabled by default and uses the current model unless overridden.
-It sends conversation excerpts to that model's provider and incurs additional
+Naming is off by default, so saved sessions cost nothing beyond your own turns.
+When enabled, it uses the current model unless `sessions.naming_model` names
+another one, which must have its own credentials. It sends conversation excerpts to that model's provider and incurs additional
 usage. It has no tools and does not inherit coding plugins. Missing credentials,
 timeouts, invalid output, or stale results leave the existing name usable and do
 not interrupt foreground work. `/usage` and the browser preview show persisted
