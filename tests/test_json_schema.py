@@ -24,6 +24,19 @@ class _PassthroughTransformer(JsonSchemaTransformer):
         return schema
 
 
+class _TitleRecordingTransformer(JsonSchemaTransformer):
+    """Records the `title` of each schema it transforms, in order."""
+
+    def __init__(self, schema: dict[str, Any], *, prefer_inlined_defs: bool = True):
+        super().__init__(schema, prefer_inlined_defs=prefer_inlined_defs)
+        self.titles: list[str] = []
+
+    def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+        if title := schema.get('title'):
+            self.titles.append(title)
+        return schema
+
+
 def test_simplify_nullable_unions():
     """Test the simplify_nullable_unions feature (deprecated, to be removed in v2)."""
 
@@ -434,19 +447,12 @@ def test_inline_defs_walks_each_def_once():
     Inlining correctly means expanding the definition's whole subtree at every reference site, which
     without this would repeat the walk once per site (and, transitively, once per nested `$ref`).
     """
-    transformed: list[str] = []
-
-    class _TitleRecordingTransformer(InlineDefsJsonSchemaTransformer):
-        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
-            if title := schema.get('title'):
-                transformed.append(title)
-            return schema
-
-    _TitleRecordingTransformer(deepcopy(SHARED_UNION_DEF_SCHEMA)).walk()
+    transformer = _TitleRecordingTransformer(deepcopy(SHARED_UNION_DEF_SCHEMA))
+    transformer.walk()
 
     # `Cat` and `Dog` are each walked once even though `Pet` — itself walked once for both fields —
     # references them, and each field inlines a copy of the result.
-    assert transformed == ['Meow', 'Cat', 'Woof', 'Dog', 'Args']
+    assert transformer.titles == ['Meow', 'Cat', 'Woof', 'Dog', 'Args']
 
 
 def test_inline_defs_rewalks_defs_on_each_walk():
@@ -593,28 +599,46 @@ PAYLOAD: dict[str, Any] = {'type': 'object', 'properties': {'value': {'type': 's
             {'patternProperties': {'^p': PAYLOAD}},
             id='patternProperties',
         ),
+        pytest.param(
+            {'type': ['object', 'null'], 'properties': {'payload': PAYLOAD_REF}},
+            {'type': ['object', 'null'], 'properties': {'payload': PAYLOAD}},
+            id='object-in-type-list',
+        ),
     ],
 )
-def test_inline_defs_typeless_object_keywords_are_inlined(object_keywords: dict[str, Any], expected: dict[str, Any]):
-    """A typeless node carrying object keywords must not strand `$ref`s when `$defs` is dropped.
+def test_inline_defs_untyped_object_keywords_are_inlined(object_keywords: dict[str, Any], expected: dict[str, Any]):
+    """A node not typed `'object'` that carries object keywords must not strand `$ref`s when `$defs` is dropped.
 
-    Object keywords apply without an explicit `type`, so the node is walked as an object, and no
-    `type` is added: that would narrow the instances the schema accepts. Not a VCR test: cassettes
-    match on method and URI, so a stranded `$ref` in the request body would still replay.
+    Object keywords apply whenever the node's `type` is absent or admits objects, so the node is walked
+    as an object, and its `type` is left as is: adding `'object'` would narrow the instances the schema
+    accepts. Not a VCR test: cassettes match on method and URI, so a stranded `$ref` in the request
+    body would still replay.
     """
     schema = {'$defs': {'Payload': PAYLOAD}, **object_keywords}
 
     assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == expected
 
 
-def test_inline_defs_object_in_type_list_properties_are_inlined():
-    """A `type` list that includes `object` walks the node's object keywords like `type: 'object'` does."""
-    schema = {'$defs': {'Payload': PAYLOAD}, 'type': ['object', 'null'], 'properties': {'payload': PAYLOAD_REF}}
+@pytest.mark.parametrize(
+    'object_type',
+    [pytest.param({}, id='typeless'), pytest.param({'type': ['object', 'null']}, id='object-in-type-list')],
+)
+def test_only_inlining_transformers_walk_untyped_object_keywords(object_type: dict[str, Any]):
+    """Only a transformer that drops `$defs` walks the object keywords of a node not typed `'object'`.
 
-    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == {
-        'type': ['object', 'null'],
-        'properties': {'payload': PAYLOAD},
-    }
+    A transformer that keeps `$defs` has no dangling `$ref` to fix there, and walking would change what
+    its `transform()` produces. Which subschemas get transformed is only observable through a
+    transformer subclass, not a provider request.
+    """
+    schema = {**object_type, 'properties': {'a': {'type': 'string', 'title': 'A'}}}
+    inlining = _TitleRecordingTransformer(deepcopy(schema))
+    keeping = _TitleRecordingTransformer(deepcopy(schema), prefer_inlined_defs=False)
+
+    inlining.walk()
+    keeping.walk()
+
+    assert inlining.titles == ['A']
+    assert keeping.titles == []
 
 
 def test_inline_defs_typeless_object_with_union_is_walked_once():
@@ -624,14 +648,6 @@ def test_inline_defs_typeless_object_with_union_is_walked_once():
     once, and a definition referenced from both sides is walked once. Counting `transform()` calls
     needs a transformer subclass, which no provider request can observe.
     """
-    transformed: list[str] = []
-
-    class _TitleRecordingTransformer(InlineDefsJsonSchemaTransformer):
-        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
-            if title := schema.get('title'):
-                transformed.append(title)
-            return schema
-
     schema = {
         '$defs': {
             'Extra': {
@@ -644,9 +660,10 @@ def test_inline_defs_typeless_object_with_union_is_walked_once():
         'anyOf': [{'$ref': '#/$defs/Extra'}, {'type': 'string'}],
     }
 
-    result = _TitleRecordingTransformer(deepcopy(schema)).walk()
+    transformer = _TitleRecordingTransformer(deepcopy(schema))
+    result = transformer.walk()
 
-    assert transformed == ['B', 'Extra', 'C']  # children first, each exactly once
+    assert transformer.titles == ['B', 'Extra', 'C']  # children first, each exactly once
     assert result == snapshot(
         {
             'properties': {
