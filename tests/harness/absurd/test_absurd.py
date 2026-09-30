@@ -657,7 +657,7 @@ class TestStepNames:
 class TestParallelExecutionMode:
     async def test_step_slots_follow_scheduling_order_not_completion(self, absurd: AsyncAbsurd) -> None:
         # Two concurrent calls of the same tool, where the first-scheduled call completes last.
-        # Absurd assigns the `#1`/`#2` slot when `ctx.step(...)` is entered, before the tool body
+        # Absurd assigns the `#1`/`#2` slot when the step begins (`begin_step`), before the tool body
         # runs, so slots follow the model's tool-call order and a replay serves each call its own
         # result.
         toolset = FunctionToolset(id='tools')
