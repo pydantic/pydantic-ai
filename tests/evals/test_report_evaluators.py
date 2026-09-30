@@ -39,7 +39,6 @@ with try_import() as logfire_import_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'),
-    pytest.mark.anyio,
 ]
 
 needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')

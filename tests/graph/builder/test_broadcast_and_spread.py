@@ -5,12 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import anyio
-import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import reduce_list_append
-
-pytestmark = pytest.mark.anyio
 
 
 @dataclass

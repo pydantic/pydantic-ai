@@ -11,9 +11,11 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import date, timezone
 from decimal import Decimal
+from enum import Enum
 from typing import Any, cast
 
 import pytest
+from cassetter import Cassette
 from httpx import Timeout
 from httpx2 import (
     AsyncClient as HTTPX2AsyncClient,
@@ -24,7 +26,6 @@ from httpx2 import (
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -59,6 +60,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UsageLimitExceeded,
+    UseEnumMemberDocstrings,
     UserPromptPart,
     VideoUrl,
     WebCitationSource,
@@ -91,8 +93,8 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
-from ..cassette_utils import single_request_body
-from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, try_import
+from ..cassette_utils import request_json, single_request_body
+from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 from ..parts_from_messages import part_types_from_messages
 from .citation_utils import IsCitationList, citations_from_messages
 
@@ -102,11 +104,8 @@ with try_import() as imports_successful:
         Blob,
         BlockedReason,
         Candidate,
-        Citation as GoogleCitation,
-        CitationMetadata,
         Content,
         FinishReason as GoogleFinishReason,
-        FunctionCall,
         GenerateContentResponse,
         GenerateContentResponsePromptFeedback,
         GenerateContentResponseUsageMetadata,
@@ -157,7 +156,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -835,7 +833,12 @@ async def test_google_model_mobile_youtube_video_url_input(
                 {
                     'parts': [
                         {'text': 'Explain me this video in a few sentences'},
-                        {'fileData': {'fileUri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU', 'mimeType': 'video/mp4'}},
+                        {
+                            'fileData': {
+                                'file_uri': 'https://m.youtube.com/watch?v=lCdaVNyHtjU',
+                                'mime_type': 'video/mp4',
+                            }
+                        },
                     ],
                     'role': 'user',
                 }
@@ -845,19 +848,10 @@ async def test_google_model_mobile_youtube_video_url_input(
         }
     )
     assert result.output == snapshot(
-        'This video demonstrates an AI assistant within a code editor analyzing recent 404 HTTP responses from a logfile database. The AI queries the database, identifies common patterns related to specific endpoints, request types, timeline issues, and authentication problems. Finally, it provides a detailed analysis of these patterns along with actionable recommendations to resolve the identified issues.'
+        'This video showcases an AI assistant diagnosing recent HTTP 404 errors. The assistant queries a logging database (LogLine) to identify patterns in the error responses, such as common problematic endpoints, request patterns, and issues related to timeline queries or authentication. Finally, the AI provides a detailed analysis of the identified problems and offers specific recommendations for resolution, interactively highlighting relevant sections in the code editor.'
     )
     assert result.usage.details == snapshot(
-        {
-            'cached_content_tokens': 17379,
-            'thoughts_tokens': 821,
-            'text_prompt_tokens': 16,
-            'video_prompt_tokens': 15780,
-            'audio_prompt_tokens': 1917,
-            'audio_cache_tokens': 1881,
-            'text_cache_tokens': 15,
-            'video_cache_tokens': 15483,
-        }
+        {'thoughts_tokens': 1091, 'text_prompt_tokens': 16, 'video_prompt_tokens': 15780, 'audio_prompt_tokens': 1917}
     )
 
 
@@ -1018,6 +1012,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {'text_prompt_tokens': 14},
                     'cost': '0.00000105',
                     'input_text_tokens': 14,
@@ -1074,6 +1069,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -1092,6 +1088,29 @@ async def test_google_model_web_search_tool(allow_model_requests: None, google_p
     assert first_source == WebCitationSource(
         url='https://www.google.com/search?q=weather+in+San Francisco, CA,+US',
         title='Weather information for San Francisco, CA, US',
+    )
+    # Gemini's segment offsets count UTF-8 bytes, and the first segment ends in "69°F", so later anchors only select
+    # their recorded segment text if the multi-byte "°" is accounted for.
+    [cited_part] = [
+        part
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, TextPart) and part.citations
+    ]
+    assert [
+        cited_part.content[citation.anchor.start : citation.anchor.end]
+        for citation in cited_part.citations or []
+        if citation.anchor
+    ] == snapshot(
+        [
+            '**San Francisco, CA** - Residents and visitors in San Francisco are experiencing a mild Tuesday, with partly cloudy skies and temperatures hovering around 69°F.',
+            'There is a very low chance of rain throughout the day.',
+            'According to the latest weather reports, the forecast for the remainder of the day is expected to be sunny, with highs ranging from the mid-60s to the lower 80s.',
+            'Winds are predicted to come from the west at 10 to 15 mph.',
+            'As the evening approaches, the skies are expected to remain partly cloudy, with temperatures dropping to the upper 50s.',
+            'There is a slight increase in the chance of rain overnight, but it remains low at 20%.',
+        ]
     )
     assert messages == snapshot(
         [
@@ -1162,10 +1181,12 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                         'tool_use_prompt_tokens': 119,
                         'text_prompt_tokens': 17,
                         'text_tool_use_prompt_tokens': 119,
+                        'web_search_requests': 1,
                     },
                     output_reasoning_tokens=213,
                     input_tool_tokens=119,
                     input_text_tool_tokens=119,
+                    web_searches=1,
                     cost=Decimal('0.00431'),
                 ),
                 model_name='gemini-2.5-pro',
@@ -1249,10 +1270,12 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                         'tool_use_prompt_tokens': 286,
                         'text_prompt_tokens': 209,
                         'text_tool_use_prompt_tokens': 286,
+                        'web_search_requests': 1,
                     },
                     output_reasoning_tokens=131,
                     input_tool_tokens=286,
                     input_text_tool_tokens=286,
+                    web_searches=1,
                     cost=Decimal('0.00398875'),
                 ),
                 model_name='gemini-2.5-pro',
@@ -1323,10 +1346,12 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                         'tool_use_prompt_tokens': 102,
                         'text_prompt_tokens': 17,
                         'text_tool_use_prompt_tokens': 102,
+                        'web_search_requests': 1,
                     },
                     output_reasoning_tokens=412,
                     input_tool_tokens=102,
                     input_text_tool_tokens=102,
+                    web_searches=1,
                     cost=Decimal('0.00667875'),
                 ),
                 model_name='gemini-2.5-pro',
@@ -1519,10 +1544,12 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                         'tool_use_prompt_tokens': 319,
                         'text_prompt_tokens': 249,
                         'text_tool_use_prompt_tokens': 319,
+                        'web_search_requests': 1,
                     },
                     output_reasoning_tokens=301,
                     input_tool_tokens=319,
                     input_text_tool_tokens=319,
+                    web_searches=1,
                     cost=Decimal('0.00612'),
                 ),
                 model_name='gemini-2.5-pro',
@@ -1786,9 +1813,15 @@ async def test_google_model_receive_web_search_history_from_another_provider(
             [UserPromptPart],
             [
                 NativeToolCallPart,
+                NativeToolCallPart,
                 NativeToolReturnPart,
-                TextPart,
-                TextPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -1818,7 +1851,7 @@ async def test_google_model_receive_web_search_history_from_another_provider(
         ]
     )
 
-    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    google_model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     google_agent = Agent(model=google_model)
     result = await google_agent.run('What day is tomorrow?', message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
@@ -1826,9 +1859,15 @@ async def test_google_model_receive_web_search_history_from_another_provider(
             [UserPromptPart],
             [
                 NativeToolCallPart,
+                NativeToolCallPart,
                 NativeToolReturnPart,
-                TextPart,
-                TextPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -2104,6 +2143,7 @@ async def test_google_model_thinking_part_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 9, 10, 22, 27, 55, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -3361,9 +3401,9 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
         usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
     )
 
-    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]
+    assert len(count_requests) == 1
+    assert request_json(count_requests[0])['tools'] == snapshot([{'googleSearch': {}}])
     assert result.output == snapshot('The capital of France is Paris.')
 
 
@@ -3877,8 +3917,14 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                     output_tokens=2309,
                     input_text_tokens=33,
                     output_image_tokens=1120,
-                    details={'thoughts_tokens': 529, 'text_prompt_tokens': 33, 'image_candidates_tokens': 1120},
+                    details={
+                        'thoughts_tokens': 529,
+                        'text_prompt_tokens': 33,
+                        'image_candidates_tokens': 1120,
+                        'web_search_requests': 1,
+                    },
                     output_reasoning_tokens=529,
+                    web_searches=1,
                     cost=Decimal('0.148734'),
                 ),
                 model_name='gemini-3-pro-image-preview',
@@ -3955,12 +4001,9 @@ async def test_google_image_generation_auto_size_raises_error(google_provider: G
         model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
 
 
-async def test_google_image_generation_tool_output_format(
-    mocker: MockerFixture, google_provider: GoogleProvider
-) -> None:
+async def test_google_image_generation_tool_output_format(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that ImageGenerationTool.output_format is mapped to ImageConfigDict.output_mime_type on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='png')])
 
     tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
@@ -3969,11 +4012,10 @@ async def test_google_image_generation_tool_output_format(
 
 
 async def test_google_image_generation_tool_unsupported_format_raises_error(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that unsupported output_format values raise an error on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     # 'gif' is not supported by Google
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_format='gif')])  # pyright: ignore[reportArgumentType]
 
@@ -3982,11 +4024,10 @@ async def test_google_image_generation_tool_unsupported_format_raises_error(
 
 
 async def test_google_image_generation_tool_output_compression(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test that ImageGenerationTool.output_compression is mapped to ImageConfigDict.output_compression_quality on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
 
     # Test explicit value
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(output_compression=85)])
@@ -4001,11 +4042,10 @@ async def test_google_image_generation_tool_output_compression(
 
 
 async def test_google_image_generation_tool_compression_validation(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Test compression validation on Vertex AI: range and JPEG-only."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
 
     # Invalid range: > 100
     with pytest.raises(UserError, match='`output_compression` must be between 0 and 100'):
@@ -4067,10 +4107,9 @@ async def test_google_vertexai_image_generation_with_output_format(
     assert result.output.media_type == 'image/jpeg'
 
 
-async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, google_provider: GoogleProvider) -> None:
+async def test_google_image_generation_tool_all_fields(vertex_client_google_provider: GoogleProvider) -> None:
     """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
     params = ModelRequestParameters(
         native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
     )
@@ -4086,15 +4125,19 @@ async def test_google_image_generation_tool_all_fields(mocker: MockerFixture, go
 
 
 def test_google_vertex_skips_include_server_side_tool_invocations(
-    mocker: MockerFixture, google_provider: GoogleProvider
+    vertex_client_google_provider: GoogleProvider,
 ) -> None:
     """Vertex rejects `include_server_side_tool_invocations`, so it must not be set on Gemini 3+ via Vertex.
+
+    The model is built the way #6792 reports: a
+    Vertex-backed `genai.Client` wrapped in `GoogleProvider`, whose `system` stays `'google'` —
+    the transport, not the provider name, must drive the skip.
 
     Not a VCR test: the field is dropped before the request is sent, and our cassette matchers don't
     inspect the request body, so a recording would stay green if it were reintroduced.
     """
-    model = GoogleModel('gemini-3-pro-preview', provider=google_provider)
-    mocker.patch.object(GoogleModel, 'system', new_callable=mocker.PropertyMock, return_value='google-cloud')
+    model = GoogleModel('gemini-3-pro-preview', provider=vertex_client_google_provider)
+    assert model.system == 'google'
     # A function tool is included so `tool_config` is non-empty on both paths; the only field that
     # should differ is `include_server_side_tool_invocations`.
     params = ModelRequestParameters(function_tools=[ToolDefinition(name='search')], native_tools=[WebSearchTool()])
@@ -4142,8 +4185,8 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
 
     result = await agent.run('Look up the city I live in, then search the web for its weather today.')
 
-    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    request_bodies = [json.loads(request.body) for request in generate_requests]  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]
+    request_bodies = [request_json(request) for request in generate_requests]
     # On the Gemini Developer API these requests carry `toolConfig.includeServerSideToolInvocations`;
     # on Vertex the field is skipped, so it is absent from every request Vertex actually accepted.
     assert [body.get('toolConfig', {}) for body in request_bodies] == snapshot(
@@ -4278,12 +4321,18 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                     ),
                 ],
                 usage=RequestUsage(
-                    details={'thoughts_tokens': 456, 'text_prompt_tokens': 125, 'text_candidates_tokens': 250},
+                    details={
+                        'thoughts_tokens': 456,
+                        'text_prompt_tokens': 125,
+                        'text_candidates_tokens': 250,
+                        'web_search_requests': 1,
+                    },
                     input_tokens=125,
                     input_text_tokens=125,
                     output_text_tokens=250,
                     output_tokens=706,
                     output_reasoning_tokens=456,
+                    web_searches=1,
                     cost=Decimal('0.0021805'),
                 ),
                 model_name='gemini-3-flash-preview',
@@ -4855,6 +4904,41 @@ _USAGE_RETENTION_CASES = [
         ),
     ),
     _UsageRetentionCase(
+        id='empty_metadata_on_later_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo').model_copy(
+                update={'usage_metadata': GenerateContentResponseUsageMetadata()}
+            ),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=5,
+                details={'cached_content_tokens': 16365},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
+        id='single_field_chunk_extracts_through_guard',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo').model_copy(
+                update={'usage_metadata': GenerateContentResponseUsageMetadata(thoughts_token_count=70)}
+            ),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_reasoning_tokens=70,
+                output_tokens=70,
+                details={'cached_content_tokens': 16365, 'thoughts_tokens': 70},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
         id='details_only_fields_dropped_by_later_chunk',
         make_chunks=lambda: [
             _usage_chunk(cached=16365, thoughts=100, candidates=5, text='hel'),
@@ -4876,7 +4960,7 @@ _USAGE_RETENTION_CASES = [
 async def test_gemini_streamed_response_usage_retained_across_chunks(case: _UsageRetentionCase):
     """Gemini streams usage as cumulative snapshots, but a later chunk can drop a field an earlier one
     carried (#5205): a gateway/proxy omits `cached_content_token_count`, a Vertex-direct stream omits
-    `usage_metadata` entirely, or a `details`-only field like `thoughts_tokens` disappears. The
+    `usage_metadata` or sends it empty, or a `details`-only field like `thoughts_tokens` disappears. The
     accumulated usage must survive instead of resetting to zero.
 
     These are deterministic unit tests rather than VCR tests because the direct Gemini APIs (GLA and
@@ -4941,6 +5025,60 @@ async def test_google_stream_usage_retains_dropped_field_mid_stream(
             usage_seen.append((result.usage.output_tokens, result.usage.cache_read_tokens))
 
     assert usage_seen == snapshot([(5, 16365), (10, 16365), (15, 16365)])
+
+
+@pytest.mark.parametrize(
+    'model_name,grounding_chunks,expected_web_searches',
+    [
+        pytest.param('gemini-3-flash-preview', [], 2, id='gemini-3-per-unique-query'),
+        pytest.param(
+            'gemini-2.5-flash', [{'web': {'uri': 'https://ai.pydantic.dev'}}], 1, id='gemini-2.5-per-sourced-prompt'
+        ),
+        pytest.param('gemini-2.5-flash', [], 0, id='gemini-2.5-no-sources-free'),
+    ],
+)
+async def test_google_web_search_grounding_usage(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+    model_name: str,
+    grounding_chunks: list[dict[str, Any]],
+    expected_web_searches: int,
+):
+    """Grounding surfaces as billed `web_searches` and a `web_search_requests` detail of unique non-empty queries."""
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-grounding-1',
+            'model_version': model_name,
+            'candidates': [
+                {
+                    'content': {'role': 'model', 'parts': [{'text': 'Grounded answer.'}]},
+                    'grounding_metadata': {
+                        'web_search_queries': ['pydantic ai', '', 'web search', 'pydantic ai'],
+                        'grounding_chunks': grounding_chunks,
+                    },
+                }
+            ],
+            'usage_metadata': {
+                'prompt_token_count': 100,
+                'candidates_token_count': 50,
+                'total_token_count': 150,
+            },
+        }
+    )
+    model = GoogleModel(model_name, provider=google_provider)
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+    result = await agent.run('What is Pydantic AI?')
+
+    response_message = result.new_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    usage = response_message.usage
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 50
+    assert getattr(usage, 'web_searches', 0) == expected_web_searches
+    assert usage.details['web_search_requests'] == 2
 
 
 async def test_google_stream_usage_limit_stops_stream_early(
@@ -5445,46 +5583,24 @@ def _assert_file_search_contexts(messages: list[ModelMessage], source_url: str) 
     assert not calls[0].tool_call_id.startswith('pyd_ai_')
 
 
-def test_google_grounding_offsets_are_python_character_indices():
-    text = '🙂 café'
+@pytest.mark.parametrize(
+    ('text', 'start', 'end'),
+    [
+        pytest.param('🙂', 0, 1, id='offset-inside-character'),
+        pytest.param('answer', 0, 0, id='zero-width'),
+        pytest.param('answer', 0, 99, id='past-end-of-text'),
+    ],
+)
+def test_google_unusable_grounding_offsets_are_unanchored(text: str, start: int, end: int):
+    source = WebCitationSource(url='https://example.com')
     metadata = GroundingMetadata(
-        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri='https://example.com', title='Example'))],
+        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
         grounding_supports=[
-            GroundingSupport(
-                grounding_chunk_indices=[0],
-                segment=Segment(start_index=5, end_index=10, text='café'),
-            )
+            GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=start, end_index=end))
         ],
     )
 
-    [citation] = _map_grounding_citations([Part(text=text)], metadata)[0]
-
-    anchor = citation.anchor
-    assert anchor is not None
-    assert anchor == ContentCitationAnchor(start=2, end=6)
-    assert text[anchor.start : anchor.end] == 'café'
-
-
-def test_google_grounding_with_offset_inside_character_is_unanchored():
-    source = WebCitationSource(url='https://example.com')
-    metadata = GroundingMetadata(
-        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
-        grounding_supports=[GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=0, end_index=1))],
-    )
-
-    assert _map_grounding_citations([Part(text='🙂')], metadata) == {0: [Citation(sources=[source])]}
-
-
-def test_google_zero_width_grounding_is_unanchored():
-    source = WebCitationSource(url='https://example.com')
-    metadata = GroundingMetadata(
-        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri=source.url))],
-        grounding_supports=[GroundingSupport(grounding_chunk_indices=[0], segment=Segment(start_index=0, end_index=0))],
-    )
-
-    assert _map_grounding_citations([Part(text='answer')], metadata) == {
-        0: [Citation(sources=[source])],
-    }
+    assert _map_grounding_citations([Part(text=text)], metadata) == {0: [Citation(sources=[source])]}
 
 
 @pytest.mark.parametrize(
@@ -5588,7 +5704,7 @@ def test_google_grounding_filters_sources_and_corresponding_confidence_scores():
             GroundingSupport(
                 grounding_chunk_indices=[0, 1, 99, 2],
                 confidence_scores=[0.9, 0.1, 0.2, 0.0],
-                segment=Segment(start_index=0, end_index=6),
+                segment=Segment(start_index=0, end_index=6, text='answer'),
             )
         ],
     )
@@ -5653,193 +5769,6 @@ def test_google_grounding_skips_unrenderable_source(case: str) -> None:
     assert _map_grounding_citations([Part(text='answer')], metadata) == {}
 
 
-async def test_google_unsupported_citation_metadata_is_not_exposed(
-    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
-):
-    """Gemini does not reliably emit direct citation metadata, so use a constructed provider response."""
-    response = GenerateContentResponse(
-        candidates=[
-            Candidate(
-                content=Content(parts=[Part(text='🙂 café')], role='model'),
-                citation_metadata=CitationMetadata(
-                    citations=[
-                        GoogleCitation(
-                            start_index=5,
-                            end_index=10,
-                            uri='https://example.com/cafe',
-                            title='Café',
-                            license='CC-BY',
-                        ),
-                        GoogleCitation(
-                            start_index=20,
-                            end_index=30,
-                            uri='https://example.com/unmatched',
-                            title='Unmatched',
-                        ),
-                    ]
-                ),
-            )
-        ],
-        response_id='response-1',
-        model_version='gemini-2.5-pro',
-    )
-    model = GoogleModel('gemini-2.5-pro', provider=google_provider)
-    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
-
-    result = await Agent(model).run('Cite this')
-
-    assert result.all_messages()[1].parts == [TextPart('🙂 café')]
-
-
-async def test_google_stream_citations_follow_provider_part_index_on_metadata_only_chunk():
-    grounding_metadata = GroundingMetadata(
-        grounding_chunks=[
-            GroundingChunk(web=GroundingChunkWeb(uri='https://example.com', title='Example')),
-            GroundingChunk(web=GroundingChunkWeb(title='Missing URL')),
-        ],
-        grounding_supports=[
-            GroundingSupport(grounding_chunk_indices=[0, 1], segment=Segment(part_index=1, start_index=0, end_index=6))
-        ],
-    )
-    chunks = [
-        GenerateContentResponse(
-            candidates=[Candidate(content=Content(parts=[Part(text='first'), Part(text='second')], role='model'))],
-            response_id='response-1',
-            model_version='gemini-test',
-        ),
-        GenerateContentResponse(
-            candidates=[Candidate(grounding_metadata=grounding_metadata)],
-            response_id='response-1',
-            model_version='gemini-test',
-        ),
-    ]
-    streamed_response = GeminiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='gemini-test',
-        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
-        _provider_name='google',
-        _model_id_namespace='google',
-        _provider_url='',
-    )
-
-    events = [event async for event in streamed_response]
-
-    assert streamed_response.get().parts == [
-        TextPart(
-            'firstsecond',
-            citations=[
-                Citation(
-                    sources=[WebCitationSource(url='https://example.com', title='Example')],
-                    anchor=ContentCitationAnchor(start=5, end=11),
-                )
-            ],
-        )
-    ]
-    assert [
-        event
-        for event in events
-        if isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta) and event.delta.citations_delta
-    ] == [
-        PartDeltaEvent(
-            index=0,
-            delta=TextPartDelta(
-                content_delta='',
-                citations_delta=[
-                    Citation(
-                        sources=[WebCitationSource(url='https://example.com', title='Example')],
-                        anchor=ContentCitationAnchor(start=5, end=11),
-                    )
-                ],
-            ),
-        )
-    ]
-
-
-async def test_google_stream_merges_adjacent_text_without_citations():
-    chunks = [
-        GenerateContentResponse(
-            candidates=[Candidate(content=Content(parts=[Part(text='first'), Part(text='second')], role='model'))],
-            model_version='gemini-test',
-        )
-    ]
-    streamed_response = GeminiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='gemini-test',
-        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
-        _provider_name='google',
-        _model_id_namespace='google',
-        _provider_url='',
-    )
-
-    events = [event async for event in streamed_response]
-
-    assert streamed_response.get().parts == [TextPart('firstsecond')]
-    assert sum(isinstance(event, PartStartEvent) for event in events) == 1
-
-
-async def test_google_stream_text_text_then_text_continues_trailing_text():
-    """A `[text, text]` chunk followed by `[text]` continues the existing text part."""
-    chunks = [
-        GenerateContentResponse(
-            candidates=[Candidate(content=Content(parts=[Part(text='first'), Part(text='second')], role='model'))],
-            model_version='gemini-test',
-        ),
-        GenerateContentResponse(
-            candidates=[Candidate(content=Content(parts=[Part(text=' third')], role='model'))],
-            model_version='gemini-test',
-        ),
-    ]
-    streamed_response = GeminiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='gemini-test',
-        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
-        _provider_name='google',
-        _model_id_namespace='google',
-        _provider_url='',
-    )
-
-    events = [event async for event in streamed_response]
-
-    assert streamed_response.get().parts == [TextPart('firstsecond third')]
-    assert sum(isinstance(event, PartStartEvent) for event in events) == 1
-
-
-async def test_google_stream_shorter_chunk_after_tool_starts_new_text():
-    """A shorter chunk after a tool part must not merge text across that tool call."""
-    chunks = [
-        GenerateContentResponse(
-            candidates=[
-                Candidate(
-                    content=Content(
-                        parts=[Part(text='before'), Part(function_call=FunctionCall(name='tool', args={}))],
-                        role='model',
-                    )
-                )
-            ],
-            model_version='gemini-test',
-        ),
-        GenerateContentResponse(
-            candidates=[Candidate(content=Content(parts=[Part(text='after')], role='model'))],
-            model_version='gemini-test',
-        ),
-    ]
-    streamed_response = GeminiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='gemini-test',
-        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
-        _provider_name='google',
-        _model_id_namespace='google',
-        _provider_url='',
-    )
-
-    _ = [event async for event in streamed_response]
-
-    parts = streamed_response.get().parts
-    assert parts[0] == TextPart('before')
-    assert isinstance(parts[1], ToolCallPart)
-    assert parts[2] == TextPart('after')
-
-
 async def test_google_stream_citations_can_reference_earlier_grounding_chunks():
     chunks = [
         GenerateContentResponse(
@@ -5860,7 +5789,7 @@ async def test_google_stream_citations_can_reference_earlier_grounding_chunks():
                         grounding_supports=[
                             GroundingSupport(
                                 grounding_chunk_indices=[0],
-                                segment=Segment(part_index=0, start_index=0, end_index=6),
+                                segment=Segment(part_index=0, start_index=0, end_index=6, text='answer'),
                             )
                         ]
                     )
@@ -5948,61 +5877,6 @@ async def test_google_stream_keeps_text_parts_separate_across_non_text_parts():
             sources=[WebCitationSource(url='https://example.com')],
             anchor=ContentCitationAnchor(start=0, end=6),
         )
-    ]
-
-
-async def test_google_stream_reuses_provider_index_for_repeated_thinking_deltas():
-    chunks = [
-        GenerateContentResponse(
-            candidates=[Candidate(content=Content(parts=[Part(text='rea', thought=True)], role='model'))],
-            model_version='gemini-test',
-        ),
-        GenerateContentResponse(
-            candidates=[Candidate(content=Content(parts=[Part(text='son', thought=True)], role='model'))],
-            model_version='gemini-test',
-        ),
-        GenerateContentResponse(
-            candidates=[Candidate(content=Content(parts=[Part(text='answer')], role='model'))],
-            model_version='gemini-test',
-        ),
-        GenerateContentResponse(
-            candidates=[
-                Candidate(
-                    grounding_metadata=GroundingMetadata(
-                        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri='https://example.com'))],
-                        grounding_supports=[
-                            GroundingSupport(
-                                grounding_chunk_indices=[0], segment=Segment(part_index=1, start_index=0, end_index=6)
-                            )
-                        ],
-                    )
-                )
-            ],
-            model_version='gemini-test',
-        ),
-    ]
-    streamed_response = GeminiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
-        _model_name='gemini-test',
-        _response=cast(Any, PeekableAsyncStream(_aiter_chunks(chunks))),
-        _provider_name='google',
-        _model_id_namespace='google',
-        _provider_url='',
-    )
-
-    _ = [event async for event in streamed_response]
-
-    assert streamed_response.get().parts == [
-        ThinkingPart('reason'),
-        TextPart(
-            'answer',
-            citations=[
-                Citation(
-                    sources=[WebCitationSource(url='https://example.com')],
-                    anchor=ContentCitationAnchor(start=0, end=6),
-                )
-            ],
-        ),
     ]
 
 
@@ -6120,6 +5994,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 19, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6163,6 +6038,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime.datetime(2025, 11, 21, 21, 57, 25, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id=IsStr(),
                 finish_reason='stop',
@@ -6431,6 +6307,30 @@ async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model
     assert exc_info.value.body == error_response
     assert isinstance(exc_info.value.__cause__, errors.ClientError)
     assert len(requests) == 1
+
+
+async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: None):
+    """An API error from `count_tokens` is mapped like one from the request, not raised as the SDK's own error."""
+    error_response = {'error': {'code': 429, 'message': 'Resource exhausted', 'status': 'RESOURCE_EXHAUSTED'}}
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(429, json=error_response, headers={'retry-after': '7'})
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(model).run(
+                'test', usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+            )
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == error_response
+    assert exc_info.value.retry_after == 7
+    assert isinstance(exc_info.value.__cause__, errors.ClientError)
 
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):
@@ -7160,8 +7060,9 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
             {
                 'role': 'user',
                 'parts': [
-                    {'text': 'This is file report:'},
+                    {'text': '<tool_result tool_name="final_result" tool_call_id="test_id" file_id="report">'},
                     {'inline_data': {'data': b'fakeimg', 'mime_type': 'image/png'}},
+                    {'text': '</tool_result>'},
                 ],
             },
         ]
@@ -8049,3 +7950,66 @@ async def test_google_model_armor_config_is_sent_in_request(
 
     _, kwargs = mock_generate.call_args
     assert kwargs['config']['model_armor_config'] == _MODEL_ARMOR_CONFIG
+
+
+# Opted in, and the cassette was recorded with the described options in the request, so the recording only
+# matches what the code sends while the enum keeps opting in.
+class TicketPriority(UseEnumMemberDocstrings, str, Enum):
+    """How urgent the ticket is."""
+
+    low = 'low'
+    """Can wait a week."""
+    high = 'high'
+    """Needs attention today."""
+
+
+@pytest.mark.vcr()
+async def test_google_enum_member_docstrings_reach_the_wire(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """A documented enum renders as `anyOf` of `const`s; Gemini's transformer folds each into a one-value `enum`.
+
+    Asserted on the wire, since the shape a transformer produces is what the API has to accept, and the model
+    then has to call the tool with one of the options.
+    """
+
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    agent = Agent(GoogleModel('gemini-2.5-flash', provider=provider), instructions='Set the priority of the ticket.')
+
+    @agent.tool_plain
+    def set_priority(priority: TicketPriority) -> str:
+        return f'Priority set to {priority.value}.'
+
+    result = await agent.run('Production is down for every customer.')
+    calls = [
+        part
+        for message in result.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert calls[0].args_as_dict() == {'priority': 'high'}
+    body = request_capture.body(':generateContent')
+    assert cast(list[dict[str, Any]], body['tools'])[0]['functionDeclarations'][0] == snapshot(
+        {
+            'description': '',
+            'name': 'set_priority',
+            'parameters_json_schema': {
+                'additionalProperties': False,
+                'properties': {'priority': {'$ref': '#/$defs/TicketPriority'}},
+                'required': ['priority'],
+                'type': 'object',
+                '$defs': {
+                    'TicketPriority': {
+                        'description': """\
+How urgent the ticket is.
+low: Can wait a week.
+high: Needs attention today.\
+""",
+                        'type': 'string',
+                        'enum': ['low', 'high'],
+                    }
+                },
+            },
+        }
+    )

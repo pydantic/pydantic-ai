@@ -1,8 +1,8 @@
 """Tests for xAI model integration.
 
 The xAI SDK uses gRPC for all calls (including executing built-in tools like `code_execution`,
-`web_search`, and `mcp_server` server-side). Since VCR doesn't support gRPC, we cannot
-record/replay these interactions like we do with HTTP APIs.
+`web_search`, and `mcp_server` server-side), so these calls don't go through the HTTP cassettes
+the other model tests use.
 
 Instead, we use two strategies:
 - A **custom recorder** for xAI SDK interactions where possible (gRPC-aware recording/replay)
@@ -39,7 +39,6 @@ from pydantic_ai import (
     MarkerCitationAnchor,
     MCPServerTool,
     ModelMessage,
-    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     ModelRetry,
@@ -66,8 +65,9 @@ from pydantic_ai import (
     WebSearchTool,
 )
 from pydantic_ai.capabilities import NativeTool
-from pydantic_ai.exceptions import UnexpectedModelBehavior
+from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     CachePoint,
     FinishReason,
     UploadedFile,
@@ -80,7 +80,6 @@ from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, message, message_part, try_import
-from .citation_utils import citations_from_messages
 from .mock_xai import (
     MockXai,
     create_code_execution_response,
@@ -103,6 +102,7 @@ from .mock_xai import (
 )
 
 with try_import() as imports_successful:
+    import grpc
     import xai_sdk.chat as chat_types
     from xai_sdk.chat import required_tool
     from xai_sdk.proto import chat_pb2, sample_pb2, usage_pb2
@@ -120,7 +120,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='xai_sdk not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1092,7 +1091,7 @@ async def test_xai_native_output_with_tools(allow_model_requests: None):
 async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     """Test that tool_choice falls back to 'auto' when 'required' is not supported."""
     # Create a profile that doesn't support tool_choice='required'
-    profile = GrokModelProfile(grok_supports_tool_choice_required=False)
+    profile = GrokModelProfile(supports_forced_tool_choice=False)
 
     response = create_response(content='ok', usage=create_usage(prompt_tokens=10, completion_tokens=5))
     mock_client = MockXai.create_mock([response])
@@ -1448,6 +1447,11 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
             chat_pb2.InlineCitation(x_citation=chat_pb2.XCitation()),
             chat_pb2.InlineCitation(collections_citation=chat_pb2.CollectionsCitation()),
             chat_pb2.InlineCitation(start_index=2, end_index=1),
+            chat_pb2.InlineCitation(
+                start_index=2,
+                end_index=1,
+                web_citation=chat_pb2.WebCitation(url='https://example.com/unanchored'),
+            ),
         ]
     )
     mock_client = MockXai.create_mock([response])
@@ -1488,45 +1492,33 @@ async def test_xai_inline_citation_mapping(allow_model_requests: None) -> None:
             ],
             anchor=MarkerCitationAnchor(start=23, end=26),
         ),
+        Citation(sources=[WebCitationSource(url='https://example.com/unanchored')]),
     ]
 
 
-async def test_xai_inline_citations_replay_as_text(allow_model_requests: None) -> None:
-    """Persisted xAI citations remain application metadata and are omitted from the next xAI request."""
-    text = 'See [[1]](https://example.com).'
-    first_response = create_response(content=text)
-    first_response.proto.outputs[0].message.citations.append(
-        chat_pb2.InlineCitation(
-            start_index=4,
-            end_index=len(text) - 1,
-            web_citation=chat_pb2.WebCitation(url='https://example.com'),
-        )
-    )
-    mock_client = MockXai.create_mock([first_response, create_response(content='Done.')])
-    model = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
-
-    first_result = await Agent(model).run('Cite a source.')
-    assert citations_from_messages(first_result.all_messages())
-
-    history = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(first_result.all_messages()))
-    second_result = await Agent(model).run('Continue.', message_history=history)
-    assert second_result.output == 'Done.'
-
-    second_request = get_mock_chat_create_kwargs(mock_client)[1]
-    [prior_assistant] = [message for message in second_request['messages'] if message['role'] == 'ROLE_ASSISTANT']
-    assert prior_assistant == {'role': 'ROLE_ASSISTANT', 'content': [{'text': text}]}
-
-
-async def test_xai_stream_inline_citations(allow_model_requests: None) -> None:
+@pytest.mark.parametrize(
+    ('url', 'expected'),
+    [
+        pytest.param(
+            'https://example.com',
+            [
+                Citation(
+                    sources=[WebCitationSource(url='https://example.com')], anchor=MarkerCitationAnchor(start=4, end=7)
+                )
+            ],
+            id='cited',
+        ),
+        pytest.param('', None, id='citation-without-url'),
+    ],
+)
+async def test_xai_stream_inline_citations(
+    allow_model_requests: None, url: str, expected: list[Citation] | None
+) -> None:
     """xAI streaming emits the same inline citation shape as non-streaming responses."""
     text = 'See [1].'
     response = create_response(content=text)
     response.proto.outputs[0].message.citations.append(
-        chat_pb2.InlineCitation(
-            start_index=4,
-            end_index=7,
-            web_citation=chat_pb2.WebCitation(url='https://example.com'),
-        )
+        chat_pb2.InlineCitation(start_index=4, end_index=7, web_citation=chat_pb2.WebCitation(url=url))
     )
     mock_client = MockXai.create_mock_stream([[(response, create_stream_chunk(content=text, finish_reason='stop'))]])
     agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
@@ -1537,16 +1529,11 @@ async def test_xai_stream_inline_citations(allow_model_requests: None) -> None:
     response_message = result.all_messages()[-1]
     assert isinstance(response_message, ModelResponse)
     text_part = next(part for part in response_message.parts if isinstance(part, TextPart))
-    assert text_part.citations == [
-        Citation(
-            sources=[WebCitationSource(url='https://example.com')],
-            anchor=MarkerCitationAnchor(start=4, end=7),
-        )
-    ]
+    assert text_part.citations == expected
 
 
 async def test_xai_stream_inline_citations_multiple_outputs(allow_model_requests: None) -> None:
-    """Citation offsets are relative to their individual xAI output."""
+    """Offsets from several outputs can't be matched to one streamed text part, so no citations are attached."""
     first_text = 'First [1].'
     second_text = 'Second [2].'
     first_citation = chat_pb2.InlineCitation(
@@ -1584,24 +1571,7 @@ async def test_xai_stream_inline_citations_multiple_outputs(allow_model_requests
     response_message = result.all_messages()[-1]
     assert isinstance(response_message, ModelResponse)
     assert [part for part in response_message.parts if isinstance(part, TextPart)] == [
-        TextPart(
-            content=first_text,
-            citations=[
-                Citation(
-                    sources=[WebCitationSource(url='https://first.example.com')],
-                    anchor=MarkerCitationAnchor(start=6, end=9),
-                )
-            ],
-        ),
-        TextPart(
-            content=second_text,
-            citations=[
-                Citation(
-                    sources=[WebCitationSource(url='https://second.example.com')],
-                    anchor=MarkerCitationAnchor(start=7, end=10),
-                )
-            ],
-        ),
+        TextPart(content=first_text + second_text)
     ]
 
 
@@ -5240,6 +5210,108 @@ async def test_xai_stream_server_side_tool_call_and_return_dedupes(allow_model_r
     assert builtin_returns[0].tool_call_id == 'server_tool_1'
 
 
+def _interleaved_text_and_server_tool_stream():
+    """Build a streamed response where text surrounds a server-side tool call and return.
+
+    Each text run arrives as two adjacent chunks so delta coalescing is exercised.
+    Live xAI streams emit server-side tool deltas mid-response (#7153); text after
+    the tool return is an adapter-level sequence, not a documented xAI ordering.
+    """
+    server_tool_call = create_server_tool_call(
+        tool_name='web_search',
+        arguments={'query': 'What is the weather?'},
+        tool_call_id='server_tool_1',
+    )
+    tool_output_json = json.dumps({'status': 'ok'})
+    return [
+        (
+            create_response(content='Checking', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='Checking'),
+        ),
+        (
+            create_response(content='Checking now...', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content=' now...'),
+        ),
+        (
+            create_response(content='', tool_calls=[server_tool_call], finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, tool_calls=[server_tool_call]),
+        ),
+        (
+            create_response(content=tool_output_json, tool_calls=[server_tool_call], finish_reason='stop'),
+            create_stream_chunk(
+                role=chat_pb2.MessageRole.ROLE_TOOL, tool_calls=[server_tool_call], content=tool_output_json
+            ),
+        ),
+        (
+            create_response(content='72 and ', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='72 and '),
+        ),
+        (
+            create_response(content='72 and sunny.', finish_reason='stop'),
+            create_stream_chunk(role=chat_pb2.MessageRole.ROLE_ASSISTANT, content='sunny.'),
+        ),
+    ]
+
+
+async def test_xai_stream_text_after_server_side_tool_call_returns_output(allow_model_requests: None):
+    """Text streamed after a server-side tool call is kept as a separate part (#7923).
+
+    With a constant text vendor part id, the post-call text merged into the already-ended
+    first text part, `CallToolsNode` then discarded it as pre-call text, and the run
+    failed with `UnexpectedModelBehavior: Exceeded maximum output retries`.
+    """
+    mock_client = MockXai.create_mock_stream([_interleaved_text_and_server_tool_stream()])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, output_type=str | None, capabilities=[NativeTool(WebSearchTool())])
+
+    async with agent.run_stream('What is the weather?') as result:
+        async for _ in result.stream_response(debounce_by=None):
+            pass
+
+        assert await result.get_output() == '72 and sunny.'
+        assert [type(part).__name__ for part in result.all_messages()[-1].parts] == [
+            'TextPart',
+            'NativeToolCallPart',
+            'NativeToolReturnPart',
+            'TextPart',
+        ]
+        assert result.usage.requests == 1
+
+
+async def test_xai_stream_interleaved_text_part_lifecycle_events(allow_model_requests: None):
+    """Each interleaved text run gets its own part start/end events; deltas coalesce."""
+    mock_client = MockXai.create_mock_stream([_interleaved_text_and_server_tool_stream()])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, output_type=str | None, capabilities=[NativeTool(WebSearchTool())])
+
+    events: list[AgentStreamEvent] = []
+    async with agent.iter(user_prompt='What is the weather?') as agent_run:
+        async for node in agent_run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(agent_run.ctx) as request_stream:
+                    async for event in request_stream:
+                        events.append(event)
+
+    part_events = [event for event in events if isinstance(event, PartStartEvent | PartDeltaEvent | PartEndEvent)]
+    text_starts = [
+        event for event in part_events if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+    ]
+    text_ends = [event for event in part_events if isinstance(event, PartEndEvent) and isinstance(event.part, TextPart)]
+    text_deltas = [event for event in part_events if isinstance(event, PartDeltaEvent)]
+
+    assert [event.index for event in text_starts] == [0, 3]
+    assert [event.index for event in text_ends] == [0, 3]
+    assert text_ends[-1].part == TextPart(content='72 and sunny.')
+    assert [event.index for event in text_deltas] == [0, 3]
+
+    ended_indexes: set[int] = set()
+    for event in part_events:
+        if isinstance(event, PartEndEvent):
+            ended_indexes.add(event.index)
+        elif isinstance(event, PartDeltaEvent):
+            assert event.index not in ended_indexes
+
+
 async def test_xai_stream_server_side_tool_call_ignored_for_unknown_role(allow_model_requests: None):
     """Server-side tool deltas with an unknown role should be ignored."""
 
@@ -6233,6 +6305,26 @@ async def test_xai_builtin_tool_failed_without_error_in_history(allow_model_requ
             }
         ]
     )
+
+
+async def test_xai_file_upload_error_is_mapped(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):
+    """A gRPC error from the document upload is mapped like one from the chat request, not raised raw."""
+    mock_client = MockXai.create_mock([create_response(content='unused')])
+
+    async def failing_upload(data: bytes, filename: str) -> Any:
+        raise grpc.aio.AioRpcError(
+            grpc.StatusCode.RESOURCE_EXHAUSTED, grpc.aio.Metadata(), grpc.aio.Metadata(), details='upload quota'
+        )
+
+    monkeypatch.setattr(mock_client, 'files_upload', failing_upload)
+    agent = Agent(XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client)))
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await agent.run(['Process this document', BinaryContent(data=b'%PDF-1.4 test', media_type='application/pdf')])
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == 'upload quota'
+    assert isinstance(exc_info.value.__cause__, grpc.aio.AioRpcError)
 
 
 async def test_xai_document_url_without_data_type(allow_model_requests: None, monkeypatch: pytest.MonkeyPatch):

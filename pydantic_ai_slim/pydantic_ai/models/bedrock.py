@@ -19,7 +19,12 @@ from typing_extensions import ParamSpec, TypedDict, assert_never
 
 try:
     from botocore.client import BaseClient
-    from botocore.exceptions import BotoCoreError, ClientError
+    from botocore.exceptions import (
+        BotoCoreError,
+        ClientError,
+        ConnectionError as BotocoreConnectionError,
+        HTTPClientError,
+    )
     from botocore.model import StructureShape
 except ImportError as _import_error:
     raise ImportError(
@@ -66,7 +71,10 @@ from pydantic_ai import (
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
-from pydantic_ai.messages import is_multi_modal_content
+from pydantic_ai.messages import (
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
+    is_multi_modal_content,
+)
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
@@ -77,10 +85,20 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
-from pydantic_ai.models._tool_choice import ResolvedToolChoice, resolve_tool_choice
+from pydantic_ai.models._tool_choice import (
+    FORCING_UNSUPPORTED_REASON,
+    resolve_tool_choice,
+    support_tool_forcing,
+    tool_forcing_unavailable_reason,
+)
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
-from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
-from pydantic_ai.profiles.anthropic import ANTHROPIC_THINKING_BUDGET_MAP, resolve_anthropic_effort
+from pydantic_ai.output import StructuredOutputMode
+from pydantic_ai.profiles import DEFAULT_THINKING_TAGS, ModelProfile
+from pydantic_ai.profiles.anthropic import (
+    ANTHROPIC_SAMPLING_PARAMS,
+    ANTHROPIC_THINKING_BUDGET_MAP,
+    resolve_anthropic_effort,
+)
 from pydantic_ai.profiles.openai import OPENAI_REASONING_EFFORT_MAP
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.bedrock import BedrockModelProfile, remove_bedrock_geo_prefix
@@ -95,9 +113,7 @@ if TYPE_CHECKING:
     )
     from mypy_boto3_bedrock_runtime.type_defs import (
         CachePointBlockTypeDef,
-        CitationLocationTypeDef,
         CitationOutputTypeDef,
-        CitationsContentBlockOutputTypeDef,
         CitationsDeltaTypeDef,
         ContentBlockOutputTypeDef,
         ContentBlockUnionTypeDef,
@@ -150,6 +166,9 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
                 headers=metadata.get('HTTPHeaders'),
                 suggested_model_id=suggested_model_id,
             ) from e
+        raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except (HTTPClientError, BotocoreConnectionError) as e:
+        # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
 
 
@@ -227,6 +246,7 @@ async def _call_bedrock(
 _SUPPORTED_IMAGE_FORMATS = ('jpeg', 'png', 'gif', 'webp')
 _SUPPORTED_VIDEO_FORMATS = ('mkv', 'mov', 'mp4', 'webm', 'flv', 'mpeg', 'mpg', 'wmv', 'three_gp')
 _SUPPORTED_DOCUMENT_FORMATS = ('pdf', 'txt', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'html', 'md')
+_ADAPTIVE_THINKING_SETTING = "bedrock_additional_model_requests_fields={'thinking': {'type': 'adaptive'}}"
 _BEDROCK_USAGE_FIELDS = frozenset(
     {'inputTokens', 'outputTokens', 'totalTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens'}
 )
@@ -342,13 +362,27 @@ LatestBedrockModelNames = Literal[
     'global.anthropic.claude-opus-4-8',
     'us.anthropic.claude-opus-5',
     'global.anthropic.claude-opus-5',
+    'us.anthropic.claude-opus-5-5',
+    'global.anthropic.claude-opus-5-5',
     'us.anthropic.claude-sonnet-5',
     'global.anthropic.claude-sonnet-5',
+    'global.anthropic.claude-sonnet-5-5',
     'us.anthropic.claude-fable-5',
+    'us.anthropic.claude-fable-5-1',
     'global.anthropic.claude-fable-5',
+    'global.anthropic.claude-fable-5-1',
     # Amazon Nova
     'us.amazon.nova-premier-v1:0',
     'global.amazon.nova-2-lite-v1:0',
+    # OpenAI GPT-5.6 (models that require a cross-region inference profile)
+    'us.openai.gpt-5.6-sol',
+    'global.openai.gpt-5.6-sol',
+    'us.openai.gpt-5.6-luna',
+    'in.openai.gpt-5.6-luna',
+    'global.openai.gpt-5.6-luna',
+    'us.openai.gpt-5.6-terra',
+    'in.openai.gpt-5.6-terra',
+    'global.openai.gpt-5.6-terra',
     # Meta Llama 4
     'us.meta.llama4-maverick-17b-instruct-v1:0',
     'us.meta.llama4-scout-17b-instruct-v1:0',
@@ -423,19 +457,15 @@ _FINISH_REASON_MAP: dict[StopReasonType, FinishReason] = {
 def _map_citation_source(
     citation: CitationOutputTypeDef | CitationsDeltaTypeDef,
 ) -> WebCitationSource | DocumentCitationSource:
-    details: dict[str, Any] = {}
-    if (source := citation.get('source')) is not None:
-        details['source'] = source
-    if (location := citation.get('location')) is not None:
-        details['location'] = location
+    details = dict(citation)
     title = citation.get('title')
     excerpts = [text for content in citation.get('sourceContent', []) if (text := content.get('text'))]
+    details.pop('title', None)
+    details.pop('sourceContent', None)
     location = citation.get('location')
     web = location.get('web') if isinstance(location, Mapping) else None
     if isinstance(web, Mapping) and isinstance(url := web.get('url'), str):
         details.pop('location', None)
-        if isinstance(domain := web.get('domain'), str):
-            details['domain'] = domain
         return WebCitationSource(url=url, title=title, excerpts=excerpts, provider_details=details or None)
     return DocumentCitationSource(title=title, excerpts=excerpts, provider_details=details or None)
 
@@ -447,211 +477,59 @@ def _map_citations(
     return [Citation(sources=sources, anchor=anchor)] if sources else None
 
 
-def _map_bedrock_citation_location_for_replay(
-    source: DocumentCitationSource,
-) -> CitationLocationTypeDef | None:
-    location = (source.provider_details or {}).get('location')
-    if not _utils.is_str_dict(location):
-        return None
-
-    if len(location) != 1:
-        return None
-    location_kind, location_data = next(iter(location.items()))
-    index_name = {
-        'documentChar': 'documentIndex',
-        'documentPage': 'documentIndex',
-        'documentChunk': 'documentIndex',
-        'searchResultLocation': 'searchResultIndex',
-    }.get(location_kind)
-    if index_name is None or not _utils.is_str_dict(location_data):
-        return None
-    allowed_keys = {index_name, 'start', 'end'}
-    if set(location_data) != allowed_keys:
-        return None
-    replay_location = {key: location_data[key] for key in allowed_keys}
-    if (
-        any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in replay_location.values())
-        or replay_location['end'] <= replay_location['start']
-    ):
-        return None
-    # The SDK models the four range locations as distinct TypedDicts despite their identical integer field grammar.
-    return cast('CitationLocationTypeDef', {location_kind: replay_location})
-
-
-def _map_bedrock_citation_source_for_replay(
-    source: WebCitationSource | DocumentCitationSource,
-) -> CitationOutputTypeDef | None:
-    # Bedrock returns web citations in this shape, but Claude rejects the same `citationsContent` block in assistant
-    # history and Nova fails to process it. Keep the output-only shape on the Pydantic AI message.
-    if isinstance(source, WebCitationSource):
-        return None
-
-    location = _map_bedrock_citation_location_for_replay(source)
-    if location is None:
-        return None
-
-    citation: CitationOutputTypeDef = {'location': location}
-    if source.title is not None:
-        citation['title'] = source.title
-    if source.excerpts:
-        citation['sourceContent'] = [{'text': excerpt} for excerpt in source.excerpts]
-
-    if source.document_id is not None:
-        citation['source'] = source.document_id
-    source_name = (source.provider_details or {}).get('source')
-    if isinstance(source_name, str):
-        citation['source'] = source_name
-    return citation
-
-
-def _map_bedrock_citation_blocks_for_replay(
-    citations: list[Citation] | None,
-    text: str,
+def _map_citations_for_replay(
+    citations: list[Citation] | None, text: str, document_texts: list[str | None]
 ) -> list[ContentBlockOutputTypeDef] | None:
-    if not citations:
-        return None
+    """Rebuild the `citationsContent` block Bedrock returned for this text, or return `None` to send plain text.
 
-    candidates: list[tuple[ContentCitationAnchor, Citation]] = []
-    for citation in citations:
-        anchor = citation.anchor
+    Only the shape Pydantic AI builds from a Bedrock cited block is rebuilt: one citation covering the whole text
+    part. Every source must be a character range that still selects its excerpt from a plain-text document in the
+    request. `document_texts` holds the text of each document in the request's messages, or `None` if it isn't text.
+    """
+    if not citations or len(citations) != 1 or citations[0].anchor != ContentCitationAnchor(start=0, end=len(text)):
+        return None
+    mapped_sources: list[CitationOutputTypeDef] = []
+    for source in citations[0].sources:
+        location = (source.provider_details or {}).get('location')
+        char_location = location.get('documentChar') if _utils.is_str_dict(location) else None
+        if not _utils.is_str_dict(char_location):
+            return None
+        index, start, end = char_location.get('documentIndex'), char_location.get('start'), char_location.get('end')
         if (
-            isinstance(anchor, ContentCitationAnchor)
-            and anchor.end <= len(text)
-            and any(_map_bedrock_citation_source_for_replay(source) is not None for source in citation.sources)
+            not isinstance(index, int)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+            or not 0 <= index < len(document_texts)
+            or (document_text := document_texts[index]) is None
+            or not 0 <= start < end
+            or source.excerpts != [document_text[start:end]]
         ):
-            candidates.append((anchor, citation))
-    candidates.sort(key=lambda item: (item[0].start, item[0].end))
-    anchored_citations: list[tuple[ContentCitationAnchor, Citation]] = []
-    for anchor, citation in candidates:
-        if anchored_citations and anchor != anchored_citations[-1][0] and anchor.start < anchored_citations[-1][0].end:
-            # Bedrock content blocks cannot overlap without duplicating generated text. Keep the earlier, more specific
-            # range and omit the conflicting citation rather than broadening either source's attribution.
-            continue
-        anchored_citations.append((anchor, citation))
-
-    return _map_bedrock_anchored_citation_blocks_for_replay(anchored_citations, text)
-
-
-def _map_bedrock_anchored_citation_blocks_for_replay(
-    anchored_citations: list[tuple[ContentCitationAnchor, Citation]],
-    text: str,
-) -> list[ContentBlockOutputTypeDef] | None:
-    blocks: list[ContentBlockOutputTypeDef] = []
-    position = 0
-    index = 0
-    while index < len(anchored_citations):
-        anchor = anchored_citations[index][0]
-        if anchor.start > position:
-            blocks.append({'text': text[position : anchor.start]})
-
-        grouped_sources: list[WebCitationSource | DocumentCitationSource] = []
-        while index < len(anchored_citations) and anchored_citations[index][0] == anchor:
-            grouped_sources.extend(anchored_citations[index][1].sources)
-            index += 1
-
-        mapped_sources = [
-            mapped_source
-            for source in grouped_sources
-            if (mapped_source := _map_bedrock_citation_source_for_replay(source)) is not None
-        ]
-        citations_content: CitationsContentBlockOutputTypeDef = {
-            'content': [{'text': text[anchor.start : anchor.end]}],
-            'citations': mapped_sources,
+            return None
+        mapped_source: CitationOutputTypeDef = {
+            'location': {'documentChar': {'documentIndex': index, 'start': start, 'end': end}},
+            'sourceContent': [{'text': document_text[start:end]}],
         }
-        blocks.append({'citationsContent': citations_content})
-        position = anchor.end
+        if source.title is not None:  # pragma: no branch
+            # Bedrock names every document it cites.
+            mapped_source['title'] = source.title
+        mapped_sources.append(mapped_source)
+    return [{'citationsContent': {'content': [{'text': text}], 'citations': mapped_sources}}]
 
-    if position < len(text):
-        blocks.append({'text': text[position:]})
-    return blocks or None
 
+def _citation_document_texts(messages: Sequence[MessageUnionTypeDef]) -> list[str | None]:
+    """Return the text of each document block in `messages` in order, or `None` if it isn't text.
 
-def _bedrock_citation_documents(messages: Sequence[MessageUnionTypeDef]) -> list[tuple[str | None, str | None]]:
-    """Return destination document text and names in the index order used by Bedrock citations."""
-    result: list[tuple[str | None, str | None]] = []
-
-    def add_document(block: Mapping[str, Any]) -> None:
-        document = block.get('document')
-        if not _utils.is_str_dict(document):
-            return
-        source = document.get('source')
-        text: str | None = None
-        if _utils.is_str_dict(source):  # pragma: no branch
-            # Bedrock document sources are always mappings; the value may be text, bytes, or an S3 location.
-            if isinstance(source_text := source.get('text'), str):
-                text = source_text
-            elif document.get('format') == 'txt' and isinstance(source_bytes := source.get('bytes'), bytes):
-                try:
-                    text = source_bytes.decode()
-                except UnicodeDecodeError:
-                    pass
-        name = document.get('name')
-        result.append((text, name if isinstance(name, str) else None))
-
+    Returns no documents if a tool result contains one, as it's unknown whether Bedrock counts those.
+    """
+    result: list[str | None] = []
     for message in messages:
         for block in message['content']:
-            add_document(block)
-            tool_result = block.get('toolResult')
-            if isinstance(tool_result, Mapping):
-                for nested_block in tool_result.get('content', []):
-                    if isinstance(nested_block, Mapping):  # pragma: no branch
-                        # The SDK types each tool-result content item as a mapping.
-                        add_document(nested_block)
+            if (document := block.get('document')) is not None:
+                text = document['source'].get('text')
+                result.append(text if isinstance(text, str) else None)
+            elif any('document' in item for item in block.get('toolResult', {}).get('content', [])):
+                return []
     return result
-
-
-def _map_anthropic_document_citation_blocks_for_bedrock_replay(
-    citations: list[Citation] | None,
-    text: str,
-    citation_documents: list[tuple[str | None, str | None]],
-) -> list[ContentBlockOutputTypeDef] | None:
-    mapped_sources: list[CitationOutputTypeDef] = []
-    for citation in citations or []:
-        if citation.anchor is not None:
-            continue
-        for source in citation.sources:
-            if not isinstance(source, DocumentCitationSource) or len(source.excerpts) != 1:
-                continue
-            details = source.provider_details or {}
-            document_index = details.get('document_index')
-            start = details.get('start_char_index')
-            end = details.get('end_char_index')
-            if (
-                details.get('type') != 'char_location'
-                or not isinstance(document_index, int)
-                or isinstance(document_index, bool)
-                or not 0 <= document_index < len(citation_documents)
-                or not isinstance(start, int)
-                or isinstance(start, bool)
-                or not isinstance(end, int)
-                or isinstance(end, bool)
-                or not 0 <= start < end
-            ):
-                continue
-            document_text, document_title = citation_documents[document_index]
-            cited_text = source.excerpts[0]
-            if (
-                document_text is None
-                or document_title is None
-                or end > len(document_text)
-                or document_text[start:end] != cited_text
-            ):
-                continue
-
-            mapped_source: CitationOutputTypeDef = {
-                'location': {
-                    'documentChar': {'documentIndex': document_index, 'start': start, 'end': end},
-                },
-                'sourceContent': [{'text': cited_text}],
-                # The title identifies the destination document binding, so use its actual Bedrock name rather than
-                # carrying an optional source-provider title across the boundary.
-                'title': document_title,
-            }
-            mapped_sources.append(mapped_source)
-
-    if not mapped_sources:
-        return None
-    return [{'citationsContent': {'content': [{'text': text}], 'citations': mapped_sources}}]
 
 
 def _parse_s3_source(url: str) -> DocumentSourceTypeDef:
@@ -900,10 +778,10 @@ class BedrockConverseModel(Model[BaseClient]):
         """The model provider."""
         return self._provider.name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest retention requested by supported Bedrock cache settings."""
         settings = merge_model_settings(self.settings, model_settings) or {}
-        return self._max_prompt_cache_retention(
+        return self._max_cache_retention(
             settings.get('bedrock_cache_instructions')
             if self.profile.get('bedrock_supports_prompt_caching', False)
             else None,
@@ -920,31 +798,50 @@ class BedrockConverseModel(Model[BaseClient]):
         """The set of builtin tool types this model can handle."""
         return frozenset({CodeExecutionTool})
 
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        profile = cast(BedrockModelProfile, self.profile)
+        return _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
+
+    def _default_structured_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        profile = cast(BedrockModelProfile, self.profile)
+        # Extended thinking, and thinking on the non-Anthropic variants, reject the forced tool choice Tool Output
+        # relies on.
+        if (
+            model_request_parameters.output_tools
+            and _effective_thinking_type(model_settings, model_request_parameters, profile) == 'enabled'
+        ):
+            return 'native' if profile.get('supports_json_schema_output', False) else 'prompted'
+        return super()._default_structured_output_mode(model_settings, model_request_parameters)
+
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         settings = merge_model_settings(self.settings, model_settings)
-        if model_request_parameters.output_tools and _is_thinking_enabled(settings, model_request_parameters):
-            if model_request_parameters.output_mode == 'auto':
-                output_mode = 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
-                model_request_parameters = replace(model_request_parameters, output_mode=output_mode)
-            elif (
-                model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
-            ):  # pragma: no branch
-                suggested_output_type = (
-                    'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
-                )
-                raise UserError(
-                    f'Bedrock does not support thinking and output tools at the same time. Use `output_type={suggested_output_type}(...)` instead.'
-                )
-
-        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
-        # strict-forcing check below also applies when native mode is reached via the profile default
-        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
-        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        profile = cast(BedrockModelProfile, self.profile)
+        # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
+        # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
+        # otherwise only resolve it after `customize_request_parameters()` has already transformed the schema.
         model_request_parameters = model_request_parameters.with_default_output_mode(
-            self.profile.get('default_structured_output_mode', 'tool')
+            self._default_structured_output_mode(settings, model_request_parameters)
         )
+        if (
+            model_request_parameters.output_mode == 'tool'
+            and not model_request_parameters.allow_text_output
+            and profile.get('bedrock_thinking_variant') not in (None, 'anthropic')
+            and _effective_thinking_type(settings, model_request_parameters, profile) is not None
+        ):
+            # This would result in `toolChoice: any`, which isn't available here.
+            suggested_output_type = (
+                'NativeOutput' if self.profile.get('supports_json_schema_output', False) else 'PromptedOutput'
+            )
+            raise UserError(
+                'Bedrock does not support thinking and output tools at the same time. '
+                f'Use `output_type={suggested_output_type}(...)` instead.'
+            )
 
         if (
             self.profile.get('supports_json_schema_output', False)
@@ -958,7 +855,35 @@ class BedrockConverseModel(Model[BaseClient]):
                 model_request_parameters, output_object=replace(model_request_parameters.output_object, strict=True)
             )
         # Pass unmerged model_settings; base class does its own merge
-        return super().prepare_request(model_settings, model_request_parameters)
+        prepared_settings, model_request_parameters = super().prepare_request(model_settings, model_request_parameters)
+        if prepared_settings and (
+            self.profile.get('anthropic_disallows_sampling_settings', False)
+            or self.profile.get('bedrock_disallows_sampling_settings', False)
+        ):
+            filtered: ModelSettings = {**prepared_settings}
+            self._drop_unsupported_sampling_settings(filtered)
+            prepared_settings = filtered or None
+        return prepared_settings, model_request_parameters
+
+    def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
+        """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.
+
+        `temperature` and `top_p` would reach `inferenceConfig` and unified `top_k` would reach
+        `additionalModelRequestFields`; all three are rejected with a 400 by the models that set
+        `anthropic_disallows_sampling_settings` or `bedrock_disallows_sampling_settings`. A user's own
+        `bedrock_additional_model_requests_fields` is deliberately left alone: it is the raw
+        escape hatch, so a value placed there is addressed to Bedrock directly.
+        """
+        dropped = [setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in model_settings]
+        for setting in dropped:
+            model_settings.pop(setting, None)
+
+        if dropped:
+            warnings.warn(
+                f'Sampling parameters {dropped} are not supported by {self.model_name!r}. These settings will be ignored.',
+                UserWarning,
+                stacklevel=2,
+            )
 
     @property
     def _botocore_supports_strict_tool_param(self) -> bool:
@@ -1205,20 +1130,7 @@ class BedrockConverseModel(Model[BaseClient]):
         variant = profile.get('bedrock_thinking_variant', None)
 
         if variant == 'anthropic' and 'thinking' not in existing:
-            if profile.get('bedrock_supports_adaptive_thinking', False):
-                if thinking is not False:
-                    existing['thinking'] = {'type': 'adaptive'}
-                    # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
-                    if (
-                        profile.get('bedrock_supports_effort', False)
-                        and isinstance(thinking, str)
-                        and 'output_config' not in existing
-                    ):
-                        existing['output_config'] = {'effort': resolve_anthropic_effort(thinking, supports_xhigh=False)}
-            elif thinking is False:
-                existing['thinking'] = {'type': 'disabled'}
-            else:
-                existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+            _add_anthropic_thinking_fields(existing, thinking, profile)
         elif variant == 'openai' and 'reasoning_effort' not in existing:
             if thinking is not False:  # Bedrock doesn't accept reasoning_effort='none'
                 existing['reasoning_effort'] = OPENAI_REASONING_EFFORT_MAP[thinking]
@@ -1347,9 +1259,7 @@ class BedrockConverseModel(Model[BaseClient]):
         tool_defs = model_request_parameters.declared_tool_defs
 
         profile = cast(BedrockModelProfile, self.profile)
-        supports = _support_tool_forcing(
-            self.model_name, profile, model_settings, model_request_parameters, resolved_tool_choice
-        )
+        supports = _support_tool_forcing(self.model_name, profile, model_settings, model_request_parameters)
 
         tool_choice: ToolChoiceTypeDef
         if resolved_tool_choice == 'auto':
@@ -1521,15 +1431,22 @@ class BedrockConverseModel(Model[BaseClient]):
                                     tool_result_content.append(file_block)
                                 else:
                                     tool_result_content.append({'text': f'See file {item.identifier}.'})
-                                    media_note: ContentBlockUnionTypeDef = {'text': f'This is file {item.identifier}:'}
+                                    # This media lands on a user turn, so it is framed with the call it
+                                    # came from — see `_tool_result_provenance_tags`.
+                                    open_tag, close_tag = _tool_result_provenance_tags(
+                                        part.tool_name, part.tool_call_id, item.identifier
+                                    )
+                                    framed_media: list[ContentBlockUnionTypeDef] = [
+                                        {'text': open_tag},
+                                        file_block,
+                                        {'text': close_tag},
+                                    ]
                                     if kind in colocatable_content:
                                         # This model allows the media alongside the `toolResult`; keep it in the same turn.
-                                        colocated_media_content.append(media_note)
-                                        colocated_media_content.append(file_block)
+                                        colocated_media_content.extend(framed_media)
                                     else:
                                         # The media can't share the `toolResult`'s turn; defer it to a later user turn.
-                                        deferred_media_content.append(media_note)
-                                        deferred_media_content.append(file_block)
+                                        deferred_media_content.extend(framed_media)
                             else:
                                 tool_result_content.append({'text': item} if isinstance(item, str) else {'json': item})
                         if not tool_result_content:
@@ -1572,26 +1489,19 @@ class BedrockConverseModel(Model[BaseClient]):
             elif isinstance(message, ModelResponse):
                 flush_deferred_media()
                 content: list[ContentBlockOutputTypeDef] = []
-                include_citations = settings.get('include_citations', False)
-                citation_documents = _bedrock_citation_documents(bedrock_messages) if include_citations else []
                 for item in message.parts:
                     if isinstance(item, TextPart):
-                        provider_name = item.provider_name or message.provider_name
-                        if not include_citations:
-                            citation_blocks = None
-                        elif provider_name == self.system:
-                            citation_blocks = _map_bedrock_citation_blocks_for_replay(
-                                item.citations,
-                                item.content,
+                        citation_blocks = (
+                            _map_citations_for_replay(
+                                item.citations, item.content, _citation_document_texts(bedrock_messages)
                             )
-                        elif provider_name == 'anthropic':
-                            citation_blocks = _map_anthropic_document_citation_blocks_for_bedrock_replay(
-                                item.citations,
-                                item.content,
-                                citation_documents,
-                            )
-                        else:
-                            citation_blocks = None
+                            # Replay checks citations against the documents' text, which is only sent as text when
+                            # citations are enabled.
+                            if settings.get('include_citations', False)
+                            and item.citations
+                            and (item.provider_name or message.provider_name) == self.system
+                            else None
+                        )
                         content.extend(citation_blocks or [{'text': item.content}])
                     elif isinstance(item, ThinkingPart):
                         if (
@@ -2232,22 +2142,70 @@ class _AsyncIteratorWrapper(Generic[T]):
                 raise e  # pragma: lax no cover
 
 
-def _is_thinking_enabled(
+def _add_anthropic_thinking_fields(existing: dict[str, Any], thinking: ThinkingLevel, profile: ModelProfile) -> None:
+    """Translate unified `thinking` into the Anthropic `thinking` (and `output_config.effort`) request fields."""
+    if profile.get('bedrock_supports_adaptive_thinking', False):
+        if thinking is False:
+            # Omitting `thinking` leaves it on for models that think by default. `Model.prepare_request`
+            # has already dropped `False` for models that can't turn thinking off.
+            if profile.get('thinking_enabled_by_default', False):
+                existing['thinking'] = {'type': 'disabled'}
+        else:
+            existing['thinking'] = {'type': 'adaptive'}
+            # Bedrock puts effort in output_config (a sibling of thinking), matching the direct Anthropic API shape.
+            # The merged profile carries the Anthropic xhigh flag, so `xhigh` passes through on the same
+            # models as the direct API. Bedrock rejects it on the other models, where it maps to `max`.
+            if (
+                profile.get('bedrock_supports_effort', False)
+                and isinstance(thinking, str)
+                and 'output_config' not in existing
+            ):
+                effort = resolve_anthropic_effort(
+                    thinking, supports_xhigh=profile.get('anthropic_supports_xhigh_effort', False)
+                )
+                existing['output_config'] = {'effort': effort}
+    elif thinking is False:
+        existing['thinking'] = {'type': 'disabled'}
+    else:
+        existing['thinking'] = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+
+
+def _effective_thinking_type(
     model_settings: ModelSettings | None,
-    model_request_parameters: ModelRequestParameters | None = None,
-) -> bool:
-    if model_request_parameters is not None and model_request_parameters.thinking:
-        return True
-    if model_settings:
-        if model_settings.get('thinking'):
-            return True
-        if (
-            (additional_fields := model_settings.get('bedrock_additional_model_requests_fields'))
-            and (thinking := additional_fields.get('thinking'))
-            and thinking.get('type') in ('enabled', 'adaptive')
-        ):
-            return True
-    return False
+    model_request_parameters: ModelRequestParameters | None,
+    profile: BedrockModelProfile,
+) -> Literal['adaptive', 'enabled'] | None:
+    """Resolve the thinking type used by the output-tool and tool-forcing guards.
+
+    Explicit `bedrock_additional_model_requests_fields` take precedence over unified thinking,
+    matching `_build_additional_model_request_fields`.
+    """
+    if model_settings and profile.get('bedrock_thinking_variant') == 'anthropic':
+        additional_fields = model_settings.get('bedrock_additional_model_requests_fields')
+        if additional_fields is not None and 'thinking' in additional_fields:
+            thinking_config = additional_fields['thinking']
+            if _utils.is_str_dict(thinking_config):
+                thinking_type = thinking_config.get('type')
+                if thinking_type in ('adaptive', 'enabled'):
+                    return thinking_type
+            return None
+
+    if model_settings is not None and 'thinking' in model_settings:
+        unified_thinking = model_settings['thinking']
+    else:
+        unified_thinking = model_request_parameters.thinking if model_request_parameters is not None else None
+    is_anthropic = profile.get('bedrock_thinking_variant') == 'anthropic'
+    if unified_thinking:
+        return 'adaptive' if is_anthropic and profile.get('bedrock_supports_adaptive_thinking', False) else 'enabled'
+    # Claude models that think by default keep thinking without a setting, and those that can't turn it off
+    # ignore `thinking=False`, as on the direct Anthropic API.
+    if (
+        is_anthropic
+        and (unified_thinking is None or profile.get('thinking_always_enabled', False))
+        and profile.get('thinking_enabled_by_default', False)
+    ):
+        return 'adaptive'
+    return None
 
 
 def _support_tool_forcing(
@@ -2255,28 +2213,34 @@ def _support_tool_forcing(
     profile: BedrockModelProfile,
     model_settings: BedrockModelSettings | None,
     model_request_parameters: ModelRequestParameters,
-    effective_tool_choice: ResolvedToolChoice,
 ) -> bool:
-    """Check if model supports tool forcing, raising UserError if explicitly requested but unsupported.
+    """Whether to send a forced `toolChoice`, raising `UserError` if explicitly requested but unavailable.
 
-    Also checks for thinking mode compatibility - Bedrock/Anthropic don't support tool forcing with thinking enabled.
+    On top of the profile's forcing flags, extended thinking rejects a forced tool choice, and adaptive thinking
+    accepts it but answers without thinking, so only an explicit forcing `tool_choice` is sent then.
     """
-    if not profile.get('bedrock_supports_tool_choice', False):
-        explicit_choice = (model_settings or {}).get('tool_choice')
-        if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            raise UserError(
-                f'tool_choice={explicit_choice!r} is not supported by model {model_name!r}. '
-                f'This model does not support forcing tool use.'
+    thinking_type = _effective_thinking_type(model_settings, model_request_parameters, profile)
+    if profile.get('bedrock_supports_tool_choice', False):
+        unavailable_reason = tool_forcing_unavailable_reason(
+            profile, thinking=thinking_type is not None, thinking_remedy='Disable thinking with `thinking=False`'
+        )
+    else:
+        unavailable_reason = FORCING_UNSUPPORTED_REASON
+    if unavailable_reason is None and thinking_type == 'enabled':
+        if profile.get('bedrock_thinking_variant') != 'anthropic':
+            unavailable_reason = (
+                "Bedrock doesn't support forcing tool use with thinking enabled for this model. "
+                "Disable thinking or use `tool_choice='auto'`."
             )
-        return False
-
-    if _is_thinking_enabled(model_settings, model_request_parameters):
-        explicit_choice = (model_settings or {}).get('tool_choice')
-        if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            raise UserError(
-                "Bedrock does not support forcing specific tools with thinking mode. Disable thinking or use `tool_choice='auto'`."
+        else:
+            unavailable_reason = (
+                "Extended thinking doesn't support forcing tool use. Disable thinking or use `tool_choice='auto'`."
             )
-        if effective_tool_choice == 'required' or isinstance(effective_tool_choice, tuple):
-            return False
-
-    return True
+            if profile.get('bedrock_supports_adaptive_thinking', False):
+                unavailable_reason += f' Alternatively, `{_ADAPTIVE_THINKING_SETTING}` supports forcing.'
+    return support_tool_forcing(
+        model_name,
+        model_settings,
+        unavailable_reason,
+        disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
+    )

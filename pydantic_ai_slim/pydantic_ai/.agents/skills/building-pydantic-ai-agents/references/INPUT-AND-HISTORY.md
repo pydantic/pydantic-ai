@@ -47,13 +47,9 @@ Important distinctions:
   that may be exact cited text or broader retrieval chunks and should be treated as untrusted, potentially private data;
   set `model_settings={'include_citations': True}` to request citations from
   providers that require an explicit opt-in (providers that do not require it ignore the setting)
-- persisted citations replay through native provider annotations where the destination can represent them truthfully:
-  Anthropic and Bedrock can translate character citations for the same persisted text document in either direction
-  (`include_citations=True` is required for a Bedrock destination), and OpenAI Responses can translate a foreign URL
-  citation whose anchor identifies a rendered marker; other combinations replay text without synthesizing citation
-  objects; citations remain in the stored Pydantic AI messages for application rendering, but the model may not know
-  what a visible marker refers to, so include the source again when a follow-up requires it rather than injecting a
-  synthetic citation list into history
+- persisted citations are sent back only to the provider that produced them (Anthropic, Bedrock with
+  `include_citations=True`, OpenAI Responses when item IDs are sent) and go to other providers as plain text; the
+  model may not know what a visible marker refers to, so include the source again when a follow-up needs it
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt
 - interrupted, hand-built, or context-evicted histories are made provider-valid automatically before each model request — no manual cleanup needed. Repairs only ADD synthesized parts or REMOVE fundamentally-unsendable ones (never silently dropping meaningful content): a tool call with no result gets a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`), including one whose args were cut off mid-stream; an orphaned tool result (result with no matching call) is dropped; then consecutive compatible messages are merged. Applies to regular tool calls only — builtin/native parts are left untouched (handled by each model's serializer). Duplicate tool results and provider-specific ordering rules are out of scope.
 - to cancel a whole run: pass a `CancellationToken` to any run method and call `token.cancel()` (thread-safe), call `agent_run.cancel()` on the `agent.iter()` handle, cancel via `async with agent.run_stream_events(...) as events: ... events.cancel()`, or call `ctx.cancel()` from a tool, `event_stream_handler`, or capability hook. Inside the `agent.iter()` block this surfaces as `CancelledError`; once the context exits it raises `RunCancelled`. `RunCancelled.all_messages()` returns a complete snapshot of the history (completed tool results included) and can be passed as `message_history` to a new run to resume — dangling calls are repaired per the previous bullet. Cancellation is terminal: capability hooks may clean up but cannot recover the run to success. External `asyncio.Task.cancel()` keeps raising `CancelledError` (never translated; wins if both race); catch it and call `RunCancelled.from_cancellation(exc)` to access the attached run state. `StreamedRunResult.cancel()` is different: it only stops the current model response, the run continues.
@@ -85,7 +81,7 @@ Rules of thumb:
 - Do **not** pass `run_id=''`, or reuse a `run_id` that already appears on `message_history` — both raise `UserError` because they break `new_messages()` boundary detection. Correlate pause/resume and multi-turn work with `conversation_id` instead. When retrying a failed run with the same `run_id`, rebuild `message_history` without the failed attempt's messages.
 - Pass `conversation_id='new'` to fork a thread off existing history; `'new'` is **not** a sentinel for `run_id`.
 - UI adapters auto-wire protocol thread/chat ids into `conversation_id`. Protocol run ids (e.g. AG-UI `runId`) are **not** mapped into agent `run_id` — pass `run_id=` on the adapter/`Agent.run` if you need them aligned. A `UIEventStream` used standalone (no adapter, e.g. encoding events out of a durable execution workflow or a queue) has no protocol ids to wire: `AGUIEventStream(thread_id=..., run_id=...)` takes them directly, and defaults each to a fresh UUID that matches nothing agent-side, so pass the run's own `conversation_id`/`run_id` to keep them aligned.
-- AG-UI live failed tool outcomes round-trip through a namespaced payload on `ReasoningEncryptedValueEvent.encrypted_value` with `ag-ui-protocol >= 0.1.13`. Earlier event streams have no outcome carrier, so reloading them reconstructs the tool result as successful.
+- AG-UI live failed tool outcomes round-trip through a namespaced payload on `ReasoningEncryptedValueEvent.encrypted_value` with `ag-ui-protocol >= 0.1.11`. Earlier event streams have no outcome carrier, so reloading them reconstructs the tool result as successful.
 
 ## Manage Context Size
 
@@ -110,11 +106,13 @@ Good uses:
 - summarizing old messages
 - applying app-specific history policies
 
+To decide *when* to trim or summarize, a context-aware processor can check `ctx.context_window_used` — the fraction of the model's context window occupied as of the last response. Treat `None` as unknown and leave history unchanged; it means there is no response yet or the window or usage is unknown. The window size itself is `model.context_window`, read from the profile's `context_window` (filled automatically from genai-prices data, or set explicitly via `profile={'context_window': 128_000}` for custom/local models); a `FallbackModel` reports the smallest window among its candidates.
+
 ## Inject Messages Mid-Run
 
-Use `RunContext.enqueue(...)` (from a tool or capability hook) or `AgentRun.enqueue(...)` (from external code driving `agent.iter()`) to add content to the conversation while a run is in progress — e.g. a tool adding follow-up context, or an external event "steering" the agent.
+Use `RunContext.enqueue(...)` (from a tool or capability hook), `AgentRun.enqueue(...)` (from external code driving `agent.iter()`), or `RealtimeSession.enqueue(...)` (from external code driving a realtime session) to add content to the conversation while a run is in progress — e.g. a tool adding follow-up context, or an external event "steering" the agent.
 
-`enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`). Both `enqueue` methods return an `enqueue_id` (`str`) for non-empty calls, or `None` for empty calls. The event stream yields an `EnqueuedMessagesEvent` (with that `enqueue_id` and the delivered messages) once those messages enter run history, so a client can observe when its steering message took effect.
+`enqueue` is variadic; each positional arg is one item: a piece of `UserContent` (a `str` or multi-modal content like an `ImageUrl`), a `ModelRequestPart` (e.g. a `SystemPromptPart`), or a complete `ModelRequest`/`ModelResponse`. Adjacent user content is gathered into one `UserPromptPart`. Pass an existing list by spreading it (`enqueue(*items)`). All three entry points return an `enqueue_id` (`str`) for non-empty calls, or `None` for empty calls. Standard-run and realtime event streams yield an `EnqueuedMessagesEvent` (with that `enqueue_id` and the delivered messages) once those messages enter history, so a client can observe when its steering message took effect. Realtime sessions accept text and `SystemPromptPart`s only, render system parts as `<system>…</system>`, and record the delivered content as one `UserPromptPart`. A system part marks provenance, not silence: the model still gets a turn on it (use `session.send(text, respond=False)` for context that should not prompt a turn).
 
 An enqueued `SystemPromptPart` is a mid-conversation instruction: it's sent at its position in the history rather than hoisted into the provider's top-level system prompt, so it doesn't invalidate a cached prefix ahead of it. This does not enable caching by itself; configure the model's prompt caching or include a `CachePoint`. On models that honor `CachePoint`, one at the end of an `enqueue(...)` batch covers every preceding item in that batch, including a `SystemPromptPart`; one with more content after it caches up to where you put it and leaves the instruction outside, since the instruction is sent after the content it accompanies. Where the provider's API accepts a system message inline it's sent as one, with real operator authority; elsewhere it's rendered as `<system>`-tagged user content at that position, which a model treats as a strong preference rather than a system-level rule. Support varies by model *and* transport, and Pydantic AI picks the rendering automatically — don't gate your own code on a model list.
 
@@ -129,7 +127,7 @@ agent = Agent('anthropic:claude-opus-4-7', name='alerting_agent')
 
 
 @agent.tool
-def trigger_alert(ctx: RunContext[None]) -> str:
+def trigger_alert(ctx: RunContext) -> str:
     ctx.enqueue('Alert: production is degraded, prioritize triage.')
     return 'alert raised'
 ```

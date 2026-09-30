@@ -7,9 +7,9 @@ the Thinking capability, and end-to-end integration via FunctionModel.
 # pyright: reportPrivateUsage=false, reportArgumentType=false
 from __future__ import annotations
 
-import re
 from dataclasses import replace
 from typing import Any, Literal
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -21,7 +21,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.output import OutputObjectDefinition
-from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.profiles import ModelProfile, merge_profile
 from pydantic_ai.profiles.anthropic import AnthropicModelProfile
 from pydantic_ai.profiles.cohere import cohere_model_profile
 from pydantic_ai.profiles.google import GoogleModelProfile, google_model_profile
@@ -56,6 +56,8 @@ with try_import() as openai_imports:
         OpenRouterModelSettings,
         _openrouter_settings_to_openai_settings,
     )
+    from pydantic_ai.providers.cerebras import CerebrasProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
 
 with try_import() as google_imports:
     from pydantic_ai.models.google import GoogleModel
@@ -67,14 +69,13 @@ with try_import() as groq_imports:
 
 with try_import() as bedrock_imports:
     from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSettings
-    from pydantic_ai.providers.bedrock import BedrockModelProfile
+    from pydantic_ai.providers.bedrock import BedrockModelProfile, BedrockProvider
 
 with try_import() as xai_imports:
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
+    from pydantic_ai.providers.xai import XaiProvider
 
-pytestmark = [
-    pytest.mark.anyio,
-]
+pytestmark = []
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +169,10 @@ class TestPrepareRequestThinkingResolution:
 # ---------------------------------------------------------------------------
 
 
+def _anthropic_model(profile: AnthropicModelProfile) -> AnthropicModel:
+    return AnthropicModel('claude-opus-4-7', provider=AnthropicProvider(api_key='mock-api-key'), profile=profile)
+
+
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 class TestAnthropicThinkingTranslation:
     """Test Anthropic _translate_thinking and _build_output_config translation."""
@@ -227,6 +232,18 @@ class TestAnthropicThinkingTranslation:
         result = AnthropicModel._translate_thinking(adaptive_model, settings, params)
         assert result is anthropic_omit
 
+    def test_thinking_false_disables_thinking_on_by_default(self):
+        """thinking=False -> {'type': 'disabled'} on a model that thinks when `thinking` is omitted."""
+        model = FunctionModel(
+            _echo,
+            profile=AnthropicModelProfile(
+                supports_thinking=True, anthropic_supports_adaptive_thinking=True, thinking_enabled_by_default=True
+            ),
+        )
+        params = ModelRequestParameters(thinking=False)
+        result = AnthropicModel._translate_thinking(model, {}, params)
+        assert result == snapshot({'type': 'disabled'})
+
     def test_thinking_none_returns_omit(self, adaptive_model: FunctionModel):
         """thinking=None -> OMIT (not sent to API)."""
         params = ModelRequestParameters(thinking=None)
@@ -243,10 +260,11 @@ class TestAnthropicThinkingTranslation:
 
     def test_effort_level_on_output_config(self):
         """thinking='high' sets effort on output_config when model supports it."""
-        model = AnthropicModel.__new__(AnthropicModel)
-        model._profile = AnthropicModelProfile(
-            supports_thinking=True,
-            anthropic_supports_effort=True,
+        model = _anthropic_model(
+            AnthropicModelProfile(
+                supports_thinking=True,
+                anthropic_supports_effort=True,
+            )
         )
 
         params = ModelRequestParameters(thinking='high')
@@ -256,10 +274,11 @@ class TestAnthropicThinkingTranslation:
 
     def test_output_config_no_effort_for_bool(self):
         """thinking=True does NOT set effort on output_config (only str values do)."""
-        model = AnthropicModel.__new__(AnthropicModel)
-        model._profile = AnthropicModelProfile(
-            supports_thinking=True,
-            anthropic_supports_effort=True,
+        model = _anthropic_model(
+            AnthropicModelProfile(
+                supports_thinking=True,
+                anthropic_supports_effort=True,
+            )
         )
 
         params = ModelRequestParameters(thinking=True)
@@ -269,11 +288,12 @@ class TestAnthropicThinkingTranslation:
 
     def test_adaptive_model_with_effort_level(self):
         """thinking='high' on adaptive+effort model uses adaptive thinking and output_config effort."""
-        model = AnthropicModel.__new__(AnthropicModel)
-        model._profile = AnthropicModelProfile(
-            supports_thinking=True,
-            anthropic_supports_adaptive_thinking=True,
-            anthropic_supports_effort=True,
+        model = _anthropic_model(
+            AnthropicModelProfile(
+                supports_thinking=True,
+                anthropic_supports_adaptive_thinking=True,
+                anthropic_supports_effort=True,
+            )
         )
 
         params = ModelRequestParameters(thinking='high')
@@ -289,12 +309,12 @@ class TestAnthropicThinkingTranslation:
 
     def test_task_budget_coexists_with_effort(self):
         """Anthropic task budgets share the same output_config object as effort."""
-        model = AnthropicModel.__new__(AnthropicModel)
-        model._model_name = 'claude-opus-4-7'
-        model._profile = AnthropicModelProfile(
-            supports_thinking=True,
-            anthropic_supports_effort=True,
-            anthropic_supports_task_budgets=True,
+        model = _anthropic_model(
+            AnthropicModelProfile(
+                supports_thinking=True,
+                anthropic_supports_effort=True,
+                anthropic_supports_task_budgets=True,
+            )
         )
 
         params = ModelRequestParameters(thinking='high')
@@ -496,7 +516,34 @@ class TestOpenAIResponsesThinkingTranslation:
 
 @pytest.mark.skipif(not google_imports(), reason='google-genai not installed')
 class TestGoogleThinkingTranslation:
-    """Test Google model _translate_thinking translation."""
+    """Test Google model _translate_thinking translation.
+
+    Unit-pinned because cassette matchers aren't sensitive to the request body — asserting the
+    translated config directly is what catches resolution drift; wire-level cases live in
+    `tests/test_thinking_wire_contract.py`.
+    """
+
+    @pytest.fixture
+    def default_google_model(self):
+        """A model with unspecified thinking_level support (should default to Gemini 3+ behaviour)."""
+        return FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+            ),
+        )
+
+    def test_thinking_default_uses_thinking_level(self, default_google_model: FunctionModel):
+        params = ModelRequestParameters(thinking='high')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(default_google_model, settings, params)
+        assert result == {'include_thoughts': True, 'thinking_level': 'HIGH'}
+
+    def test_thinking_false_default_uses_minimal_level(self, default_google_model: FunctionModel):
+        params = ModelRequestParameters(thinking=False)
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(default_google_model, settings, params)
+        assert result == {'thinking_level': 'MINIMAL'}
 
     @pytest.fixture
     def gemini_3_model(self):
@@ -529,6 +576,30 @@ class TestGoogleThinkingTranslation:
                 supports_thinking=True,
                 google_supports_thinking_level=True,
                 google_supports_minimal_thinking_level=False,
+            ),
+        )
+
+    @pytest.fixture
+    def flash_lite_image_model(self):
+        """`gemini-3.1-flash-lite-image`: documented levels are only `minimal` and `high`."""
+        return FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_thinking_levels=frozenset({'MINIMAL', 'HIGH'}),
+            ),
+        )
+
+    @pytest.fixture
+    def low_high_model(self):
+        """A model with a non-contiguous level set that skips `medium` (e.g. `gemini-3-pro-preview`)."""
+        return FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_thinking_levels=frozenset({'LOW', 'HIGH'}),
             ),
         )
 
@@ -592,6 +663,81 @@ class TestGoogleThinkingTranslation:
         settings: ModelSettings = {}
         result = GoogleModel._translate_thinking(gemini_3_no_minimal_model, settings, params)
         assert result == snapshot({'thinking_level': 'LOW'})
+
+    def test_thinking_low_snaps_to_minimal(self, flash_lite_image_model: FunctionModel):
+        """`gemini-3.1-flash-lite-image` documents only `minimal`/`high`, so `low` snaps down."""
+        params = ModelRequestParameters(thinking='low')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'MINIMAL'})
+
+    def test_thinking_medium_snaps_to_high(self, flash_lite_image_model: FunctionModel):
+        """`medium` is unsupported on `gemini-3.1-flash-lite-image` and snaps up to `high`."""
+        params = ModelRequestParameters(thinking='medium')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'HIGH'})
+
+    def test_thinking_xhigh_snaps_to_high(self, flash_lite_image_model: FunctionModel):
+        params = ModelRequestParameters(thinking='xhigh')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'HIGH'})
+
+    def test_thinking_false_maps_to_lowest_supported_level(self, flash_lite_image_model: FunctionModel):
+        """`thinking=False` resolves through the lowest supported level, here `MINIMAL`."""
+        params = ModelRequestParameters(thinking=False)
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(flash_lite_image_model, settings, params)
+        assert result == snapshot({'thinking_level': 'MINIMAL'})
+
+    def test_thinking_medium_tie_rounds_down(self, low_high_model: FunctionModel):
+        """Equidistant supported levels round down to the cheaper one."""
+        params = ModelRequestParameters(thinking='medium')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(low_high_model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'LOW'})
+
+    def test_thinking_empty_levels_rejected(self):
+        """An explicitly empty `google_thinking_levels` is malformed config, not 'no levels'."""
+        model = FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_thinking_levels=frozenset(),
+            ),
+        )
+        params = ModelRequestParameters(thinking='low')
+        settings: ModelSettings = {}
+        with pytest.raises(UserError, match='must contain at least one level'):
+            GoogleModel._translate_thinking(model, settings, params)
+
+    def test_thinking_snaps_table_derived_levels(self):
+        """The snap applies to a level set derived by `google_model_profile`, not just hand-built ones."""
+        model = FunctionModel(_echo, profile=google_model_profile('gemini-3.7-flash'))
+        params = ModelRequestParameters(thinking='minimal')
+        settings: ModelSettings = {}
+        result = GoogleModel._translate_thinking(model, settings, params)
+        assert result == snapshot({'include_thoughts': True, 'thinking_level': 'LOW'})
+
+        params_false = ModelRequestParameters(thinking=False)
+        assert GoogleModel._translate_thinking(model, settings, params_false) == snapshot({'thinking_level': 'LOW'})
+
+    def test_thinking_unknown_levels_rejected(self):
+        """Levels the resolver can't order (e.g. lowercase misspellings) are rejected as config errors."""
+        model = FunctionModel(
+            _echo,
+            profile=GoogleModelProfile(
+                supports_thinking=True,
+                google_supports_thinking_level=True,
+                google_thinking_levels=frozenset({'minimal'}),
+            ),
+        )
+        params = ModelRequestParameters(thinking='low')
+        settings: ModelSettings = {}
+        with pytest.raises(UserError, match='unknown levels'):
+            GoogleModel._translate_thinking(model, settings, params)
 
     def test_thinking_false_gemini_25(self, gemini_25_model: FunctionModel):
         """thinking=False on Gemini 2.5 uses thinking_budget=0."""
@@ -674,14 +820,11 @@ def _thinking_settings(anthropic_thinking: BetaThinkingConfigParam | None) -> Mo
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 class TestAnthropicThinkingOutputToolsConflict:
-    """Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
-    thinking but accepts alongside adaptive thinking, so only the former switches the output mode.
+    """Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended thinking and
+    answers without thinking alongside adaptive thinking, so a bare structured `output_type` switches to Native
+    Output whenever the request thinks, including on models that think without a thinking setting.
 
-    The exception is a model that rejects forcing outright (`claude-fable-5`, `claude-mythos-5`):
-    there, Tool Output could only fall back to a soft `tool_choice='auto'` the model may ignore, so
-    adaptive thinking keeps switching away from it too.
-
-    These are pre-request guards, so no request is ever made and there is nothing to record. Real
+    These are pre-request decisions, so no request is ever made and there is nothing to record. Real
     model names are used so the shipped profile flags — not hand-built ones — decide each case.
     """
 
@@ -699,8 +842,8 @@ class TestAnthropicThinkingOutputToolsConflict:
             pytest.param(
                 'claude-opus-4-6',
                 None,
-                'tool',
-                id='unified_thinking_on_adaptive_profile_keeps_tool_output',
+                'native',
+                id='unified_thinking_on_adaptive_profile_switches_to_native',
             ),
             pytest.param(
                 'claude-sonnet-4-5',
@@ -709,7 +852,7 @@ class TestAnthropicThinkingOutputToolsConflict:
                 id='unified_thinking_on_non_adaptive_profile_switches_to_native',
             ),
             pytest.param(
-                'claude-fable-5',
+                'claude-fable-5-1',
                 None,
                 'native',
                 id='adaptive_profile_that_cannot_force_switches_to_native',
@@ -717,8 +860,8 @@ class TestAnthropicThinkingOutputToolsConflict:
             pytest.param(
                 'claude-opus-4-6',
                 {'type': 'adaptive'},
-                'tool',
-                id='explicit_adaptive_keeps_tool_output',
+                'native',
+                id='explicit_adaptive_switches_to_native',
             ),
             pytest.param(
                 'claude-opus-4-6',
@@ -743,40 +886,58 @@ class TestAnthropicThinkingOutputToolsConflict:
         assert resolved_params.output_mode == expected_output_mode
 
     @pytest.mark.parametrize(
-        'model_name,anthropic_thinking,expected_message',
+        'model_name,thinking,expected_output_mode',
         [
-            pytest.param(
-                'claude-fable-5',
-                None,
-                "'claude-fable-5' does not support output tools when a thinking setting is configured, "
-                'because it rejects the forced tool choice they require. '
-                'Use `output_type=NativeOutput(...)` instead.',
-                id='adaptive_profile_that_cannot_force_names_the_model',
-            ),
-            pytest.param(
-                'claude-opus-4-6',
-                {'type': 'enabled', 'budget_tokens': 1024},
-                'Anthropic does not support extended thinking and output tools at the same time. '
-                'Use `output_type=NativeOutput(...)` instead. Alternatively, '
-                "`anthropic_thinking={'type': 'adaptive'}` supports output tools.",
-                id='extended_thinking_on_adaptive_profile_suggests_adaptive',
-            ),
+            pytest.param('claude-opus-4-6', None, 'tool', id='opus_4_6_thinks_only_when_asked'),
+            pytest.param('claude-opus-5', None, 'native', id='opus_5_thinks_by_default'),
+            pytest.param('claude-sonnet-5', False, 'tool', id='sonnet_5_thinking_turned_off'),
+            pytest.param('claude-opus-5-5', False, 'native', id='opus_5_5_cannot_turn_thinking_off'),
         ],
     )
-    def test_explicit_tool_output_raises(
+    def test_auto_output_mode_follows_the_model_default(
+        self,
+        anthropic_api_key: str,
+        output_tool_params: ModelRequestParameters,
+        model_name: str,
+        thinking: bool | None,
+        expected_output_mode: str,
+    ):
+        model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
+        settings = ModelSettings() if thinking is None else ModelSettings(thinking=thinking)
+
+        _, resolved_params = model.prepare_request(settings, output_tool_params)
+
+        assert resolved_params.output_mode == expected_output_mode
+
+    @pytest.mark.parametrize(
+        'model_name,anthropic_thinking',
+        [
+            pytest.param('claude-fable-5-1', None, id='model_that_cannot_force'),
+            pytest.param('claude-opus-4-6', {'type': 'enabled', 'budget_tokens': 1024}, id='extended_thinking'),
+        ],
+    )
+    def test_explicit_tool_output_is_kept(
         self,
         anthropic_api_key: str,
         output_tool_params: ModelRequestParameters,
         model_name: str,
         anthropic_thinking: BetaThinkingConfigParam | None,
-        expected_message: str,
     ):
+        """An explicit `ToolOutput` keeps Tool Output where forcing isn't available; the output tool is then
+        offered with `tool_choice='auto'`, and a text response is retried."""
         settings = _thinking_settings(anthropic_thinking)
         model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
         params = replace(output_tool_params, output_mode='tool', allow_text_output=False)
 
-        with pytest.raises(UserError, match=re.escape(expected_message)):
-            model.prepare_request(settings, params)
+        _, resolved_params = model.prepare_request(settings, params)
+
+        assert resolved_params.output_mode == 'tool'
+
+
+def _bedrock_model(profile: ModelProfile) -> BedrockConverseModel:
+    client = MagicMock()
+    client.meta.endpoint_url = 'https://bedrock-runtime.us-east-1.amazonaws.com'
+    return BedrockConverseModel('test-model', provider=BedrockProvider(bedrock_client=client), profile=profile)
 
 
 @pytest.mark.skipif(not bedrock_imports(), reason='boto3 not installed')
@@ -784,10 +945,11 @@ class TestBedrockThinkingTranslation:
     """Test Bedrock thinking translation in `_build_additional_model_request_fields` for each variant."""
 
     def test_anthropic_variant_thinking_true(self):
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(
-            bedrock_thinking_variant='anthropic',
-            supports_thinking=True,
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='anthropic',
+                supports_thinking=True,
+            )
         )
 
         settings = BedrockModelSettings()
@@ -796,10 +958,11 @@ class TestBedrockThinkingTranslation:
         assert result == {'thinking': {'type': 'enabled', 'budget_tokens': 10000}}
 
     def test_anthropic_variant_thinking_false(self):
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(
-            bedrock_thinking_variant='anthropic',
-            supports_thinking=True,
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='anthropic',
+                supports_thinking=True,
+            )
         )
 
         settings = BedrockModelSettings()
@@ -809,10 +972,11 @@ class TestBedrockThinkingTranslation:
 
     def test_openai_variant_thinking_false(self):
         """thinking=False on OpenAI Bedrock variant is a no-op (Bedrock rejects 'none')."""
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(
-            bedrock_thinking_variant='openai',
-            supports_thinking=True,
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='openai',
+                supports_thinking=True,
+            )
         )
 
         settings = BedrockModelSettings()
@@ -822,10 +986,11 @@ class TestBedrockThinkingTranslation:
         assert result is None
 
     def test_openai_variant_thinking_high(self):
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(
-            bedrock_thinking_variant='openai',
-            supports_thinking=True,
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='openai',
+                supports_thinking=True,
+            )
         )
 
         settings = BedrockModelSettings()
@@ -834,10 +999,11 @@ class TestBedrockThinkingTranslation:
         assert result == {'reasoning_effort': 'high'}
 
     def test_qwen_variant_thinking_true(self):
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(
-            bedrock_thinking_variant='qwen',
-            supports_thinking=True,
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='qwen',
+                supports_thinking=True,
+            )
         )
 
         settings = BedrockModelSettings()
@@ -847,10 +1013,11 @@ class TestBedrockThinkingTranslation:
 
     def test_qwen_variant_thinking_false(self):
         """thinking=False on Qwen variant is a no-op (Qwen has no disable mechanism)."""
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(
-            bedrock_thinking_variant='qwen',
-            supports_thinking=True,
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='qwen',
+                supports_thinking=True,
+            )
         )
 
         settings = BedrockModelSettings()
@@ -861,8 +1028,7 @@ class TestBedrockThinkingTranslation:
 
     def test_no_variant_thinking_passthrough(self):
         """When bedrock_thinking_variant is None, unified thinking is a no-op."""
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(bedrock_thinking_variant=None)
+        model = _bedrock_model(BedrockModelProfile(bedrock_thinking_variant=None))
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking='high')
@@ -871,8 +1037,7 @@ class TestBedrockThinkingTranslation:
         assert result is None
 
     def test_thinking_none_returns_existing(self):
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(bedrock_thinking_variant='anthropic')
+        model = _bedrock_model(BedrockModelProfile(bedrock_thinking_variant='anthropic'))
 
         settings = BedrockModelSettings()
         params = ModelRequestParameters(thinking=None)
@@ -880,22 +1045,17 @@ class TestBedrockThinkingTranslation:
         assert result is None
 
     def _adaptive_model(self, *, supports_effort: bool = True):
-        from pydantic_ai.models.bedrock import BedrockConverseModel
-        from pydantic_ai.providers.bedrock import BedrockModelProfile
-
-        model = BedrockConverseModel.__new__(BedrockConverseModel)
-        model._profile = BedrockModelProfile(
-            bedrock_thinking_variant='anthropic',
-            bedrock_supports_adaptive_thinking=True,
-            bedrock_supports_effort=supports_effort,
-            supports_thinking=True,
+        return _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='anthropic',
+                bedrock_supports_adaptive_thinking=True,
+                bedrock_supports_effort=supports_effort,
+                supports_thinking=True,
+            )
         )
-        return model
 
     def test_anthropic_variant_adaptive_thinking_true(self):
         """Bare thinking=True enables adaptive but doesn't set effort (matches AnthropicModel)."""
-        from pydantic_ai.models.bedrock import BedrockModelSettings
-
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
             BedrockModelSettings(), ModelRequestParameters(thinking=True)
@@ -904,8 +1064,6 @@ class TestBedrockThinkingTranslation:
 
     def test_anthropic_variant_adaptive_thinking_high_sets_effort(self):
         """thinking='high' on adaptive model adds output_config.effort sibling per AWS docs."""
-        from pydantic_ai.models.bedrock import BedrockModelSettings
-
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
             BedrockModelSettings(), ModelRequestParameters(thinking='high')
@@ -918,18 +1076,37 @@ class TestBedrockThinkingTranslation:
     )
     def test_anthropic_variant_adaptive_effort_map(self, level: ThinkingLevel, effort: str):
         """Effort map: minimal/low → low, medium → medium, high → high, xhigh → max (best-effort)."""
-        from pydantic_ai.models.bedrock import BedrockModelSettings
-
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
             BedrockModelSettings(), ModelRequestParameters(thinking=level)
         )
         assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': effort}}
 
+    def test_anthropic_variant_adaptive_xhigh_passes_through_when_profile_supports_it(self):
+        """`xhigh` reaches the wire as `xhigh` when the merged profile carries `anthropic_supports_xhigh_effort`.
+
+        `BedrockProvider.model_profile` merges the downstream Anthropic profile into the Bedrock one, so the
+        flag is present for the same models the direct Anthropic path passes `xhigh` through for. Bedrock accepts
+        `xhigh` on exactly those models and rejects it on the rest, which the `max` fallback above covers.
+        """
+        model = _bedrock_model(
+            merge_profile(
+                BedrockModelProfile(
+                    bedrock_thinking_variant='anthropic',
+                    bedrock_supports_adaptive_thinking=True,
+                    bedrock_supports_effort=True,
+                    supports_thinking=True,
+                ),
+                AnthropicModelProfile(anthropic_supports_xhigh_effort=True),
+            )
+        )
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking='xhigh')
+        )
+        assert result == {'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'xhigh'}}
+
     def test_anthropic_variant_adaptive_no_effort_when_unsupported(self):
         """Effort is omitted when the profile doesn't advertise bedrock_supports_effort."""
-        from pydantic_ai.models.bedrock import BedrockModelSettings
-
         model = self._adaptive_model(supports_effort=False)
         result = model._build_additional_model_request_fields(
             BedrockModelSettings(), ModelRequestParameters(thinking='high')
@@ -938,8 +1115,6 @@ class TestBedrockThinkingTranslation:
 
     def test_anthropic_variant_adaptive_user_output_config_wins(self):
         """User-provided output_config in bedrock_additional_model_requests_fields is preserved."""
-        from pydantic_ai.models.bedrock import BedrockModelSettings
-
         model = self._adaptive_model()
         settings = BedrockModelSettings(bedrock_additional_model_requests_fields={'output_config': {'effort': 'low'}})
         result = model._build_additional_model_request_fields(settings, ModelRequestParameters(thinking='high'))
@@ -947,13 +1122,26 @@ class TestBedrockThinkingTranslation:
 
     def test_anthropic_variant_adaptive_thinking_false_omits(self):
         """thinking=False on adaptive model omits both thinking and output_config."""
-        from pydantic_ai.models.bedrock import BedrockModelSettings
-
         model = self._adaptive_model()
         result = model._build_additional_model_request_fields(
             BedrockModelSettings(), ModelRequestParameters(thinking=False)
         )
         assert result is None
+
+    def test_anthropic_variant_adaptive_thinking_false_disables_thinking_on_by_default(self):
+        """thinking=False on a model that thinks by default sends `disabled`, since omitting it leaves thinking on."""
+        model = _bedrock_model(
+            BedrockModelProfile(
+                bedrock_thinking_variant='anthropic',
+                bedrock_supports_adaptive_thinking=True,
+                supports_thinking=True,
+                thinking_enabled_by_default=True,
+            )
+        )
+        result = model._build_additional_model_request_fields(
+            BedrockModelSettings(), ModelRequestParameters(thinking=False)
+        )
+        assert result == {'thinking': {'type': 'disabled'}}
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -1006,8 +1194,6 @@ class TestOpenRouterThinkingTranslation:
         propagates from the sub-profile via `merge_profile` so always-on upstream routes
         silently drop `thinking=False` at the gate — matching their direct-route behavior
         per the `ModelProfile.thinking_always_enabled` docstring."""
-        from pydantic_ai.providers.openrouter import OpenRouterProvider
-
         profile = OpenRouterProvider.model_profile(model_name)
         assert profile is not None
         assert profile.get('supports_thinking', False) is True
@@ -1015,9 +1201,11 @@ class TestOpenRouterThinkingTranslation:
 
     def test_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on OpenRouter is passed through."""
-        model = OpenRouterModel.__new__(OpenRouterModel)
-        model._profile = ModelProfile(supports_thinking=True)
-        model._settings = None
+        model = OpenRouterModel(
+            'openai/gpt-5',
+            provider=OpenRouterProvider(api_key='mock-api-key'),
+            profile=ModelProfile(supports_thinking=True),
+        )
 
         settings: dict[str, Any] = {'openai_reasoning_effort': 'low'}
         params = ModelRequestParameters(thinking='high')
@@ -1069,9 +1257,11 @@ class TestCerebrasThinkingTranslation:
 
     def test_explicit_openai_reasoning_effort_passthrough(self):
         """Explicit openai_reasoning_effort on Cerebras is passed through."""
-        model = CerebrasModel.__new__(CerebrasModel)
-        model._profile = ModelProfile(supports_thinking=True)
-        model._settings = None
+        model = CerebrasModel(
+            'zai-glm-4.7',
+            provider=CerebrasProvider(api_key='mock-api-key'),
+            profile=ModelProfile(supports_thinking=True),
+        )
 
         settings: dict[str, Any] = {'openai_reasoning_effort': 'low'}
         params = ModelRequestParameters(thinking='high')
@@ -1086,9 +1276,11 @@ class TestCerebrasThinkingTranslation:
         Driven through `prepare_request` rather than VCR because the footgun is a cross-request mutation of
         in-memory settings that no single recorded request can exercise.
         """
-        model = CerebrasModel.__new__(CerebrasModel)
-        model._profile = ModelProfile(supports_thinking=True)
-        model._settings = CerebrasModelSettings(cerebras_clear_thinking=False)
+        model = CerebrasModel(
+            'zai-glm-4.7',
+            provider=CerebrasProvider(api_key='mock-api-key'),
+            settings=CerebrasModelSettings(cerebras_clear_thinking=False),
+        )
         params = ModelRequestParameters()
 
         first, _ = model.prepare_request(None, params)
@@ -1097,13 +1289,16 @@ class TestCerebrasThinkingTranslation:
         assert first is not None and second is not None
         assert first.get('extra_body') == {'clear_thinking': False}
         assert second.get('extra_body') == {'clear_thinking': False}
+        assert model._settings is not None
         assert 'cerebras_clear_thinking' in model._settings
 
     def test_disable_reasoning_survives_repeated_requests(self):
         """Same non-mutation guarantee for the deprecated `cerebras_disable_reasoning` pop."""
-        model = CerebrasModel.__new__(CerebrasModel)
-        model._profile = ModelProfile(supports_thinking=True)
-        model._settings = CerebrasModelSettings(cerebras_disable_reasoning=True)
+        model = CerebrasModel(
+            'zai-glm-4.7',
+            provider=CerebrasProvider(api_key='mock-api-key'),
+            settings=CerebrasModelSettings(cerebras_disable_reasoning=True),
+        )
         params = ModelRequestParameters()
 
         with pytest.warns(PydanticAIDeprecationWarning, match=r'`cerebras_disable_reasoning` is deprecated'):
@@ -1114,6 +1309,7 @@ class TestCerebrasThinkingTranslation:
         assert first is not None and second is not None
         assert first.get('openai_reasoning_effort') == 'none'
         assert second.get('openai_reasoning_effort') == 'none'
+        assert model._settings is not None
         assert 'cerebras_disable_reasoning' in model._settings
 
 
@@ -1122,9 +1318,9 @@ class TestXaiThinkingTranslation:
     """Test xAI unified thinking fallback."""
 
     def test_thinking_high(self):
-        model = XaiModel.__new__(XaiModel)
-        model._profile = ModelProfile(supports_thinking=True)
-        model._settings = None
+        model = XaiModel(
+            'grok-4', provider=XaiProvider(api_key='mock-api-key'), profile=ModelProfile(supports_thinking=True)
+        )
 
         settings = XaiModelSettings()
         params = ModelRequestParameters(thinking='high')
@@ -1133,9 +1329,9 @@ class TestXaiThinkingTranslation:
         assert resolved_params.thinking == 'high'
 
     def test_thinking_true(self):
-        model = XaiModel.__new__(XaiModel)
-        model._profile = ModelProfile(supports_thinking=True)
-        model._settings = None
+        model = XaiModel(
+            'grok-4', provider=XaiProvider(api_key='mock-api-key'), profile=ModelProfile(supports_thinking=True)
+        )
 
         settings = XaiModelSettings()
         params = ModelRequestParameters(thinking=True)
@@ -1146,15 +1342,17 @@ class TestXaiThinkingTranslation:
         """The `thinking_always_enabled` flag is what enforces the gate drop for grok-3-mini.
 
         Two instances because `Model.profile` is a `cached_property`."""
-        always_on = XaiModel.__new__(XaiModel)
-        always_on._profile = grok_model_profile('grok-3-mini')
-        always_on._settings = None
+        always_on = XaiModel(
+            'grok-3-mini', provider=XaiProvider(api_key='mock-api-key'), profile=grok_model_profile('grok-3-mini')
+        )
         _, resolved = always_on.prepare_request(XaiModelSettings(thinking=False), ModelRequestParameters())
         assert resolved.thinking is None
 
-        non_always_on = XaiModel.__new__(XaiModel)
-        non_always_on._profile = ModelProfile(supports_thinking=True, thinking_always_enabled=False)
-        non_always_on._settings = None
+        non_always_on = XaiModel(
+            'grok-4',
+            provider=XaiProvider(api_key='mock-api-key'),
+            profile=ModelProfile(supports_thinking=True, thinking_always_enabled=False),
+        )
         _, resolved = non_always_on.prepare_request(XaiModelSettings(thinking=False), ModelRequestParameters())
         assert resolved.thinking is False
 
@@ -1361,7 +1559,9 @@ class TestGoogleBudgetApiConstraints:
 
     def test_all_budgets_within_flash_range(self):
         """Every effort budget must be within Gemini 2.5 Flash's [0, 24576] range."""
-        model = FunctionModel(_echo, profile=ModelProfile(supports_thinking=True))
+        model = FunctionModel(
+            _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+        )
         for effort in ('minimal', 'low', 'medium', 'high', 'xhigh'):
             params = ModelRequestParameters(thinking=effort)
             result = GoogleModel._translate_thinking(model, {}, params)
@@ -1372,7 +1572,9 @@ class TestGoogleBudgetApiConstraints:
 
     def test_all_budgets_within_pro_range(self):
         """Every effort budget must be within Gemini 2.5 Pro's [128, 32768] range."""
-        model = FunctionModel(_echo, profile=ModelProfile(supports_thinking=True))
+        model = FunctionModel(
+            _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+        )
         for effort in ('minimal', 'low', 'medium', 'high', 'xhigh'):
             params = ModelRequestParameters(thinking=effort)
             result = GoogleModel._translate_thinking(model, {}, params)
@@ -1383,7 +1585,9 @@ class TestGoogleBudgetApiConstraints:
 
     def test_budgets_are_monotonically_increasing(self):
         """low < medium < high — effort levels should map to increasing budgets."""
-        model = FunctionModel(_echo, profile=ModelProfile(supports_thinking=True))
+        model = FunctionModel(
+            _echo, profile=GoogleModelProfile(supports_thinking=True, google_supports_thinking_level=False)
+        )
         budgets = {}
         for effort in ('low', 'medium', 'high'):
             params = ModelRequestParameters(thinking=effort)
@@ -1435,15 +1639,41 @@ class TestProfileThinkingCapabilities:
         assert profile is not None
         assert profile.get('supports_thinking', False) is True
         assert profile.get('thinking_always_enabled', False) is False
+        assert profile.get('google_supports_thinking_level') is False
 
         profile = google_model_profile('gemini-2.5-pro')
         assert profile is not None
         assert profile.get('supports_thinking', False) is True
         assert profile.get('thinking_always_enabled', False) is True
+        assert profile.get('google_supports_thinking_level') is False
 
         profile = google_model_profile('gemini-2.0-flash')
         assert profile is not None
         assert profile.get('supports_thinking', False) is False
+        assert profile.get('google_supports_thinking_level') is False
+
+        profile = google_model_profile('gemini-1.5-flash')
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is False
+        assert profile.get('google_supports_thinking_level') is False
+
+        profile = google_model_profile('gemini-3.0-pro')
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('thinking_always_enabled', False) is True
+        assert profile.get('google_supports_thinking_level') is True
+
+        profile = google_model_profile('gemini-3-flash-preview')
+        assert profile is not None
+        assert profile.get('supports_thinking', False) is True
+        assert profile.get('google_supports_thinking_level') is True
+
+        # Future/unversioned and -latest alias models default to Gemini 3 behaviour
+        for name in ('gemini-9-flash', 'gemini-flash-latest', 'gemini-pro-latest'):
+            profile = google_model_profile(name)
+            assert profile is not None
+            assert profile.get('supports_thinking', False) is True
+            assert profile.get('google_supports_thinking_level') is True
 
     def test_openai_profile_thinking_support(self):
         profile = openai_model_profile('o3')

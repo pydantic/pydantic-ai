@@ -1,3 +1,7 @@
+---
+description: "A simple Pydantic AI example that constructs a validated Pydantic model from free-form text input, using structured output with any supported model."
+---
+
 # Pydantic Model
 
 Simple example of using Pydantic AI to construct a Pydantic model from a text input.
@@ -14,8 +18,8 @@ With [dependencies installed and environment variables set](./setup.md#usage), r
 python/uv-run -m pydantic_ai_examples.pydantic_model
 ```
 
-This examples uses `openai:gpt-5` by default, but it works well with other models, e.g. you can run it
-with Gemini using:
+This example uses `openai:gpt-5` by default, but it works well with other models. For example, run it
+with Gemini:
 
 ```bash
 PYDANTIC_AI_MODEL=gemini-3-pro-preview python/uv-run -m pydantic_ai_examples.pydantic_model
