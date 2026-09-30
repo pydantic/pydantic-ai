@@ -84,6 +84,12 @@ primitive for it (see [Three-level identity](#three-level-identity)).
 - **Neither set** uses `ctx.run_id` unchanged. A missing context run id raises
   `RuntimeError` because inventing one would disconnect replayed writes.
 
+The run record, events, and snapshots carry `agent_name`. When it is unset, they
+record the running agent's `name` instead (which Pydantic AI infers from the
+variable name when `Agent(name=...)` is not passed). That fallback does not feed
+the `run_id` derivation above, so the store key stays `ctx.run_id` and runs can
+still be looked up by the id passed to or returned from `Agent.run`.
+
 ## Durable execution
 
 `StepPersistence` has the stable capability id `step_persistence`, so it can

@@ -13,13 +13,14 @@ from typing import Generic
 
 from anyio import CancelScope, fail_after
 from anyio.lowlevel import checkpoint
+from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import AgentStreamEvent
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 
 from . import theme
-from .commands import Commands, plugins_command
+from .commands import Commands, added_plugin
 from .config import PluginSettings
 from .plugins import (
     Conversation,
@@ -45,6 +46,8 @@ _RETIRED_BUILTINS: dict[str, PluginSettings] = {
         id='google_workspace', factory='pydantic_ai_harness.google_workspace:GoogleWorkspace', enabled=False
     ),
     'ordinal': PluginSettings(id='ordinal', factory='pydantic_ai_harness.ordinal:Ordinal', enabled=False),
+    'slack': PluginSettings(id='slack', factory='pydantic_ai_harness.slack:Slack', enabled=False),
+    'grain': PluginSettings(id='grain', factory='pydantic_ai_harness.grain:Grain', enabled=False),
 }
 """Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
 
@@ -57,6 +60,10 @@ class PluginError(Exception):
         super().__init__(f'Plugin {plugin!r}: {type(error).__name__}: {error}')
         self.plugin = plugin
         self.error = error
+
+
+class PluginSettingsError(PluginError):
+    """A plugin rejected its settings while activating, so `/plugins add` does not save them."""
 
 
 @dataclass(kw_only=True)
@@ -134,6 +141,8 @@ class PluginLoader(Generic[DepsT]):
         self._project = {declaration.id: declaration for declaration in project}
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, PluginHost[DepsT]] = {}
+        # A `/plugins add` declaration being tried before it is saved, so rejected settings never reach the store.
+        self._staged: dict[str, PluginSettings] = {}
         self.enabled = enabled
 
     @property
@@ -147,6 +156,7 @@ class PluginLoader(Generic[DepsT]):
             return []
         folder = self._discover()
         declared = {declaration.id: self._upgrade(declaration) for declaration in self._store.plugins()}
+        declared.update(self._staged)
         for name in folder.keys() - declared.keys():
             declared[name] = PluginSettings(id=name, factory=name, path=str(folder[name]))
         for shipped in (self._project, self._builtin):
@@ -180,6 +190,10 @@ class PluginLoader(Generic[DepsT]):
         if current is None or not _same_plugin(saved, _RETIRED_BUILTINS.get(saved.id)):
             return saved
         return current.model_copy(update={'enabled': saved.enabled})
+
+    def _saved(self, entry: PluginEntry[DepsT]) -> PluginSettings:
+        """The stored declaration as it is now, without refreshing `entries()` mid-load."""
+        return next((saved for saved in self._store.plugins() if saved.id == entry.name), entry.declaration)
 
     def _registration_order(self) -> list[PluginEntry[DepsT]]:
         """Shipped plugins first, in declaration order, then everything else by name.
@@ -263,13 +277,14 @@ class PluginLoader(Generic[DepsT]):
             full_screen=self._full_screen,
             conversation=self._conversation,
             status=self._status,
-            save_settings=lambda settings: self._store.save_plugin(
-                entry.declaration.model_copy(update={'settings': settings, 'enabled': True})
-            ),
+            save_settings=lambda settings: self._save(entry, settings),
         )
+        activating = False
         try:
             module = self._import(entry, fresh=fresh)
+            activating = True
             _activate(module, entry.declaration, host)
+            activating = False
             self._commands.register_many(host.commands)
             entry.host = host
             self._loaded[name] = host
@@ -280,8 +295,20 @@ class PluginLoader(Generic[DepsT]):
         except Exception as exc:
             await self._failed_load(entry, host)
             entry.error = f'{type(exc).__name__}: {exc}'
+            if activating and isinstance(exc, ValidationError):
+                raise PluginSettingsError(name, exc) from exc
             raise PluginError(name, exc) from exc
         entry.error = None
+
+    def _save(self, entry: PluginEntry[DepsT], settings: dict[str, JsonValue]) -> None:
+        """Persist a host's saved settings, or, while `/plugins add` is trying them, update what it will save."""
+        update: dict[str, object] = {'settings': settings, 'enabled': True}
+        staged = self._staged.get(entry.name)
+        if staged is not None:
+            self._staged[entry.name] = staged.model_copy(update=update)
+            return
+        # The declaration saved now, not at load: another CLAI process may have replaced it since.
+        self._store.save_plugin(self._saved(entry).model_copy(update=update))
 
     async def _failed_load(self, entry: PluginEntry[DepsT], host: PluginHost[DepsT]) -> None:
         try:
@@ -411,10 +438,24 @@ class PluginLoader(Generic[DepsT]):
             existing = next((entry for entry in self.entries() if rest and entry.name == rest[0]), None)
             if existing is not None and not existing.shipped:
                 raise ValueError(f'Plugin {rest[0]} already exists; remove its declaration before replacing it.')
+            declaration = added_plugin(args)
+            loaded = existing is not None and existing.host is not None
             if existing is not None:
                 await self.unload(rest[0])
-            plugins_command(self._store, args)
-            await self.load(rest[0])
+            # Settings are plaintext, so they are saved only once the plugin accepts them: settings it
+            # rejects, perhaps a pasted secret, never reach the store.
+            self._staged[rest[0]] = declaration
+            try:
+                await self.load(rest[0])
+            except PluginSettingsError:
+                del self._staged[rest[0]]
+                if loaded:
+                    await self.load(rest[0])
+                raise
+            except BaseException:
+                self._store.save_plugin(self._staged.pop(rest[0]))
+                raise
+            self._store.save_plugin(self._staged.pop(rest[0]))
             if existing is None:
                 return await self._configure_new(rest[0], f'Added and loaded {rest[0]}.')
             kind = 'project' if existing.project else 'built-in'

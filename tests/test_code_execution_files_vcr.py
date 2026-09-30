@@ -152,10 +152,6 @@ async def test_anthropic_code_execution_files_multi_turn(
             (
                 'assistant',
                 [
-                    'text',
-                    'server_tool_use',
-                    'bash_code_execution_tool_result',
-                    'text',
                     'server_tool_use',
                     'bash_code_execution_tool_result',
                     'text',
@@ -280,11 +276,11 @@ async def test_anthropic_code_execution_files_with_function_tool(
     )
 
 
-# A real container from an earlier recording, created on 2026-06-30 and retried on 2026-08-28,
-# about 59 days later. It had expired past Anthropic's documented 30-day lifetime. Anthropic answers
-# a `container_upload` aimed at this history-resolved id with a generic `api_error` 500 rather than
-# the 404 it gives for an id that never existed. The missing typed error or discriminator is tracked
-# upstream in https://github.com/pydantic/pydantic-ai/issues/7833.
+# A real container from an earlier recording, created on 2026-06-30, so it has expired past Anthropic's
+# documented 30-day lifetime. Anthropic used to answer a `container_upload` aimed at this history-resolved
+# id with a generic `api_error` 500, and now answers a 404 `not_found_error` ("Container not found").
+# The missing typed error or discriminator is tracked upstream in
+# https://github.com/pydantic/pydantic-ai/issues/7833.
 _DEAD_CONTAINER_ID = 'container_01EG1LKXFPoQJ9tpbsZ1dh74'
 
 
@@ -294,15 +290,15 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
 ):
     """A rejected container id resolved from history is dropped and the request resent once.
 
-    The history-resolved id was created on 2026-06-30 and retried on 2026-08-28, about 59 days later,
-    so it had expired past Anthropic's documented 30-day lifetime. Pairing that expired id with
-    `container_upload` answers 500 — the generic `api_error` body any internal failure produces —
-    rather than the 404 it gives for an id that never existed. The cause is not readable off the
-    response, so this test pins the shape that reproduces. The *remedy* is documented — "Send the
-    request again without the `container` parameter to get a new container" — and that is exactly
-    what the two requests here show: the first carries the expired id, the second carries no
-    container at all, and the fresh container gets the file. The missing typed error or discriminator
-    is tracked upstream in https://github.com/pydantic/pydantic-ai/issues/7833.
+    The history-resolved id was created on 2026-06-30, so it has expired past Anthropic's documented
+    30-day lifetime. Pairing it with `container_upload` answered 500 (the generic `api_error`) when
+    this test was written; it now answers a 404 `not_found_error` ("Container not found"), which
+    arrives as an error event in the stream since the default `max_tokens` makes the request stream.
+    The *remedy* is documented — "Send the request again without the `container` parameter to get a
+    new container" — and that is exactly what the two requests here show: the first carries the
+    expired id, the second carries no container at all, and the fresh container gets the file. The
+    missing typed error or discriminator is tracked upstream in
+    https://github.com/pydantic/pydantic-ai/issues/7833.
 
     `max_retries=0` keeps the SDK's own retry out of the way, so the two captured requests are ours.
     It also makes playback match live: the real 500 carries `x-should-retry: false` and the SDK stops
@@ -339,8 +335,15 @@ async def test_anthropic_code_execution_files_rejected_container_is_dropped_and_
 
     assert '100' in result.output
 
-    recorded_error = vcr.interactions[1].response
-    assert (recorded_error.status, recorded_error.body.content['error']['type']) == snapshot((500, 'api_error'))
+    recorded_error = next(
+        interaction.response
+        for interaction in vcr.interactions
+        if isinstance(interaction.response.body.content, str) and 'event: error' in interaction.response.body.content
+    )
+    error_event = json.loads(recorded_error.body.content.split('data: ', 1)[1].splitlines()[0])
+    assert (recorded_error.status, error_event['error']['type'], error_event['error']['message']) == snapshot(
+        (200, 'not_found_error', 'Container not found. The provided container has expired or does not exist.')
+    )
 
     # Both attempts are on the wire, and only the first carries the dead id.
     bodies = request_capture.bodies('/v1/messages')
