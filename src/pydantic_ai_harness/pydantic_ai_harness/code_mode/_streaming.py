@@ -19,6 +19,7 @@ class PartialArgs(TypedDict):
 
 
 _PARTIAL_ARGS_ADAPTER: TypeAdapter[PartialArgs] = TypeAdapter(PartialArgs)
+_ANALYSIS_FILENAME = '<pydantic-ai-code-mode-analysis>'
 
 MAX_SCAN_CHARS = 1 << 18
 """Largest streamed prefix (in characters) the host will decode or `ast.parse`.
@@ -64,10 +65,14 @@ def parse_code(code: str, *, mode: Literal['exec', 'eval'] = 'exec') -> ast.Modu
     # Each streamed delta can reparse the same literal. CPython's invalid-escape advisory
     # would flood stderr (or become an error under strict warning filters), even though
     # these escapes preserve their backslashes. This is analysis, not Python execution.
+    # Warning filters are process-global on older Python. The unique filename limits
+    # suppression to our analysis, not another thread compiling unrelated source.
     with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message=r'.*invalid escape sequence', category=SyntaxWarning)
-        warnings.filterwarnings('ignore', message=r'.*invalid escape sequence', category=DeprecationWarning)
-        tree = ast.parse(code, mode=mode)
+        for category in (SyntaxWarning, DeprecationWarning):
+            warnings.filterwarnings(
+                'ignore', message=r'.*invalid escape sequence', category=category, module=rf'^{_ANALYSIS_FILENAME}$'
+            )
+        tree = ast.parse(code, filename=_ANALYSIS_FILENAME, mode=mode)
     assert isinstance(tree, (ast.Module, ast.Expression))
     return tree
 

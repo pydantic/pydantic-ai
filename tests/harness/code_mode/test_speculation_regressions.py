@@ -17,6 +17,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import threading
 import warnings
 from collections.abc import AsyncIterator
 
@@ -206,13 +207,33 @@ def test_analysis_warning_filter_is_narrow_and_restored(monkeypatch: pytest.Monk
         with pytest.warns((SyntaxWarning, DeprecationWarning), match='invalid escape sequence'):
             ast.parse(r'"\("')
 
-        def diagnostic_parse(code: str, *, mode: str) -> ast.Module:
+        def diagnostic_parse(code: str, *, filename: str = '<unknown>', mode: str) -> ast.Module:
             warnings.warn('unrelated parser diagnostic', SyntaxWarning)
             return ast.Module(body=[], type_ignores=[])
 
-        monkeypatch.setattr(ast, 'parse', diagnostic_parse)
         with pytest.warns(SyntaxWarning, match='unrelated parser diagnostic'):
+            with monkeypatch.context() as patch:
+                patch.setattr(ast, 'parse', diagnostic_parse)
+                parse_code('value = 1')
+
+
+def test_analysis_does_not_hide_other_threads_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Older Python warning filters are process-global, so restrict them to the analysis filename."""
+
+    def warn_elsewhere() -> None:
+        warnings.warn_explicit('invalid escape sequence', SyntaxWarning, filename='user_code.py', lineno=1)
+
+    def concurrent_parse(code: str, *, filename: str = '<unknown>', mode: str) -> ast.Module:
+        thread = threading.Thread(target=warn_elsewhere)
+        thread.start()
+        thread.join()
+        return ast.Module(body=[], type_ignores=[])
+
+    with pytest.warns(SyntaxWarning, match='invalid escape sequence') as caught:
+        with monkeypatch.context() as patch:
+            patch.setattr(ast, 'parse', concurrent_parse)
             parse_code('value = 1')
+    assert caught[0].filename == 'user_code.py'
 
 
 class TestPartialArgsDecoding:
