@@ -1,3 +1,7 @@
+---
+description: "A Pydantic AI example that cancels a streaming agent run from an interactive terminal and resumes the conversation with the history preserved before cancellation."
+---
+
 Cancel a streaming agent response from an interactive terminal, then continue the conversation with its preserved history.
 
 Demonstrates:
