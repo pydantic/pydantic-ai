@@ -83,6 +83,8 @@ from .models._continuation import (
     merge_mode,
     merge_responses,
 )
+from .models.concurrency import ConcurrencyLimitedModel
+from .models.wrapper import WrapperModel
 from .output import OutputDataT, OutputSpec
 from .settings import ModelSettings
 from .tools import (
@@ -576,6 +578,26 @@ def _ensure_model_supports_streaming(model: models.Model) -> None:
             'or because a capability registers a `wrap_run_event_stream` hook and so needs events to observe. '
             'Implement `request_stream()` on the model, or use a non-streamed run without such a capability.'
         )
+
+
+def _ensure_no_shared_concurrency_limiter(model: models.Model, agent: Agent[DepsT, object] | None) -> None:
+    if agent is None:
+        return
+
+    agent_limiter = agent._concurrency_limiter  # pyright: ignore[reportPrivateUsage]
+    if agent_limiter is None:
+        return
+
+    while isinstance(model, WrapperModel):
+        if (
+            isinstance(model, ConcurrencyLimitedModel) and model._limiter is agent_limiter  # pyright: ignore[reportPrivateUsage]
+        ):
+            raise exceptions.UserError(
+                'The agent and a `ConcurrencyLimitedModel` in its model wrapper chain use the same concurrency '
+                'limiter, which can deadlock a request. Use separate limiters or apply concurrency limiting at '
+                'only one layer.'
+            )
+        model = model.wrapped
 
 
 @dataclasses.dataclass
@@ -1383,6 +1405,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `AgentStream` and the model-request hooks wrap it once.
             # `ctx.state.usage.requests` is bumped once here: continuations aren't
             # separate request steps.
+            _ensure_no_shared_concurrency_limiter(req_ctx.model, ctx.deps.agent)
             async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
                 self._did_stream = True
                 _usage_attribution.record_request(ctx.state.usage)
@@ -1601,6 +1624,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 nonlocal _handler_response
                 _handler_response = response
 
+            _ensure_no_shared_concurrency_limiter(req_ctx.model, ctx.deps.agent)
             response = await model_request(
                 req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
             )

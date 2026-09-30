@@ -19,6 +19,7 @@ from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -519,6 +520,25 @@ class TestAgentWithSharedLimiter:
 
         # Both agents should share the same limiter
         assert agent1._concurrency_limiter is agent2._concurrency_limiter
+
+    @pytest.mark.parametrize(
+        ('stream', 'wrapped'),
+        [(False, False), (True, False), (False, True)],
+    )
+    async def test_agent_rejects_shared_agent_and_model_limiter(self, stream: bool, wrapped: bool):
+        limiter = ConcurrencyLimiter(max_running=1)
+        model = ConcurrencyLimitedModel(TestModel(), limiter=limiter)
+        agent = Agent(WrapperModel(model) if wrapped else model, max_concurrency=limiter)
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            with pytest.raises(UserError, match='same concurrency limiter'):
+                if stream:
+                    async with agent.run_stream('test') as result:
+                        await result.get_output()
+                else:
+                    await agent.run('test')
+
+        assert limiter.running_count == 0
 
 
 class TestConcurrencyLimiterName:
