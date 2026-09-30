@@ -60,11 +60,11 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     from pydantic_ai_harness import Advisor, Coder
 
     agent = Agent(
-        'anthropic:claude-fable-5',
+        'anthropic:claude-fable-5-1',
         capabilities=[
             Coder(),  # files, shell, repo context, sub-agents, context management
             WebSearch(),  # look up docs and error messages on the web
-            Advisor('openai:gpt-5.6-sol'),  # a second opinion from another model when stuck
+            Advisor('openai:gpt-6-sol'),  # a second opinion from another model when stuck
         ],
     )
     agent.to_cli_sync()
@@ -110,7 +110,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
         score: float = Field(ge=-1, le=1)
 
 
-    agent = Agent('openai:gpt-5.6-sol', output_type=Sentiment)
+    agent = Agent('openai:gpt-6-sol', output_type=Sentiment)
 
 
     @agent.tool
@@ -144,7 +144,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 
     agent = Agent(
-        'openai:gpt-5.6-sol',
+        'openai:gpt-6-sol',
         instructions='Research the topic and write a structured brief.',
         name='researcher',
         capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
@@ -222,8 +222,18 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Image Generation](image-generation.md)
 
+!!! tip "See your first run in Logfire"
+    Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire). Logfire has a [free tier](https://pydantic.dev/pricing/) that needs no credit card, and you can sign up with just a GitHub account. Run `uvx logfire auth` and `uvx logfire projects new` once first, or point your coding agent at the [Logfire setup skill](https://pydantic.dev/ai-setup.md) to do it for you. The [Logfire guide](logfire.md#using-logfire) has the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
+
+    ```python
+    import logfire
+
+    logfire.configure()
+    logfire.instrument_pydantic_ai()
+    ```
+
 !!! tip "No API key yet?"
-    You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) (`Agent('test')`), which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
+    You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) (`Agent('test')`), which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, the [Pydantic AI Gateway](gateway.md) gives you one key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, or see [Models and Providers](models/overview.md) to pick a provider and set its own API key.
 
 ## Why Pydantic AI
 
@@ -325,7 +335,7 @@ async def refund_status(ctx: RunContext[SupportDependencies]) -> str:
 
 
 support_agent = Agent(  # (9)!
-    'openai:gpt-5.6-sol',  # (10)!
+    'openai:gpt-6-sol',  # (10)!
     deps_type=SupportDependencies,
     output_type=SupportOutput,  # (11)!
     instructions=(
@@ -371,7 +381,7 @@ async def main():
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
 8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md), like an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
 9. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
-10. Here we configure the agent to use [OpenAI's GPT-5.6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
+10. Here we configure the agent to use [OpenAI's GPT-6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
 11. The response from the agent will be guaranteed to be a `SupportOutput`. Since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking. If validation fails, the agent is [prompted to try again](agent.md#reflection-and-self-correction).
 12. Mount the capabilities on the agent. More [capabilities](capabilities/overview.md), like [web search](capabilities/web-search.md) or anything from the [Harness](https://pydantic.dev/docs/ai/harness/), snap on alongside them in the same list.
 13. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
@@ -404,7 +414,7 @@ logfire.instrument_sqlite3()  # (3)!
 ...
 
 support_agent = Agent(
-    'openai:gpt-5.6-sol',
+    'openai:gpt-6-sol',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
     instructions=(
@@ -452,11 +462,11 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
 ```
 
-Or [install Pydantic AI](install.md), pick a [model](models/overview.md), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
+Or [install Pydantic AI](install.md), pick a [model](models/overview.md) (the [Pydantic AI Gateway](gateway.md) is one key for all of them), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
+
+**See what your agent did.** [Instrument it](logfire.md): one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account), is the easiest way to look, any OTLP backend works.
 
 **Put it to work on a repository.** That same agent, or one you write yourself, runs on issues, pull requests or a schedule as a [GitHub Agentic Workflow](https://pydantic.dev/docs/ai/harness/gh-aw/): headless, in a sandbox, writing back through safe outputs.
-
-**See what your agent did.** [Instrument it](logfire.md): one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire) is the easiest way to look, any OTLP backend works.
 
 **Go deeper.** The [Agents guide](agent.md) is the core walkthrough; the [API Reference](api/agent.md) covers the full interface; the [Harness](https://pydantic.dev/docs/ai/harness/) has the batteries.
 
@@ -469,7 +479,7 @@ Everything you need to ship production-grade AI agents:
 - [Pydantic Validation](https://pydantic.dev/docs/validation/latest/): the validation layer underneath all of it
 - [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/): the official capability library and harness, from single capabilities to complete agents
 - [Pydantic Logfire](https://pydantic.dev/logfire): AI-first, full-stack observability
-- [Pydantic AI Gateway](gateway.md): unified LLM proxy
+- [Pydantic AI Gateway](gateway.md): one key for every model, with cost monitoring and spending limits
 - [Pydantic Evals](evals.md): evaluate any Python function, agents included, with [production evals on Logfire](https://pydantic.dev/logfire/evals)
 - [Pydantic Graph](graph.md): typed graph control flow
 - [genai-prices](https://github.com/pydantic/genai-prices): model pricing data, kept current

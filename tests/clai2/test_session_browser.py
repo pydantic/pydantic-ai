@@ -9,9 +9,9 @@ import pytest
 from termflow.ansi.utils import visible_length
 from termflow.tui.keys import Key
 
-import pydantic_clai2.session_browser as module
+import pydantic_clai2.ui.menus.session_browser as module
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.session_browser import SessionBrowser, date_label, plain
+from pydantic_clai2.ui.menus.session_browser import SessionBrowser, date_label, plain
 
 
 def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[ConversationSummary]]:

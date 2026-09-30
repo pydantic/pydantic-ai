@@ -13,8 +13,8 @@ from pydantic_ai import Agent
 from pydantic_ai.models import override_allow_model_requests
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_command
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command
 from tests.clai2.menu_script import Script, make_context, pick
 
 
