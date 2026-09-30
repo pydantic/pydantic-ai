@@ -65,6 +65,7 @@ from pydantic_ai_harness._monty_exec import (
     is_sandbox_panic,
 )
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
+from pydantic_ai_harness.code_mode._workspace_files import WorkspaceFiles
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.code_mode._speculation import SpeculationCoordinator
@@ -425,6 +426,20 @@ _OS_ENABLED_NOTE = (
     'handler configured for this agent (availability depends on that configuration). '
     '`time.sleep` and `asyncio.sleep` really wait.'
 )
+_WORKSPACE_FILES_NOTE = (
+    "- **Workspace filesystem**: `pathlib.Path` operations and `open()` act on the run's workspace, the same "
+    'files your other tools read and write. Relative paths resolve against its working directory.'
+)
+_WORKSPACE_MOUNT_NOTE = ' Paths under the configured mount point(s) are routed to the host instead.'
+_WORKSPACE_OS_NOTE = (
+    '- **Configured OS access**: `os.getenv`/`os.environ`, `datetime.datetime.now()`, `datetime.date.today()`, '
+    'and `time.time()` are routed to the OS handler configured for this agent (availability depends on that '
+    'configuration). `time.sleep` and `asyncio.sleep` really wait.'
+)
+_WORKSPACE_NO_OS_NOTE = (
+    '- **No environment or clock**: `os.getenv`/`os.environ`, `datetime.datetime.now()`, '
+    '`datetime.date.today()`, and `time.time()` are unavailable here. `time.sleep` and `asyncio.sleep` really wait.'
+)
 _MOUNT_LIFETIME_NOTE = (
     "- **Mount write lifetime**: writes through a `mode='overlay'` mount last only for the current "
     "`run_code` call. Use `mode='read-write'` when later calls need to read those writes."
@@ -456,14 +471,18 @@ final expression, returns a list with the printed text followed by the native co
 """
 
 
-def _base_description(*, has_os: bool, has_mount: bool) -> str:
+def _base_description(*, has_os: bool, has_mount: bool, has_workspace_files: bool) -> str:
     """Assemble the `run_code` base description with the right OS-access restriction line.
 
     `os` routes environment, clock, and filesystem calls; a `mount` alone only
     exposes filesystem paths, so a mount-only sandbox must not advertise env or
     clock access (the model would generate calls that fail and burn retries).
+    `workspace_files` takes file calls from both, except paths under a mount.
     """
-    if has_os:
+    if has_workspace_files:
+        files = f'{_WORKSPACE_FILES_NOTE}{_WORKSPACE_MOUNT_NOTE if has_mount else ""}'
+        restriction = f'{files}\n{_WORKSPACE_OS_NOTE if has_os else _WORKSPACE_NO_OS_NOTE}'
+    elif has_os:
         restriction = _OS_ENABLED_NOTE
     elif has_mount:
         restriction = _MOUNT_ONLY_NOTE
@@ -777,6 +796,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     mount: CodeModeMount | None = None
     """Host directories to expose to sandboxed `pathlib` code; each mount's `mode` controls whether writes reach the host."""
 
+    workspace_files: bool = field(default=False, kw_only=True)
+    """Route sandboxed `pathlib` and `open()` calls to the run's workspace, except paths under a `mount`."""
+
     monty_sandbox_url: str | None = field(default=None, kw_only=True)
     """Run sandboxed code on remote Monty workers reached over this `ws://` or `wss://` URL.
 
@@ -950,13 +972,16 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # `get_instructions` call later this step; empty string means "nothing to surface".
         # The base prose stays host-aware in both modes -- its OS/mount restriction line is
         # static (it doesn't change per discovery), so it belongs in the cached description.
-        has_os = self.os_access is not None
-        has_mount = self.mount is not None
+        base = _base_description(
+            has_os=self.os_access is not None,
+            has_mount=self.mount is not None,
+            has_workspace_files=self.workspace_files,
+        )
         if self.dynamic_catalog:
-            description = _base_description(has_os=has_os, has_mount=has_mount)
+            description = base
             self._last_catalog = self._render_catalog(callable_defs)
         else:
-            description = self._build_description(callable_defs, has_os=has_os, has_mount=has_mount)
+            description = self._build_description(callable_defs, base=base)
             self._last_catalog = ''
 
         if _RUN_CODE_TOOL_NAME in native_tools:
@@ -1153,6 +1178,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             try:
                 # Already converted in `__post_init__`; this narrows the field's type.
                 os_handler = as_os_handler(self.os_access)
+                file_handler = cwd = None
+                if self.workspace_files:
+                    file_handler = WorkspaceFiles(workspace=ctx.workspace, mount=self.mount).answer
+                    # Relative sandbox paths resolve where the workspace's own tools resolve them.
+                    cwd = await ctx.workspace.working_dir()
                 completed = await MontyExecutor(
                     dispatch=dispatch_tool_call,
                     valid_names=callable_defs,
@@ -1163,6 +1193,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     # check is dropped there for replay, but sleeps are charged what they request.
                     max_sleep_secs=configured.get('max_feed_duration_secs'),
                     os_handler=os_handler,
+                    file_handler=file_handler,
                 ).run(
                     partial(
                         session.feed_start,
@@ -1170,6 +1201,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                         print_callback=capture.callback,
                         os=os_handler,
                         mount=self.mount,
+                        cwd=cwd,
                         skip_type_check=not type_check,
                     )
                 )
@@ -1328,9 +1360,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         return callable_defs, sanitized_to_original
 
     @staticmethod
-    def _build_description(callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool) -> str:
+    def _build_description(callable_defs: dict[str, ToolDefinition], *, base: str) -> str:
         """Render the `run_code` description: base prose + TypedDicts + function signatures."""
-        base = _base_description(has_os=has_os, has_mount=has_mount)
         catalog = CodeModeToolset._render_catalog(callable_defs)
         if not catalog:
             return base

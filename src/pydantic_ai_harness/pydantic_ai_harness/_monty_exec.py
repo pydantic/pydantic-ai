@@ -60,6 +60,12 @@ except ImportError as _import_error:  # pragma: no cover
 # perform the host-side work (tool call or sub-agent run) and return the result.
 DispatchFn = Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
 
+# File-call callback: given an OS call's name, args, and kwargs, return the answer to resume the
+# sandbox with, or `None` to leave the call to the feed's mounts and `os=` handler.
+FileCallFn = Callable[
+    [str, tuple[object, ...], dict[str, object]], Awaitable[ExternalReturnValue | ExternalException | None]
+]
+
 _T = TypeVar('_T')
 _Args = TypeVarTuple('_Args')
 
@@ -264,6 +270,8 @@ class MontyExecutor:
     sleep: Callable[[float], Coroutine[Any, Any, None]] = asyncio.sleep
     # CodeMode's `os_access`. Only needed here to answer host-state calls inside a Temporal workflow.
     os_handler: OsHandler | None = None
+    # CodeMode's `workspace_files`: answers file calls on the run's own thread, ahead of mounts and `os_handler`.
+    file_handler: FileCallFn | None = None
 
     _slept_secs: float = field(default=0.0, init=False)
     # Parallel calls deferred but not yet resolved, keyed by Monty call id.
@@ -314,6 +322,14 @@ class MontyExecutor:
         """Dispatch (or defer) a single external function call."""
         if snapshot.is_os_function and snapshot.function_name in ('time.sleep', 'asyncio.sleep'):
             return await self._sleep(snapshot)
+        if snapshot.is_os_function and self.file_handler is not None:
+            token = otel_context.attach(snapshot.trace_context())
+            try:
+                answer = await self.file_handler(snapshot.function_name, snapshot.args, snapshot.kwargs)
+            finally:
+                otel_context.detach(token)
+            if answer is not None:
+                return await call_monty(self.portal, snapshot.resume, answer)
         if snapshot.is_os_function:
             if self.portal is not None and self.os_handler is not None:
                 match snapshot.function_name:

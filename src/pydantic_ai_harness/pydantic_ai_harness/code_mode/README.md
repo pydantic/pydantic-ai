@@ -587,8 +587,23 @@ for msg in result.all_messages():
 
 ## Filesystem and OS access
 
-Sandboxed code starts with no access to the host's files, environment, or clock. Two parameters add
+Sandboxed code starts with no access to the host's files, environment, or clock. Three parameters add
 controlled filesystem, environment, or clock behavior.
+
+**`workspace_files` -- use the run's workspace.** Reach for this when sandboxed code should work on
+the same files as `Shell` and `FileSystem`, locally or in a remote sandbox such as `ModalSandbox`.
+Sandboxed `pathlib` and `open()` calls go to the run's workspace, and relative paths resolve against
+its working directory. The run fails at its start without a workspace, and `Path.rename` is not
+supported. Paths under a `mount` still reach the host, and `os_access` keeps answering environment
+and clock calls but no longer sees file calls.
+
+```python
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import CodeMode
+
+capabilities = [LocalWorkspace('./project'), CodeMode(workspace_files=True)]
+```
 
 **`mount` -- share host directories.** Reach for this when the agent works with real files: analyzing
 a dataset you've dropped in a folder and writing a report back, editing a checkout, or processing a
@@ -597,7 +612,7 @@ environment variables or the clock, use `os_access` instead.)
 
 Mounts are directories on the machine running the agent, not the run's workspace. With a remote
 sandbox such as `ModalSandbox`, `Shell` and `FileSystem` act in the sandbox while mounted `pathlib`
-code still reads and writes the host. Use the workspace tools for files the model shares with its
+code still reads and writes the host. Use `workspace_files` for files the model shares with its
 commands.
 
 ```python

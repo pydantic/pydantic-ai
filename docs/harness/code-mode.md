@@ -521,7 +521,9 @@ computation inside `run_code`. The workflow waits while the sandbox computes, an
 workflow task that does not yield within 2 seconds, so move heavier computation into a tool.
 Clock, environment, and randomness calls reach `os_access` on the workflow's own thread, so a
 handler can answer `datetime.now()` with `workflow.now()` and stay replay-safe. File calls are
-answered by Monty from the mounts first and reach the handler on another thread.
+answered by Monty from the mounts first and reach the handler on another thread. With
+`workspace_files`, file calls outside a mount are durable workspace operations, recorded like any
+other workspace call in workflow code.
 
 ## Observability
 
@@ -568,15 +570,33 @@ A representative run wires `CodeMode` up against an MCP server and a web search 
 
 ## Filesystem and OS access
 
-Sandboxed code starts with no access to the host's files, environment, or clock. Two parameters add controlled filesystem, environment, or clock behavior.
+Sandboxed code starts with no access to the host's files, environment, or clock. Three parameters add controlled filesystem, environment, or clock behavior.
 
-Both parameters are fixed when the capability is built, so construct `CodeMode` per request to scope the configured access to that request.
+`mount` and `os_access` are fixed when the capability is built, so construct `CodeMode` per request to scope the configured access to that request.
+
+### `workspace_files` -- use the run's workspace
+
+Reach for `workspace_files=True` when sandboxed code should work on the same files as [`Shell`](shell.md) and [`FileSystem`](filesystem.md): the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), whether that's a local directory or a remote sandbox such as [`ModalSandbox`](modal-sandbox.md). Sandboxed `pathlib` and `open()` calls go to the workspace, and relative paths resolve against its working directory, as they do for the workspace tools.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai_harness import CodeMode
+
+# Sandboxed code reads and writes the files under ./project, like the agent's other workspace tools:
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    capabilities=[LocalWorkspace('./project'), CodeMode(workspace_files=True)],
+)
+```
+
+The run fails at its start if no workspace is attached. `Path.rename` is not supported, since the workspace has no atomic move. Paths under a `mount` still reach the host, and `os_access` keeps answering environment and clock calls, but no longer sees file calls.
 
 ### `mount` -- share host directories
 
 Reach for `mount` when the agent works with real files: analyzing a dataset you've dropped in a folder and writing a report back, editing a checkout, or processing a batch of documents. Sandboxed `pathlib` code reads and writes under the mounted path. (For environment variables or the clock, use `os_access` instead.)
 
-Mounts are directories on the machine running the agent, not the run's workspace. With a remote sandbox such as `ModalSandbox`, `Shell` and `FileSystem` act in the sandbox while mounted `pathlib` code still reads and writes the host. Use the workspace tools for files the model shares with its commands.
+Mounts are directories on the machine running the agent, not the run's workspace. With a remote sandbox such as `ModalSandbox`, `Shell` and `FileSystem` act in the sandbox while mounted `pathlib` code still reads and writes the host. Use `workspace_files` (above) for files the model shares with its commands.
 
 ```python
 from pydantic_ai import Agent
