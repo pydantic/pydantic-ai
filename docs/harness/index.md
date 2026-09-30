@@ -244,6 +244,7 @@ Outside the loop: how runs persist, survive failures, and get observed and confi
 |---|---|---|
 | [Durable execution](../durable_execution/overview.md) | Core | Runs that survive restarts and failures on [Temporal](../durable_execution/temporal.md), [DBOS](../durable_execution/dbos.md), or [Prefect](../durable_execution/prefect.md), with [Restate](../durable_execution/restate.md), [Kitaru](../durable_execution/kitaru.md), and [Airflow](../durable_execution/airflow.md) integrations. See [what works on each engine](durable-execution.md) for Coder, Shell, and FileSystem |
 | [AWS Lambda durability](aws-lambda.md) | Harness | Checkpoint model requests and tool calls into AWS Lambda durable function steps |
+| [Render Workflows](render-workflows.md) | Harness | Run model requests and tool calls as child tasks with separate retries, timeouts, and compute settings |
 | [Step Persistence](step-persistence.md) | Harness | Save, restore, resume (`continue_run`), and fork (`fork_run`) runs; file/SQLite/Mongo backends |
 | [Instrumentation](../capabilities/instrumentation.md) | Core | OpenTelemetry GenAI spans for every model and tool call; the raw material for [Logfire](https://pydantic.dev/logfire) traces |
 | [Logfire MCP](logfire-mcp.md) | Harness | Query Logfire telemetry and manage observability resources. |
