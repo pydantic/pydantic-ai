@@ -43,8 +43,10 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.errors import error_message
+from pydantic_clai2.models import login_names
 from pydantic_clai2.plugins import (
     ModelProvider,
+    PluginLogin,
     Renderer,
     SessionEndReason,
     SessionStart,
@@ -249,6 +251,8 @@ class _ModelResolver:
     console: Console
     plugins: Callable[[], Mapping[str, ModelProvider]] = lambda: {}
     """Model prefixes registered by loaded plugins, read per resolution so enabling one applies at once."""
+    logins: Callable[[], Mapping[str, PluginLogin]] = lambda: {}
+    """Sign-ins registered by loaded plugins, read per `/login` like `plugins`."""
     _auth: 'CodexAuth | None' = None
 
     def codex_auth(self) -> 'CodexAuth':
@@ -261,7 +265,7 @@ class _ModelResolver:
     async def login(self, args: list[str]) -> str:
         from pydantic_clai2.auth import login_command
 
-        return await login_command(args, codex=self.codex_auth())
+        return await login_command(args, codex=self.codex_auth(), plugins=self.logins())
 
     async def resolve(self, name: str) -> Model | str:
         if name.startswith('openrouter:'):
@@ -346,9 +350,9 @@ def create_shell(
     commands.register(
         Command(
             name='login',
-            description='Connect your ChatGPT/Codex or GitHub Copilot subscription',
+            description='Sign in to a subscription: codex, copilot, or one a plugin adds',
             handler=models.login,
-            complete=lambda _: ('openai-codex', 'github-copilot'),
+            complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
         )
     )
     commands.register(
@@ -447,6 +451,7 @@ def create_shell(
         enabled=load_plugins,
     )
     models.plugins = loader.model_providers
+    models.logins = loader.logins
     context.plugin_models = loader.model_names
     spinners = Spinners(selected=lambda: context.settings.spinner, registered=loader.spinners)
     commands.register(

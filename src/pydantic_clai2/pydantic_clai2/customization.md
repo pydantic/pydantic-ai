@@ -20,6 +20,7 @@ contract; this guide is shipped with the package for use without a checkout.
 - Use a custom model/provider: register your own `PREFIX:` with
   host.model_provider(prefix, resolve, models=...), where resolve returns a
   Pydantic AI Model, or supply a Pydantic AI Agent to chat from a Python launcher.
+  If its models need a sign-in, host.login(name, handler) adds /login NAME.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -507,7 +508,8 @@ CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
 catalog row does not implement provider support. Editable per-model settings
 are declared in ModelSettingsForm in model_settings.py; extend that form, not a
 second editor. Credentials belong in provider-supported storage, not model
-settings. /login currently covers Codex, not arbitrary provider authentication.
+settings. /login signs in to subscriptions: /login codex (the default),
+/login copilot, and any sign-in a plugin adds with host.login.
 
 ## Test and verify
 

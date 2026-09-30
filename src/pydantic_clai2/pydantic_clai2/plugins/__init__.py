@@ -54,7 +54,7 @@ from pydantic_ai.providers import infer_provider_class
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import Settings
-from pydantic_clai2.models import CLAI_PROVIDERS
+from pydantic_clai2.models import CLAI_PROVIDERS, LOGIN_ALIASES, LOGINS
 from pydantic_clai2.ui.rendering.spinners import Spinner, make_spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
 
@@ -172,7 +172,25 @@ class ModelProvider:
         return tuple(f'{self.prefix}:{name}' for name in self.models)
 
 
+@dataclass(frozen=True, kw_only=True)
+class PluginLogin:
+    """A sign-in a plugin adds as `/login NAME`; see `PluginHost.login`."""
+
+    name: str
+    handler: Callable[[], Awaitable[str]]
+    """Sign in and return the message to show."""
+    description: str = ''
+
+
 _PROVIDER_PREFIX = re.compile(r'[a-z][a-z0-9-]*')
+
+
+def _require_name(kind: str, name: str) -> None:
+    """Model prefixes and login names share one format: what users type after `/login` or before `:`."""
+    if not _PROVIDER_PREFIX.fullmatch(name):
+        raise ValueError(
+            f'{kind} {name!r} must start with a lowercase letter, followed by lowercase letters, digits, and hyphens.'
+        )
 
 
 def _runs_already(prefix: str) -> bool:
@@ -297,6 +315,7 @@ class PluginHost(Generic[DepsT]):
         self._segments: list[StatusSegment] = []
         self._spinners: list[Spinner] = []
         self._model_providers: list[ModelProvider] = []
+        self._logins: list[PluginLogin] = []
 
     @property
     def capabilities(self) -> list[AgentCapability[DepsT]]:
@@ -327,6 +346,11 @@ class PluginHost(Generic[DepsT]):
     def model_providers(self) -> list[ModelProvider]:
         """Model prefixes added with `model_provider`."""
         return list(self._model_providers)
+
+    @property
+    def logins(self) -> list[PluginLogin]:
+        """Sign-ins added with `login`."""
+        return list(self._logins)
 
     def summary(self) -> str:
         """One line for the `/plugins` menu."""
@@ -423,16 +447,27 @@ class PluginHost(Generic[DepsT]):
         register one prefix, the later one wins. Unloading the plugin removes the prefix, and a run with
         a model under it then fails as an unknown provider until the plugin is enabled again.
         """
-        if not _PROVIDER_PREFIX.fullmatch(prefix):
-            raise ValueError(
-                f'Model prefix {prefix!r} must start with a lowercase letter, followed by lowercase letters, '
-                'digits, and hyphens.'
-            )
+        _require_name('Model prefix', prefix)
         if _runs_already(prefix):
             raise ValueError(f'Model prefix {prefix!r} is a provider CLAI already runs; choose your own.')
         provider = ModelProvider(prefix=prefix, resolve=resolve, models=tuple(models))
         self._model_providers.append(provider)
         return provider
+
+    def login(self, name: str, handler: Callable[[], Awaitable[str]], /, *, description: str = '') -> PluginLogin:
+        """Add `/login NAME`, which awaits `handler` and shows the message it returns.
+
+        For sign-ins that store credentials, such as the subscription behind a `model_provider`. Keep
+        secrets in the keyring, never in plugin settings, and raise `UserError` when signing in fails.
+        NAME cannot be a sign-in CLAI ships (`codex`, `copilot`, or their provider names); when two
+        plugins add one name, the later one wins. Unloading the plugin removes it.
+        """
+        _require_name('Login name', name)
+        if name in LOGINS or name in LOGIN_ALIASES:
+            raise ValueError(f'Login name {name!r} is a sign-in CLAI already has; choose your own.')
+        login = PluginLogin(name=name, handler=handler, description=description)
+        self._logins.append(login)
+        return login
 
     @overload
     def on(
