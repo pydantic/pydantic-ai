@@ -4,12 +4,22 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
 
-def create_worktree(*, name: str) -> Path:
-    """Create a checkout in `.worktrees` on a new `clai/<name>` branch."""
+@dataclass(frozen=True, kw_only=True)
+class Worktree:
+    """The checkout CLAI starts in, and whether this launch created it."""
+
+    path: Path
+    branch: str
+    created: bool
+
+
+def open_worktree(*, name: str) -> Worktree:
+    """Reopen `.worktrees/NAME`, or check it out on `clai-NAME`, reusing that branch if it exists."""
     name = name or f'worktree-{uuid4().hex[:8]}'
     if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', name) is None:
         raise ValueError('Worktree names must start with a letter or digit and contain only letters, digits, - or _.')
@@ -18,11 +28,21 @@ def create_worktree(*, name: str) -> Path:
         exclude = Path(_git('rev-parse', '--git-path', 'info/exclude'))
         contents = exclude.read_bytes() if exclude.exists() else b''
         path = root / '.worktrees' / name
-        branch = f'clai/{name}'
-        _git('branch', branch, 'HEAD')
+        if path.resolve() in _registered_worktrees():
+            branch = _git('-C', str(path), 'branch', '--show-current')
+            return Worktree(path=path, branch=branch or 'detached HEAD', created=False)
+        if path.exists():
+            raise ValueError(f'Cannot create worktree: {path} exists but is not a Git worktree. Pick another name.')
+        # Flat on purpose: Git refs are paths, so a nested `clai/NAME` cannot coexist with a user's `clai` branch.
+        branch = f'clai-{name}'
+        new_branch = not _git('branch', '--list', branch)
+        if new_branch:
+            _git('branch', branch, 'HEAD')
         try:
             _git('worktree', 'add', '--', str(path), branch)
         except (OSError, subprocess.CalledProcessError) as exc:
+            if not new_branch:
+                raise
             try:
                 _git('branch', '-d', '--', branch)
             except (OSError, subprocess.CalledProcessError) as cleanup:
@@ -41,7 +61,12 @@ def create_worktree(*, name: str) -> Path:
         raise ValueError(f'Cannot create worktree: {exc.stderr.strip()}') from exc
     except OSError as exc:
         raise ValueError(f'Cannot create worktree: {exc}') from exc
-    return path
+    return Worktree(path=path, branch=branch, created=True)
+
+
+def _registered_worktrees() -> set[Path]:
+    listing = _git('worktree', 'list', '--porcelain').splitlines()
+    return {Path(line.removeprefix('worktree ')).resolve() for line in listing if line.startswith('worktree ')}
 
 
 def offer_worktree_cleanup() -> None:

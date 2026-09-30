@@ -21,7 +21,7 @@ def run(*, splash: Splash | None = None) -> None:
         nargs='?',
         const='',
         metavar='NAME',
-        help='Start in a new Git worktree; omit NAME to generate one',
+        help='Start in a Git worktree, reopening NAME if it exists; omit NAME to generate one',
     )
     parser.add_argument(
         '-a',
@@ -50,7 +50,7 @@ def run(*, splash: Splash | None = None) -> None:
         from pydantic_clai2.config import resolve_settings
         from pydantic_clai2.config.project_settings import load_project_settings
         from pydantic_clai2.config.settings_store import SettingsStore
-        from pydantic_clai2.runtime.worktrees import create_worktree, offer_worktree_cleanup
+        from pydantic_clai2.runtime.worktrees import offer_worktree_cleanup, open_worktree
     finally:
         if splash is not None:
             splash.stop()
@@ -63,12 +63,13 @@ def run(*, splash: Splash | None = None) -> None:
             return
         agent = import_agent(args.agent) if args.agent is not None else None
         if args.worktree is not None:
-            workspace = create_worktree(name=args.worktree)
+            worktree = open_worktree(name=args.worktree)
             print(
-                f'Worktree: {workspace} (branch: clai/{workspace.name}). Kept unless removal is confirmed on exit.',
+                f'{"Worktree" if worktree.created else "Reopened worktree"}: {worktree.path} '
+                f'(branch: {worktree.branch}). Kept unless removal is confirmed on exit.',
                 file=sys.stderr if args.prompt is not None else sys.stdout,
             )
-            os.chdir(workspace)
+            os.chdir(worktree.path)
         project = load_project_settings(Path.cwd())
         overrides = store.overrides() | project.overrides
         if model := args.model or os.getenv('CLAI_MODEL'):
