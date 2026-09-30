@@ -743,6 +743,11 @@ class TestStopReason:
                 id='total_tokens_limit',
             ),
             pytest.param(
+                lambda: UsageLimits(total_tokens_limit=1).check_before_request(RunUsage(input_tokens=2)),
+                'max_tokens',
+                id='total_tokens_limit-before-request',
+            ),
+            pytest.param(
                 lambda: UsageLimits(per_request_input_tokens_limit=1).check_per_request_input_tokens(2),
                 'max_tokens',
                 id='per_request_input_tokens_limit',
