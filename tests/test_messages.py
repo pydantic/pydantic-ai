@@ -1701,8 +1701,9 @@ def test_tool_return_url_items_rehydrate_only_with_media_type(
     A default dump of ours writes `media_type` for a URL item: a non-empty string, or `null` for a URL whose
     media type can't be inferred ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
     A mapping without the key, or with an empty one, is what a tool built, and stays that mapping
-    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). The dump is asserted for every
-    case, so a reconstructed item is proven to dump again.
+    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). A tool-built mapping with `null`
+    can't be told apart from one of ours, so it rehydrates too, with the media type inferred where the URL
+    allows. The dump is asserted for every case, so a reconstructed item is proven to dump again.
 
     The requirement stops at the URL kinds. `UploadedFile` falls back to `application/octet-stream`
     and `BinaryContent.media_type` is a required field, so both keep rehydrating from the fields they
@@ -1725,9 +1726,10 @@ def test_extensionless_url_media_type_serializes_null_and_round_trips(
 ) -> None:
     """A URL whose media type can't be inferred serializes `media_type: null` and round-trips.
 
-    A provider that forwards the URL as it is, as OpenAI Chat and Responses do, never reads the media
-    type, so a history that ran there has to dump, and dump to something that loads back into the same part, in a
-    user prompt as in a tool return ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    A provider that forwards the URL as it is never reads the media type, as OpenAI Chat and Responses do
+    for an image URL, so a history that ran there has to dump, and dump to something that loads back into
+    the same part, in a user prompt as in a tool return
+    ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
     """
     item = url_type(url='https://example.com/file')
     with pytest.raises(ValueError, match='Could not infer media type'):
