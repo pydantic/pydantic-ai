@@ -8,6 +8,12 @@ Everything a plugin can do goes through one object, the `PluginHost`. There is n
 global registry to import and no magic file to name. You get a `host`, you tell it
 what you want, you're done.
 
+CLAI groups its shell implementation into `cli/`, `config/`, `runtime/`,
+`models/`, `plugins/`, and `ui/`. Built-in plugin implementations live in
+`builtin_plugins/`. These are source directories, not extra plugin APIs:
+continue importing `PluginHost` from `pydantic_clai2.plugins` and `Command`
+from `pydantic_clai2.commands`.
+
 ## Startup
 
 `clai2 --help` parses arguments without loading the agent or plugins. Interactive
@@ -201,7 +207,8 @@ Output-validation and HTTP transport retry budgets are unchanged.
 ## Credentials
 
 CLAI's `/login openai-codex`, `/login github-copilot`, and the vllm and openrouter connections store tokens
-in the configured keyring backend, not plugin settings. Large token bundles use
+in the configured keyring backend, not plugin settings. Plugins that need an API key, such as
+[`posthog`](#posthog-posthog-analytics-signed-in-for-clai), keep it in `/keys` and save only its name. Large token bundles use
 multiple entries to fit Windows Credential Manager's size limit. When no keyring
 backend exists, credentials go to a per-account `0600` file under the user's CLAI config
 directory instead. None of this changes plugin APIs. See
@@ -251,7 +258,7 @@ Bare `/login` continues to sign in to Codex.
 
 ## Desktop notifications
 
-The default-enabled `notifications` plugin (`pydantic_clai2.notifications`)
+The default-enabled `notifications` plugin (`pydantic_clai2.builtin_plugins.notifications`)
 observes `turn_end` for completed and failed turns and `AskUserRequestedEvent`
 before the answer picker waits. Cancelled turns do not notify. It registers no
 tools or instructions and has no plugin settings. Its title is `CLAI2`; its
@@ -274,7 +281,7 @@ there are no background workers to stop.
 
 ## Logfire: default agent tracing
 
-The built-in `logfire` plugin (`pydantic_clai2.logfire`) is enabled by default in
+The built-in `logfire` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
 the stock CLI. It registers Pydantic AI's `Instrumentation` capability with an
 isolated Logfire instance, not process-wide instrumentation or custom tracing
 hooks. Agent/model/tool spans include timing, token usage, failures, text content,
@@ -296,7 +303,7 @@ Manage it with `/plugins disable logfire`, `/plugins enable logfire`, or
 `/plugins reload logfire`. To change its defaults:
 
 ```text
-/plugins add logfire pydantic_clai2.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
@@ -315,9 +322,66 @@ wins while enabled; disabling it restores the supplied agent's own tracing
 behavior. Custom launchers must pass `builtin_plugins=DEFAULT_PLUGINS` to opt in
 to stock built-ins. See [telemetry](README.md#telemetry-and-references).
 
+## Linear: issues and projects
+
+The built-in `linear` plugin (`pydantic_clai2.builtin_plugins.linear`) gives the agent the tools
+of Linear's hosted MCP server through harness
+[`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md). It starts disabled. Turning
+it on (`/plugins enable linear`, or Space in `/plugins`) opens its settings menu,
+and `/plugins configure linear` (or C in `/plugins`) opens it again later:
+
+```text
+ Linear settings
+ search: (type to filter)
+
+ > Sign-in                  API key from /keys
+   API key                  LINEAR_API_KEY
+   Access                   Read-only
+   Server instructions      Include
+   Save & close
+
+ type to filter - Enter edit - R reset - Esc close
+```
+
+| Row | Choices | Default |
+|---|---|---|
+| Sign-in | an API key from `/keys`, or browser sign-in (OAuth) | API key |
+| API key | a `/keys` entry, picked from a searchable list, or a new key typed into a masked prompt | `LINEAR_API_KEY` |
+| Access | read-only, or read and write | read-only |
+| Server instructions | pass Linear's own MCP instructions to the agent, or leave them out | include |
+
+Enter edits a row, R resets it to the default, and Esc backs out of a picker
+without changing anything. Each change is saved as you make it, so **Save & close**
+and Esc both just leave the menu, and the plugin is reloaded with the new settings.
+Read-only is the default because tools that create or change issues act on a
+workspace your team shares. These rows are the settings harness `Linear` takes
+from a user. Linear's hosted server has a single URL (with a read-only variant)
+and takes the workspace from the account you sign in with, so the menu has no
+base URL or workspace field.
+
+The API key lives in [`/keys`](#saved-api-keys), not in plugin settings, which
+are stored in plaintext. On the API key row, pick any saved key (one entry can
+serve several plugins), or choose **Enter a different API key**. A new key is
+saved in `/keys` as `LINEAR_API_KEY`; if that name already exists, CLAI asks
+before replacing it, since other plugins may use it. The plugin stores only the
+key's name and looks the key up at the start of every run, so replacing the value
+in `/keys` takes effect on the next run. If the key is missing, loading the plugin
+prints a warning and each run fails with an error naming `/plugins configure linear`,
+rather than running without Linear. Harness's `LINEAR_ACCESS_TOKEN` environment
+variable is not read.
+
+With browser sign-in, the key row is hidden. Tokens go to the keyring the way
+`/mcp` OAuth tokens do, and `/linear logout` signs out.
+
+The settings are also plain JSON, for scripts:
+
+```text
+/plugins add linear pydantic_clai2.builtin_plugins.linear '{"auth": "oauth", "read_only": false}'
+```
+
 ## Notion: workspace tools
 
-The built-in `notion` plugin (`pydantic_clai2.notion`) starts disabled. It adds
+The built-in `notion` plugin (`pydantic_clai2.builtin_plugins.notion`) starts disabled. It adds
 harness `Notion`: the tools of Notion's hosted MCP server, acting with the
 permissions of the Notion account it connects as. That includes tools that
 change pages.
@@ -341,7 +405,7 @@ account belongs to, so there is no URL or workspace row. The settings JSON uses
 `auth` (`"key"`, `"oauth"`, or unset), `read_only`, and `include_instructions`:
 
 ```text
-/plugins add notion pydantic_clai2.notion '{"auth": "key", "read_only": true}'
+/plugins add notion pydantic_clai2.builtin_plugins.notion '{"auth": "key", "read_only": true}'
 ```
 
 ### Secrets live in `/keys`
@@ -374,6 +438,127 @@ runs or remote machines, choose a key and set Sign-in to key only: without a
 key, CLAI warns at startup and runs fail with a message instead of waiting for a
 sign-in. The plugin emits no telemetry of its own; tool calls appear in core's
 spans.
+## Logfire MCP: query your telemetry
+
+The built-in `logfire_mcp` plugin (`pydantic_clai2.builtin_plugins.logfire_mcp`) gives the agent
+the tools of Logfire's hosted MCP server through harness
+[`LogfireMCP`](../../docs/harness/logfire-mcp.md). It starts disabled.
+Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
+opens its settings menu; reopen the menu any time with
+`/plugins configure logfire_mcp` or `C` in `/plugins`.
+
+Every row saves as soon as you change it, so **Save & close** (or Esc) just leaves
+the menu, and the plugin loads again with the new settings. Esc backs out of any
+picker or text field without changing anything; `R` resets the highlighted row to
+its default.
+
+| Row | Setting | Default | Does |
+|---|---|---|---|
+| API key | `key` | none | name of the `/keys` entry to connect with (see below) |
+| Destination | `url` | Logfire US | Logfire US, Logfire EU, or type the `https://` MCP URL of a self-hosted Logfire |
+| Tools | `read_only` | read-only | offer only the tools the server marks read-only; "read and write" also allows tools that change Logfire resources |
+| Server instructions | `include_instructions` | forwarded | whether the server's instructions, query guidance, and current UTC time reach the agent |
+| Browser sign-in | `oauth` | when there is no key | sign in, or sign up, through the browser when no key is chosen, set, or saved; the row shows whether you are signed in |
+
+### Keys live in `/keys`
+
+Plugin settings are stored as plaintext in SQLite, so they hold only the key's
+name, never its value. Enter on **API key** opens the same picker as
+`/add_model`:
+
+- **a saved key**: any entry in [`/keys`](#saved-api-keys). Several plugins and
+  connections can name one key, so one Logfire API key saved once serves them all.
+- **Enter a different API key**: a masked field. The value is saved in `/keys`
+  as `LOGFIRE_API_KEY`, the conventional label; CLAI asks before replacing an
+  existing `LOGFIRE_API_KEY`, since other plugins may use it.
+- **No API key**: clears the choice.
+
+The plugin uses the first credential that is available:
+
+1. The key chosen in the menu.
+2. `LOGFIRE_API_KEY` from the environment.
+3. A key saved in `/keys` as `LOGFIRE_API_KEY`, so saving one there is enough.
+4. Browser sign-in, when it is on (the default). See below.
+
+With browser sign-in off, the plugin looks `LOGFIRE_API_KEY` up in `/keys` on
+every run, so saving it there later connects without a reload.
+
+#### Browser sign-in
+
+Browser sign-in uses the OAuth device flow
+([RFC 8628](https://datatracker.ietf.org/doc/html/rfc8628)), as Code Puppy's
+Logfire plugin does. The first run with no usable token, or `/logfire_mcp login`
+at any time, prints a link and a code and opens the link:
+
+```text
+Sign in to Logfire (new users can sign up there): open https://logfire-us.pydantic.dev/auth/oauth-device?code=ABCD-EFGH
+Enter code: ABCD-EFGH
+Approve only the code shown here. You can open the link on another device.
+```
+
+On that Logfire page you sign in, or create an account if you have none, and
+approve the code. CLAI waits up to 660 seconds (Logfire's codes last 600). No
+local callback server is involved, so this also works over SSH: open the link on
+any device.
+
+- **Discovery:** the Logfire server is found from the Destination URL
+  ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) resource metadata),
+  so self-hosted Logfire works too, including an issuer with a path
+  ([RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414)). CLAI registers
+  itself as a client ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591))
+  and uses PKCE. It registers again if the server has forgotten the earlier
+  registration.
+- **Binding:** every request names the Destination URL as the token's resource
+  ([RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707)), and the
+  discovered metadata must describe that same URL (and the authorization
+  server's metadata its own issuer). A token is only issued for the MCP server
+  you configured, so another endpoint that names Logfire as its
+  authorization server cannot receive one. Logfire rejects unknown resources
+  with `invalid_target`.
+- **Scopes:** read-only tools ask only for `project:read`. With Tools set to read
+  and write, CLAI asks for every scope the MCP server lists (on Logfire's hosted
+  servers that includes `organization:create_project`). Switching Tools to read
+  and write signs in again for those scopes. If Logfire grants fewer scopes, CLAI
+  says so once and keeps the sign-in, since asking again would get the same
+  grant; `/logfire_mcp login` asks again when you want to.
+- **Tokens:** kept per Destination URL in the OS keyring (or the private
+  credential file) under the `logfire-oauth` account, so restarting CLAI does
+  not mean signing in again. An expired or rejected token is refreshed; if that
+  fails, the next run signs in again. `/logfire_mcp logout` forgets every
+  Logfire sign-in, including one still waiting for approval, and keeps keys in
+  `/keys`.
+  If the keyring or file refuses to save a sign-in, CLAI says so and keeps it in
+  memory for the rest of the session (logout forgets it too); the next session
+  asks you to sign in again.
+
+#### Saved keys
+
+A saved key's value is read at the start of each run, like a model connection's.
+Replacing it in `/keys` applies from the next turn. `/keys` does not stop you
+deleting or renaming a key that plugin settings name; the plugin's runs then fail
+with the old name and `/plugins configure logfire_mcp` as the fix, until you pick
+a key again.
+
+When the key the plugin depends on is missing from `/keys`, the plugin still
+loads, so the menu stays reachable. It prints a warning when the session starts,
+and each run fails with that message instead of reaching Logfire.
+
+The label is `LOGFIRE_API_KEY`, the variable `LogfireMCP` reads, and not
+`LOGFIRE_TOKEN`. `LOGFIRE_TOKEN` is the write token the
+[`logfire` plugin](#logfire-default-agent-tracing) sends traces with, and it
+cannot query the MCP server. The `logfire` plugin keeps reading it from the
+environment or the Logfire SDK's credential file.
+
+The same settings can be given as JSON, which is validated the same way:
+
+```text
+/plugins add logfire_mcp pydantic_clai2.builtin_plugins.logfire_mcp '{"url": "https://logfire-eu.pydantic.dev/mcp"}'
+```
+
+The key's own scopes still decide which projects and actions are allowed. If you
+enabled `logfire_mcp` from the old harness catalog, that saved declaration still
+takes this plugin's place; `/plugins remove logfire_mcp` switches to this one.
+The plugin emits no telemetry of its own; tool calls appear in core's spans.
 
 ## Where plugins live
 
@@ -432,31 +617,40 @@ conversation inside the context window. These five plugins are marked
 the order listed below, so `coder`'s guidance leads the system prompt; saved,
 drop-in, and project plugins follow in name order. Registration order is also the
 order plugin instructions, renderers, and status segments are consulted in.
-`/plugins` and `/plugins list` stay alphabetical for scanning:
+`/plugins` and `/plugins list` stay alphabetical for scanning. CLAI's plugin
+implementations live in `pydantic_clai2.builtin_plugins`. Saved plugin
+settings using the former import paths are redirected to the new modules.
 
 | Id | Backed by | Settings | Does |
 |---|---|---|---|
 | `coder` | `pydantic_ai_harness.coder:Coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": false}` | the file and shell tools |
-| `ask_user` | `pydantic_clai2.ask_user_menu:activate` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
-| `repo_context` | `pydantic_clai2.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
-| `persistence` | `pydantic_clai2.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
-| `compaction` | `pydantic_clai2.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+| `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu:activate` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
+| `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
+| `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
+| `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+| `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
-[`day_ai`](#day_ai-day-ai-crm-tools) is built in too, but starts disabled because
-it needs your Day AI account.
+[`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
+are built in too, but start disabled because they need your Day AI or Grain
+account.
 
 ### Other harness capabilities
 
 `/plugins` lists only the built-ins above, plus plugins you or the repository
 declared. It does not list every public harness capability for Space-enable:
-hosted-MCP integrations such as Slack or GitHub, sandboxes, and guardrails need
+hosted-MCP integrations such as GitHub, sandboxes, and guardrails need
 credentials, extras, or settings that a checkbox cannot supply, so they belong in
 CLAI plugins written for them, such as the disabled built-ins
 [`day_ai`](#day_ai-day-ai-crm-tools),
 [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
+[`grain`](#grain-meetings-with-a-saved-sign-in),
+[`linear`](#linear-issues-and-projects),
+[`logfire_mcp`](#logfire-mcp-query-your-telemetry),
 [`notion`](#notion-workspace-tools),
-[`ordinal`](#ordinal-social-posts-in-ordinal), and
-[`pylon`](#pylon-support-issues-and-accounts-in-pylon).
+[`ordinal`](#ordinal-social-posts-in-ordinal),
+[`posthog`](#posthog-posthog-analytics-signed-in-for-clai),
+[`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
+[`slack`](#slack-your-slack-workspace-as-you).
 
 To run any other capability, declare it on purpose under an id of your choice,
 with JSON constructor settings if it takes them:
@@ -474,7 +668,7 @@ Earlier releases listed every harness capability here, disabled. If you enabled
 one of those, it was saved as your own declaration, so it keeps loading and now
 shows as a saved plugin; `/plugins remove NAME` forgets it. The exception is a
 saved copy of an entry that now has its own built-in under the same id, such as
-`google_workspace` or `ordinal`: it becomes that built-in, keeping whether it was enabled.
+`google_workspace`, `ordinal`, or `slack`: it becomes that built-in, keeping whether it was enabled.
 
 `/plugins disable coder` gives you a chat-only CLAI (a writing or research setup
 with `ExaSearch` instead, say); `/plugins enable coder` brings the tools back;
@@ -485,7 +679,7 @@ the same name and it takes the built-in's place:
 
 ```text
 /plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": false, "repo_context": false}'
-/plugins add repo_context pydantic_clai2.repo_context '{"walk_up": true}'
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
 ```
 
 Keep `"repo_context": false` on a replacement `coder`: `Coder` bundles its own
@@ -521,12 +715,12 @@ changes its settings (`strategy`, `threshold`, `protected_tokens`,
 `context_window`, `summarization_model`; see the README):
 
 ```text
-/plugins add compaction pydantic_clai2.compaction '{"threshold": 0.7, "context_window": 200000}'
+/plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "context_window": 200000}'
 ```
 
 ### `ask_user`: questions answered from the terminal
 
-The second built-in, `ask_user` (`pydantic_clai2.ask_user_menu:activate`), gives
+The second built-in, `ask_user` (`pydantic_clai2.builtin_plugins.ask_user_menu:activate`), gives
 the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
 question appears inline above a compact numbered picker, keeping the conversation
@@ -581,7 +775,7 @@ show a "waiting for you" state) registers `@host.on(EventClass)` or
 
 ### `github`: tools from GitHub's hosted MCP server
 
-The `github` built-in (`pydantic_clai2.github`) gives the model harness
+The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model harness
 [`GitHub`](../pydantic_ai_harness/pydantic_ai_harness/github/README.md): the tools of GitHub's hosted
 MCP server, acting as the account behind a token. It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
@@ -651,7 +845,7 @@ of its own; tool calls appear in core's spans.
 
 ### `google_workspace`: Gmail, Calendar, and Drive tools
 
-`google_workspace` (`pydantic_clai2.google_workspace`) is a built-in that starts
+`google_workspace` (`pydantic_clai2.builtin_plugins.google_workspace`) is a built-in that starts
 disabled. It gives the agent the tools of Google's hosted Workspace MCP servers
 through harness [`GoogleWorkspace`](../../docs/harness/google-workspace.md). It needs a
 Google OAuth access token whose scopes cover the products you select.
@@ -706,7 +900,7 @@ store: mint the token with your own OAuth client and save it in `/keys`.
 Declarations still work for scripted setups:
 
 ```text
-/plugins add google_workspace pydantic_clai2.google_workspace '{"services": ["gmail", "docs"], "read_only": false}'
+/plugins add google_workspace pydantic_clai2.builtin_plugins.google_workspace '{"services": ["gmail", "docs"], "read_only": false}'
 ```
 
 Earlier versions listed `google_workspace` as a raw harness entry,
@@ -717,7 +911,7 @@ as written.
 
 ### `pylon`: support issues and accounts in Pylon
 
-`pylon` (`pydantic_clai2.pylon`) gives the agent harness
+`pylon` (`pydantic_clai2.builtin_plugins.pylon`) gives the agent harness
 [`Pylon`](../../docs/harness/pylon.md): Pylon's hosted MCP tools for
 searching, reading, creating, and updating support issues, looking up and
 updating accounts, and looking up contacts. It starts disabled;
@@ -746,7 +940,7 @@ the next run, with no reinstall.
 settings as JSON, since none of them are secret:
 
 ```text
-/plugins add pylon pydantic_clai2.pylon '{"read_only": true}'
+/plugins add pylon pydantic_clai2.builtin_plugins.pylon '{"read_only": true}'
 ```
 
 Pylon's endpoint (`https://mcp.usepylon.com`) is fixed and there is no
@@ -783,7 +977,7 @@ needed and never touch `/keys` or plugin settings.
 
 ### `day_ai`: Day AI CRM tools
 
-`day_ai` (`pydantic_clai2.day_ai`) starts disabled. It gives the model harness
+`day_ai` (`pydantic_clai2.builtin_plugins.day_ai`) starts disabled. It gives the model harness
 [`DayAI`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/day_ai/),
 the tools of Day AI's hosted MCP server: search and update CRM records, read
 meeting context, and draft emails. It needs a paid Day AI Agent tier.
@@ -838,7 +1032,7 @@ this plugin.
 
 ### `ordinal`: social posts in Ordinal
 
-`ordinal` (`pydantic_clai2.ordinal`) gives the model harness
+`ordinal` (`pydantic_clai2.builtin_plugins.ordinal`) gives the model harness
 [`Ordinal`](../pydantic_ai_harness/pydantic_ai_harness/ordinal/README.md), which drafts, schedules,
 and analyzes social posts through Ordinal's hosted MCP server. It starts disabled;
 `/plugins enable ordinal` turns it on. Ordinal MCP needs the Pro plan or higher.
@@ -884,6 +1078,220 @@ cannot connect.
 saved browser sign-in and drops the one in use, so the next browser run signs in
 again; it does not touch a `/keys` entry or the environment variable. Disabling
 the plugin does not sign you out.
+
+### `slack`: your Slack workspace, as you
+
+`slack` (`pydantic_clai2.builtin_plugins.slack`) connects harness
+[`Slack`](../pydantic_ai_harness/pydantic_ai_harness/slack/README.md) to Slack's hosted MCP server.
+It ships disabled. The tools act as the user whose token CLAI connects with, so
+anything the agent posts appears under your name. If you enabled or disabled the
+earlier raw `pydantic_ai_harness.slack:Slack` catalog row, CLAI loads this plugin
+in its place and keeps your choice. A declaration with your own
+settings is left as it is.
+
+Turning it on (Space in `/plugins`, `/plugins enable slack`, or `/plugins add`),
+or pressing `C` on it in `/plugins`, opens its settings menu. `/plugins configure slack`
+reopens it later, with no reinstall. The list is searchable, Enter edits the
+highlighted row, `R` resets it, and **Save & close** or Esc closes. Every change is saved as you make it:
+
+| Row | Choices | Saved in |
+|---|---|---|
+| Sign-in | user token from `/keys` (default) or browser sign-in through your Slack app | plugin settings, as `auth` (`key` or `browser`) |
+| User token (`key` only) | a key from `/keys`, or a new user token (`xoxp-`) | `/keys`; only the key's name is kept for Slack, in the credential store |
+| Slack app (`browser` only) | creates your CLAI Slack app, then takes its Client ID | plugin settings, as `client_id` (public, not a secret) |
+| Browser sign-in (`browser` only) | signs in again, or `R` signs out | the tokens, in the credential store (`slack-oauth`) |
+| Tools | read-only (default) or read and write | plugin settings, as `read_only` |
+| Server instructions | forwarded (default) or left out | plugin settings, as `include_instructions` |
+
+**User token.** Enter shows the names of your saved keys. Pick one, or, when
+`/keys` is empty, paste a token into the masked input. A new token is saved in `/keys` as
+`SLACK_USER_TOKEN` (the name harness `Slack` documents, used here only as a label). If that
+name already holds a token, CLAI asks before replacing it, because every plugin and
+connection that uses the key would change with it. Slack's MCP server acts as a
+user and rejects bot tokens, so the menu refuses an `xoxb-` token whether picked
+or pasted; there is no bot-token mode. The token also decides the workspace and
+user: to use another workspace, save its token under another name, such as
+`SLACK_USER_TOKEN_ACME`, and pick that. `R` on this row forgets the choice, which
+turns the Slack tools off, and leaves the key in `/keys`. The row notes when no
+key is chosen or the chosen key is gone from `/keys`.
+
+**Browser sign-in.** Slack's MCP server has no dynamic client registration and
+serves only apps installed in your workspace, so browser sign-in goes through your
+own Slack app. CLAI creates it for you. Choose **Browser sign-in** in the Sign-in row,
+then press Enter on **Slack app**. CLAI opens Slack's create-app page filled in with
+CLAI's manifest. Pick your workspace, click **Create**, and paste the app's **Client
+ID** (Basic Information, App Credentials). CLAI then opens Slack's sign-in page and
+waits up to five minutes behind a screen that shows the URL, in case no browser
+opens (over SSH, for example); Esc cancels. You never copy a token or a client
+secret: the manifest enables PKCE, so Slack treats the app as a public client and
+neither signing in nor renewing needs a secret. The manifest also turns on the
+app's MCP access (`is_mcp_enabled`), which Slack requires, and token rotation.
+Access tokens last 12 hours; CLAI renews them before a turn when they are close
+to expiring, keeping the rotated refresh token in the credential store. If CLAI
+goes unused for 30 days, the refresh token expires and you sign in again.
+
+A read-only sign-in asks Slack for read scopes only, so the token itself cannot
+post. After switching Tools to read and write, press Enter on **Browser sign-in**
+to sign in again with the write scopes. Until you do, turns have no Slack tools
+and CLAI says to sign in again, rather than offering write tools the token cannot
+use. The redirect is fixed at
+`http://localhost:53118/slack/callback`, because Slack matches the registered URL
+exactly. Workspaces that require admin approval for new apps need that approval
+first. `R` on Browser sign-in signs out; `R` on Slack app also forgets the app.
+
+Harness `Slack` has no server URL option: it always connects to
+`https://mcp.slack.com/mcp`, so the menu has no base URL row. Plugin settings never
+hold the token, and a pasted `token` setting is rejected. CLAI does not read the
+`SLACK_USER_TOKEN` environment variable either. If it is set and no key is
+chosen, CLAI says so and points at the menu.
+
+With a user token, before every turn CLAI reads the chosen key's current value from `/keys`, so
+replacing it there takes effect on the next turn with no reload. Until you choose
+a key (or, for browser sign-in, set up the Slack app), turns just have no Slack
+tools, without a warning; the menu rows say what is missing. When the chosen key
+was deleted or the saved choice is invalid, CLAI prints why and that turn has no
+Slack tools. While Slack uses a key, `/keys` will not
+rename it.
+
+| Key | Default | Does |
+|---|---|---|
+| `auth` | `key` | `key` connects with the user token chosen from `/keys`; `browser` with the browser sign-in |
+| `client_id` | none | your CLAI Slack app's Client ID, for `browser` |
+| `read_only` | `true` | keep only the tools Slack marks read-only, so the agent can search and read but not post or edit |
+| `include_instructions` | `true` | forward the Slack server's own instructions to the agent |
+
+To let the agent send messages and edit canvases as you, choose **read and
+write** in the Tools row. The equivalent typed command is
+`/plugins add slack pydantic_clai2.builtin_plugins.slack '{"read_only": false}'`.
+
+### `posthog`: PostHog analytics, signed in for CLAI
+
+`posthog` (`pydantic_clai2.builtin_plugins.posthog`) connects the agent to PostHog's hosted MCP
+server through harness [`PostHog`](../../docs/harness/posthog.md). It starts disabled.
+`/plugins enable posthog` loads it and opens its settings menu. To change the
+settings later, run `/plugins configure posthog` or press `C` on it in
+`/plugins`. You never need to reinstall it.
+
+The menu is the shared field editor that `/set` uses: type to filter, Enter to
+edit a row, `R` to reset one, **Save & close** or Esc to leave. Each change is
+saved as soon as you make it. When the menu closes, the plugin loads again, so the next turn uses the
+new settings.
+
+| Row | Default | Does |
+|---|---|---|
+| API key | none | the `/keys` entry to connect with: pick a saved key from a searchable list, or type a new one into a masked field |
+| Sign-in | API key from `/keys` | or browser sign-in, with tokens kept in the keyring |
+| Region | US cloud | US (`mcp.posthog.com`), EU (`mcp-eu.posthog.com`), or a typed `https://` URL for a PostHog MCP server you run (`http://` only for localhost) |
+| Tools | read-only | read-only, or read and write (for example editing feature flags) |
+| Feature groups | every group | a searchable list of PostHog's feature groups; Enter toggles one and saves it |
+| Server mode | server default | one `posthog` tool driven by commands, or one tool per operation |
+| Project ID | not set | pin every request to one project (`x-posthog-project-id`) |
+| Organization ID | not set | pin every request to one organization (`x-posthog-organization-id`) |
+| Server instructions | forwarded | whether the PostHog server's own instructions reach the agent |
+
+The key's own scopes, organizations, and projects still limit what any of these
+settings can reach. Some PostHog tools use an LLM on PostHog's side and need AI
+data processing enabled for your organization.
+
+Secrets are managed in `/keys`, never in plugin settings (plugin settings are
+plaintext SQLite, and a declaration that tries to hold a key is rejected: `/plugins add` keeps
+no settings that fail validation, and the error does not echo them). A new
+key typed in the menu is saved in `/keys` as `POSTHOG_PERSONAL_API_KEY`, the name
+harness `PostHog` documents. It is a label only: CLAI does not read or export the
+environment variable. If a key of that name exists, the menu asks before
+replacing it. CLAI remembers only the key's name, in the credential store beside
+the vllm and openrouter connections. Create the key with PostHog's "MCP Server"
+preset.
+
+One named key can serve several plugins and connections: pick the same `/keys`
+entry for each, the way GitHub integrations can all use one `GITHUB_TOKEN`. The
+name is looked up on every request, so replacing the key in `/keys` reaches the
+next turn of everything that names it. `/keys` refuses to rename a key while
+PostHog uses it. Until a key is chosen, or if the chosen key is deleted, the
+plugin still loads with a warning and keeps its menu, and each run fails with an
+error naming the fix instead of connecting without the key.
+
+With browser sign-in, the first prompt that uses PostHog opens the browser. The
+tokens go to the keyring (the `mcp-posthog_plugin` entry under `pydantic-clai2`),
+the same storage `/mcp` uses for OAuth servers, so the sign-in lasts across turns
+and launches. Pick the EU region if your account is on the EU instance.
+
+`/posthog` shows the key or sign-in in use; `/posthog logout` forgets the browser
+sign-in. The plugin always builds its own connection instead of passing `auth` to
+`PostHog`: harness `PostHog`'s key path connects only to the US endpoint, and
+`auth='oauth'` keeps browser tokens in memory, so it would sign in on every turn
+with a 5-second connect timeout. The plugin emits no telemetry of its own; tool
+calls appear in core's spans.
+
+### `grain`: meetings, with a saved sign-in
+
+`grain` (`pydantic_clai2.builtin_plugins.grain`) gives the agent harness's
+[`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
+the Grain meetings, transcripts, and notes you can see. It starts disabled;
+turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
+settings menu. Until you have opened the menu once or picked a key, loading it
+prints a line pointing there.
+
+`/grain`, `C` in `/plugins`, or `/plugins configure grain` opens the settings
+menu. Enter edits a row, `r` resets it to its default, and Esc or **Save &
+close** leaves the menu. Each change is saved to the plugin's settings at once
+and applies to the next prompt. Reopen it any time to change a setting or pick a
+different key:
+
+```text
+ Grain
+> Token                    browser sign-in
+  Tools                    read-only
+  Server instructions      included
+  Save & close
+```
+
+| Row | Setting | Default | Does |
+|---|---|---|---|
+| Token | none (see below) | browser sign-in | where the Grain token comes from |
+| Tools | `read_only` | `true` | read-only offers only the tools Grain marks read-only; all tools also lets the agent create clips and tag meetings |
+| Server instructions | `include_instructions` | `true` | pass Grain's own instructions for its tools to the agent |
+
+Grain's MCP endpoint is fixed, and the capability has no workspace, base URL, or
+project option, so the menu has none either.
+
+No token goes in plugin settings, which are plaintext SQLite. The plugin takes
+the first of these that applies:
+
+1. The `GRAIN_ACCESS_TOKEN` environment variable. The Token row shows it and says
+   it overrides the choice there while it is set.
+2. A [saved API key](#saved-api-keys) picked on the Token row, or with
+   `/grain key`. The searchable picker lists your `/keys` entries by name; you can
+   also type a token (masked), which is saved in `/keys` as `GRAIN_ACCESS_TOKEN`,
+   the name harness's `Grain` documents. CLAI keeps only the key's name and looks
+   the key up on every run, so replacing it in `/keys` takes effect on the next
+   prompt, deleting it makes Grain fail rather than connect without it, and
+   `/keys` refuses to rename it while Grain uses it. Several plugins can share one
+   named key, the way `vllm` and `openrouter` connections can. Choose "No API
+   key" to go back to the browser sign-in.
+3. A browser sign-in. The first prompt that connects opens your browser and
+   prints the sign-in URL, in case the browser does not open (over SSH, for
+   example). The tokens go to the OS keyring (or CLAI's private credential file
+   when there is no keyring), the way `/mcp` OAuth servers keep theirs, so later
+   sessions refresh them instead of signing in again. A headless run
+   (`clai2 -p`) cannot sign in: with no saved sign-in, its Grain connection fails
+   and says so.
+
+`/grain status` says which of the three this session uses. `/grain logout`
+forgets the browser sign-in and the tokens the session holds, so the next prompt
+that uses Grain signs in again. It cannot revoke `GRAIN_ACCESS_TOKEN` (unset it,
+then `/plugins reload grain`) or a `/keys` entry (pick "No API key").
+
+If you enabled `grain` from the old `/plugins` catalog, which saved
+`pydantic_ai_harness.grain:Grain` under that id, CLAI loads this plugin in its
+place and keeps it enabled or disabled. A declaration you gave
+settings with `/plugins add` stays as you wrote it.
+
+The settings can also be given up front:
+
+```text
+/plugins add grain pydantic_clai2.builtin_plugins.grain '{"read_only": false, "include_instructions": true}'
+```
 
 ## Managing plugins
 
@@ -1308,7 +1716,7 @@ reaches all of them. The label does not export or read an environment variable.
 ```python
 from pydantic import BaseModel, ConfigDict, Field
 
-from pydantic_clai2.api_keys import KeyReference, SavedKey
+from pydantic_clai2.config.api_keys import KeyReference, SavedKey
 
 
 class MySettings(BaseModel):
@@ -1337,15 +1745,19 @@ show afterwards. CLAI opens it when the plugin is turned on (Space in
 `/plugins`, `/plugins enable`, or `/plugins add`), on `C` in `/plugins`, and on
 `/plugins configure NAME`. Save each change with `host.save_settings(model)` as
 the user makes it; settings are stored in plaintext, so keep secrets in `/keys`
-and save only a key's name. When the saved settings changed, CLAI loads the
-plugin again afterwards, so `activate` builds from them.
+and save only a key's name: let the user pick one with
+`prompt_api_key(prompt=..., label=...)` and remember only a `KeyReference` to
+it. When the saved settings changed, CLAI loads the plugin again afterwards, so
+`activate` builds from them.
 
 Build the menu with the shared field editor (`FieldMenu` and `run_flow` from
-`pydantic_clai2.field_menu`, run through `run_worker` from
-`pydantic_clai2.menu_worker`), the same one `/set` uses. Its last row is
+`pydantic_clai2.ui.menus.field_menu`, run through `run_worker` from
+`pydantic_clai2.ui.menus.menu_worker`), the same one `/set` uses. Its last row is
 **Save & close**: every edit is already saved, so choosing it, like Esc, just
 leaves the menu. A menu you build yourself ends with `save_and_close_item()` and
 treats a result as closed when `picked(result)` is `None`.
+
+The built-in `logfire_mcp` plugin is a complete example.
 
 ```python
 @host.configure
@@ -1355,8 +1767,16 @@ async def configure() -> str:
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
 
-The built-in `github`, `notion`, and [`pylon`](#configuring-pylon) plugins are complete
-examples; `pylon` also steps out of the menu worker to run the async key picker.
+For a row that opens something other than a plain value, pass `submenus` to
+`run_flow` to map the row's key to a function that returns messages. When that
+function is itself async, such as `api_keys.prompt_api_key`, await
+`field_menu.run_flow_async` from the `configure` function instead of running
+`run_flow` in a worker: it runs each widget in its own `run_worker`, so the
+submenu can open its own.
+
+The built-in `github`, `grain`, `linear`, `notion`, and [`pylon`](#configuring-pylon) plugins are
+complete examples; `linear` uses `run_flow_async`, and `pylon` steps out of the menu
+worker to run the async key picker.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
 secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
@@ -1365,6 +1785,47 @@ replaced in `/keys` applies and a deleted one fails closed. Name a new key with
 the conventional environment-style label (`GITHUB_TOKEN`, `ORDINAL_ACCESS_TOKEN`)
 so plugins that need the same credential share it. The label is only a name; it
 does not export or read an environment variable.
+
+For a token row, `pydantic_clai2.plugins.keys.choose_key(name=..., label=..., runners=...)`
+shows the searchable `/keys` picker, or a masked input when no keys are saved.
+It saves a new value under `name` only after confirming a replacement, and
+returns a `KeyReference` to persist in place of the secret. Call it through
+`plugin_keys.on_loop` from the menu's worker thread. The built-in `slack` plugin
+is a complete example.
+
+### Sign in through the browser: `pkce.PKCESignIn`
+
+For a service whose OAuth needs a registered app but accepts PKCE instead of a
+client secret (a public client), describe the app once and let CLAI run the
+authorization-code flow, keep the tokens, and renew them:
+
+```python
+from pydantic_clai2.pkce import PKCESignIn, PublicClient
+
+client = PublicClient(
+    authorize_url='https://example.com/oauth/authorize',
+    token_url='https://example.com/oauth/token',
+    client_id=settings.client_id,  # public: plugin settings may hold it
+    redirect_uri='http://localhost:53119/example/callback',  # registered with the app, fixed port
+    scopes=('read',),
+)
+sign_in = PKCESignIn(client=client, account='example-oauth', service='Example', setup='/plugins configure example')
+```
+
+`await plugin_keys.browser_sign_in(sign_in, runners)` signs in from a settings
+menu behind a waiting screen that shows the URL, and returns `False` when the user
+presses Esc. Outside a menu, `await sign_in.sign_in()` opens the browser directly.
+Before each run, `await sign_in.token()` returns an access token, refreshing it
+first when it expires within five minutes and saving a rotated refresh token. It
+raises `UserError` naming `setup` when there is no usable sign-in, so a plugin can
+turn its tools off with that message. Refreshes are serialized across CLAI
+processes, because a service that rotates refresh tokens invalidates the old one.
+Token responses may report errors the standard way or, like Slack, with HTTP 200
+and an `error` field; both are handled. The tokens are stored under `account` in
+the credential store with the scopes the service granted, tied to the Client ID.
+Changing the app, or asking for scopes the sign-in did not grant, means signing in
+again. Services with Dynamic Client Registration need none of this: add them as
+`/mcp` servers with OAuth.
 
 ### Reach the conversation and the status row: `host.conversation`, `host.status`
 
@@ -1485,9 +1946,21 @@ numbers, and underscores, starting with a letter or underscore. Saving an existi
 name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
 the secret on the command line.
 
+Consumers store a key's name, not its value, and look it up each time they
+connect, so replacing a value in `/keys` updates every consumer and a deleted key
+makes them fail with an error. Renaming a key that vLLM, OpenRouter, or a
+plugin uses is refused until they are pointed at another key. Several
+consumers can share one entry: name keys with the conventional variable name for
+the service, such as `LINEAR_API_KEY` or `GITHUB_TOKEN`, and every plugin for that
+service can pick the same entry. The names are labels only; CLAI does not export
+them as environment variables.
+
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
 and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
-[`notion`](#notion-workspace-tools), and [`pylon`](#pylon-support-issues-and-accounts-in-pylon) show a
+[`grain`](#grain-meetings-with-a-saved-sign-in), [`linear`](#linear-issues-and-projects),
+[`logfire_mcp`](#logfire-mcp-query-your-telemetry), [`notion`](#notion-workspace-tools),
+[`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
+[`slack`](#slack-your-slack-workspace-as-you) show a
 searchable list of names. Choose one, enter a different key privately, or
 choose **No API key** for vLLM. Esc closes the picker without connecting. Browser
 login flows are unchanged. Select keys only for endpoints you trust.
@@ -1499,9 +1972,19 @@ Key values never appear in the picker or confirmation. Names are labels, not
 exported environment variables. Selecting a saved key stores a reference, not a copy. Discovery and each new
 turn resolve its current value. Replacing a key updates connections that reference
 it. Deleting it makes those connections fail until you restore the same name or
-reconfigure them. Keys referenced by saved connections, including Pylon's, cannot be renamed. A cross-process lock
+reconfigure them. Keys referenced by saved connections, including Pylon's, cannot be renamed;
+a key named in plugin settings, such as `logfire_mcp`'s, can, and that plugin's runs then fail
+with the missing name until you pick it again. One named key can serve several connections and
+plugins, so built-in plugins look for conventional labels, such as `LOGFIRE_API_KEY`, that other
+tools can share. A cross-process lock
 serializes key changes and connection saves so concurrent CLAI sessions do not
 overwrite each other's key edits. The lock file contains no credentials.
+
+Manage plugin secrets here too: a plugin that needs a token stores a reference to
+a named key, never the token itself, because plugin settings are plaintext
+SQLite. Several connections can share one key: name it the way its provider's
+tools do, such as `SLACK_USER_TOKEN` or `GITHUB_TOKEN`, and choose that name in
+each connection. Replacing it then updates all of them.
 
 Existing connections with inline credentials, manually entered connection keys,
 and browser logins remain unchanged. To switch an existing connection to a
@@ -1572,7 +2055,7 @@ on the next prompt. `r` resets a field; Esc or Ctrl-C goes back. Fixed choices
 open a picker; numeric fields accept typed values, and empty input resets.
 
 The built-in model catalog and `/set model` completions include
-`openai-codex:gpt-6-sol` and `openai-codex:gpt-6-luna`.
+`openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
@@ -1605,8 +2088,8 @@ remain visible so they can be reset. Choices depend on the model and API: Chat C
 controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort
 and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
-1024 and below an explicit `max_tokens`. If classic thinking has no output cap,
-CLAI reserves the thinking budget plus 4096 output tokens. Other unset fields
+1024 and below an explicit `max_tokens`. Without one, Pydantic AI
+leaves room for the answer beyond the budget. Other unset fields
 use the provider default.
 Explicit native thinking settings take precedence over generic `thinking`.
 GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,

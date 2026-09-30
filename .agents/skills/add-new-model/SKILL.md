@@ -78,6 +78,18 @@ Until then, for that id: `ModelResponse.cost()` raises `LookupError`, `RunContex
 is `None`, and a `cost_limit` cannot be enforced — the run warns `CostNotFoundWarning` at the end
 instead. Open the genai-prices PR alongside the model add and link the two.
 
+Before you write the entry, check that no one has added it already. Someone else may have added
+it on release day. Grep genai-prices `main` for each provider file you plan to edit, then the
+provider-file changes in its open PRs:
+
+```bash
+for f in <provider files, e.g. openai openrouter github_copilot>; do gh api "repos/pydantic/genai-prices/contents/prices/providers/$f.yml" -H 'Accept: application/vnd.github.raw' | grep -n '<id>' | sed "s/^/$f.yml:/"; done
+for n in $(gh pr list --repo pydantic/genai-prices --state open --limit 200 --json number --jq '.[].number'); do gh api "repos/pydantic/genai-prices/pulls/$n/files" --paginate --jq '.[] | select(.filename | startswith("prices/providers/")) | .patch' | grep -q '<id>' && echo "#$n"; done
+```
+
+A hit means you link that entry or PR instead of opening your own. Do not rely on `gh search prs`:
+its index lags newly opened PRs, and on release day it did not yet return genai-prices #732.
+
 Check the current catalogs of other providers that host the new model before scoping that PR.
 For example, OpenRouter may publish `openai/<id>` and a `YYYYMMDD` canonical slug on release day
 even when OpenAI's own model list exposes only the base id. Add a separate genai-prices entry
@@ -111,15 +123,13 @@ For OpenAI, check the broad union the repo actually consumes (`OpenAIModelName =
 uv run python -c "from openai.types import AllModels; from typing import get_args; print([m for m in get_args(AllModels) if '<new-version>' in m])"
 ```
 
-Anthropic and xAI do **not** follow this OpenAI flow — the repo bridges their SDK lag with a local `Literal` and lands green immediately, no split. See the SDK-lag bridge notes in their landmine sections below (Anthropic checks `ModelParam`, not `Model`).
+If no SDK release lists the new id, bridge it with a local `Literal` on the model-name alias. The PR then lands green without waiting for the SDK.
 
-If a provider with no bridge (e.g. OpenAI) doesn't yet list the new id, **the literals PR cannot land green on CI**. Surface this to the user with the choice:
+If a release lists the id but sits inside the 7-day `exclude-newer` window, the providers differ:
 
-1. **Split the PR** — land the profile/handler change now (capability flip is harmless without `KnownModelName` literals because runtime accepts plain strings). Open a separate draft PR for the literals; promote it once the SDK ships and the pin is bumped.
-2. **Hold the whole PR** — wait for SDK release, bump pin, refresh snapshots with `pytest --inline-snapshot=fix`, push.
-3. **Bump SDK pin now** — only if the new SDK is already released.
-
-Default recommendation: option 1 (split). Use `AskUserQuestion`.
+- OpenAI: bridge anyway with `OpenAIModelName = str | AllModels | Literal['<id>']`. The docstring names the `openai` release that adds the id. A later PR bumps the floor and drops the bridge (#8635 bridged, #8655 dropped).
+- Anthropic: bump the SDK through the quarantine exemption its landmine section describes. Anthropic checks `ModelParam`, not `Model`.
+- xAI: see the SDK-lag bridge notes in its landmine section.
 
 ## Step 5 — Probe capabilities (only if not a pure mirror)
 
@@ -127,7 +137,7 @@ If the new model is just another sibling in an existing family (e.g. `gpt-5.5` a
 
 If the model is a new family or has unclear capabilities, write a small comparison script (`local-notes/probe_<model>.py`) that hits the new model AND its closest neighbour with:
 - `temperature` / `top_p` (does the API reject sampling params?)
-- `reasoning.effort` values (`none`, `low`, `medium`, `high`, `xhigh`) — note which the API accepts
+- `reasoning.effort` values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) — note which the API accepts. OpenAI's 400 lists the accepted values
 - New parameters mentioned in the release notes
 - Streaming / tool calls if the family is new
 
@@ -156,7 +166,7 @@ advertised and quietly degraded by a capability carve-out instead.
 
 ## Step 6 — Edit (minimal diff matching the mirrored PR)
 
-Make only the changes the enumeration step surfaced. Resist scope creep. If you discover a pre-existing bug in a sibling model's profile, **flag it in the PR description; do not fix it in this PR.**
+Make only the changes the enumeration step surfaced. Resist scope creep. If you suspect a pre-existing bug in a sibling model's profile, reproduce it live first. Fold a reproduced bug on the same profile gate into this PR, with a test and one PR-body line. Flag an unreproduced or larger one in the PR description instead.
 
 After edits:
 
@@ -195,12 +205,17 @@ check. Keep the model-specific evidence concise:
 
 ### OpenAI
 
-- **`_REASONING_SUPPORT_BY_PREFIX`** in `pydantic_ai_slim/pydantic_ai/profiles/openai.py` — a dict keyed by model-name prefix (`'gpt-5.6'`, `'gpt-5.3-chat'`, `'gpt-5'`, `'o'`, …) → `_ReasoningSupport(enabled_by_default, can_be_disabled, supports_mode)`, resolved **first-match-wins** by `_reasoning_support()`. A new `gpt-5.N` family MUST be added here, and **ordering matters**: a more specific prefix (`'gpt-5.3-chat'`) must precede the broader one it would otherwise shadow (`'gpt-5.3'`), and every newer `gpt-5.x` family must precede the plain `'gpt-5'` catch-all. Miss it and the model falls through to the `_NO_REASONING` default (`thinking_always_enabled=False`, `openai_supports_reasoning_effort_none=False`) — wrong defaults, no error. The resolved matrix is pinned in `tests/profiles/test_openai.py`.
+- **`_REASONING_SUPPORT_BY_PREFIX`** in `pydantic_ai_slim/pydantic_ai/profiles/openai.py` — a dict keyed by model-name prefix (`'gpt-5.6'`, `'gpt-5.3-chat'`, `'gpt-5'`, `'o'`, …) → `_ReasoningSupport(enabled_by_default, can_be_disabled, supports_mode, supports_context)`, resolved **first-match-wins** by `_reasoning_support()`. A new `gpt-5.N` family MUST be added here, and **ordering matters**: a more specific prefix (`'gpt-5.3-chat'`) must precede the broader one it would otherwise shadow (`'gpt-5.3'`), and every newer `gpt-5.x` family must precede the plain `'gpt-5'` catch-all. Miss it and the model falls through to the `_NO_REASONING` default (`thinking_always_enabled=False`, `openai_supports_reasoning_effort_none=False`) — wrong defaults, no error. The resolved matrix is pinned in `tests/profiles/test_openai.py`.
 - **`KnownModelName` lives in `pydantic_ai_slim/pydantic_ai/models/_known_model_names.py`** (a `TypeAliasType`), **not** `models/__init__.py`. It has split `openai:` and `gateway/openai:` blocks. Don't assume the gateway block omits `-pro`/`-chat-latest` — for the `gpt-5.x` series it enumerates them (`gateway/openai:gpt-5.2-pro`, `gateway/openai:gpt-5.3-chat-latest`, …). Mirror the exact enumeration of the most recent series across both blocks rather than guessing a convention.
 - **Most `gpt-5.x-chat` variants DO reason** (`_ALWAYS_ON_REASONING`: reason at a fixed effort, reject `reasoning_effort='none'` and sampling parameters). The non-reasoning exception is the original `gpt-5-chat`/`gpt-5-chat-latest` (`_NO_REASONING`). Verify each `-chat`/`-chat-latest` variant against the live Responses API; don't copy a sibling's reasoning class blindly.
-- **`-pro` variants map to `_ALWAYS_ON_REASONING`** (`gpt-5.2-pro`, `gpt-5.4-pro`, `gpt-5.5-pro`) — they reason and reject `effort='none'`. The three-fact `_ReasoningSupport` model doesn't encode per-effort-*value* rejection, so if a new `-pro` rejects a specific value (e.g. `'low'`), flag it rather than assuming the enum covers it.
+- **`-pro` variants map to `_ALWAYS_ON_REASONING`** (`gpt-5.2-pro`, `gpt-5.4-pro`, `gpt-5.5-pro`) — they reason and reject `effort='none'`. `_ReasoningSupport` doesn't encode per-effort-*value* rejection, so if a new `-pro` rejects a specific value (e.g. `'low'`), flag it rather than assuming the enum covers it.
 - **`tests/models/test_model_names.py::test_known_model_names`** asserts `known_model_names()` equals the set generated from `_PROVIDER_TO_MODEL_NAMES['openai']`, i.e. `OpenAIModelName = str | AllModels` (the broad union, not the chat-only `ChatModel`). A literal missing from `AllModels` fails this test — Step 4's SDK check is mandatory and must query `AllModels`.
 - **`tests/test_capability_spec.py::test_model_json_schema_with_capabilities`** is a snapshot test enumerating every `KnownModelName`. Refresh with `--inline-snapshot=fix`.
+- **A dotted point release matches none of its family's prefixes.** `gpt-6.1-sol` does not start with `'gpt-6-sol'`. Before you add it, it resolves to `_NO_REASONING` and misses every `startswith` gate in `openai_model_profile()`. Add it to `_REASONING_SUPPORT_BY_PREFIX` and to the generation's gate tuple (`_GPT_6_MODEL_PREFIXES`).
+- **Probe a point release against every sibling, not only its namesake.** GPT-6.1 Sol rejects `effort='none'` like GPT-6 Astra; GPT-6 Sol accepts it. The accepted-effort list decides `can_be_disabled`. Decide `supports_image_output` by forcing the tool (`tool_choice={'type': 'image_generation'}`), not from the model page's tool list.
+- **Chat Completions rejects function tools while reasoning is on** for the GPT-6 family: `Function tools with reasoning_effort are not supported`. A model that rejects `effort='none'` therefore has no Chat Completions tool calling. Document the limit in `docs/models/openai.md`.
+- **A gateway 404 `No cost data available for model` means genai-prices has no entry yet.** It is not a gateway rejection. Keep the `gateway/openai:` literal and leave `UNSUPPORTED_GATEWAY_MODEL_NAMES` alone. The id waits on the Step 3b genai-prices entry.
+- **clai2 keeps a curated Codex menu**: `CODEX_MODELS` in `src/pydantic_clai2/pydantic_clai2/model_catalog.py`. Add the id when Codex offers it. Check `openai/codex`'s `codex_tui__chatwidget__tests__model_selection_popup.snap`, then run `Agent('openai-codex:<id>')` with a local Codex login. Update the Codex model lists in `src/pydantic_clai2/README.md` (two of them), `src/pydantic_clai2/PLUGINS.md` and `docs/harness/clai2.md`: `rg 'openai-codex:gpt-|gpt-5.6-luna' src/pydantic_clai2 docs/harness`.
 
 ### Anthropic
 
