@@ -14,9 +14,9 @@ from rich.text import Text
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2.prompt_surface import PromptSurface
-from pydantic_clai2.prompt_transcript import TranscriptBuffer
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 
 
 async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens(
@@ -33,7 +33,7 @@ async def test_startup_and_plugin_messages_are_captured_once_before_editor_opens
                 assert text.count('PLUGIN_LOAD_NOTICE') == 1
             super().paint(rows)
 
-    monkeypatch.setattr('pydantic_clai2.live_prompt.PromptSurface', Surface)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir()
     (store.plugins_dir / 'notice.py').write_text(

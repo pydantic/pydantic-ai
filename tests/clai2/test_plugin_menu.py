@@ -14,11 +14,11 @@ from termflow.tui.menu import MenuResult
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.field_menu import is_save_and_close
-from pydantic_clai2.plugin_loader import PluginLoader
-from pydantic_clai2.plugin_menu import Configure, PluginMenu, open_plugins_menu
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.ui.menus.field_menu import is_save_and_close
+from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
 
 PLUGIN = 'from pydantic_clai2.plugins import PluginHost\ndef activate(host: PluginHost) -> None:\n    pass\n'
 TUNED = """
