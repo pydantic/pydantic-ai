@@ -57,7 +57,7 @@ def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
         fake.opened.append(url)
         return True
 
-    monkeypatch.setattr('pydantic_clai2.github.OPEN_BROWSER', open_browser)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.OPEN_BROWSER', open_browser)
     return fake
 
 

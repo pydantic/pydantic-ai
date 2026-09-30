@@ -18,9 +18,8 @@ from pydantic import BaseModel, Field, SecretStr, ValidationError
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
-
-from . import theme
-from .auth import ReadLine, read_line
+from pydantic_clai2.auth import ReadLine, read_line
+from pydantic_clai2.ui.rendering import theme
 
 
 class KeyResponse(BaseModel):

@@ -15,7 +15,7 @@ from rich.console import Console
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
 from pydantic_clai2.auth import CodexAuth, CodexCredentials
-from pydantic_clai2.credential_store import (
+from pydantic_clai2.config.credential_store import (
     credentials_path,
     delete_credentials,
     load_codex_credentials,
@@ -194,7 +194,7 @@ def test_planted_staging_symlink_is_not_followed(
     target.write_text('untouched')
     staging = fallback.with_name(f'credentials.json.{"0" * 32}.tmp')
     staging.symlink_to(target)
-    monkeypatch.setattr('pydantic_clai2.credential_store.uuid4', lambda: UUID(int=0))
+    monkeypatch.setattr('pydantic_clai2.config.credential_store.uuid4', lambda: UUID(int=0))
     save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
     assert target.read_text() == 'untouched'
     assert not staging.is_symlink()
@@ -210,7 +210,7 @@ def test_staging_race_is_refused(fallback: Path, no_keyring: None, monkeypatch: 
             Path(path).write_text('{"access_token":"attacker"}', encoding='utf-8')
         return real_open(path, flags, mode)
 
-    monkeypatch.setattr('pydantic_clai2.credential_store.os.open', planting_open)
+    monkeypatch.setattr('pydantic_clai2.config.credential_store.os.open', planting_open)
     with pytest.raises(FileExistsError):
         save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
     assert not fallback.exists()

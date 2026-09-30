@@ -25,14 +25,10 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-
-from . import theme, warm_imports
-from ._branding import print_banner
-from ._completion_adapter import COMPLETION_STYLE, PromptCompleter
-from ._rendering import StreamRenderer
-from ._session import Session
-from .command_context import CommandContext, CommandProvider
-from .commands import (
+from pydantic_clai2 import warm_imports
+from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
+from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
+from pydantic_clai2.commands import (
     Command,
     Commands,
     config_command,
@@ -42,42 +38,46 @@ from .commands import (
     is_silent,
     set_completions,
 )
-from .config import PluginSettings, Settings
-from .customization import customization_guide
-from .errors import error_message
-from .forks import Forks
-from .image_input import ImageInput
-from .input_history import input_history
-from .interrupts import Interrupts
-from .key_menu import keys_command
-from .live_prompt import LivePrompt
-from .menu_worker import holding_output
-from .model_picker import model_command, model_completions
-from .plugin_loader import PluginError, PluginLoader
-from .plugin_menu import open_plugins_menu
-from .plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart, bare_screen
-from .project_settings import ProjectSettings
-from .prompt_transcript import TranscriptBuffer
-from .reloading import reload_clai
-from .screen import Screen
-from .session_settings import SessionSettings
-from .sessions import Sessions
-from .set_menu import set_command
-from .settings_store import SettingsStore
-from .shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
-from .speculation import Speculation
-from .spinner_picker import spinner_command, spinner_completions
-from .spinners import Spinner, Spinners
-from .status import Status, StatusLine
-from .theme_picker import theme_command
-from .tool_output import terminal_text
-from .usage_report import cost_line, session_usage
+from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.customization import customization_guide
+from pydantic_clai2.errors import error_message
+from pydantic_clai2.plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart, bare_screen
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.reloading import reload_clai
+from pydantic_clai2.runtime.session_settings import SessionSettings
+from pydantic_clai2.runtime.sessions import Sessions
+from pydantic_clai2.runtime.speculation import Speculation
+from pydantic_clai2.ui.menus.key_menu import keys_command
+from pydantic_clai2.ui.menus.menu_worker import holding_output
+from pydantic_clai2.ui.menus.model_picker import model_command, model_completions
+from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
+from pydantic_clai2.ui.menus.set_menu import set_command
+from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
+from pydantic_clai2.ui.menus.theme_picker import theme_command
+from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, PromptCompleter
+from pydantic_clai2.ui.prompt.image_input import ImageInput
+from pydantic_clai2.ui.prompt.input_history import input_history
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
+from pydantic_clai2.ui.prompt.screen import Screen
+from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering._branding import print_banner
+from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
+from pydantic_clai2.ui.rendering.status import Status, StatusLine
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
+from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
 
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup
 
 if TYPE_CHECKING:
-    from .auth import CodexAuth
+    from pydantic_clai2.auth import CodexAuth
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -91,24 +91,24 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
         factory='pydantic_ai_harness.coder:Coder',
         settings={'unrestricted_filesystem': True, 'repo_context': False, 'sub_agents': False},
     ),
-    PluginSettings(id='ask_user', factory='pydantic_clai2.ask_user_menu:activate'),
-    PluginSettings(id='repo_context', factory='pydantic_clai2.repo_context'),
-    PluginSettings(id='compaction', factory='pydantic_clai2.compaction', settings={}),
-    PluginSettings(id='persistence', factory='pydantic_clai2.sessions'),
-    PluginSettings(id='logfire', factory='pydantic_clai2.logfire'),
-    PluginSettings(id='notifications', factory='pydantic_clai2.notifications'),
+    PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu:activate'),
+    PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
+    PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
+    PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
+    PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire'),
+    PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
-    PluginSettings(id='github', factory='pydantic_clai2.github', enabled=False),
-    PluginSettings(id='pylon', factory='pydantic_clai2.pylon', enabled=False),
-    PluginSettings(id='google_workspace', factory='pydantic_clai2.google_workspace', enabled=False),
-    PluginSettings(id='day_ai', factory='pydantic_clai2.day_ai', enabled=False),
-    PluginSettings(id='ordinal', factory='pydantic_clai2.ordinal', enabled=False),
-    PluginSettings(id='notion', factory='pydantic_clai2.notion', enabled=False),
-    PluginSettings(id='slack', factory='pydantic_clai2.slack', enabled=False),
-    PluginSettings(id='logfire_mcp', factory='pydantic_clai2.logfire_mcp', enabled=False),
-    PluginSettings(id='posthog', factory='pydantic_clai2.posthog', enabled=False),
-    PluginSettings(id='grain', factory='pydantic_clai2.grain', enabled=False),
-    PluginSettings(id='linear', factory='pydantic_clai2.linear', enabled=False),
+    PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),
+    PluginSettings(id='pylon', factory='pydantic_clai2.builtin_plugins.pylon', enabled=False),
+    PluginSettings(id='google_workspace', factory='pydantic_clai2.builtin_plugins.google_workspace', enabled=False),
+    PluginSettings(id='day_ai', factory='pydantic_clai2.builtin_plugins.day_ai', enabled=False),
+    PluginSettings(id='ordinal', factory='pydantic_clai2.builtin_plugins.ordinal', enabled=False),
+    PluginSettings(id='notion', factory='pydantic_clai2.builtin_plugins.notion', enabled=False),
+    PluginSettings(id='slack', factory='pydantic_clai2.builtin_plugins.slack', enabled=False),
+    PluginSettings(id='logfire_mcp', factory='pydantic_clai2.builtin_plugins.logfire_mcp', enabled=False),
+    PluginSettings(id='posthog', factory='pydantic_clai2.builtin_plugins.posthog', enabled=False),
+    PluginSettings(id='grain', factory='pydantic_clai2.builtin_plugins.grain', enabled=False),
+    PluginSettings(id='linear', factory='pydantic_clai2.builtin_plugins.linear', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 
@@ -243,27 +243,27 @@ class _ModelResolver:
 
     def codex_auth(self) -> 'CodexAuth':
         if self._auth is None:
-            from .auth import CodexAuth
+            from pydantic_clai2.auth import CodexAuth
 
             self._auth = CodexAuth(self.console)
         return self._auth
 
     async def login(self, args: list[str]) -> str:
-        from .auth import login_command
+        from pydantic_clai2.auth import login_command
 
         return await login_command(args, codex=self.codex_auth())
 
     async def resolve(self, name: str) -> Model | str:
         if name.startswith('openrouter:'):
-            from . import openrouter
+            from pydantic_clai2.models import openrouter
 
             return await asyncio.to_thread(openrouter.model, name)
         if name.startswith('vllm:'):
-            from . import vllm
+            from pydantic_clai2.models import vllm
 
             return await asyncio.to_thread(vllm.model, name)
         if name.startswith('github-copilot:'):
-            from . import github_copilot
+            from pydantic_clai2.models import github_copilot
 
             return await asyncio.to_thread(github_copilot.model, name)
         return self.codex_auth().model(name) if name.startswith('openai-codex:') else name
@@ -316,12 +316,12 @@ def create_shell(
     async def add_model(args: list[str]) -> str:
         if args:
             return context.set_setting(['model', *args])
-        from .model_menu import open_add_model_menu
+        from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
 
         return await open_add_model_menu(context)
 
     async def model_settings(args: list[str]) -> str:
-        from .model_menu import model_settings_command
+        from pydantic_clai2.ui.menus.model_menu import model_settings_command
 
         return await model_settings_command(context, args)
 

@@ -14,7 +14,7 @@ from pydantic_clai2.commands import (
     plugins_command,
     set_completions,
 )
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
 
 
 def test_command_boundaries(tmp_path: Path) -> None:

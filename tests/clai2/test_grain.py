@@ -21,14 +21,10 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.grain import Grain
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys, grain as grain_module
+from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2._app import create_shell
-from pydantic_clai2.api_keys import KeyReference
-from pydantic_clai2.commands import Commands
-from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.grain import (
+from pydantic_clai2.builtin_plugins import grain as grain_module
+from pydantic_clai2.builtin_plugins.grain import (
     GRAIN_MCP_URL,
     KEY_ACCOUNT,
     KEY_NAME,
@@ -38,11 +34,16 @@ from pydantic_clai2.grain import (
     GrainSignIn,
     activate,
 )
-from pydantic_clai2.headless import no_screen
-from pydantic_clai2.plugin_loader import PluginLoader
+from pydantic_clai2.cli.headless import no_screen
+from pydantic_clai2.commands import Commands
+from pydantic_clai2.config import PluginSettings, api_keys
+from pydantic_clai2.config.api_keys import KeyReference
+from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import FullScreen, PluginHost, SessionStart, bare_screen
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from tests.clai2.menu_script import Script, pick
 
 RETIRED = 'pydantic_ai_harness.grain:Grain'
@@ -105,7 +106,7 @@ def sign_in(capability: Grain[None]) -> GrainSignIn:
 
 def test_declared_as_a_disabled_builtin() -> None:
     [declaration] = [plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'grain']
-    assert declaration.factory == 'pydantic_clai2.grain'
+    assert declaration.factory == 'pydantic_clai2.builtin_plugins.grain'
     assert not declaration.enabled
 
 
@@ -115,7 +116,9 @@ def test_a_saved_catalog_declaration_moves_to_the_builtin(tmp_path: Path, enable
     store.save_plugin(PluginSettings(id='grain', factory=RETIRED, enabled=enabled))
     store.save_plugin(PluginSettings(id='other', factory=RETIRED))
     loaded = declarations(store)
-    assert loaded['grain'] == PluginSettings(id='grain', factory='pydantic_clai2.grain', enabled=enabled)
+    assert loaded['grain'] == PluginSettings(
+        id='grain', factory='pydantic_clai2.builtin_plugins.grain', enabled=enabled
+    )
     assert loaded['other'].factory == RETIRED, 'only the id the built-in replaced moves'
 
 
@@ -302,7 +305,7 @@ def answer_key_prompt(
 ) -> Prompt:
     """Answer `/grain key`: `keys` drive the saved-key picker, `typed` the masked prompt."""
     prompt = Prompt(*typed)
-    monkeypatch.setattr('pydantic_clai2.grain.PromptSession', lambda: prompt)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.grain.PromptSession', lambda: prompt)
     pressed = iter(keys)
     monkeypatch.setattr(api_keys, 'menu_key', lambda: next(pressed))
     return prompt

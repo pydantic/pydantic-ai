@@ -14,15 +14,15 @@ from pydantic_ai.models import infer_model
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_clai2 import Session
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.model_catalog import catalog, genai_prices_models, runnable_providers
-from pydantic_clai2.model_menu import ModelMenu, ModelSettingsSource, open_add_model_menu, run_model_flow
-from pydantic_clai2.model_picker import ModelPickerAction, build_model_picker, model_command, model_completions
-from pydantic_clai2.model_settings import ModelSettingsForm, model_settings_from_json
-from pydantic_clai2.set_menu import SettingsSource
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.model_catalog import catalog, genai_prices_models, runnable_providers
+from pydantic_clai2.models.model_settings import ModelSettingsForm, model_settings_from_json
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.model_menu import ModelMenu, ModelSettingsSource, open_add_model_menu, run_model_flow
+from pydantic_clai2.ui.menus.model_picker import ModelPickerAction, build_model_picker, model_command, model_completions
+from pydantic_clai2.ui.menus.set_menu import SettingsSource
 from tests.clai2.menu_script import Script, make_context, pick, typed
 
 
@@ -130,7 +130,7 @@ def test_settings_shortcut_does_not_consume_search(tmp_path: Path, monkeypatch: 
     context, _ = make_context(tmp_path)
     menu = ModelMenu(context)
     keys = iter(['s', 'ctrl-s'])
-    monkeypatch.setattr('pydantic_clai2.model_menu.menu_key', lambda: next(keys))
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_menu.menu_key', lambda: next(keys))
     widget = menu.build()
     result = widget.run()
     assert widget.highlighted is not None

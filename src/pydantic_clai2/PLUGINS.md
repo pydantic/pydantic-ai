@@ -8,6 +8,12 @@ Everything a plugin can do goes through one object, the `PluginHost`. There is n
 global registry to import and no magic file to name. You get a `host`, you tell it
 what you want, you're done.
 
+CLAI groups its shell implementation into `cli/`, `config/`, `runtime/`,
+`models/`, `plugins/`, and `ui/`. Built-in plugin implementations live in
+`builtin_plugins/`. These are source directories, not extra plugin APIs:
+continue importing `PluginHost` from `pydantic_clai2.plugins` and `Command`
+from `pydantic_clai2.commands`.
+
 ## Startup
 
 `clai2 --help` parses arguments without loading the agent or plugins. Interactive
@@ -252,7 +258,7 @@ Bare `/login` continues to sign in to Codex.
 
 ## Desktop notifications
 
-The default-enabled `notifications` plugin (`pydantic_clai2.notifications`)
+The default-enabled `notifications` plugin (`pydantic_clai2.builtin_plugins.notifications`)
 observes `turn_end` for completed and failed turns and `AskUserRequestedEvent`
 before the answer picker waits. Cancelled turns do not notify. It registers no
 tools or instructions and has no plugin settings. Its title is `CLAI2`; its
@@ -275,7 +281,7 @@ there are no background workers to stop.
 
 ## Logfire: default agent tracing
 
-The built-in `logfire` plugin (`pydantic_clai2.logfire`) is enabled by default in
+The built-in `logfire` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
 the stock CLI. It registers Pydantic AI's `Instrumentation` capability with an
 isolated Logfire instance, not process-wide instrumentation or custom tracing
 hooks. Agent/model/tool spans include timing, token usage, failures, text content,
@@ -297,7 +303,7 @@ Manage it with `/plugins disable logfire`, `/plugins enable logfire`, or
 `/plugins reload logfire`. To change its defaults:
 
 ```text
-/plugins add logfire pydantic_clai2.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
@@ -318,7 +324,7 @@ to stock built-ins. See [telemetry](README.md#telemetry-and-references).
 
 ## Linear: issues and projects
 
-The built-in `linear` plugin (`pydantic_clai2.linear`) gives the agent the tools
+The built-in `linear` plugin (`pydantic_clai2.builtin_plugins.linear`) gives the agent the tools
 of Linear's hosted MCP server through harness
 [`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md). It starts disabled. Turning
 it on (`/plugins enable linear`, or Space in `/plugins`) opens its settings menu,
@@ -370,12 +376,12 @@ With browser sign-in, the key row is hidden. Tokens go to the keyring the way
 The settings are also plain JSON, for scripts:
 
 ```text
-/plugins add linear pydantic_clai2.linear '{"auth": "oauth", "read_only": false}'
+/plugins add linear pydantic_clai2.builtin_plugins.linear '{"auth": "oauth", "read_only": false}'
 ```
 
 ## Notion: workspace tools
 
-The built-in `notion` plugin (`pydantic_clai2.notion`) starts disabled. It adds
+The built-in `notion` plugin (`pydantic_clai2.builtin_plugins.notion`) starts disabled. It adds
 harness `Notion`: the tools of Notion's hosted MCP server, acting with the
 permissions of the Notion account it connects as. That includes tools that
 change pages.
@@ -399,7 +405,7 @@ account belongs to, so there is no URL or workspace row. The settings JSON uses
 `auth` (`"key"`, `"oauth"`, or unset), `read_only`, and `include_instructions`:
 
 ```text
-/plugins add notion pydantic_clai2.notion '{"auth": "key", "read_only": true}'
+/plugins add notion pydantic_clai2.builtin_plugins.notion '{"auth": "key", "read_only": true}'
 ```
 
 ### Secrets live in `/keys`
@@ -434,7 +440,7 @@ sign-in. The plugin emits no telemetry of its own; tool calls appear in core's
 spans.
 ## Logfire MCP: query your telemetry
 
-The built-in `logfire_mcp` plugin (`pydantic_clai2.logfire_mcp`) gives the agent
+The built-in `logfire_mcp` plugin (`pydantic_clai2.builtin_plugins.logfire_mcp`) gives the agent
 the tools of Logfire's hosted MCP server through harness
 [`LogfireMCP`](../../docs/harness/logfire-mcp.md). It starts disabled.
 Turning it on (Space in `/plugins`, or `/plugins enable logfire_mcp`) loads it and
@@ -546,7 +552,7 @@ environment or the Logfire SDK's credential file.
 The same settings can be given as JSON, which is validated the same way:
 
 ```text
-/plugins add logfire_mcp pydantic_clai2.logfire_mcp '{"url": "https://logfire-eu.pydantic.dev/mcp"}'
+/plugins add logfire_mcp pydantic_clai2.builtin_plugins.logfire_mcp '{"url": "https://logfire-eu.pydantic.dev/mcp"}'
 ```
 
 The key's own scopes still decide which projects and actions are allowed. If you
@@ -611,16 +617,18 @@ conversation inside the context window. These five plugins are marked
 the order listed below, so `coder`'s guidance leads the system prompt; saved,
 drop-in, and project plugins follow in name order. Registration order is also the
 order plugin instructions, renderers, and status segments are consulted in.
-`/plugins` and `/plugins list` stay alphabetical for scanning:
+`/plugins` and `/plugins list` stay alphabetical for scanning. CLAI's plugin
+implementations live in `pydantic_clai2.builtin_plugins`. Saved plugin
+settings using the former import paths are redirected to the new modules.
 
 | Id | Backed by | Settings | Does |
 |---|---|---|---|
 | `coder` | `pydantic_ai_harness.coder:Coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": false}` | the file and shell tools |
-| `ask_user` | `pydantic_clai2.ask_user_menu:activate` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
-| `repo_context` | `pydantic_clai2.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
-| `persistence` | `pydantic_clai2.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
-| `compaction` | `pydantic_clai2.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
-| `slack` (off until enabled) | `pydantic_clai2.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
+| `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu:activate` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
+| `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
+| `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
+| `compaction` | `pydantic_clai2.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
+| `slack` (off until enabled) | `pydantic_clai2.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
 are built in too, but start disabled because they need your Day AI or Grain
@@ -671,7 +679,7 @@ the same name and it takes the built-in's place:
 
 ```text
 /plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": false, "repo_context": false}'
-/plugins add repo_context pydantic_clai2.repo_context '{"walk_up": true}'
+/plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
 ```
 
 Keep `"repo_context": false` on a replacement `coder`: `Coder` bundles its own
@@ -707,12 +715,12 @@ changes its settings (`strategy`, `threshold`, `protected_tokens`,
 `context_window`, `summarization_model`; see the README):
 
 ```text
-/plugins add compaction pydantic_clai2.compaction '{"threshold": 0.7, "context_window": 200000}'
+/plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "context_window": 200000}'
 ```
 
 ### `ask_user`: questions answered from the terminal
 
-The second built-in, `ask_user` (`pydantic_clai2.ask_user_menu:activate`), gives
+The second built-in, `ask_user` (`pydantic_clai2.builtin_plugins.ask_user_menu:activate`), gives
 the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
 question appears inline above a compact numbered picker, keeping the conversation
@@ -767,7 +775,7 @@ show a "waiting for you" state) registers `@host.on(EventClass)` or
 
 ### `github`: tools from GitHub's hosted MCP server
 
-The `github` built-in (`pydantic_clai2.github`) gives the model harness
+The `github` built-in (`pydantic_clai2.builtin_plugins.github`) gives the model harness
 [`GitHub`](../pydantic_ai_harness/pydantic_ai_harness/github/README.md): the tools of GitHub's hosted
 MCP server, acting as the account behind a token. It starts disabled.
 `/plugins enable github`, or Space on it in `/plugins`, loads it and opens its
@@ -837,7 +845,7 @@ of its own; tool calls appear in core's spans.
 
 ### `google_workspace`: Gmail, Calendar, and Drive tools
 
-`google_workspace` (`pydantic_clai2.google_workspace`) is a built-in that starts
+`google_workspace` (`pydantic_clai2.builtin_plugins.google_workspace`) is a built-in that starts
 disabled. It gives the agent the tools of Google's hosted Workspace MCP servers
 through harness [`GoogleWorkspace`](../../docs/harness/google-workspace.md). It needs a
 Google OAuth access token whose scopes cover the products you select.
@@ -892,7 +900,7 @@ store: mint the token with your own OAuth client and save it in `/keys`.
 Declarations still work for scripted setups:
 
 ```text
-/plugins add google_workspace pydantic_clai2.google_workspace '{"services": ["gmail", "docs"], "read_only": false}'
+/plugins add google_workspace pydantic_clai2.builtin_plugins.google_workspace '{"services": ["gmail", "docs"], "read_only": false}'
 ```
 
 Earlier versions listed `google_workspace` as a raw harness entry,
@@ -903,7 +911,7 @@ as written.
 
 ### `pylon`: support issues and accounts in Pylon
 
-`pylon` (`pydantic_clai2.pylon`) gives the agent harness
+`pylon` (`pydantic_clai2.builtin_plugins.pylon`) gives the agent harness
 [`Pylon`](../../docs/harness/pylon.md): Pylon's hosted MCP tools for
 searching, reading, creating, and updating support issues, looking up and
 updating accounts, and looking up contacts. It starts disabled;
@@ -932,7 +940,7 @@ the next run, with no reinstall.
 settings as JSON, since none of them are secret:
 
 ```text
-/plugins add pylon pydantic_clai2.pylon '{"read_only": true}'
+/plugins add pylon pydantic_clai2.builtin_plugins.pylon '{"read_only": true}'
 ```
 
 Pylon's endpoint (`https://mcp.usepylon.com`) is fixed and there is no
@@ -969,7 +977,7 @@ needed and never touch `/keys` or plugin settings.
 
 ### `day_ai`: Day AI CRM tools
 
-`day_ai` (`pydantic_clai2.day_ai`) starts disabled. It gives the model harness
+`day_ai` (`pydantic_clai2.builtin_plugins.day_ai`) starts disabled. It gives the model harness
 [`DayAI`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/day_ai/),
 the tools of Day AI's hosted MCP server: search and update CRM records, read
 meeting context, and draft emails. It needs a paid Day AI Agent tier.
@@ -1024,7 +1032,7 @@ this plugin.
 
 ### `ordinal`: social posts in Ordinal
 
-`ordinal` (`pydantic_clai2.ordinal`) gives the model harness
+`ordinal` (`pydantic_clai2.builtin_plugins.ordinal`) gives the model harness
 [`Ordinal`](../pydantic_ai_harness/pydantic_ai_harness/ordinal/README.md), which drafts, schedules,
 and analyzes social posts through Ordinal's hosted MCP server. It starts disabled;
 `/plugins enable ordinal` turns it on. Ordinal MCP needs the Pro plan or higher.
@@ -1073,7 +1081,7 @@ the plugin does not sign you out.
 
 ### `slack`: your Slack workspace, as you
 
-`slack` (`pydantic_clai2.slack`) connects harness
+`slack` (`pydantic_clai2.builtin_plugins.slack`) connects harness
 [`Slack`](../pydantic_ai_harness/pydantic_ai_harness/slack/README.md) to Slack's hosted MCP server.
 It ships disabled. The tools act as the user whose token CLAI connects with, so
 anything the agent posts appears under your name. If you enabled or disabled the
@@ -1154,11 +1162,11 @@ rename it.
 
 To let the agent send messages and edit canvases as you, choose **read and
 write** in the Tools row. The equivalent typed command is
-`/plugins add slack pydantic_clai2.slack '{"read_only": false}'`.
+`/plugins add slack pydantic_clai2.builtin_plugins.slack '{"read_only": false}'`.
 
 ### `posthog`: PostHog analytics, signed in for CLAI
 
-`posthog` (`pydantic_clai2.posthog`) connects the agent to PostHog's hosted MCP
+`posthog` (`pydantic_clai2.builtin_plugins.posthog`) connects the agent to PostHog's hosted MCP
 server through harness [`PostHog`](../../docs/harness/posthog.md). It starts disabled.
 `/plugins enable posthog` loads it and opens its settings menu. To change the
 settings later, run `/plugins configure posthog` or press `C` on it in
@@ -1217,7 +1225,7 @@ calls appear in core's spans.
 
 ### `grain`: meetings, with a saved sign-in
 
-`grain` (`pydantic_clai2.grain`) gives the agent harness's
+`grain` (`pydantic_clai2.builtin_plugins.grain`) gives the agent harness's
 [`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
 the Grain meetings, transcripts, and notes you can see. It starts disabled;
 turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
@@ -1282,7 +1290,7 @@ settings with `/plugins add` stays as you wrote it.
 The settings can also be given up front:
 
 ```text
-/plugins add grain pydantic_clai2.grain '{"read_only": false, "include_instructions": true}'
+/plugins add grain pydantic_clai2.builtin_plugins.grain '{"read_only": false, "include_instructions": true}'
 ```
 
 ## Managing plugins
@@ -1708,7 +1716,7 @@ reaches all of them. The label does not export or read an environment variable.
 ```python
 from pydantic import BaseModel, ConfigDict, Field
 
-from pydantic_clai2.api_keys import KeyReference, SavedKey
+from pydantic_clai2.config.api_keys import KeyReference, SavedKey
 
 
 class MySettings(BaseModel):
@@ -1743,8 +1751,8 @@ it. When the saved settings changed, CLAI loads the plugin again afterwards, so
 `activate` builds from them.
 
 Build the menu with the shared field editor (`FieldMenu` and `run_flow` from
-`pydantic_clai2.field_menu`, run through `run_worker` from
-`pydantic_clai2.menu_worker`), the same one `/set` uses. Its last row is
+`pydantic_clai2.ui.menus.field_menu`, run through `run_worker` from
+`pydantic_clai2.ui.menus.menu_worker`), the same one `/set` uses. Its last row is
 **Save & close**: every edit is already saved, so choosing it, like Esc, just
 leaves the menu. A menu you build yourself ends with `save_and_close_item()` and
 treats a result as closed when `picked(result)` is `None`.
@@ -1778,7 +1786,7 @@ the conventional environment-style label (`GITHUB_TOKEN`, `ORDINAL_ACCESS_TOKEN`
 so plugins that need the same credential share it. The label is only a name; it
 does not export or read an environment variable.
 
-For a token row, `pydantic_clai2.plugin_keys.choose_key(name=..., label=..., runners=...)`
+For a token row, `pydantic_clai2.plugins.keys.choose_key(name=..., label=..., runners=...)`
 shows the searchable `/keys` picker, or a masked input when no keys are saved.
 It saves a new value under `name` only after confirming a replacement, and
 returns a `KeyReference` to persist in place of the secret. Call it through
