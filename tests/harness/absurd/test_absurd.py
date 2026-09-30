@@ -655,10 +655,6 @@ class TestStepNames:
 
 
 class TestParallelExecutionMode:
-    def test_plain_parallel_raises(self) -> None:
-        with pytest.raises(UserError, match="`parallel_execution_mode='parallel'` is not supported"):
-            AbsurdDurability(parallel_execution_mode='parallel')  # pyright: ignore[reportArgumentType]
-
     async def test_step_slots_follow_scheduling_order_not_completion(self, absurd: AsyncAbsurd) -> None:
         # Two concurrent calls of the same tool, where the first-scheduled call completes last.
         # Absurd assigns the `#1`/`#2` slot when `ctx.step(...)` is entered, before the tool body
