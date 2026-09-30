@@ -80,6 +80,7 @@ from ..profiles.anthropic import (
     resolve_anthropic_effort,
 )
 from ..providers import Provider, infer_provider
+from ..providers._bedrock_model_names import bedrock_claude_cache_retentions
 from ..providers.anthropic import AsyncAnthropicClient
 from ..settings import CacheSetting, ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import AgentDepsT, ToolDefinition
@@ -991,6 +992,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 and not isinstance(client, _NON_AUTOMATIC_CACHING_CLIENTS),
             ),
         )
+        if isinstance(client, AsyncAnthropicBedrock):
+            # AWS grants the 1-hour cache TTL to only a subset of Claude models, matching `BedrockConverseModel`.
+            _profile = merge_profile(
+                _profile,
+                AnthropicModelProfile(supported_cache_retentions=bedrock_claude_cache_retentions(self._model_name)),
+            )
         return cast(AnthropicModelProfile, _profile)
 
     @property

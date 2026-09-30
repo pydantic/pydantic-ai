@@ -191,6 +191,25 @@ def test_unsupported_cache_point_ttl_does_not_extend_retention():
     assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=20), '1h'), profile=profile, now=NOW) == 'warm'
 
 
+@pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_openai_provider_profiles_declare_cache_tiers():
+    # Raw provider profiles gate `CachePoint.ttl` too, not just `Model.profile` with its defaults filled in.
+    gpt_5_6 = OpenAIProvider.model_profile('gpt-5.6-sol')
+    assert gpt_5_6 is not None and gpt_5_6.get('supported_cache_retentions') == ('30m',)
+    assert prompt_cache_outlook(_cache_point_history(timedelta(minutes=45), '1h'), profile=gpt_5_6, now=NOW) == 'cold'
+    gpt_5 = OpenAIProvider.model_profile('gpt-5')
+    assert gpt_5 is not None and gpt_5.get('supported_cache_retentions') == ()
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_cache_point_ttl_honored_per_model():
+    history = _cache_point_history(timedelta(minutes=45), '1h')
+    one_hour = BedrockProvider.model_profile('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
+    assert prompt_cache_outlook(history, profile=one_hour, now=NOW) == 'warm'
+    five_minutes = BedrockProvider.model_profile('anthropic.claude-3-7-sonnet-20250219-v1:0')
+    assert prompt_cache_outlook(history, profile=five_minutes, now=NOW) == 'cold'
+
+
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 def test_supported_cache_point_ttl_extends_retention():
     profile = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key='test-key')).profile

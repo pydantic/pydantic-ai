@@ -91,7 +91,10 @@ class TestSnapCacheRetention:
             ('30m', ('5m',), '5m'),
             ('5m', ('30m', '1h'), '30m'),
             ('5m', ('1h',), '1h'),
-            ('1h', (), '1h'),
+            ('5m', ('30m',), '30m'),
+            ('1h', ('30m',), '30m'),
+            # No retention tier to request: caching at the provider's default retention.
+            ('1h', (), True),
         ],
     )
     def test_snap(self, value: CacheSetting, supported: tuple[CacheRetention, ...], expected: CacheSetting):
@@ -275,14 +278,32 @@ class TestBedrockCacheTranslation:
         assert params.cache is True
 
     def test_cache_retention_snaps_before_translation(self, bedrock_provider: BedrockProvider):
-        """`'1h'` must snap to `'5m'` before translation: Bedrock forwards a string retention as
-        the `cachePoint` `ttl`, and AWS grants the 1-hour TTL to only some models, so an
-        un-snapped value would produce a runtime `ValidationException`."""
+        """On a model AWS grants only the 5-minute TTL, `'1h'` must snap to `'5m'` before translation:
+        Bedrock forwards a string retention as the `cachePoint` `ttl`, so an un-snapped value would
+        produce a runtime `ValidationException`."""
+        model = BedrockConverseModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=bedrock_provider)
+        settings, params = model.prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
+        assert settings == {'bedrock_cache_instructions': '5m', 'bedrock_cache_tool_definitions': '5m'}
+        assert params.cache == '5m'
+
+    def test_one_hour_retention_forwarded_on_supporting_model(self, bedrock_provider: BedrockProvider):
         settings, params = self._model(bedrock_provider).prepare_request(
             ModelSettings(cache='1h'), ModelRequestParameters()
         )
-        assert settings == {'bedrock_cache_instructions': '5m', 'bedrock_cache_tool_definitions': '5m'}
-        assert params.cache == '5m'
+        assert settings == {'bedrock_cache_instructions': '1h', 'bedrock_cache_tool_definitions': '1h'}
+        assert params.cache == '1h'
+
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
+    def test_anthropic_model_on_bedrock_client_matches(self):
+        """`AnthropicModel` on an `AsyncAnthropicBedrock` client uses the same per-model list."""
+        client = AsyncAnthropicBedrock(aws_access_key='x', aws_secret_key='y', aws_region='us-east-1')
+        provider = AnthropicProvider(anthropic_client=client)
+        one_hour = AnthropicModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=provider)
+        five_minutes = AnthropicModel('anthropic.claude-3-7-sonnet-20250219-v1:0', provider=provider)
+        assert one_hour.profile.get('supported_cache_retentions') == ('5m', '1h')
+        assert five_minutes.profile.get('supported_cache_retentions') == ('5m',)
+        settings, _ = five_minutes.prepare_request(ModelSettings(cache='1h'), ModelRequestParameters())
+        assert settings == {'anthropic_cache_instructions': '5m', 'anthropic_cache_tool_definitions': '5m'}
 
     def test_explicit_provider_setting_wins(self, bedrock_provider: BedrockProvider):
         settings, params = self._model(bedrock_provider).prepare_request(

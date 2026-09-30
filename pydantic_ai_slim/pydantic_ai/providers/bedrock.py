@@ -24,6 +24,7 @@ from pydantic_ai.profiles.zai import zai_model_profile
 from pydantic_ai.providers import Provider
 from pydantic_ai.providers._bedrock_model_names import (
     BEDROCK_GEO_PREFIXES as BEDROCK_GEO_PREFIXES,  # re-exported for backwards compatibility
+    bedrock_claude_cache_retentions,
     remove_bedrock_geo_prefix as remove_bedrock_geo_prefix,  # re-exported for backwards compatibility
     split_bedrock_model_id,
 )
@@ -278,10 +279,8 @@ def bedrock_anthropic_model_profile(model_name: str) -> ModelProfile | None:
             bedrock_supports_prompt_caching=True,
             bedrock_supports_tool_caching=True,
             supports_cache=True,
-            # AWS grants the 1-hour cache TTL to only a subset of Claude models, so the unified
-            # setting conservatively snaps every retention to the default tier; the explicit
-            # `bedrock_cache_*='1h'` settings remain available for models that support it.
-            supported_cache_retentions=('5m',),
+            # AWS grants the 1-hour cache TTL to only a subset of Claude models.
+            supported_cache_retentions=bedrock_claude_cache_retentions(model_name),
             bedrock_supported_media_kinds_in_tool_returns=frozenset({'image', 'document'}),
             # Anthropic on Bedrock rejects a `toolResult` co-located with a document or video block, but
             # accepts text and images alongside it. See https://github.com/pydantic/pydantic-ai/issues/6081.

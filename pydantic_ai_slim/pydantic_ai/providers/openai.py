@@ -84,6 +84,11 @@ class OpenAIProvider(_OpenAICompatibleProvider):
                 # adding anything to the request. Set here rather than in `openai_model_profile`, which
                 # is shared with OpenAI-compatible endpoints that don't necessarily cache implicitly.
                 supports_cache=True,
+                # OpenAI ignores `CachePoint.ttl`. GPT-5.6 and later accept a request-wide
+                # `prompt_cache_options.ttl`, whose only value is `'30m'`; earlier models have no retention
+                # tier to request (`prompt_cache_retention` is a maximum-retention policy, not a tier).
+                # https://developers.openai.com/api/docs/guides/prompt-caching
+                supported_cache_retentions=('30m',) if profile.get('openai_supports_prompt_cache_breakpoints') else (),
             ),
         )
 

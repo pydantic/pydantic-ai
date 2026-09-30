@@ -27,7 +27,7 @@ from ..providers.openrouter import OpenRouterModelProfile, OpenRouterProvider
 from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
-from ._prompt_cache import excess_cache_points, warn_cache_point_ignored
+from ._prompt_cache import excess_cache_points
 from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
 from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
 
@@ -794,7 +794,6 @@ class OpenRouterModel(OpenAIChatModel):
                 Ignored for providers that don't support it.
         """
         if not self._resolved_profile.get('openrouter_supports_cache_control', False):
-            warn_cache_point_ignored('the downstream provider on OpenRouter')
             return
 
         if not params:

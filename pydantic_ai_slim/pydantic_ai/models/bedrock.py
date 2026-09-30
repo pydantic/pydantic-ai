@@ -81,7 +81,7 @@ from pydantic_ai.models import (
     check_allow_model_requests,
     download_item,
 )
-from pydantic_ai.models._prompt_cache import excess_cache_points, warn_cache_point_ignored
+from pydantic_ai.models._prompt_cache import excess_cache_points
 from pydantic_ai.models._tool_choice import (
     FORCING_UNSUPPORTED_REASON,
     resolve_tool_choice,
@@ -1702,7 +1702,7 @@ class BedrockConverseModel(Model[BaseClient]):
                         content.append(_make_document_block(f'Document {next(document_count)}', format, source))
                 elif isinstance(item, CachePoint):
                     if not supports_prompt_caching:
-                        warn_cache_point_ignored(f'model {self.model_name!r} on Bedrock')
+                        # Silently skip CachePoint for models that don't support prompt caching
                         continue
                     if not content:
                         # A CachePoint means "cache everything before this point". This part has no

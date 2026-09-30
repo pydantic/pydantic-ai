@@ -63,7 +63,6 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._prompt_cache import warn_cache_point_ignored
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -692,7 +691,7 @@ class GroqModel(Model[AsyncGroq]):
                 elif isinstance(item, UploadedFile):
                     raise NotImplementedError('UploadedFile is not supported in Groq user prompts')
                 elif isinstance(item, CachePoint):
-                    warn_cache_point_ignored('Groq')
+                    pass
                 else:
                     assert_never(item)
 

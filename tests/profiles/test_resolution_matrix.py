@@ -330,6 +330,7 @@ def test_openai_gpt_5_4():
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': True,
+            'supported_cache_retentions': (),
         }
     )
 
@@ -370,6 +371,7 @@ def test_openai_gpt_5_6():
             'openai_supports_minimal_reasoning_effort': False,
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': True,
+            'supported_cache_retentions': ('30m',),
         }
     )
 
@@ -408,6 +410,7 @@ def test_openai_gpt_6_astra():
             'openai_supports_minimal_reasoning_effort': False,
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': True,
+            'supported_cache_retentions': ('30m',),
         }
     )
 
@@ -521,6 +524,7 @@ def test_openai_gpt_4o():
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': True,
+            'supported_cache_retentions': (),
         }
     )
 
@@ -547,6 +551,7 @@ def test_openai_o3_mini():
             'tool_addition_mode': 'with_definitions',
             'tool_deferral_mode': 'with_tool_search',
             'supports_cache': True,
+            'supported_cache_retentions': (),
         }
     )
 
@@ -581,6 +586,7 @@ def test_openai_codex_gpt_5_6():
             'openai_unsupported_model_settings': ('max_tokens', 'temperature', 'top_p'),
             'default_cache_retention': timedelta(seconds=1800),
             'supports_cache': True,
+            'supported_cache_retentions': ('30m',),
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -781,7 +787,7 @@ def test_bedrock_anthropic_claude_sonnet_4_5():
             'anthropic_default_code_execution_tool_version': '20260120',
             'anthropic_supported_code_execution_tool_versions': ('20250825', '20260120'),
             'supports_cache': True,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': ('5m', '1h'),
             'supported_native_tools': frozenset(),
             'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,
@@ -853,7 +859,7 @@ def test_bedrock_anthropic_with_geo_prefix():
             'supported_native_tools': frozenset(),
             'bedrock_supports_tool_choice': True,
             'supports_cache': True,
-            'supported_cache_retentions': ('5m',),
+            'supported_cache_retentions': ('5m', '1h'),
             'bedrock_send_back_thinking_parts': True,
             'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
             'bedrock_supports_leading_assistant_message': True,

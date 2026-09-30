@@ -154,7 +154,9 @@ class ModelProfile(TypedDict, total=False):
     supported_cache_retentions: tuple[CacheRetention, ...]
     """The prompt-cache retention tiers the provider supports, shortest first. Default: `('5m',)`.
 
-    A retention requested via the unified `cache` setting snaps down to the nearest supported tier.
+    A retention requested via the unified `cache` setting snaps down to the nearest supported tier. Empty when
+    the provider has no retention tier to request, in which case a requested retention caches at the provider's
+    default retention.
     [`prompt_cache_outlook`][pydantic_ai.profiles.prompt_cache_outlook] likewise only lets a
     [`CachePoint.ttl`][pydantic_ai.messages.CachePoint.ttl] in the history extend the expected retention
     when it's one of these tiers, since a provider that doesn't support a tier doesn't honor it on a

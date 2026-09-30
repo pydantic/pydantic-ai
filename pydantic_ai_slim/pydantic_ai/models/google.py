@@ -74,7 +74,6 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._prompt_cache import warn_cache_point_ignored
 from ._tool_choice import resolve_tool_choice
 
 try:
@@ -1431,11 +1430,10 @@ class GoogleModel(Model[Client]):
                     file_part = await self._map_file_to_part(item)
                     content.append(file_part)
                 elif isinstance(item, CachePoint):
-                    warn_cache_point_ignored(
-                        'Google',
-                        hint='Gemini caches prompts implicitly; explicit caching requires a pre-created '
-                        'cache resource passed via the `google_cached_content` setting.',
-                    )
+                    # Google doesn't support inline CachePoint markers. Google's caching requires
+                    # pre-creating cache objects via the API, then referencing them by name using
+                    # `GoogleModelSettings.google_cached_content`. See https://ai.google.dev/gemini-api/docs/caching
+                    pass
                 else:
                     assert_never(item)
         return content

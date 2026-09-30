@@ -35,7 +35,8 @@ CacheRetention: TypeAlias = Literal['5m', '30m', '1h']
 Not all providers support all tiers. A requested retention snaps down to the
 nearest tier the provider supports (e.g. `'1h'` -> `'5m'` on a provider whose
 longest tier is 5 minutes); a retention below every supported tier snaps up to
-the shortest one.
+the shortest one. On a provider with no retention tier to request, caching uses
+the provider's default retention.
 """
 
 CacheSetting: TypeAlias = bool | CacheRetention

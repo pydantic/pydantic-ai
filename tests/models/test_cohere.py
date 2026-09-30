@@ -583,11 +583,9 @@ def test_text_content_in_request(allow_model_requests: None):
     )
 
 
-def test_cache_point_skipped_with_warning_user_prompt_part(allow_model_requests: None):
+def test_cache_point_silently_skipped_user_prompt_part(allow_model_requests: None):
     req = ModelRequest(parts=[UserPromptPart(content=['Hello there!', CachePoint()])])
-    with pytest.warns(UserWarning, match='`CachePoint` is not supported by Cohere'):
-        messages = list(CohereModel._map_user_message(req))  # pyright: ignore[reportPrivateUsage]
-    assert messages == snapshot(
+    assert list(CohereModel._map_user_message(req)) == snapshot(  # pyright: ignore[reportPrivateUsage]
         [
             UserChatMessageV2(
                 content=[

@@ -122,7 +122,6 @@ from . import (
     download_item,
     get_user_agent,
 )
-from ._prompt_cache import warn_cache_point_ignored
 from ._tool_choice import (
     resolve_tool_choice,
     support_tool_forcing,
@@ -1954,9 +1953,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 type='file',
             )
         elif isinstance(item, CachePoint):
-            # Reached only when the profile doesn't support explicit breakpoints:
-            # `_map_user_prompt_content_item()` intercepts the supported case.
-            warn_cache_point_ignored(f'model {self.model_name!r}')
+            # Cache points are handled by `_map_user_prompt_content_item()` when supported.
             return None
         else:
             assert_never(item)
@@ -3916,8 +3913,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 elif isinstance(item, CachePoint):
                     if self.profile.get('openai_supports_prompt_cache_breakpoints', False):
                         _add_openai_prompt_cache_breakpoint(content)
-                    else:
-                        warn_cache_point_ignored(f'model {self.model_name!r}')
                 elif is_multi_modal_content(item):
                     content.append(await OpenAIResponsesModel._map_file_to_response_content(item, 'user prompts'))  # pyright: ignore[reportArgumentType]
                 else:

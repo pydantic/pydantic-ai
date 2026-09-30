@@ -2,7 +2,6 @@
 
 from __future__ import annotations as _annotations
 
-import warnings
 from collections.abc import Callable, Iterable, Sequence
 from typing import TypeVar
 
@@ -20,7 +19,8 @@ def snap_cache_retention(value: CacheSetting, supported: Sequence[CacheRetention
 
     Booleans and supported retentions pass through unchanged. An unsupported retention snaps
     down to the nearest shorter supported tier, or up to the shortest supported tier when no
-    shorter one exists.
+    shorter one exists. On a provider with no retention tiers to request, a retention becomes
+    `True`: caching with the provider's default retention.
     """
     if isinstance(value, bool):
         return value
@@ -29,7 +29,9 @@ def snap_cache_retention(value: CacheSetting, supported: Sequence[CacheRetention
             f'Unknown `cache` retention {value!r}. '
             f'Use `True`, `False`, or one of {", ".join(repr(tier) for tier in CACHE_RETENTION_ORDER)}.'
         )
-    if not supported or value in supported:
+    if not supported:
+        return True
+    if value in supported:
         return value
     rank = CACHE_RETENTION_ORDER.index(value)
     supported_ranks = sorted(CACHE_RETENTION_ORDER.index(tier) for tier in supported)
@@ -70,15 +72,3 @@ def excess_cache_points(
             else:
                 excess.append(block)
     return excess
-
-
-def warn_cache_point_ignored(description: str, hint: str | None = None) -> None:
-    """Warn that a `CachePoint` marker was dropped from the request.
-
-    The default warnings filter deduplicates by call site, so each dropping code path
-    warns at most once per process.
-    """
-    message = f'`CachePoint` is not supported by {description} and was ignored.'
-    if hint:
-        message = f'{message} {hint}'
-    warnings.warn(message, UserWarning, stacklevel=2)
