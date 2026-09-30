@@ -1280,7 +1280,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         missing_finish_reason = False
         if response.choices and not (choice := response.choices[0]).finish_reason:
             missing_finish_reason = True
-            if choice.finish_reason is None:  # pyright: ignore[reportUnnecessaryComparison]
+            if choice.finish_reason is None:
                 choice.finish_reason = 'stop'
 
         try:

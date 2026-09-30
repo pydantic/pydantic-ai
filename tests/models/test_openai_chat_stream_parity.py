@@ -11,7 +11,7 @@ from __future__ import annotations as _annotations
 import dataclasses
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx2
 import pytest
@@ -127,8 +127,9 @@ class _CompletionAccumulator:
         self._fields.setdefault(None, {}).update(
             {key: value for key, value in data.items() if key not in ('choices', 'object') and value not in (None, '')}
         )
-        for choice in data.get('choices') or []:
-            index = choice.get('index', 0)
+        choices: list[dict[str, Any]] = cast(list[dict[str, Any]], data.get('choices') or [])
+        for choice in choices:
+            index: int = choice.get('index', 0)
             self._fields.setdefault(index, {}).update(
                 {
                     key: value
@@ -136,7 +137,7 @@ class _CompletionAccumulator:
                     if key not in ('delta', 'index', 'logprobs') and value is not None
                 }
             )
-            delta = choice.get('delta') or {}
+            delta: dict[str, Any] = choice.get('delta') or {}
             # OpenAI-compatible providers repeat `role` in every delta, which the SDK would concatenate.
             if 'role' in delta:
                 if index in self._roles:
@@ -145,7 +146,7 @@ class _CompletionAccumulator:
             for key, value in list(delta.items()):
                 if key == 'tool_calls' or not isinstance(value, list) or not value:
                     continue
-                entries: list[dict[str, Any]] = value
+                entries = cast(list[dict[str, Any]], value)
                 indexed_entries = [entry for entry in entries if 'index' in entry]
                 if not indexed_entries:
                     # The SDK rejects lists of objects without an `index` (e.g. OpenRouter's `annotations`), so
@@ -163,7 +164,7 @@ class _CompletionAccumulator:
                                 del entry[identity]
                             else:
                                 seen[identity] = entry[identity]
-        self._state.handle_chunk(construct_type(type_=ChatCompletionChunk, value=data))
+        self._state.handle_chunk(cast(ChatCompletionChunk, construct_type(type_=ChatCompletionChunk, value=data)))
 
     def get_final_completion(self) -> ChatCompletion:
         completion = self._state.get_final_completion()
@@ -197,8 +198,9 @@ async def _streamed_and_complete(interaction: dict[str, Any]) -> tuple[dict[str,
     )
     model = _model(uri, request_body['model'], client)
     # Continuous usage stats change how chunks are read, and aren't recorded in the response.
+    stream_options: dict[str, Any] = request_body.get('stream_options') or {}
     model_settings = OpenAIChatModelSettings(
-        openai_continuous_usage_stats=(request_body.get('stream_options') or {}).get('continuous_usage_stats', False)
+        openai_continuous_usage_stats=stream_options.get('continuous_usage_stats', False)
     )
 
     async def open_stream() -> AsyncStream[ChatCompletionChunk]:
