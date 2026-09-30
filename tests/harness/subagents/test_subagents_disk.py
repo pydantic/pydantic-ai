@@ -60,6 +60,7 @@ class TestClampEffort:
             floor = subagents.MINIMUM_EFFORT_FLOOR
             clamp = subagents.clamp_effort
         assert len(record) == 2
+        assert all('AgentOverride(effort=' in str(warning.message) for warning in record)
         assert clamp(None) == floor
         assert clamp(False) == floor
         assert clamp(True) is True
