@@ -90,6 +90,10 @@ async def test_commands_run_in_bwrap_on_the_wrapped_host(tools: FakeRemoteTools,
 class _FailedHome:
     """A backend whose home probe fails, so the sandbox refuses to start."""
 
+    @property
+    def ref(self) -> None:
+        return None
+
     async def working_dir(self) -> str:
         return '/work'
 
@@ -211,7 +215,9 @@ async def test_the_filesystem_root_keeps_ssh_read_only_and_refuses_to_launch(too
 
 
 async def test_a_home_directory_probe_that_fails_is_unavailable() -> None:
-    workspace = BubblewrapWorkspace(Workspace(_FailedHome()))
+    backend = _FailedHome()
+    assert backend.ref is None
+    workspace = BubblewrapWorkspace(Workspace(backend))
 
     with pytest.raises(WorkspaceUnavailableError, match='could not read the host account'):
         await workspace.run(['true'])
