@@ -390,7 +390,7 @@ class TestCapabilityCreationToolset:
     async def test_author_success_message(self, tmp_path: Path) -> None:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
         result = await toolset.author_capability('marker', VALID_CODE)
-        assert 'authored and validated' in result
+        assert 'authored, validated and saved' in result
         assert 'MarkerCapability' in result
         assert 'does not take effect in this run' in result
         assert 'depends on how this agent is set up' in result
