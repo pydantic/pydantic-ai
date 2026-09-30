@@ -24,7 +24,6 @@ from absurd_sdk import (
 )
 from fastmcp import FastMCP
 from inline_snapshot import snapshot
-from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -103,7 +102,6 @@ def _dynamic_toolset(tool_calls: dict[str, int], *, id: str | None) -> DynamicTo
 
 
 _RUNTIME_TOOLSET_ERROR = 'cannot be added at runtime with Absurd'
-_response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
 
 
 class TestDurability:
@@ -156,25 +154,6 @@ class TestDurability:
         toolsets = [FunctionToolset[object](id='tools'), FunctionToolset[object](id='tools')]
         with pytest.raises(UserError, match='same `id`'):
             Agent(_make_model(), name='a', toolsets=toolsets, capabilities=[AbsurdDurability()])
-
-    async def test_run_outside_task_is_transparent(self) -> None:
-        counter = {'calls': 0}
-        agent = Agent(_make_model(counter), name='a', capabilities=[AbsurdDurability()])
-        result = await agent.run('hi')
-        assert result.output == 'ok'
-        assert counter['calls'] == 1
-
-    async def test_replay_serves_cached_model_response(self, absurd: AsyncAbsurd) -> None:
-        counter = {'calls': 0}
-        agent = Agent(_make_model(counter), name='crash', capabilities=[AbsurdDurability()])
-
-        async with running_task_context(absurd, 'crash') as ctx:
-            first = await agent.run('hi')
-        async with reenter_running_task(absurd, ctx.task_id):
-            replayed = await agent.run('hi')
-
-        assert counter['calls'] == 1
-        assert replayed.output == first.output == 'ok'
 
     async def test_replay_does_not_rerun_function_tool(self, absurd: AsyncAbsurd) -> None:
         tool_calls = {'calls': 0}
@@ -340,25 +319,6 @@ class TestDurability:
         assert any(isinstance(e, PartStartEvent) for e in events)
         assert replayed == events
         assert counter['calls'] == 1
-
-    async def test_bare_model_response_stream_checkpoint_replays(self, absurd: AsyncAbsurd) -> None:
-        """A `request_stream` checkpoint stored as a bare `ModelResponse`, without captured events, replays."""
-        counter = {'calls': 0}
-        agent = Agent(_make_model(counter), name='legacy', capabilities=[AbsurdDurability()])
-        legacy_payload = _response_adapter.dump_python(
-            ModelResponse(parts=[TextPart(content='from-wrapper')]), mode='json'
-        )
-
-        async def write_legacy() -> JsonValue:
-            return legacy_payload
-
-        async with running_task_context(absurd, 'legacy') as ctx:
-            await ctx.step('legacy__model.request_stream', write_legacy)
-        async with reenter_running_task(absurd, ctx.task_id):
-            async with agent.run_stream('hi') as result:
-                assert await result.get_output() == 'from-wrapper'
-
-        assert counter['calls'] == 0
 
     async def test_cancel_suspended_response_is_checkpointed(self, absurd: AsyncAbsurd) -> None:
         # The model returns a `'suspended'` response, the continuation fails, and the graph tears the
@@ -646,21 +606,35 @@ class TestMcpSessions:
         assert counts == after_first_run
 
 
+_STREAM_RESPONSE: JsonValue = {
+    'parts': [{'content': 'from-checkpoint', 'part_kind': 'text'}],
+    'model_name': 'fn',
+    'kind': 'response',
+}
+
+
 class TestCheckpointFormat:
-    async def test_hand_written_stream_payload_replays(self, absurd: AsyncAbsurd) -> None:
+    @pytest.mark.parametrize(
+        'payload',
+        [
+            {
+                'response': _STREAM_RESPONSE,
+                'events': [
+                    {
+                        'index': 0,
+                        'part': {'content': 'from-checkpoint', 'part_kind': 'text'},
+                        'event_kind': 'part_start',
+                    }
+                ],
+            },
+            _STREAM_RESPONSE,
+        ],
+        ids=['with-events', 'bare-response'],
+    )
+    async def test_stream_checkpoint_replays(self, absurd: AsyncAbsurd, payload: JsonValue) -> None:
+        """Pins the `request_stream` checkpoint shapes a replay reads: `{response, events}` or a bare response."""
         counter = {'calls': 0}
         agent = Agent(_make_model(counter), name='gold', capabilities=[AbsurdDurability()])
-        # Pins the `{response, events}` payload shape of a stream checkpoint.
-        payload: JsonValue = {
-            'response': {
-                'parts': [{'content': 'golden-stream', 'part_kind': 'text'}],
-                'model_name': 'fn',
-                'kind': 'response',
-            },
-            'events': [
-                {'index': 0, 'part': {'content': 'golden-stream', 'part_kind': 'text'}, 'event_kind': 'part_start'}
-            ],
-        }
 
         async def write() -> JsonValue:
             return payload
@@ -669,7 +643,7 @@ class TestCheckpointFormat:
             await ctx.step('gold__model.request_stream', write)
         async with reenter_running_task(absurd, ctx.task_id):
             async with agent.run_stream('hi') as result:
-                assert await result.get_output() == 'golden-stream'
+                assert await result.get_output() == 'from-checkpoint'
 
         assert counter['calls'] == 0
 

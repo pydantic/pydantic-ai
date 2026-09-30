@@ -23,7 +23,7 @@ pytest.importorskip('fastmcp')
 
 from absurd_sdk import AsyncAbsurd, AsyncTaskContext, JsonValue
 from fastmcp import FastMCP
-from psycopg import AsyncConnection, sql
+from psycopg import AsyncConnection
 from psycopg.rows import TupleRow
 from pydantic import BaseModel
 
@@ -35,6 +35,8 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, T
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.absurd import AbsurdDurability
+
+from ._task import checkpoints
 
 GOLDEN: dict[str, dict[str, JsonValue]] = json.loads(
     (Path(__file__).parent / 'fixtures' / 'pydantic_ai_absurd_0.8.0_checkpoints.json').read_text()
@@ -174,17 +176,12 @@ class TestPydanticAiAbsurdCheckpoints:
         # Only the `ModelRetry` call re-runs: `pydantic-ai-absurd` never checkpointed it either.
         assert executions == (['report_finding:retry'] if CASES[case] else [])
 
-    async def test_fresh_run_writes_the_same_checkpoints(
-        self, case: str, absurd: AsyncAbsurd, async_conn: AsyncConnection[TupleRow], queue_name: str
-    ) -> None:
+    async def test_fresh_run_writes_the_same_checkpoints(self, case: str, absurd: AsyncAbsurd) -> None:
         _register(absurd, _agent(CASES[case], []))
-        await absurd.spawn('workflow', None)
+        spawned = await absurd.spawn('workflow', None)
         await absurd.work_batch(batch_size=1)
 
-        cursor = await async_conn.execute(
-            sql.SQL('SELECT checkpoint_name, state FROM absurd.{}').format(sql.Identifier(f'c_{queue_name}'))
-        )
-        stored = {name: state for name, state in await cursor.fetchall()}
+        stored = await checkpoints(absurd, spawned['task_id'])
         golden = GOLDEN[case]
         assert sorted(stored) == sorted(golden)
         # Tool results are compared verbatim. Model responses and MCP tool listings also carry fields

@@ -27,19 +27,18 @@ from ._operation_backend import AbsurdOperationBackend
 AbsurdParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 """Tool-call execution modes usable with Absurd. A subset of `ParallelExecutionMode`.
 
-Absurd names a repeated step by encounter order (`name`, `name#2`, ...), claiming the slot when
-`ctx.step(...)` is entered. `'parallel'` is excluded because it emits tool-result events, and so their
-`event_stream_handler` steps, in completion order, which could give a step a different slot on replay.
-`'parallel_ordered_events'` emits them in the model's tool-call order."""
+Absurd numbers a repeated step name in encounter order (`name`, `name#2`, ...). `'parallel'` is excluded
+because it emits tool-result events, and so their `event_stream_handler` steps, in completion order,
+which could give a step a different number on replay."""
 
 
 @dataclass(init=False)
 class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
     """Capability that makes an agent durable by checkpointing its I/O into Absurd steps.
 
-    Run the agent inside an Absurd task handler: every model request, MCP call, and function tool
-    call becomes a `ctx.step(...)`, so a retried task resumes from the last completed step. Outside
-    a task the capability is transparent.
+    Run the agent inside an async Absurd task handler: every model request, MCP call, and function
+    tool call becomes a step, so a retried task resumes from the last completed step. Outside a task
+    the capability is transparent.
 
     Example:
         ```python {test="skip"}
