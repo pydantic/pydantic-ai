@@ -2,7 +2,9 @@
 
 `MongoStepStore` needs the `mongodb` extra (`pip install
 pydantic-ai-harness[mongodb]`); it is imported lazily so the rest of this
-module stays usable without `pymongo` installed.
+module stays usable without `pymongo` installed. `PostgresStepStore` imports
+no driver (it takes a caller-owned asyncpg-compatible pool), so it is exported
+eagerly.
 """
 
 from typing import TYPE_CHECKING
@@ -14,6 +16,11 @@ from pydantic_ai_harness.step_persistence._helpers import (
     continue_run,
     fork_run,
     is_provider_valid,
+)
+from pydantic_ai_harness.step_persistence._postgres import (
+    PostgresConnection,
+    PostgresPool,
+    PostgresStepStore,
 )
 from pydantic_ai_harness.step_persistence._store import (
     FileStepStore,
@@ -40,6 +47,9 @@ __all__ = [
     'FileStepStore',
     'InMemoryStepStore',
     'MongoStepStore',
+    'PostgresConnection',
+    'PostgresPool',
+    'PostgresStepStore',
     'RunRecord',
     'SnapshotSaved',
     'SnapshotState',
