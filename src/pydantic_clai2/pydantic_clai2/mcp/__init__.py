@@ -7,13 +7,11 @@ settings (`/plugins add mcp pydantic_clai2.mcp JSON`) still load, read-only.
 
 from pydantic_ai.capabilities import Toolset
 from pydantic_ai.toolsets import DynamicToolset
-
-from ..commands import Command
-from ..plugins import PluginHost, SessionEnd
-from ._command import HELP, MCPCommand
-from ._form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
-from ._runtime import MCPServers, ServerEntry, State
-from ._settings import (
+from pydantic_clai2.commands import Command
+from pydantic_clai2.mcp._command import HELP, MCPCommand
+from pydantic_clai2.mcp._form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
+from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State
+from pydantic_clai2.mcp._settings import (
     OAUTH_TIMEOUT,
     HTTPServer,
     MCPSettings,
@@ -24,8 +22,9 @@ from ._settings import (
     StdioServer,
     http_client,
 )
-from ._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
-from ._tokens import TokenStore, oauth, sign_in
+from pydantic_clai2.mcp._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
+from pydantic_clai2.mcp._tokens import SignIn, TokenStore, oauth, sign_in
+from pydantic_clai2.plugins import PluginHost, SessionEnd
 
 __all__ = [
     'CLAUDE_MCP_FILE',
@@ -45,6 +44,7 @@ __all__ = [
     'ServerEntry',
     'ServerForm',
     'ServerSettings',
+    'SignIn',
     'State',
     'StdioServer',
     'TokenStore',

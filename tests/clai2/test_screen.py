@@ -16,10 +16,10 @@ from rich.text import Text
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost
-from pydantic_clai2.screen import Screen
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.status import Status, StatusLine
+from pydantic_clai2.ui.prompt.screen import Screen
+from pydantic_clai2.ui.rendering.status import Status, StatusLine
 
 
 async def test_screen_is_free_between_prompts_and_bound_during_one() -> None:

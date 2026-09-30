@@ -106,7 +106,7 @@ orchestrator = Agent(
 | Field | Effect |
 |---|---|
 | `models` | Which keys of the `SubAgents` model menu this delegate may run on, and which one it runs on by default: the first key listed. See "Per-delegation model selection" below. |
-| `usage_limits` | A request/token budget for one delegation. The child runs with its own usage accounting, so the budget counts only that child's requests and tokens (not the parent's or siblings'), even when `forward_usage=True`. The tradeoff: that child's tokens no longer aggregate into the parent's `usage`. Reaching the budget is a soft outcome (see below), not a run-stopping `UsageLimitExceeded`. |
+| `usage_limits` | A request/token budget for one delegation. The child runs with its own usage accounting, so the budget counts only that child's requests and tokens (not the parent's or siblings'). With `forward_usage=True`, the child's usage is added to the parent's usage after the delegation. Reaching the budget is a soft outcome (see below), not a run-stopping `UsageLimitExceeded`. |
 | `timeout_seconds` | A wall-clock budget for one delegation. When the child exceeds it, its run is cancelled and the parent gets a soft steering message instead of hanging on the child. The cancelled child's `event_stream_handler` (if any) stops receiving events without a terminal event. |
 | `max_calls` | The maximum number of delegations to this sub-agent per parent run. Once reached, further delegations return a soft budget-exhausted message without running the child. Counts are scoped to one `Agent.run` (a `run_id`) and cleared when it ends, so each parent run and each level of a nested tree budgets independently. |
 | `on_failure` | A steering message returned to the parent for any soft degradation of this delegate, in place of the built-in default. Setting it also makes child failures soft (see below). |
@@ -225,7 +225,7 @@ Definitions are read at the start of every run from the run's [workspace](https:
 
 `agent_folders` controls which folders are read:
 
-- A folder-name `str` (`'agents'` is the conventional layout): load from `.agents/<name>/` under the workspace's working directory, falling back to `.claude/<name>/` when `.agents/` is absent. A run without a workspace skips it.
+- A folder-name `str` (`'agents'` is the conventional layout): load from both `.agents/<name>/` and `.claude/<name>/` under the workspace's working directory, so a workspace that uses `.agents/` for something else (such as skills) still loads agents from `.claude/`. A run without a workspace skips them.
 - A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
 - `None`, the default, disables disk loading, exposing only the explicitly-passed `agents`.
 
@@ -291,7 +291,7 @@ SubAgents(agent_folders='agents', tool_resolver=resolve)
 
 ### Precedence
 
-When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first, then earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
+When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first; for convention discovery, the workspace's `.agents/` folder before its `.claude/` folder; and for an explicit path sequence, earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
 
 ## Configuration
 
