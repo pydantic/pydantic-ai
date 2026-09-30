@@ -153,7 +153,9 @@ async def test_a_command_its_menu_and_the_fields_it_changes_nest(exporter: InMem
 
 
 async def test_reset_bare_commands_and_menu_results(exporter: InMemorySpanExporter) -> None:
-    menu = FieldMenu(Paint())
+    source = Paint()
+    menu = FieldMenu(source)
+    assert source.problem(menu.rows[0], 'red') is None
     assert menu.apply(menu.rows[0], '  ') == 'Reset color.'
     commands = Commands()
     commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
@@ -191,15 +193,11 @@ async def test_a_menu_its_owner_cancels_says_so(exporter: InMemorySpanExporter) 
     assert own['closed_by'] == 'owner'
 
 
-class Opener:
-    def __call__(self) -> None: ...
-
-
 def test_operation_names_are_where_the_menu_was_written() -> None:
     assert telemetry.operation_name(run_flow) == 'ui.menus.field_menu:run_flow'
     assert telemetry.operation_name(partial(partial(run_flow))) == 'ui.menus.field_menu:run_flow'
     assert telemetry.operation_name(FieldMenu.build) == 'ui.menus.field_menu:FieldMenu.build'
-    assert telemetry.operation_name(Opener()) == 'tests.clai2.test_ui_telemetry:Opener'
+    assert telemetry.operation_name(Paint()) == 'tests.clai2.test_ui_telemetry:Paint'
     assert telemetry.operation_name(len) == 'builtins:len'
 
 
