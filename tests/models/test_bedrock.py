@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import io
 import json
 import os
 from collections.abc import Generator, Iterator
@@ -75,6 +76,7 @@ from ..cassette_utils import request_json, single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 
 with try_import() as imports_successful:
+    from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
     from botocore.client import BaseClient
     from botocore.exceptions import (
         BotoCoreError,
@@ -87,6 +89,7 @@ with try_import() as imports_successful:
     from cassetter import Cassette
     from mypy_boto3_bedrock_runtime import BedrockRuntimeClient
     from mypy_boto3_bedrock_runtime.type_defs import MessageUnionTypeDef, SystemContentBlockTypeDef, ToolTypeDef
+    from urllib3 import HTTPResponse
 
     from pydantic_ai.models.bedrock import (
         BedrockConverseModel,
@@ -7499,3 +7502,41 @@ def test_bedrock_anthropic_5_no_sampling_settings_pass_through_silently(
 
     assert prepared == snapshot({'max_tokens': 16})
     assert not [w for w in recwarn if 'Sampling parameters' in str(w.message)]
+
+
+@pytest.mark.parametrize(
+    ('call', 'body'),
+    [
+        pytest.param('request', b'', id='request'),
+        pytest.param('request', b'not json', id='request-not-json'),
+        pytest.param('count_tokens', b'', id='count_tokens'),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(allow_model_requests: None, call: str, body: bytes):
+    """A 200 response body that's empty or not JSON surfaces as `ModelAPIError`, not a `KeyError`.
+
+    The response is injected at `before-send` so botocore's own parser handles it, because no real endpoint returns such
+    a body on demand. https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+    provider = BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='AKIA6666666666666666',
+        aws_secret_access_key='6666666666666666666666666666666666666666',
+    )
+    model = BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=provider)
+
+    def respond(request: AWSPreparedRequest, **_: object) -> AWSResponse:
+        return AWSResponse(request.url, 200, HTTPHeaders(), HTTPResponse(body=io.BytesIO(body), preload_content=False))
+
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last('before-send.bedrock-runtime', respond)  # pyright: ignore[reportArgumentType]
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Hello')]
+    with pytest.raises(ModelAPIError) as exc_info:
+        if call == 'count_tokens':
+            await model.count_tokens(messages, None, ModelRequestParameters())
+        else:
+            await model.request(messages, None, ModelRequestParameters())
+
+    field = 'inputTokens' if call == 'count_tokens' else 'output'
+    assert exc_info.value.message == f'Response has no {field!r} field'

@@ -4731,3 +4731,24 @@ async def test_openai_image_generation_non_json_response_body_raises_model_api_e
 
     assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='Google Gen AI SDK not installed')
+async def test_google_image_generation_non_json_response_body_raises_model_api_error():
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http_client:
+        provider = GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost')
+        model = GoogleImageGenerationModel('gemini-2.5-flash-image', provider=provider)
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.generate('tiny robot')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

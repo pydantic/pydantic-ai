@@ -140,6 +140,11 @@ if TYPE_CHECKING:
     )
 
 
+# botocore parses a 200 body that's empty, not JSON, or JSON without the operation's fields to a response lacking them,
+# instead of raising.
+_MISSING_RESPONSE_FIELD = 'Response has no {field!r} field'
+
+
 @contextmanager
 def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Generator[None]:
     try:
@@ -894,6 +899,8 @@ class BedrockConverseModel(Model[BaseClient]):
         client = self.client
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             response = await _call_bedrock(client, client.count_tokens, params, settings.get('extra_headers'))
+        if 'inputTokens' not in response:
+            raise ModelAPIError(model_name=self.model_name, message=_MISSING_RESPONSE_FIELD.format(field='inputTokens'))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -1126,6 +1133,10 @@ class BedrockConverseModel(Model[BaseClient]):
                 )
             else:
                 model_response = await _call_bedrock(client, client.converse, params, settings.get('extra_headers'))
+                if 'output' not in model_response:
+                    raise ModelAPIError(
+                        model_name=self.model_name, message=_MISSING_RESPONSE_FIELD.format(field='output')
+                    )
         return model_response
 
     @staticmethod
