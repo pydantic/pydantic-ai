@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import inspect
 import time
+import warnings
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
@@ -12,10 +13,10 @@ from contextvars import Context, ContextVar, copy_context
 from copy import deepcopy
 from dataclasses import field, replace
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, SupportsIndex, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
-from typing_extensions import TypeVar, assert_never
+from typing_extensions import Self, TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
@@ -70,6 +71,7 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
+from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -1300,6 +1302,60 @@ def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDe
     )
 
 
+_PERSISTING_REQUEST_EDIT_WARNING = (
+    'Adding messages to `request_context.messages` in `before_model_request` also adds them to the message '
+    'history for backward compatibility, but that will stop in v3: `request_context.messages` will only change '
+    'the current model request. To keep the messages in history, assign a new list to `request_context.messages` '
+    'and add the messages to `ctx.messages` as well.'
+)
+
+
+class _HistoryMirroringMessages(list[_messages.ModelMessage]):
+    """The `ModelRequestContext.messages` list that `before_model_request` hooks receive.
+
+    Before hooks used to have their final request list written back to the message history, so code
+    that appended to `request_context.messages` also changed history. Messages added in place here are
+    still added to history, with a deprecation warning, until the before-chain finishes and `detach()`
+    turns this into a plain request-only list. Assigning a new list opts out, as intended.
+    """
+
+    def __init__(self, messages: Iterable[_messages.ModelMessage], history: list[_messages.ModelMessage]):
+        super().__init__(messages)
+        self._history: list[_messages.ModelMessage] | None = history
+
+    def detach(self) -> None:
+        self._history = None
+
+    def _mirror_target(self) -> list[_messages.ModelMessage] | None:
+        if self._history is not None:
+            # stacklevel points at the hook's `append`/`extend`/`insert`/`+=` call.
+            warnings.warn(_PERSISTING_REQUEST_EDIT_WARNING, PydanticAIDeprecationWarning, stacklevel=3)
+        return self._history
+
+    def append(self, message: _messages.ModelMessage) -> None:
+        super().append(message)
+        if (history := self._mirror_target()) is not None:
+            history.append(message)
+
+    def extend(self, messages: Iterable[_messages.ModelMessage]) -> None:
+        messages = list(messages)
+        super().extend(messages)
+        if (history := self._mirror_target()) is not None:
+            history.extend(messages)
+
+    def insert(self, index: SupportsIndex, message: _messages.ModelMessage) -> None:
+        super().insert(index, message)
+        if (history := self._mirror_target()) is not None:
+            history.insert(index, message)
+
+    def __iadd__(self, messages: Iterable[_messages.ModelMessage]) -> Self:
+        messages = list(messages)
+        super().extend(messages)
+        if (history := self._mirror_target()) is not None:
+            history.extend(messages)
+        return self
+
+
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
@@ -1805,7 +1861,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelRequestContext:
         """Apply `before_model_request` and finalize the request inside the wrapped lifecycle."""
         persistent_messages_before_processing = len(ctx.state.message_history)
-        processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
+        mirrored_messages = _HistoryMirroringMessages(request_context.messages, history=ctx.state.message_history)
+        request_context.messages = mirrored_messages
+        try:
+            processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
+        finally:
+            # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.
+            mirrored_messages.detach()
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original

@@ -8,6 +8,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
+from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import ReinjectSystemPrompt
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
@@ -87,8 +88,7 @@ async def test_model_request_message_persistence_depends_on_context(
     assert _contains_marker(result_messages) is persistent
 
 
-@pytest.mark.parametrize('hook', ['before', 'wrap'])
-async def test_model_request_messages_allow_request_only_list_mutation(hook: Literal['before', 'wrap']) -> None:
+async def test_wrap_model_request_list_mutation_is_request_only() -> None:
     """The public list remains mutable while its top-level ownership is request-local."""
     marker = ModelRequest(parts=[UserPromptPart(content='hook marker')])
     model_messages: list[list[ModelMessage]] = []
@@ -97,18 +97,8 @@ async def test_model_request_messages_allow_request_only_list_mutation(hook: Lit
         model_messages.append(messages)
         return ModelResponse(parts=[TextPart(content='done')])
 
-    def mutate_messages(request_context: ModelRequestContext) -> None:
-        request_context.messages.append(marker)
-
     @dataclass
     class AppendMessages(AbstractCapability[Any]):
-        async def before_model_request(
-            self, ctx: RunContext[Any], request_context: ModelRequestContext
-        ) -> ModelRequestContext:
-            if hook == 'before':
-                mutate_messages(request_context)
-            return request_context
-
         async def wrap_model_request(
             self,
             ctx: RunContext[Any],
@@ -116,8 +106,7 @@ async def test_model_request_messages_allow_request_only_list_mutation(hook: Lit
             request_context: ModelRequestContext,
             handler: Any,
         ) -> ModelResponse:
-            if hook == 'wrap':
-                mutate_messages(request_context)
+            request_context.messages.append(marker)
             return await handler(request_context)
 
     agent = Agent(FunctionModel(model_function), capabilities=[AppendMessages()])
@@ -126,6 +115,123 @@ async def test_model_request_messages_allow_request_only_list_mutation(hook: Lit
 
     # The in-place list edit reached the wire but not persistent history.
     assert _contains_marker(model_messages[0])
+    assert not _contains_marker(result.all_messages())
+
+
+def _count_markers(messages: list[ModelMessage]) -> int:
+    return sum(
+        isinstance(message, ModelRequest)
+        and any(isinstance(part, UserPromptPart) and part.content == 'hook marker' for part in message.parts)
+        for message in messages
+    )
+
+
+Edit = Literal['append', 'extend', 'insert', 'iadd']
+
+
+def _add(messages: list[ModelMessage], edit: Edit, message: ModelMessage) -> None:
+    if edit == 'append':
+        messages.append(message)
+    elif edit == 'extend':
+        messages.extend([message])
+    elif edit == 'insert':
+        messages.insert(0, message)
+    else:
+        messages += [message]
+
+
+@pytest.mark.parametrize('edit', ['append', 'extend', 'insert', 'iadd'])
+@pytest.mark.parametrize('streaming', [False, True])
+async def test_before_model_request_in_place_additions_still_persist_with_deprecation_warning(
+    edit: Edit, streaming: bool
+) -> None:
+    """Until v3, adding to the request list in a before hook still reaches history, as it did before."""
+    marker = ModelRequest(parts=[UserPromptPart(content='hook marker')])
+    model_messages: list[list[ModelMessage]] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        model_messages.append(messages)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        model_messages.append(messages)
+        yield 'done'
+
+    class AddMessages(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            _add(request_context.messages, edit, marker)
+            return request_context
+
+    agent = Agent(FunctionModel(model_function, stream_function=stream_function), capabilities=[AddMessages()])
+    with pytest.warns(
+        PydanticAIDeprecationWarning,
+        match=r'`request_context\.messages` in `before_model_request`.*assign a new list.*`ctx\.messages`',
+    ):
+        if streaming:
+            async with agent.run_stream('hello') as stream:
+                assert await stream.get_output() == 'done'
+                result_messages = stream.all_messages()
+        else:
+            result = await agent.run('hello')
+            result_messages = result.all_messages()
+
+    assert _count_markers(model_messages[0]) == 1
+    assert _count_markers(result_messages) == 1
+    if edit == 'insert':
+        assert result_messages[0] is marker
+
+
+async def test_before_model_request_migrated_edit_persists_once_without_warning() -> None:
+    """The migration the warning asks for: assign a new request list, and add to `ctx.messages` for history."""
+    marker = ModelRequest(parts=[UserPromptPart(content='hook marker')])
+    model_messages: list[list[ModelMessage]] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        model_messages.append(messages)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    class AddMessages(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            request_context.messages = [*request_context.messages, marker]
+            ctx.messages.append(marker)
+            return request_context
+
+    # `filterwarnings = ['error']` fails this test if the deprecation warning fires.
+    result = await Agent(FunctionModel(model_function), capabilities=[AddMessages()]).run('hello')
+
+    assert _count_markers(model_messages[0]) == 1
+    assert _count_markers(result.all_messages()) == 1
+
+
+@pytest.mark.parametrize('edit', ['append', 'extend', 'insert', 'iadd'])
+async def test_before_model_request_list_stops_persisting_after_the_before_chain(edit: Edit) -> None:
+    """A list kept from `before_model_request` and edited later changes neither history nor raises a warning."""
+    marker = ModelRequest(parts=[UserPromptPart(content='hook marker')])
+    saved: list[list[ModelMessage]] = []
+
+    class KeepMessages(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            saved.append(request_context.messages)
+            return request_context
+
+        async def after_model_request(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, response: ModelResponse
+        ) -> ModelResponse:
+            _add(saved[0], edit, marker)
+            return response
+
+    result = await Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+        capabilities=[KeepMessages()],
+    ).run('hello')
+
+    assert _contains_marker(saved[0])
     assert not _contains_marker(result.all_messages())
 
 
