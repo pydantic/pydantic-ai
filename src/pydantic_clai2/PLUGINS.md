@@ -1625,16 +1625,24 @@ Tools and capabilities emit typed events (a shell started, a file was written).
 Name the classes you want:
 
 ```python
+from collections.abc import Sequence
+
 from pydantic_ai import RunContext
-from pydantic_ai.capabilities import Hooks
+from pydantic_ai.capabilities import AgentCapability, Hooks
 from pydantic_ai_harness.filesystem import FileWrittenEvent
 
-hooks = Hooks[None]()
+from pydantic_clai2.plugins import Plugin
 
 
-@hooks.on.event(FileWrittenEvent)
-async def log_write(ctx: RunContext[None], event: FileWrittenEvent) -> None:
-    print(f'wrote {event.path}')
+class WriteLog(Plugin):
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        hooks = Hooks[None]()
+
+        @hooks.on.event(FileWrittenEvent)
+        async def log_write(ctx: RunContext[None], event: FileWrittenEvent) -> None:
+            self.host.console.print(f'wrote {event.path}')
+
+        return (hooks,)
 ```
 
 A capability class of your own can do the same with core's `@on_event(EventClass)`
@@ -1793,7 +1801,7 @@ has been stable for 250 ms. It then replays a bounded recent transcript tail and
 restores the draft; it does not erase terminal scrollback or conversation history.
 The buffer includes startup and plugin lifecycle output. It retains ANSI styling,
 not arbitrary terminal-control operations.
-Use `host.full_screen()` for widgets instead of printing cursor-control sequences
+Use `self.host.full_screen()` for widgets instead of printing cursor-control sequences
 into the transcript. Large output bursts during resize spill to a private temporary
 file and are flushed in order after the viewport is rebuilt.
 The Termflow smoothing defaults match Code Puppy: responses use 12 ms ticks, a 0.5-second
@@ -1872,7 +1880,10 @@ so plugins that need the same credential share one key; replacing it in `/keys`
 reaches all of them. The label does not export or read an environment variable.
 
 ```python
+from collections.abc import Sequence
+
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic_ai.capabilities import AgentCapability
 
 from pydantic_clai2.config.api_keys import KeyReference, SavedKey
 from pydantic_clai2.plugins import Plugin
@@ -1886,7 +1897,7 @@ class MySettings(BaseModel):
 class MyPlugin(Plugin[MySettings]):
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         auth = SavedKey(name=self.settings.token.name, setup='Add MY_SERVICE_TOKEN in /keys.')
-        return (MyService(auth=auth),)
+        return (MyService(auth=auth),)  # your capability, taking an `auth` function
 ```
 
 `SavedKey` is a capability `auth` function. It looks the key up on every run and
@@ -1894,8 +1905,8 @@ raises with `setup` when the key is missing, so a deleted key fails closed rathe
 than falling back to something else. To let the user choose a key, call `prompt_api_key(prompt=..., label=...)`: it
 returns a `KeyReference` to a saved key, a masked new value for you to
 `save_key(name=..., value=...)`, or `None` when cancelled. Then call
-`host.save_settings(settings)` with the new reference. It saves your plugin's
-declaration as `plugins add` would, and `host.settings(Model)` returns the new
+`self.host.save_settings(settings)` with the new reference. It saves your plugin's
+declaration as `plugins add` would, and `self.host.settings(Model)` returns the new
 values from then on.
 
 ### Offer a settings menu: `async def configure(self)`
@@ -1903,7 +1914,7 @@ values from then on.
 Override `configure` with an async method that shows a settings menu and returns
 a line to show afterwards. CLAI opens it when the plugin is turned on (Space in
 `/plugins`, `/plugins enable`, or `/plugins add`), on `C` in `/plugins`, and on
-`/plugins configure NAME`. Save each change with `host.save_settings(model)` as
+`/plugins configure NAME`. Save each change with `self.host.save_settings(model)` as
 the user makes it; settings are stored in plaintext, so keep secrets in `/keys`
 and save only a key's name: let the user pick one with
 `prompt_api_key(prompt=..., label=...)` and remember only a `KeyReference` to
@@ -2091,7 +2102,8 @@ again.
 - Handlers are `async`. There is no sync variant of anything.
 - `get_*` methods are called once, when the plugin loads. Return what the plugin
   offers; do not do slow or blocking work there. Use `on_session_start` for
-  that, off the event loop.
+  that, but keep it asynchronous: it runs on the event loop, so offload blocking
+  work with `anyio.to_thread.run_sync` or a worker.
 - CLAI's `on_*` handlers return `None`. Core hooks keep their exact core return
   contracts: for example `before_model_request` must return its `ModelRequestContext`.
   For cancelable host events, edit the event or call `event.cancel()`.
@@ -2361,7 +2373,7 @@ pairs. Do not put credentials here: values are stored as plaintext in SQLite.
 
 ### Persisting conversation changes
 
-Use `await host.conversation.commit_messages(messages)` for between-turn history
+Use `await self.host.conversation.commit_messages(messages)` for between-turn history
 changes. It commits to storage before replacing the live history, and rejects
 changes while an operation is running. `replace_messages(...)` remains an
 in-memory compatibility API; it does not save by itself. `Transcript` implements
