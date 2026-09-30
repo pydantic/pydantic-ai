@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -133,7 +134,7 @@ async def test_stopping_skips_programs_planted_in_the_working_dir(
     impostor.mkdir()
     ran = tmp_path / 'ran'
     for name in ('ps', 'tr', 'grep', 'awk', 'sort', 'sleep'):
-        (impostor / name).write_text(f'#!/bin/sh\ntouch {ran}\n')
+        (impostor / name).write_text(f'#!/bin/sh\ntouch {shlex.quote(str(ran))}\n')
         (impostor / name).chmod(0o755)
     monkeypatch.setenv('PATH', f'{impostor}{os.pathsep}{os.environ["PATH"]}')
     tag = '__pydantic_ai_ssh_job_00112233aabbccdd'
