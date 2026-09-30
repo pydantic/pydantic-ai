@@ -35,6 +35,7 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -273,6 +274,15 @@ def _body_raises_approval_agent(executed: list[str]) -> Agent[None, str]:
         raise ApprovalRequired()
 
     return agent
+
+
+def _last_prompt(messages: list[ModelMessage]) -> str | None:
+    """The text of the most recent user prompt in `messages`."""
+    for message in reversed(messages):
+        for part in reversed(message.parts):
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+                return part.content
+    return None
 
 
 class TestLifecycle:
@@ -741,16 +751,24 @@ class TestStopReason:
 
     async def test_configured_usage_limits_end_the_turn_with_max_turn_requests(self) -> None:
         request_count = 0
+        spins = 0
 
-        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
             nonlocal request_count
             request_count += 1
-            yield {0: DeltaToolCall(name='spin', json_args='{}')}
+            if _last_prompt(messages) == 'next':
+                yield 'done'
+            else:
+                yield {0: DeltaToolCall(name='spin', json_args='{}')}
 
         agent = Agent(FunctionModel(stream_function=stream))
 
         @agent.tool_plain
         def spin() -> str:
+            nonlocal spins
+            spins += 1
             return 'again'
 
         adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, usage_limits=UsageLimits(request_limit=2))
@@ -762,7 +780,42 @@ class TestStopReason:
         assert response.stop_reason == 'max_turn_requests'
         assert response.usage is None
         assert request_count == 2
-        assert adapter._sessions[session_id].history == []  # pyright: ignore[reportPrivateUsage]
+        # The tools that ran before the limit stay in the history, so the next turn knows about them.
+        history = adapter._sessions[session_id].history  # pyright: ignore[reportPrivateUsage]
+        assert _last_prompt(history) == 'go'
+        assert sum(isinstance(part, ToolReturnPart) for message in history for part in message.parts) == spins == 2
+
+        follow_up = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
+        assert follow_up.stop_reason == 'end_turn'
+
+    async def test_tool_calls_limit_commits_the_turn_without_the_unrun_calls(self) -> None:
+        """A limit hit before a response's tool calls run leaves those calls out of the committed history."""
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            if _last_prompt(messages) == 'next':
+                yield 'done'
+            else:
+                yield {0: DeltaToolCall(name='spin', json_args='{}')}
+
+        agent = Agent(FunctionModel(stream_function=stream))
+
+        @agent.tool_plain
+        def spin() -> str:
+            return 'again'
+
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, usage_limits=UsageLimits(tool_calls_limit=1))
+        session_id = await _start(adapter, FakeClient())
+
+        response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
+        assert response.stop_reason == 'max_turn_requests'
+
+        history = adapter._sessions[session_id].history  # pyright: ignore[reportPrivateUsage]
+        assert not (isinstance(history[-1], ModelResponse) and history[-1].tool_calls)
+        # A dangling call would make this prompt fail with "unprocessed tool calls".
+        follow_up = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
+        assert follow_up.stop_reason == 'end_turn'
 
     async def test_default_usage_limits_allow_normal_tool_resume(self) -> None:
         request_count = 0

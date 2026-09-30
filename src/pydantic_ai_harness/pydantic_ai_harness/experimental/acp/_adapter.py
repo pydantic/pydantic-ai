@@ -24,7 +24,7 @@ import anyio
 from acp import schema
 from acp.interfaces import Client
 
-from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied, UsageLimitExceeded
+from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolDenied, UsageLimitExceeded, capture_run_messages
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     RetryPromptPart,
@@ -107,6 +108,20 @@ def _usage_limit_stop_reason(exc: UsageLimitExceeded) -> schema.StopReason:
     configuration can hit).
     """
     return 'max_tokens' if 'tokens_limit' in str(exc) else 'max_turn_requests'
+
+
+def _committable_history(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """The history a turn ended by a usage limit commits.
+
+    A token limit trips after a response arrives and before its tool calls run. Those calls never
+    ran, and a history ending in them is rejected by the next prompt ("unprocessed tool calls"),
+    so that response is left out. An interrupted tail (a limit hit during tool execution) is kept:
+    the next run closes out its calls.
+    """
+    last = messages[-1] if messages else None
+    if isinstance(last, ModelResponse) and last.tool_calls and last.state != 'interrupted':
+        return messages[:-1]
+    return list(messages)
 
 
 def _to_acp_usage(usage: RunUsage) -> schema.Usage:
@@ -597,14 +612,16 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
 
         The response carries the ACP stop reason mapped from the final model response, plus the
         turn's total token usage (summed across every run pass, one per approval pause). A turn
-        ended by a usage limit rolls back like a cancellation, so its response omits usage while
-        still answering with the limit's `max_tokens`/`max_turn_requests` stop reason.
+        ended by a usage limit answers with the limit's `max_tokens`/`max_turn_requests` stop
+        reason and commits the messages exchanged before the limit, so the next turn knows which
+        tools already ran; its response omits usage, which the interrupted pass did not report.
         """
         conn = self._conn
         assert conn is not None
         history = state.history
         config = state.config
         usage = RunUsage()
+        limited = False
         stop_reason: schema.StopReason = 'end_turn'
         deferred_results: DeferredToolResults | None = None
         run_input: list[UserContent] | None = user_content
@@ -622,31 +639,34 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         # persist its user message either.
         turn.updates.extend(acp.update_user_message(block) for block in prompt)
 
+        # The messages of the pass in flight, kept when a usage limit ends it (see below).
+        captured: list[ModelMessage] = []
         try:
             while True:
                 result = None
-                async with self._agent.run_stream_events(
-                    run_input,
-                    message_history=history,
-                    deferred_tool_results=deferred_results,
-                    output_type=output_type,
-                    deps=config.deps,
-                    capabilities=config.capabilities,
-                    toolsets=config.toolsets,
-                    workspace=config.workspace,
-                    # Per-run override for the client's model config choice; `None` uses the
-                    # agent's own model, never mutating the shared agent. A `model_resolver` (if
-                    # given) maps the advertised id to a pre-built `Model` for ids `infer_model`
-                    # can't parse.
-                    model=self._resolve_run_model(state.model),
-                    usage_limits=self._usage_limits,
-                ) as stream:
-                    event: AgentStreamEvent | AgentRunResultEvent[object]
-                    async for event in stream:
-                        if isinstance(event, AgentRunResultEvent):
-                            result = event.result
-                        else:
-                            await self._emit_event(turn, event)
+                with capture_run_messages() as captured:
+                    async with self._agent.run_stream_events(
+                        run_input,
+                        message_history=history,
+                        deferred_tool_results=deferred_results,
+                        output_type=output_type,
+                        deps=config.deps,
+                        capabilities=config.capabilities,
+                        toolsets=config.toolsets,
+                        workspace=config.workspace,
+                        # Per-run override for the client's model config choice; `None` uses the
+                        # agent's own model, never mutating the shared agent. A `model_resolver` (if
+                        # given) maps the advertised id to a pre-built `Model` for ids `infer_model`
+                        # can't parse.
+                        model=self._resolve_run_model(state.model),
+                        usage_limits=self._usage_limits,
+                    ) as stream:
+                        event: AgentStreamEvent | AgentRunResultEvent[object]
+                        async for event in stream:
+                            if isinstance(event, AgentRunResultEvent):
+                                result = event.result
+                            else:
+                                await self._emit_event(turn, event)
 
                 assert result is not None, 'run_stream_events always yields a final result event'
                 history = result.all_messages()
@@ -674,11 +694,14 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             raise
         except UsageLimitExceeded as exc:
             # ACP models a turn ending at a limit as a normal stop reason, not a request error.
-            # The raising run's partial messages are not retrievable, so nothing is committed --
-            # the turn rolls back to the prior state, like a cancellation, and the response must
-            # not report uncommitted usage.
+            # Unlike a cancellation, the turn is committed up to the limit: its tools may already
+            # have edited files, and rolling the history back would leave the next turn unaware
+            # of those changes. The interrupted pass reported no usage, so none is claimed.
             await self._fail_outstanding_tool_calls(turn)
-            return schema.PromptResponse(stop_reason=_usage_limit_stop_reason(exc))
+            if captured:
+                history = _committable_history(captured)
+            stop_reason = _usage_limit_stop_reason(exc)
+            limited = True
         except Exception:
             # The turn is failing with the error the client receives as the prompt's response;
             # close out its announced tool calls so they are not left rendering as running.
@@ -702,7 +725,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                     'persisting ACP session %s was cancelled; durable state is now behind', state.session_id
                 )
                 stop_reason = 'cancelled'
-        return schema.PromptResponse(stop_reason=stop_reason, usage=_to_acp_usage(usage))
+        return schema.PromptResponse(stop_reason=stop_reason, usage=None if limited else _to_acp_usage(usage))
 
     async def _fail_outstanding_tool_calls(self, turn: _TurnState) -> None:
         """Drive every announced-but-unfinished tool call to a terminal `failed` status.
