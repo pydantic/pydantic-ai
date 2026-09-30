@@ -9,6 +9,7 @@ cassette of a reconnect holds several), and whatever it yields is collected.
 from __future__ import annotations as _annotations
 
 import json
+import re
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any, Literal
@@ -181,6 +182,21 @@ async def replay_codec_events(path: Path) -> list[list[RealtimeCodecEvent]]:
         if isinstance(connection, OpenAILiveConnection):
             await connection.aclose()
     return events
+
+
+_CLIENT_INPUT_EVENT_ID = re.compile(r'pydantic_ai\.(?:content|response)\.(\d+(?:-\d+)*)')
+
+
+def recorded_inputs(path: Path) -> int:
+    """How many inputs the recorded client sent (numbered in its frames' event ids), which its responses may answer."""
+    indexes = [
+        int(index)
+        for interaction in RealtimeCassette.load(path).interactions
+        if isinstance(interaction, CassetteMessage) and interaction.direction == 'sent'
+        if (match := _CLIENT_INPUT_EVENT_ID.fullmatch(str(interaction.data.get('event_id'))))
+        for index in match[1].split('-')
+    ]
+    return max(indexes, default=-1) + 1
 
 
 async def replay_lifecycle_events(path: Path) -> list[list[RealtimeCodecEvent | LifecycleEvent]]:

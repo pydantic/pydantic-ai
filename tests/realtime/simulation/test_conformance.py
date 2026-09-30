@@ -39,7 +39,13 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.usage import RequestUsage
 
-    from ._cassette_replay import CASSETTES_DIR, replay_codec_events, replay_lifecycle_events, websocket_cassettes
+    from ._cassette_replay import (
+        CASSETTES_DIR,
+        recorded_inputs,
+        replay_codec_events,
+        replay_lifecycle_events,
+        websocket_cassettes,
+    )
     from ._conformance import LifecycleChecker
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='realtime provider SDKs not installed')
@@ -57,8 +63,10 @@ async def test_cassette_obeys_the_codec_lifecycle(recording: Path) -> None:
         for event in events:
             checker.feed(event)
         assert checker.issues == []
+    # Only the provider's frames are replayed: a response may answer any input the recorded client sent.
+    sent = recorded_inputs(recording)
     for events in await replay_lifecycle_events(recording):
-        checker = LifecycleChecker(lifecycle=True)
+        checker = LifecycleChecker(lifecycle=True, inputs_sent=lambda: sent)
         for event in events:
             checker.feed(event)
         checker.finish()
@@ -140,9 +148,11 @@ def test_lifecycle_contract_rules() -> None:
 
 async def test_recorded_abnormal_close_is_replayed_as_one() -> None:
     """A socket the recording saw drop with 1011 ends its replay the same way, not as a clean close."""
-    dropped, resumed = await replay_codec_events(
-        CASSETTES_DIR / 'test_xai_ws' / 'test_session_resumption_after_drop.yaml'
+    # The xAI reconnect recording, whatever it is called: the test drops it with a 1011.
+    recording = next(
+        path for path in sorted((CASSETTES_DIR / 'test_xai_ws').glob('*.yaml')) if 'code: 1011' in path.read_text()
     )
+    dropped, resumed = await replay_codec_events(recording)
     assert isinstance(error := dropped[-1], RealtimeSessionErrorEvent)
     assert '1011' in error.message
     assert isinstance(error := resumed[-1], RealtimeSessionErrorEvent)
