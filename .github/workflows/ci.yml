@@ -484,6 +484,10 @@ jobs:
 
       - run: mkdir .coverage
 
+      - name: Install lxml build dependencies
+        if: matrix.python-version == '3.15'
+        run: sudo apt-get update && sudo apt-get install -y libxml2-dev libxslt1-dev
+
       - run: uv sync --only-dev
 
       - name: cache incremental coverage
@@ -591,6 +595,10 @@ jobs:
           cache-suffix: all-extras
 
       - run: mkdir .coverage
+
+      - name: Install lxml build dependencies
+        if: matrix.python-version == '3.15'
+        run: sudo apt-get update && sudo apt-get install -y libxml2-dev libxslt1-dev
 
       - run: uv sync --only-dev
 
