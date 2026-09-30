@@ -448,14 +448,15 @@ class TestPublicAgentPath:
             seen_instructions.append(_latest_instructions(messages))
             return ModelResponse(parts=[TextPart('done')])
 
-        await Agent(
+        agent: Agent[None, str] = Agent(
             FunctionModel(model),
             capabilities=[
                 Memory[None](store=store, guidance=guidance),
                 LocalWorkspace(tmp_path),
                 *([file_system] if file_system is not None else []),
             ],
-        ).run('go')
+        )
+        await agent.run('go')
 
         assert {'write_memory', 'delete_memory', 'search_memory'} <= seen_tools
         if case == 'present':

@@ -39,7 +39,7 @@ async def test_workspace_spill_uses_read_file(tmp_path: Path) -> None:
             )
         return ModelResponse(parts=[ToolCallPart('big_tool', {})])
 
-    agent = Agent(
+    agent: Agent[None, str] = Agent(
         FunctionModel(respond),
         capabilities=[
             ToolOutputLimits[None](bands=[Band(over=100, action=Spill())]),
@@ -73,7 +73,7 @@ async def test_reader_stays_for_spills_file_tools_cannot_return_whole(tmp_path: 
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart('big_tool', {})])
 
-    agent = Agent(
+    agent: Agent[None, str] = Agent(
         FunctionModel(respond),
         capabilities=[
             ToolOutputLimits[None](bands=[Band(over=100, action=Spill())]),
@@ -102,7 +102,7 @@ async def test_exact_spill_access_is_checked_before_reader_is_dropped(tmp_path: 
             return ModelResponse(parts=[TextPart('done')])
         return ModelResponse(parts=[ToolCallPart('big_tool', {})])
 
-    agent = Agent(
+    agent: Agent[None, str] = Agent(
         FunctionModel(respond),
         capabilities=[
             ToolOutputLimits[None](bands=[Band(over=100, action=Spill())]),
@@ -142,7 +142,7 @@ async def test_read_tool_result_stays_when_file_tools_cannot_replace_it(tmp_path
         offered.update(tool.name for tool in info.function_tools)
         return ModelResponse(parts=[TextPart('done')])
 
-    agent = Agent(
+    agent: Agent[None, str] = Agent(
         FunctionModel(respond),
         capabilities=[
             ToolOutputLimits[None](store=store),
