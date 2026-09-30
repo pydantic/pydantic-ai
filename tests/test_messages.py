@@ -1632,6 +1632,21 @@ def test_tool_return_content_nested_multimodal():
             id='empty-media-type',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report', 'media_type': None},
+            snapshot(ImageUrl(url='https://example.com/report')),
+            snapshot(
+                {
+                    'url': 'https://example.com/report',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'media_type': None,
+                    'kind': 'image-url',
+                    'identifier': '43ecae',
+                }
+            ),
+            id='null-media-type',
+        ),
+        pytest.param(
             {'kind': 'uploaded-file', 'file_id': 'file-1', 'provider_name': 'openai'},
             snapshot(UploadedFile(file_id='file-1', provider_name='openai')),
             snapshot(
@@ -1666,13 +1681,13 @@ def test_tool_return_content_nested_multimodal():
 def test_tool_return_url_items_rehydrate_only_with_media_type(
     content: dict[str, Any], expected: Any, expected_dump: Any
 ):
-    """A tool return reconstructs a URL item only from a mapping naming a media type, and it always dumps.
+    """A tool return reconstructs a URL item only from a mapping carrying `media_type`, and it always dumps.
 
-    `FileUrl` infers its media type from the URL when it was given none, and a URL with no usable
-    extension raises `Could not infer media type` on the *dump*, long after the load that built the
-    object ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)) — so the dump is
-    asserted for every case, because that is the leg the requirement buys. An empty `media_type` is
-    not one: `FileUrl` infers whenever it is falsy.
+    Every dump of ours writes `media_type` for a URL item: a non-empty string, or `null` for a URL whose
+    media type can't be inferred ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    A mapping without the key, or with an empty one, is what a tool built, and stays that mapping
+    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). The dump is asserted for every
+    case, so a reconstructed item is proven to dump again.
 
     The requirement stops at the URL kinds. `UploadedFile` falls back to `application/octet-stream`
     instead of raising and `BinaryContent.media_type` is a required field, so both keep rehydrating

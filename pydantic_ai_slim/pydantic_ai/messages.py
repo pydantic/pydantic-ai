@@ -1290,23 +1290,19 @@ class _RequireUrlMediaType:
     """The `MultiModalContent` arm of `ToolReturnContent`, with an explicit `media_type` required of its URL items.
 
     A tool return is arbitrary user data, so this arm has to separate a multimodal item we serialized
-    from a mapping a tool happened to build. For the four [`FileUrl`][pydantic_ai.messages.FileUrl]
-    kinds, `media_type` draws that line, because those are the items whose media type the URL alone
-    cannot always supply: `FileUrl.media_type` infers one from the URL when it was given none, and a
-    URL with no usable extension raises `Could not infer media type` wherever that media type is read
-    ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)). A dump writes `null` for
-    such a URL rather than reading it ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)),
-    so a URL mapping without a media type string either wasn't dumped by us or names no media type an
-    item could be rebuilt with: it stays a plain `Mapping` and reaches the caller with the keys its
-    tool put in it. An item reconstructed here brings its own media type and never reaches that
-    inference.
+    from a mapping a tool happened to build ([issue #4190](https://github.com/pydantic/pydantic-ai/issues/4190)).
+    For the four [`FileUrl`][pydantic_ai.messages.FileUrl] kinds, the `media_type` key draws that line,
+    because every dump of ours writes it: the media type given or inferred from the URL, or `null` for a
+    URL with no usable extension ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)),
+    which reconstructs into an item with no media type and dumps `null` again. A URL mapping without the
+    key wasn't dumped by us: it stays a plain `Mapping` and reaches the caller with the keys its tool put
+    in it.
 
-    Nothing is required of the other two kinds, which cannot fail that way and so keep rehydrating
-    from the fields they declare: `media_type` is a required field on `BinaryContent`, and
-    `UploadedFile.media_type` falls back to `application/octet-stream` instead of raising.
+    Nothing is required of the other two kinds, which keep rehydrating from the fields they declare:
+    `media_type` is a required field on `BinaryContent`, and `UploadedFile.media_type` falls back to
+    `application/octet-stream`.
 
-    The requirement is a *non-empty* string. `FileUrl` infers whenever `_media_type` is falsy, so `''`
-    would reconstruct an item with no media type after all, and no dump of ours writes one.
+    The key has to hold a *non-empty* string or `null`. No dump of ours writes `''`.
 
     The check is chained onto each URL choice of the tagged union rather than written as a validator,
     because any Python callable on this union is called once per node of the decoded payload — the cost
@@ -1345,7 +1341,7 @@ class _RequireUrlMediaType:
         mapping_naming_its_media_type = pydantic_core.core_schema.typed_dict_schema(
             {
                 'media_type': pydantic_core.core_schema.typed_dict_field(
-                    pydantic_core.core_schema.str_schema(min_length=1)
+                    pydantic_core.core_schema.nullable_schema(pydantic_core.core_schema.str_schema(min_length=1))
                 )
             },
             extra_behavior='allow',
