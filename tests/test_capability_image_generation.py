@@ -514,10 +514,20 @@ class TestImageGenerationCapability:
         with pytest.raises(UserError, match=r'`local=True` is not supported'):
             ImageGeneration(local=True)  # pyright: ignore[reportArgumentType]
 
-    @pytest.mark.parametrize('local', [False, True, 'duckduckgo'])
-    def test_image_generation_native_false_rejects_an_invalid_local_without_a_settings_notice(self, local: bool | str):
+    @pytest.mark.parametrize(
+        ('local', 'error'),
+        [
+            (False, 'both `native` and `local` cannot be False'),
+            (True, 'is not supported'),
+            ('duckduckgo', 'is not supported'),
+        ],
+    )
+    def test_image_generation_native_false_rejects_an_invalid_local_without_a_settings_notice(
+        self, local: bool | str, error: str
+    ):
         """An invalid `local` is refused outright, not first reported as a tool that ignores the capability's settings."""
-        with pytest.raises(UserError):
+        # `filterwarnings = ['error']` turns a notice emitted first into the failure this test guards against.
+        with pytest.raises(UserError, match=error):
             ImageGeneration(native=False, local=local, quality='high')  # pyright: ignore[reportArgumentType]
 
     def test_image_generation_rejects_a_local_strategy_string(self):

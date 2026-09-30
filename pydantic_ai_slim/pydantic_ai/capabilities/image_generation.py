@@ -72,7 +72,8 @@ def _routed_profiles(model: AbstractModel | None) -> Iterator[tuple[str, ModelPr
     has no profile of its own and prepares each request against the model it tries, so each of its
     models is read instead. A wrapper's profile is the one its requests are prepared against --
     `TemporalModel`'s is whichever model `using_model()` selected, not `wrapped` -- so it is read
-    too, unless it forwards to a `FallbackModel` and raises. Only a regular `Model` has a profile.
+    too; when it raises because that model is a `FallbackModel`, only a plain forwarding wrapper's
+    `wrapped` is walked. Only a regular `Model` has a profile.
     """
     if isinstance(model, FallbackModel):
         for inner in model.models:
@@ -81,11 +82,12 @@ def _routed_profiles(model: AbstractModel | None) -> Iterator[tuple[str, ModelPr
         try:
             profile = model.profile
         except NotImplementedError:
-            # Forwarded to a model with no profile. That is `wrapped` unless the wrapper selected
-            # another one for this run -- `TemporalModel.using_model()` does, and its `model_id`
-            # names the selection -- so a `wrapped` that isn't the selection says nothing rather
-            # than standing in for the model that is, whose members nothing public exposes.
-            if model.model_id == model.wrapped.model_id:
+            # Forwarded to a model with no profile. Only `WrapperModel`'s own `profile` is known to
+            # forward to `wrapped`; an override may select another model for this run
+            # (`TemporalModel.using_model()` does), and nothing public says which, not even
+            # `model_id`, which two differently routed `FallbackModel`s can share. So an override
+            # says nothing rather than letting `wrapped` stand in for the model that runs.
+            if type(model).profile is WrapperModel.profile:
                 yield from _routed_profiles(model.wrapped)
         else:
             yield model.model_name, profile

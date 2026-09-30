@@ -3271,10 +3271,15 @@ async def test_image_generation_prepare_function_reads_the_model_temporal_select
         assert inspect.isawaitable(prepared)
         await prepared
 
-    # A selected `FallbackModel` has no profile, and nothing public says which of its models runs, so
-    # the notice says nothing rather than reading the default in its place -- including a default
-    # that is itself a `FallbackModel`, whose members would otherwise stand in for the selected one's.
-    for default in (no_native, FallbackModel(no_native)):
+    # A current `FallbackModel` has no profile, and nothing public says which model is current or
+    # which of its members runs -- a registered selection can share the default's `model_id` -- so
+    # the notice says nothing rather than reading `wrapped` in its place, whether the selection is a
+    # registered `FallbackModel` or the default one.
+    for default, selection in (
+        (no_native, 'fallback'),
+        (FallbackModel(no_native), 'fallback'),
+        (FallbackModel(no_native), None),
+    ):
         registry_model = TemporalModel(
             default,
             activity_name_prefix='image_generation_selected_fallback',
@@ -3283,7 +3288,7 @@ async def test_image_generation_prepare_function_reads_the_model_temporal_select
             models={'fallback': FallbackModel(native)},
         )
         registry_ctx = RunContext(deps=None, model=registry_model, usage=RunUsage(), run_id='run-123')
-        with registry_model.using_model('fallback'):
+        with registry_model.using_model(selection):
             for toolset in (quality_toolset, dimensions_toolset):
                 prepared = toolset.prepare_func(registry_ctx, [tool_def])
                 assert inspect.isawaitable(prepared)
