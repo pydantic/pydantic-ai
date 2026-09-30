@@ -26,6 +26,7 @@ CURATED = {
     'persistence',
     'logfire',
     'notifications',
+    'herdr',
     'mcp',
     'day_ai',
     'ordinal',
@@ -40,6 +41,7 @@ CURATED = {
     'linear',
 }
 OPT_IN = {
+    'herdr',
     'day_ai',
     'github',
     'google_workspace',

@@ -35,6 +35,7 @@ from pydantic_clai2.plugins import (
     TurnStart,
     bare_screen,
 )
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
@@ -236,6 +237,15 @@ class PluginLoader(Generic[DepsT]):
         shipped = sorted((entry for entry in entries if entry.name in order), key=lambda entry: order[entry.name])
         return [*shipped, *(entry for entry in entries if entry.name not in order)]
 
+    def _ensure_plugins_dir(self) -> None:
+        """Create the drop-in folder, so installing a plugin is one copy into a folder that already exists."""
+        try:
+            self._store.plugins_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._console.print(
+                f'Cannot create the plugins folder: {exc}', style=theme.color(theme.ERROR), markup=False
+            )
+
     def _discover(self) -> dict[str, Path]:
         folder = self._store.plugins_dir
         if not folder.is_dir():
@@ -293,6 +303,8 @@ class PluginLoader(Generic[DepsT]):
         version, is skipped quietly: `/plugins list` still shows the failure. Loading it explicitly
         with `/plugins enable`, `add`, or `reload` still raises.
         """
+        if self.enabled:
+            self._ensure_plugins_dir()
         for entry in self._registration_order():
             if entry.declaration.enabled and entry.host is None:
                 try:
@@ -404,18 +416,21 @@ class PluginLoader(Generic[DepsT]):
     async def enable(self, name: str) -> None:
         """Remember the plugin as enabled and load it now."""
         entry = self._entry(name)
+        _requested('enable', name)
         self._store.save_plugin(entry.declaration.model_copy(update={'enabled': True}))
         await self.load(name)
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now and remember it as disabled."""
         entry = self._entry(name)
+        _requested('disable', name)
         await self.unload(name)
         self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}))
 
     async def remove(self, name: str) -> str:
         """Unload the plugin and forget its saved declaration; a shipped declaration comes back as declared."""
         entry = self._entry(name)
+        _requested('remove', name)
         await self.unload(name)
         if entry.path is not None and not entry.shipped:
             self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}))
@@ -433,12 +448,14 @@ class PluginLoader(Generic[DepsT]):
         """Unload, re-import the module, and load again."""
         if not self._entry(name).declaration.enabled:
             raise ValueError(f'Plugin {name} is disabled; enable it before reloading.')
+        _requested('reload', name)
         await self.unload(name)
         await self.load(name, fresh=True)
 
     async def configure(self, name: str) -> str:
         """Open the plugin's settings menu, then load it again if its saved settings changed."""
         host = self._entry(name).host
+        _requested('configure', name)
         if host is None:
             raise ValueError(f'Plugin {name} is not loaded; enable it before configuring.')
         if host.configurer is None:
@@ -492,6 +509,7 @@ class PluginLoader(Generic[DepsT]):
                 self._store.save_plugin(self._staged.pop(rest[0]))
                 raise
             self._store.save_plugin(self._staged.pop(rest[0]))
+            _requested('add', rest[0])
             if existing is None:
                 return await self._configure_new(rest[0], f'Added and loaded {rest[0]}.')
             kind = 'project' if existing.project else 'built-in'
@@ -526,6 +544,11 @@ class PluginLoader(Generic[DepsT]):
         module_name = entry.declaration.factory.partition(':')[0]
         module = importlib.import_module(module_name)
         return importlib.reload(module) if fresh else module
+
+
+def _requested(action: str, name: str) -> None:
+    """UI telemetry for an action on a plugin known to exist (never a mistyped name), before disabling `logfire`."""
+    telemetry.record('plugin {plugin} {action}', plugin=name, action=action)
 
 
 def _module_absent(entry: PluginEntry[DepsT], error: BaseException) -> bool:

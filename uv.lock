@@ -45,7 +45,7 @@ pydantic-monty = false
 pydantic-monty-client = false
 pydantic-monty-runtime = false
 pydantic-settings = false
-termflow-md = "2026-09-24T16:36:46Z"
+termflow-md = "2026-09-30T15:58:29Z"
 
 [manifest]
 members = [
@@ -6861,7 +6861,7 @@ requires-dist = [
     { name = "pydantic-monty", specifier = ">=1.0.0,<2" },
     { name = "pyfiglet", specifier = ">=1.0.4" },
     { name = "rich", specifier = ">=14" },
-    { name = "termflow-md", specifier = ">=0.9.3,<0.10" },
+    { name = "termflow-md", specifier = ">=0.11.0,<0.12" },
 ]
 provides-extras = ["typesafe"]
 
@@ -8893,15 +8893,16 @@ wheels = [
 
 [[package]]
 name = "termflow-md"
-version = "0.9.3"
+version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pygments" },
     { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "wcwidth" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/5c/45/3d38b72453163c005e0c29c53875d81243b4339a27dbab4c4f67ff835da6/termflow_md-0.11.0.tar.gz", hash = "sha256:25706c43d80c9ddb1cad971a559f834abe89680f20887d4f5735e9968cef9e5a", size = 182364, upload-time = "2026-09-30T15:58:28.403Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/93/d6b95a69eece72a79c3bd92e28cc48d6c7493b9d720ff244ddc9885681ba/termflow_md-0.9.3-py3-none-any.whl", hash = "sha256:569f1ac99d466d1ddd91ec057139965864ffb678da6d0f9da30ee4a458c9f6fb", size = 95796, upload-time = "2026-09-24T16:36:45.369Z" },
+    { url = "https://files.pythonhosted.org/packages/66/bd/0b0b500fd09318dc35b2dfe2ca4405de6f6ba91f969736ba7eaa83b18562/termflow_md-0.11.0-py3-none-any.whl", hash = "sha256:05661df6235c73de34540d11faf6bf06bd7470496621a9cb84de40bf31e48767", size = 105318, upload-time = "2026-09-30T15:58:27.154Z" },
 ]
 
 [[package]]
