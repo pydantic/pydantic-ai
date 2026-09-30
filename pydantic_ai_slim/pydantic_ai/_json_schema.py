@@ -99,7 +99,11 @@ class JsonSchemaTransformer(ABC):
             # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
             # We try to use whatever the original root key was, but if it is already in use,
             # we modify it to avoid collisions.
-            defs = {key: deepcopy(self._walked_def(key)) for key in self.recursive_refs}
+            # Walking a definition can find more recursive refs, when a `$ref`'s sibling keywords first reached it.
+            defs: dict[str, JsonSchema] = {}
+            while pending := [key for key in self.recursive_refs if key not in defs]:
+                for key in pending:
+                    defs[key] = deepcopy(self._walked_def(key))
             root_ref = self.schema.get('$ref')
             root_key = None if root_ref is None else _DEFS_REF_PREFIX.sub('', root_ref)
             if root_key is None:
@@ -142,9 +146,9 @@ class JsonSchemaTransformer(ABC):
             # `properties`, `items` etc. also apply when `type` is absent or a list admitting objects or arrays,
             # like `['object', 'null']`, and `walk()` drops `$defs` when inlining, so their `$ref`s must be walked
             # or they dangle.
-            if (type_ is None or 'object' in type_) and self._has_inlinable_refs(schema, _OBJECT_KEYWORDS):
+            if (type_ is None or 'object' in type_) and self._should_walk_untyped_keywords(schema, _OBJECT_KEYWORDS):
                 schema = self._handle_object(schema)
-            if (type_ is None or 'array' in type_) and self._has_inlinable_refs(schema, _ARRAY_KEYWORDS):
+            if (type_ is None or 'array' in type_) and self._should_walk_untyped_keywords(schema, _ARRAY_KEYWORDS):
                 schema = self._handle_array(schema)
 
         if type_ is None:
@@ -158,7 +162,7 @@ class JsonSchemaTransformer(ABC):
         # Apply the base transform
         return self.transform(schema)
 
-    def _has_inlinable_refs(self, schema: JsonSchema, keywords: tuple[str, ...]) -> bool:
+    def _should_walk_untyped_keywords(self, schema: JsonSchema, keywords: tuple[str, ...]) -> bool:
         """Whether to walk `keywords`, which the node's `type` doesn't name.
 
         Only a `$ref` into `$defs`, which `walk()` drops, needs it. Otherwise they're left exactly as written,
@@ -166,7 +170,10 @@ class JsonSchemaTransformer(ABC):
         a `$ref` under them, or in a definition one points at, can't be resolved, since walking raises on it.
         When they are walked, it's all of them, exactly as under a matching `type`.
         """
-        pending: list[JsonValue] = [schema[keyword] for keyword in keywords if keyword in schema]
+        return bool(self._reachable_defs([schema[keyword] for keyword in keywords if keyword in schema]))
+
+    def _reachable_defs(self, pending: list[JsonValue]) -> set[str] | None:
+        """The definitions the `$ref`s in `pending` reach, also through each other, or `None` if one can't be resolved."""
         seen: set[str] = set()
         while pending:
             node = pending.pop()
@@ -177,12 +184,12 @@ class JsonSchemaTransformer(ABC):
                     key = _DEFS_REF_PREFIX.sub('', ref)
                     # A boolean definition is valid JSON Schema, but `_walk_def` can only merge a dict.
                     if not isinstance(definition := self.defs.get(key), dict):
-                        return False
+                        return None
                     if key not in seen:
                         seen.add(key)
                         pending.append(definition)
                 pending.extend(node.values())
-        return bool(seen)
+        return seen
 
     def _walked_def(self, key: str) -> JsonSchema:
         """The definition `key` refers to, walked once per transformer and cached.

@@ -662,6 +662,30 @@ def test_only_inlining_transformers_walk_untyped_keywords(schema: dict[str, Any]
     assert keeping.titles == []
 
 
+@pytest.mark.parametrize('k_type', [pytest.param({}, id='typeless'), pytest.param({'type': 'object'}, id='typed')])
+def test_inline_defs_recursive_def_first_reached_through_ref_siblings(k_type: dict[str, Any]):
+    """A recursive definition found only while emitting the recursive ones still gets emitted.
+
+    `K` is first reached through a `$ref` whose sibling `properties` replace its own, so its `a` (and the
+    recursive `L` behind it) is only walked when `walk()` emits `K`. Not a VCR test: the walk raised before
+    any request was built.
+    """
+    schema = {
+        '$defs': {
+            'K': {**k_type, 'properties': {'a': {'$ref': '#/$defs/L'}}},
+            'L': {'type': 'object', 'properties': {'l': {'$ref': '#/$defs/L'}}},
+        },
+        'type': 'object',
+        'properties': {'x': {'$ref': '#/$defs/K', 'properties': {'self': {'$ref': '#/$defs/K'}}}},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    assert result['$ref'] == '#/$defs/root'
+    assert set(result['$defs']) == {'K', 'L', 'root'}
+    assert result['$defs']['K']['properties']['a'] == {'type': 'object', 'properties': {'l': {'$ref': '#/$defs/L'}}}
+
+
 INTEGER: dict[str, Any] = {'type': 'integer'}
 
 
