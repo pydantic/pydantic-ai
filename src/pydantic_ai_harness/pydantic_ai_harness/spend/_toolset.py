@@ -28,6 +28,6 @@ def build_toolset(limits: SpendLimits[AgentDepsT]) -> FunctionToolset[AgentDepsT
         )
 
     toolset_id = limits.id
-    if toolset_id is None or toolset_id == 'spend_limits':
+    if toolset_id is None:
         toolset_id = 'spend'
     return FunctionToolset[AgentDepsT]([get_spend], id=toolset_id)

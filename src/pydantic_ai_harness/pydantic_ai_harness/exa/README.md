@@ -283,9 +283,9 @@ from pydantic_ai_harness import ExaSearch
 agent = Agent(
     'anthropic:claude-sonnet-4-6',
     capabilities=[
-        ExaSearch(),  # web_search, get_page
+        ExaSearch(id='exa_open_web'),  # web_search, get_page
         PrefixTools(
-            wrapped=ExaSearch(include_domains=['crunchbase.com'], guidance=''),
+            wrapped=ExaSearch(id='exa_crunchbase', include_domains=['crunchbase.com'], guidance=''),
             prefix='cb',
         ),  # cb_web_search, cb_get_page
     ],
@@ -294,7 +294,9 @@ agent = Agent(
 
 Set `guidance=''` on the wrapped instance (or replace it with text that tells
 the model when to use the prefixed tools), since each instance otherwise
-contributes the same default research guidance.
+contributes the same default research guidance. Give each instance a distinct
+`id` when using the tools with a durable execution capability, so each toolset
+gets its own stable activity identity.
 
 This also works for `ExaAgent`: it identifies its deferred calls by metadata
 it wrote when deferring, not by tool name, so a prefixed `exa_agent` still
