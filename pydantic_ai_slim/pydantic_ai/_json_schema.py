@@ -13,6 +13,7 @@ from .exceptions import UserError
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
+_DEFS_REF_PREFIX = re.compile(r'^#/\$defs/')
 _OBJECT_KEYWORDS = ('properties', 'additionalProperties', 'patternProperties')
 _ARRAY_KEYWORDS = ('items', 'prefixItems')
 
@@ -100,7 +101,7 @@ class JsonSchemaTransformer(ABC):
             # we modify it to avoid collisions.
             defs = {key: deepcopy(self._walked_def(key)) for key in self.recursive_refs}
             root_ref = self.schema.get('$ref')
-            root_key = None if root_ref is None else re.sub(r'^#/\$defs/', '', root_ref)
+            root_key = None if root_ref is None else _DEFS_REF_PREFIX.sub('', root_ref)
             if root_key is None:
                 root_key = self.schema.get('title', 'root')
                 while root_key in defs:
@@ -112,12 +113,12 @@ class JsonSchemaTransformer(ABC):
 
         return handled
 
-    def _handle(self, schema: _JsonSchemaNode) -> _JsonSchemaNode:  # noqa: C901
+    def _handle(self, schema: _JsonSchemaNode) -> _JsonSchemaNode:
         if isinstance(schema, bool):
             return schema
 
         if self.prefer_inlined_defs and (ref := schema.get('$ref')):
-            key = re.sub(r'^#/\$defs/', '', ref)
+            key = _DEFS_REF_PREFIX.sub('', ref)
             if key in self.refs_stack:
                 # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
                 self.recursive_refs.add(key)
@@ -137,25 +138,20 @@ class JsonSchemaTransformer(ABC):
             schema = self._handle_object(schema)
         elif type_ == 'array':
             schema = self._handle_array(schema)
-        elif type_ is None:
-            # `properties`, `items` etc. apply without an explicit `type`, and `walk()` drops `$defs`
-            # when inlining, so an object- or array-shaped typeless node must be walked or its `$ref`s dangle.
-            if self.prefer_inlined_defs:
-                if self._has_inlinable_refs(schema, _OBJECT_KEYWORDS):
-                    schema = self._handle_object(schema)
-                if self._has_inlinable_refs(schema, _ARRAY_KEYWORDS):
-                    schema = self._handle_array(schema)
+        elif self.prefer_inlined_defs and (type_ is None or isinstance(type_, list)):
+            # `properties`, `items` etc. also apply when `type` is absent or a list admitting objects or arrays,
+            # like `['object', 'null']`, and `walk()` drops `$defs` when inlining, so their `$ref`s must be walked
+            # or they dangle.
+            if (type_ is None or 'object' in type_) and self._has_inlinable_refs(schema, _OBJECT_KEYWORDS):
+                schema = self._handle_object(schema)
+            if (type_ is None or 'array' in type_) and self._has_inlinable_refs(schema, _ARRAY_KEYWORDS):
+                schema = self._handle_array(schema)
+
+        if type_ is None:
             schema = self._handle_union(schema, 'allOf')
             schema = self._handle_union(schema, 'anyOf')
             schema = self._handle_union(schema, 'oneOf')
-        elif self.prefer_inlined_defs and isinstance(type_, list):
-            # Same for a `type` list that admits objects or arrays, like `['object', 'null']`.
-            if 'object' in type_ and self._has_inlinable_refs(schema, _OBJECT_KEYWORDS):
-                schema = self._handle_object(schema)
-            if 'array' in type_ and self._has_inlinable_refs(schema, _ARRAY_KEYWORDS):
-                schema = self._handle_array(schema)
-
-        if type_ is not None:
+        else:
             for union_kind in ('allOf', 'anyOf', 'oneOf'):
                 if members := schema.get(union_kind):
                     schema[union_kind] = [self._handle(member) for member in members]
@@ -168,6 +164,7 @@ class JsonSchemaTransformer(ABC):
         Only a `$ref` into `$defs`, which `walk()` drops, needs it. Otherwise they're left exactly as written,
         since walking reshapes a subtree (single-member unions collapse, `transform()` runs). So are they when
         a `$ref` under them, or in a definition one points at, can't be resolved, since walking raises on it.
+        When they are walked, it's all of them, exactly as under a matching `type`.
         """
         pending: list[JsonValue] = [schema[keyword] for keyword in keywords if keyword in schema]
         seen: set[str] = set()
@@ -177,7 +174,7 @@ class JsonSchemaTransformer(ABC):
                 pending.extend(node)
             elif isinstance(node, dict):
                 if isinstance(ref := node.get('$ref'), str):
-                    key = re.sub(r'^#/\$defs/', '', ref)
+                    key = _DEFS_REF_PREFIX.sub('', ref)
                     if key not in self.defs:
                         return False
                     if key not in seen:

@@ -698,9 +698,10 @@ def test_inline_defs_leaves_untyped_keywords_it_cannot_or_need_not_inline(schema
     """Keywords the node's `type` doesn't name go out as written unless they hold a `$ref` into `$defs`, all resolvable.
 
     Walking them would reshape what needs no inlining (a single-member `allOf` collapses into its parent,
-    whose `properties` win, dropping `max`), and would raise on a `$ref` the walk can't resolve, which
-    the provider may resolve itself. Not a VCR test: cassettes match on method and URI, so a reshaped
-    request body would still replay.
+    whose `properties` win, dropping `max`), and would raise on a `$ref` the walk can't resolve, like `#`,
+    which the schema sent as is still resolves. When one sits in a definition the keywords point at, the
+    `$ref` into `$defs` is left as it was too, since inlining it would walk the definition and raise. Not
+    a VCR test: cassettes match on method and URI, so a reshaped request body would still replay.
     """
     assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == {k: v for k, v in schema.items() if k != '$defs'}
 

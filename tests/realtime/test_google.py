@@ -481,7 +481,8 @@ def test_tool_def_accepts_a_recursive_map(kids: dict[str, Any]) -> None:
     """A map's value schema never reaches Gemini, so a recursive `$ref` in it doesn't refuse the tool.
 
     `additionalProperties` is dropped because Gemini mishandles it, and `Schema` has no
-    `patternProperties`, so the map arrives empty like any other `dict` field.
+    `patternProperties`, so the map arrives empty like any other `dict` field. Not a cassette test: the
+    declaration is built before a session opens, into the same shape `counts` sends in the test above.
     """
     tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
         ToolDefinition(
