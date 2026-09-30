@@ -11,6 +11,7 @@ from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
@@ -292,9 +293,35 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         self.add_function(self.delete_memory, name='delete_memory')
         self.add_function(self.search_memory, name='search_memory')
 
+    async def _for_tool_call(self, ctx: RunContext[AgentDepsT]) -> Memory[AgentDepsT]:
+        """Use the whole run-local capability, including settings overridden by `for_run`."""
+        from pydantic_ai_harness.memory._capability import Memory
+
+        selected: Memory[AgentDepsT] | None = None
+
+        def select(capability: AbstractCapability[AgentDepsT]) -> None:
+            nonlocal selected
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if not isinstance(capability, Memory):
+                return
+            # Run copies share the leaf even when `get_toolset` creates a fresh wrapper.
+            if capability._toolset is self._capability._toolset:  # pyright: ignore[reportPrivateUsage]
+                selected = capability
+
+        if ctx.root_capability is not None:
+            ctx.root_capability.apply(select)
+        if selected is None:
+            return self._capability
+        # A worker's context carries the construction-time chain, not the run's clone.
+        if selected._resolved_scope is None:  # pyright: ignore[reportPrivateUsage]
+            return await selected.for_run(ctx)
+        return selected
+
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         tools = await super().get_tools(ctx)
-        store, _ = self._capability.resolve_scope(ctx)
+        capability = await self._for_tool_call(ctx)
+        store, _ = capability.resolve_scope(ctx)
         # A store with its own workspace need not inherit the run's read-only policy.
         if isinstance(store, FileStore) and store.workspace is None and ctx.workspace.read_only:
             return {name: tool for name, tool in tools.items() if name not in {'write_memory', 'delete_memory'}}
@@ -321,7 +348,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             file: Memory filename; defaults to `MEMORY.md`.
             old_text: Exact passage to replace, which must occur once.
         """
-        capability = self._capability
+        capability = await self._for_tool_call(ctx)
         name = normalize_filename(file)
         if old_text is None and not content.strip():
             raise ModelRetry('Nothing to write -- pass the text to append, or `old_text` to replace.')
@@ -394,13 +421,14 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             file: Memory filename returned by injection or search.
         """
         name = normalize_filename(file)
-        store, scope = self._capability.resolve_scope(ctx)
+        capability = await self._for_tool_call(ctx)
+        store, scope = capability.resolve_scope(ctx)
         with ctx.tracer.start_as_current_span(
             'memory.read', record_exception=False, set_status_on_exception=False
         ) as span:
             _set_span_base(span, store, _scope_hash(scope))
             try:
-                memory_file = await store.read(f'{scope}/{name}', max_chars=self._capability.max_memory_size)
+                memory_file = await store.read(f'{scope}/{name}', max_chars=capability.max_memory_size)
                 if memory_file is None:
                     _set_span_result(span, 'not_found')
                     raise ModelRetry(
@@ -428,7 +456,8 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         name = normalize_filename(file)
         if name == MAIN_FILENAME:
             raise ModelRetry(f'{MAIN_FILENAME} is the main notebook; edit it with `write_memory` instead.')
-        store, scope = self._capability.resolve_scope(ctx)
+        capability = await self._for_tool_call(ctx)
+        store, scope = capability.resolve_scope(ctx)
         path = f'{scope}/{name}'
         operation = _operation(ctx, scope, 'delete', path, {'file': file})
         with ctx.tracer.start_as_current_span(
@@ -479,7 +508,7 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
             query: Terms to find in memory filenames and content.
         """
         query = _normalize_search_query(query)
-        capability = self._capability
+        capability = await self._for_tool_call(ctx)
         store, scope = capability.resolve_scope(ctx)
         prefix = f'{scope}/'
         with ctx.tracer.start_as_current_span(
