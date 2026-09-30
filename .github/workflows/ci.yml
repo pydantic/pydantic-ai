@@ -533,7 +533,7 @@ jobs:
   # optional dependency -- so it gets its own job, split into shards, instead of sharing the
   # `test` job's timeout budget with the three much lighter install shapes.
   test-all-extras:
-    name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{ matrix.python-version == '3.10' && 3 || 2 }})
+    name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{ matrix.python-version == '3.10' && 4 || 2 }})
     needs: classify
     if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
@@ -544,10 +544,12 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         shard: [1, 2]
         include:
-          # The third 3.10 shard `SPLITS` accounts for; `shard: 3` matches no base combination,
-          # so this adds a cell rather than overriding one.
+          # The extra 3.10 shards `SPLITS` accounts for. Neither `shard` value matches a base
+          # combination, so each adds a cell rather than overriding one.
           - python-version: "3.10"
             shard: 3
+          - python-version: "3.10"
+            shard: 4
     env:
       CI: true
       # Collect every shard on 3.14, where coverage uses the faster sys.monitoring core, plus
@@ -559,10 +561,13 @@ jobs:
       # `coverage` came to 99.97%), and coverage's cheap `sys.monitoring` core does not measure
       # branches before 3.14, so no pre-3.14 cell can avoid the legacy tracer.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.10' }}
-      # That tracer costs 3.10 roughly 250s a shard, which is irreducible -- so divide it. Three
-      # ways puts each 3.10 shard near the ~400s its two-way siblings run, which is where this
-      # stops: a fourth would make the matrix's most expensive cell its cheapest.
-      SPLITS: ${{ matrix.python-version == '3.10' && 3 || 2 }}
+      # That tracer more than doubles what these cells run and the gap grows with the suite: on
+      # run 36695601609 the 3.10 shards took 1047s and 1098s where their two-way siblings took
+      # 359-503s and the same shard without coverage (3.10 lowest-versions) took 484s. It cannot
+      # be removed, so divide it. Four ways puts each 3.10 shard around 540s, under the ~643s
+      # `test-lowest-versions` shard 2 runs; a fifth buys no wall-clock time until that one is
+      # split further, so this stops at four.
+      SPLITS: ${{ matrix.python-version == '3.10' && 4 || 2 }}
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
       # compatible version; re-enable if a shard then stays comfortably within its timeout.
       BLOCKBUSTER_ENABLED: false
@@ -636,7 +641,7 @@ jobs:
       # so this, the slowest install shape, keeps pace with the rest of the matrix. The split is
       # by test count, not measured duration -- no `.test_durations` file is committed -- so
       # rebalance with `--store-durations` if `ci_duration.py`'s report shows the shards
-      # drifting apart. `pytest-split` repartitions when `--splits` changes, so 3.10's three
+      # drifting apart. `pytest-split` repartitions when `--splits` changes, so 3.10's four
       # shards hold a different partition than the other versions' two; every test still runs
       # exactly once per version, but a shard is only comparable to the same version's.
       # Everything under `tests/durable_exec` and every test marked `temporal` runs in
