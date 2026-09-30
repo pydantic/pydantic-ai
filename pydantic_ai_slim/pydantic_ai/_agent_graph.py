@@ -71,6 +71,7 @@ from ._run_context import (
 )
 from .exceptions import ToolRetryError
 from .messages import (
+    _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _clean_message_history,  # pyright: ignore[reportPrivateUsage]
     _repair_dangling_tool_calls,  # pyright: ignore[reportPrivateUsage]
 )
@@ -121,7 +122,6 @@ __all__ = (
 T = TypeVar('T')
 S = TypeVar('S')
 NoneType = type(None)
-_PYDANTIC_AI_METADATA_KEY = '__pydantic_ai__'
 EndStrategy = Literal['early', 'graceful', 'exhaustive']
 """How to handle function tool calls a model requests alongside a result that ends the run.
 
