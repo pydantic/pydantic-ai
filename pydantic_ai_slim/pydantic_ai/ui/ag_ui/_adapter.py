@@ -57,7 +57,13 @@ from ...tools import (
     DeferredToolResults,
 )
 from ...toolsets import AbstractToolset
-from .._adapter import compaction_part_from_payload, compaction_payload, tool_availability_delta_from_payload
+from .._adapter import (
+    DEFAULT_ALLOWED_CONTENT_TYPES,
+    compaction_part_from_payload,
+    compaction_payload,
+    tool_availability_delta_from_payload,
+)
+from .._utils import get_ui_message_id, set_ui_message_id
 
 try:
     from ag_ui.core import (
@@ -237,14 +243,14 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
     ag_ui_version: str = DEFAULT_AG_UI_VERSION
     """AG-UI protocol version controlling behavior thresholds.
 
-    Accepts any version string (e.g. `'0.1.13'`). Defaults to the version detected from
+    Accepts any version string (e.g. `'0.1.11'`). Defaults to the version detected from
     the installed `ag-ui-protocol` package.
 
     Known thresholds:
 
-    - `< 0.1.13`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
+    - `< 0.1.11`: emits `THINKING_*` events during streaming, drops `ThinkingPart`
       from `dump_messages` output.
-    - `>= 0.1.13`: emits `REASONING_*` events with encrypted metadata during streaming, and
+    - `>= 0.1.11`: emits `REASONING_*` events with encrypted metadata during streaming, and
       includes `ThinkingPart` as `ReasoningMessage` in `dump_messages` output for full round-trip
       fidelity of thinking signatures and provider metadata.
     - `>= 0.1.15`: emits typed multimodal input content (`ImageInputContent`, `AudioInputContent`,
@@ -317,6 +323,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
         allowed_file_url_force_download: frozenset[ForceDownloadMode] = frozenset(),
         allow_uploaded_files: bool = False,
+        allowed_content_types: frozenset[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
         **kwargs: Any,
     ) -> AGUIAdapter[AgentDepsT, OutputDataT]:
         """Extends [`from_request`][pydantic_ai.ui.UIAdapter.from_request] with AG-UI-specific parameters."""
@@ -329,6 +336,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             allowed_file_url_schemes=allowed_file_url_schemes,
             allowed_file_url_force_download=allowed_file_url_force_download,
             allow_uploaded_files=allow_uploaded_files,
+            allowed_content_types=allowed_content_types,
             **kwargs,
         )
 
@@ -402,6 +410,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         # onward; older versions drop the client's claim, so the field is only read when present.
         use_encrypted_value = parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION
         for msg in messages:
+            checkpoint = builder.checkpoint()
             match msg:
                 case UserMessage(content=content):
                     if isinstance(content, str):
@@ -632,6 +641,17 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                         stacklevel=2,
                     )
 
+            # Keep the AG-UI message id for `dump_messages`. `ModelRequest`/`ModelResponse` have no id
+            # field, so it goes in the metadata of the message the parts above landed in. That may be a new
+            # message or the previous one extended, and some AG-UI messages add no parts at all, so ask the
+            # builder rather than assume the tail. An AG-UI message lands in a request or a response, never
+            # both (an `ActivityMessage` can be either), so whichever lookup answers is the one.
+            target = builder.last_modified(checkpoint, of_type=ModelRequest) or builder.last_modified(
+                checkpoint, of_type=ModelResponse
+            )
+            if target is not None:
+                set_ui_message_id(target, msg.id)
+
         # Parts above are built as base `ToolCallPart`/`ToolReturnPart`/`NativeTool*Part` carrying a
         # `tool_kind` claim; promote them to their typed subclasses in one best-effort pass.
         return narrow_message_parts(builder.messages)
@@ -778,9 +798,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         tool_messages: list[ToolMessage] = []
 
         version = parse_ag_ui_version(ag_ui_version)
-        # `ReasoningMessage` is a REASONING_* type (0.1.13+); the `tool_kind` carrier
-        # `ToolCall`/`ToolMessage.encrypted_value` landed earlier in 0.1.11 — see
-        # `tool_kind_encrypted_value`.
+        # `ReasoningMessage` and the `tool_kind` carrier `ToolCall`/`ToolMessage.encrypted_value`
+        # both landed in 0.1.11, so these two thresholds coincide — see `tool_kind_encrypted_value`.
         use_reasoning = version >= REASONING_VERSION
         use_encrypted_value = version >= ENCRYPTED_VALUE_VERSION
 
@@ -909,6 +928,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         Note: The round-trip `dump_messages` -> `load_messages` is not fully lossless:
 
+        - `ModelRequest.metadata` and top-level `ModelResponse.provider_details` are lost. AG-UI has
+          no trusted message-level carrier for framework or provider state; general client-controlled
+          metadata must not be restored as server-side state. The one thing `load_messages` keeps in
+          the reserved `__pydantic_ai__` namespace is the AG-UI message id, which comes back on the
+          last message dumped from each `ModelMessage`.
         - `TextPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
@@ -941,8 +965,8 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           when `preserve_file_data=True`, which reloads as a separate `UserPromptPart`.
         - `MultiModalContent` items in `ToolReturnPart`/`NativeToolReturnPart.content` always round-trip,
           regardless of `preserve_file_data`: the full content (files as base64/URL dicts) is serialized
-          inline into the JSON `ToolMessage.content` and rehydrated on reload via the `ToolReturnContent`
-          discriminator. The same serialization is used for both history (`dump_messages`) and the live
+          inline into the JSON `ToolMessage.content` and rehydrated on reload through the `ToolReturnContent`
+          union. The same serialization is used for both history (`dump_messages`) and the live
           event stream (`ToolCallResultEvent.content`), so files survive either round-trip.
         - Part ordering within a `ModelResponse` may change when text follows tool calls.
 
@@ -967,15 +991,20 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
 
         for msg in messages:
             if isinstance(msg, ModelRequest):
-                request_messages = cls._dump_request_parts(
+                dumped = cls._dump_request_parts(
                     msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
                 )
-                result.extend(request_messages)
             elif isinstance(msg, ModelResponse):
-                result.extend(
-                    cls._dump_response_parts(msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data)
+                dumped = cls._dump_response_parts(
+                    msg, ag_ui_version=ag_ui_version, preserve_file_data=preserve_file_data
                 )
             else:
                 assert_never(msg)
+            # `load_messages` kept the id of the last AG-UI message merged into `msg`, so it goes back on the
+            # last AG-UI message dumped from it. The others keep their fresh ids: several tool results in one
+            # request become several `ToolMessage`s, and those need distinct ids.
+            if dumped and (ui_message_id := get_ui_message_id(msg)) is not None:
+                dumped[-1].id = ui_message_id
+            result.extend(dumped)
 
         return result

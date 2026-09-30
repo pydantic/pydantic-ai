@@ -16,14 +16,14 @@ result = agent.run_sync(
 )
 ```
 
-This setting is a best-effort request: providers that do not require an explicit opt-in ignore it, and a model may
-still return no citations. It is separate from provider-specific settings that retain raw annotation payloads.
+Providers that don't need an opt-in ignore this setting, and a model may still return no citations.
+
+To render citations, read each text part's citations and their sources:
 
 ```python {test="skip"}
 from pydantic_ai import (
     Agent,
     ContentCitationAnchor,
-    DocumentCitationSource,
     MarkerCitationAnchor,
     TextPart,
     WebCitationSource,
@@ -44,52 +44,21 @@ for message in result.all_messages():
                 elif isinstance(anchor, MarkerCitationAnchor):
                     location = f'citation marker: {part.content[anchor.start : anchor.end]!r}'
                 else:
-                    location = 'the text part as a whole'
+                    location = 'somewhere in the text part'
 
                 for source in citation.sources:
                     if isinstance(source, WebCitationSource):
                         label = source.title or source.url
-                    elif isinstance(source, DocumentCitationSource):
+                    else:
                         label = source.title or source.document_id or 'Document source'
                     print(location, label, source.excerpts)
 ```
 
-A citation can reference one or more web or document sources. Its optional
-[`anchor`][pydantic_ai.messages.CitationAnchor] uses Python character offsets into the containing text:
-`part.content[anchor.start:anchor.end]`. A
-[`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor] identifies supported text, while a
-[`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor] identifies a citation marker already present in the
-model output. An absent anchor means the provider did not supply a text range that Pydantic AI could safely normalize.
-
-Google grounding can produce content anchors, including citations where several sources jointly support one span.
-OpenAI web-search citations can produce marker anchors, while OpenAI file citations and Anthropic web-search citations
-may be unanchored. Consumers should therefore handle all three cases rather than assuming every source identifies a
-specific assertion.
-
-A [`DocumentCitationSource`][pydantic_ai.messages.DocumentCitationSource] means non-web evidence, not necessarily a
-file uploaded through Pydantic AI. Its optional `document_id` is an opaque identifier in the provider's storage system;
-it is not a local path and does not imply that the application can download the document. Inline documents may have no
-stable identifier or title, in which case a renderer should use a generic fallback label.
-
-Both source types contain an `excerpts` list of provider-selected supporting passages. An item can be an exact cited
-passage or a broader retrieval chunk, depending on the provider. The list preserves separate passages when a provider
-returns more than one for the same source. It lets applications show evidence previews without separately retrieving
-the source, but should not be interpreted as a provider-independent exact quotation or as the text selected by the
-citation's anchor.
-
-## Provider support
-
-| Provider/API | Normalized response | Request behavior | Provider support notes |
-| --- | --- | --- | --- |
-| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web-search and document citations | `include_citations=True` enables citations for inline documents and Anthropic Web Fetch; Web Search supplies citations with grounded output | Client-provided `search_result` citations are outside this initial normalized surface |
-| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Converse document citations | `include_citations=True` enables citations for TXT and PDF document inputs | Citation locations within the source document remain in `provider_details`; the generated text block is the normalized content anchor |
-| [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Web, Maps, image-search, and file-search grounding | No citation-specific setting; enable the corresponding native grounding tool | Grounding byte offsets are normalized to Python character offsets; image citations link to their attribution page rather than the image asset |
-| [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerateContentResponse#GroundingMetadata) | Google Search and Vertex retrieval grounding | No citation-specific setting; enable the corresponding native grounding tool | Retrieved document resource names map to `document_id` |
-| [OpenAI Chat and Responses](https://platform.openai.com/docs/guides/tools-web-search) | URL annotations and Responses file citations | No citation-specific setting; enable the corresponding native search tool | `container_file_citation` annotations are not file-search evidence and remain available only through raw provider annotations |
-| [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/web-search) | Web-search URL annotations | No citation-specific setting; enable OpenRouter web search | Annotations without usable output offsets are normalized without an anchor |
-| [xAI](https://docs.x.ai/developers/tools/citations) | Web, X, and collections inline citations | `include_citations=True` requests inline citations | Web and X links use marker anchors; collections citations map to document sources |
-
-For example, the normalized provider results can have these shapes:
+A citation has one or more sources and an optional [`anchor`][pydantic_ai.messages.CitationAnchor], which holds
+Python character offsets into the text: `part.content[anchor.start:anchor.end]`. A
+[`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor] selects the supported text, a
+[`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor] selects a citation marker the model wrote, and a
+citation without an anchor belongs to the text part, but its position in the text is unknown. Handle all three:
 
 ```python
 from pydantic_ai import (
@@ -100,7 +69,7 @@ from pydantic_ai import (
     WebCitationSource,
 )
 
-# Google: both sources support the selected assertion.
+# Google: both sources support the selected text.
 TextPart(
     'Pydantic validates data.',
     citations=[
@@ -111,7 +80,7 @@ TextPart(
     ],
 )
 
-# OpenAI: the selected text is the rendered citation marker, not the supported assertion.
+# OpenAI: the selected text is the citation marker.
 TextPart(
     'Pydantic validates data. [1]',
     citations=[
@@ -122,7 +91,7 @@ TextPart(
     ],
 )
 
-# Anthropic: the source qualifies this text part, but no character range was supplied.
+# Anthropic: no text range.
 TextPart(
     'Pydantic validates data.',
     citations=[
@@ -138,5 +107,22 @@ TextPart(
 )
 ```
 
-Treat citation URLs, titles, and excerpts as untrusted data. Excerpts can contain private retrieved content, so
-applications should choose deliberately whether to log, render, or send them to a client.
+A [`DocumentCitationSource`][pydantic_ai.messages.DocumentCitationSource] is any non-web source. Its `document_id` is
+the provider's identifier, not a local path, and inline documents may have neither an ID nor a title. A source's
+`excerpts` are the passages the provider returned as evidence: depending on the provider, an exact quote or a wider
+chunk of the source.
+
+Treat citation URLs, titles, and excerpts as untrusted data. Excerpts can contain private retrieved content, so choose
+deliberately whether to log, render, or send them to a client.
+
+## Provider support
+
+| Provider/API | Normalized response | Request behavior | Provider support notes |
+| --- | --- | --- | --- |
+| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search and document citations | `include_citations=True` enables citations for documents and requests them for Web Fetch; Web Search returns citations without it | Anthropic [rejects](https://platform.claude.com/docs/en/build-with-claude/citations#feature-compatibility) document citations combined with [`NativeOutput`][pydantic_ai.output.NativeOutput]. Citations of client-provided search results are not included |
+| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Document citations | `include_citations=True` enables citations for text and PDF documents | The cited text block is the anchor; the location in the source document is in `provider_details` |
+| [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Search, file search and Web Fetch grounding | Enable the grounding tool | Gemini's UTF-8 byte offsets are converted to character offsets |
+| [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerateContentResponse#GroundingMetadata) | Search and Vertex retrieval grounding | Enable the grounding tool | Retrieved document resource names map to `document_id` |
+| [OpenAI Chat and Responses](https://platform.openai.com/docs/guides/tools-web-search) | URL citations, and Responses file citations | Enable Web Search for URL citations, or File Search for file citations | `container_file_citation` annotations are only available as raw annotations |
+| [OpenRouter](https://openrouter.ai/docs/guides/features/server-tools/web-search) | Web search URL citations | Enable web search | Citations without usable offsets have no anchor |
+| [xAI](https://docs.x.ai/developers/tools/citations) | Web, X, and collection citations | `include_citations=True` requests inline citations | Citations get marker anchors when their offsets fall inside the text; collection citations are document sources |

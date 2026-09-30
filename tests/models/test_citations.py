@@ -41,7 +41,7 @@ with try_import() as google_available:
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as openrouter_available:
@@ -54,6 +54,9 @@ with try_import() as xai_available:
     from pydantic_ai.providers.xai import XaiProvider
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+
+# The Anthropic recordings sent this explicitly; without it, requests are streamed behind the scenes.
+ANTHROPIC_SETTINGS = ModelSettings(max_tokens=4096)
 
 
 @pytest.fixture()
@@ -86,7 +89,7 @@ class ExpectedWebCitation:
 @dataclass(frozen=True)
 class WebCitationCase:
     id: str
-    provider: Literal['anthropic', 'google-gemini', 'google-vertex', 'openai', 'openrouter', 'xai']
+    provider: Literal['anthropic', 'google-gemini', 'google-vertex', 'openai', 'openai-chat', 'openrouter', 'xai']
     stream: bool = False
     expected: list[ExpectedWebCitation] = field(default_factory=list[ExpectedWebCitation])
 
@@ -309,6 +312,35 @@ WEB_CASES = [
             ]
         ),
     ),
+    WebCitationCase(
+        'openai-chat',
+        'openai-chat',
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    ['github.com'],
+                    [0],
+                    MarkerCitationAnchor(start=119, end=205),
+                    '([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))',
+                )
+            ]
+        ),
+    ),
+    WebCitationCase(
+        'openai-chat-stream',
+        'openai-chat',
+        stream=True,
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    ['github.com'],
+                    [0],
+                    MarkerCitationAnchor(start=249, end=335),
+                    '([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))',
+                )
+            ]
+        ),
+    ),
 ]
 
 
@@ -317,6 +349,7 @@ WEB_PROVIDER_AVAILABLE = {
     'google-gemini': google_available,
     'google-vertex': google_available,
     'openai': openai_available,
+    'openai-chat': openai_available,
     'openrouter': openrouter_available,
     'xai': xai_available,
 }
@@ -335,7 +368,9 @@ def _web_citation_agent(
     prompt = "Use web search to find Pydantic AI's documentation and cite it."
     settings = None
     if case.provider == 'anthropic':
-        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+        model = AnthropicModel(
+            'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+        )
         tool = WebSearchTool(max_uses=1)
     elif case.provider == 'google-gemini':
         model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
@@ -348,6 +383,11 @@ def _web_citation_agent(
         model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
         tool = WebSearchTool(max_uses=1)
         prompt = "Use web search to find Pydantic AI's GitHub repository and cite it."
+    elif case.provider == 'openai-chat':
+        # Chat Completions search models always search, so no tool is needed.
+        model = OpenAIChatModel('gpt-5-search-api', provider=OpenAIProvider(api_key=openai_api_key))
+        tool = None
+        prompt = "Find Pydantic AI's GitHub repository and cite it in one sentence."
     elif case.provider == 'openrouter':
         model = OpenRouterModel('deepseek/deepseek-chat', provider=OpenRouterProvider(api_key=openrouter_api_key))
         tool = WebSearchTool(max_uses=1)
@@ -361,7 +401,7 @@ def _web_citation_agent(
     else:  # pragma: no cover
         assert_never(case.provider)
 
-    return Agent(model, capabilities=[NativeTool(tool)], model_settings=settings), prompt
+    return Agent(model, capabilities=[NativeTool(tool)] if tool else [], model_settings=settings), prompt
 
 
 def _cited_text_parts(messages: list[ModelMessage]) -> list[TextPart]:
@@ -584,7 +624,9 @@ async def test_document_citations(
         pytest.skip(f'{case.provider} dependencies not installed')
 
     if case.provider == 'anthropic':
-        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+        model = AnthropicModel(
+            'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+        )
     else:
         model = BedrockConverseModel(
             'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')

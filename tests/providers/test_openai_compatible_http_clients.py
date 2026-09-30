@@ -27,6 +27,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.crusoe import CrusoeProvider
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.fireworks import FireworksProvider
+    from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.heroku import HerokuProvider
     from pydantic_ai.providers.litellm import LiteLLMProvider
     from pydantic_ai.providers.moonshotai import MoonshotAIProvider
@@ -39,6 +40,7 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.vllm import VLLMProvider
     from pydantic_ai.providers.zai import ZaiProvider
 
 
@@ -99,6 +101,11 @@ CASES = [
         'fireworks',
         lambda: FireworksProvider(api_key='test'),
         lambda http_client: FireworksProvider(api_key='test', http_client=http_client),
+    ),
+    Case(
+        'github-copilot',
+        lambda: GitHubCopilotProvider(api_key='test'),
+        lambda http_client: GitHubCopilotProvider(api_key='test', http_client=http_client),
     ),
     Case(
         'heroku',
@@ -163,6 +170,11 @@ CASES = [
         lambda http_client: VercelProvider(api_key='test', http_client=http_client),
     ),
     Case(
+        'vllm',
+        lambda: VLLMProvider(base_url='http://localhost:8000/v1', api_key='test'),
+        lambda http_client: VLLMProvider(base_url='http://localhost:8000/v1', api_key='test', http_client=http_client),
+    ),
+    Case(
         'zai',
         lambda: ZaiProvider(api_key='test'),
         lambda http_client: ZaiProvider(api_key='test', http_client=http_client),
@@ -177,6 +189,7 @@ IMPORT_GUARD_CASES = [
     ('crusoe', 'use the Crusoe provider'),
     ('deepseek', 'use the DeepSeek provider'),
     ('fireworks', 'use the Fireworks AI provider'),
+    ('github_copilot', 'use the GitHub Copilot provider'),
     ('heroku', 'use the Heroku provider'),
     ('litellm', 'use the LiteLLM provider'),
     ('moonshotai', 'use the MoonshotAI provider'),
@@ -189,15 +202,22 @@ IMPORT_GUARD_CASES = [
     ('snowflake', 'use the Snowflake provider'),
     ('together', 'use the Together AI provider'),
     ('vercel', 'use the Vercel provider'),
+    ('vllm', 'use the vLLM provider'),
     ('zai', 'use the Z.AI provider'),
 ]
 
 
-@pytest.mark.parametrize(('module', 'error_hint'), IMPORT_GUARD_CASES)
-def test_openai_compatible_provider_import_guard(module: str, error_hint: str) -> None:
-    code = f"""
+@pytest.fixture(scope='module')
+def import_guard_errors() -> dict[str, str | None]:
+    # One subprocess for all providers: each interpreter spawn cold-imports pydantic_ai under
+    # coverage (~7s in CI), so 20 per-provider subprocesses cost minutes while one costs seconds.
+    # Each module still gets a fresh import: the guard fires at module import time, and no
+    # provider module is imported twice.
+    code = """
 import builtins
 import importlib
+import json
+import sys
 
 original_import = builtins.__import__
 
@@ -207,15 +227,32 @@ def import_without_openai(name, globals=None, locals=None, fromlist=(), level=0)
     return original_import(name, globals, locals, fromlist, level)
 
 builtins.__import__ = import_without_openai
-importlib.import_module("pydantic_ai.providers.{module}")
+
+errors = {}
+for module in sys.argv[1:]:
+    try:
+        importlib.import_module(f"pydantic_ai.providers.{module}")
+    except ImportError as exc:
+        errors[module] = str(exc)
+    else:
+        errors[module] = None
+print(json.dumps(errors))
 """
-    result = subprocess.run([sys.executable, '-c', code], text=True, capture_output=True)
+    modules = [module for module, _ in IMPORT_GUARD_CASES]
+    result = subprocess.run([sys.executable, '-c', code, *modules], text=True, capture_output=True, check=True)
+    return json.loads(result.stdout)
 
-    assert result.returncode != 0
-    assert error_hint in result.stderr
+
+@pytest.mark.xdist_group(name='provider_import_guard')
+@pytest.mark.parametrize(('module', 'error_hint'), IMPORT_GUARD_CASES)
+def test_openai_compatible_provider_import_guard(
+    module: str, error_hint: str, import_guard_errors: dict[str, str | None]
+) -> None:
+    error = import_guard_errors[module]
+    assert error is not None, f'importing pydantic_ai.providers.{module} without openai did not raise ImportError'
+    assert error_hint in error
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_http_client_lifecycle(case: Case) -> None:
     provider = case.create()
@@ -234,7 +271,6 @@ async def test_openai_compatible_provider_http_client_lifecycle(case: Case) -> N
     assert second_client.is_closed
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_preserves_caller_owned_httpx2_client(case: Case) -> None:
     async with httpx2.AsyncClient() as http_client:
@@ -246,7 +282,6 @@ async def test_openai_compatible_provider_preserves_caller_owned_httpx2_client(c
         assert not http_client.is_closed
 
 
-@pytest.mark.anyio
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_openai_compatible_provider_deprecates_caller_owned_httpx_client(case: Case) -> None:
     async with httpx.AsyncClient() as http_client:
@@ -262,7 +297,6 @@ async def test_openai_compatible_provider_deprecates_caller_owned_httpx_client(c
         assert not http_client.is_closed
 
 
-@pytest.mark.anyio
 async def test_openai_compatible_provider_preserves_caller_owned_sdk_client() -> None:
     async with httpx2.AsyncClient() as http_client:
         openai_client = AsyncOpenAI(api_key='test', http_client=http_client)

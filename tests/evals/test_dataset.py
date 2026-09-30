@@ -65,7 +65,7 @@ with try_import() as tenacity_import_successful:
     from pydantic_ai.retries import RetryConfig
 
 
-pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed'), pytest.mark.anyio]
+pytestmark = [pytest.mark.skipif(not imports_successful(), reason='pydantic-evals not installed')]
 
 needs_logfire = pytest.mark.skipif(not logfire_import_successful(), reason='logfire not installed')
 
@@ -1612,7 +1612,6 @@ async def test_dataset_evaluate_with_multiple_evaluators(example_dataset: Datase
     assert len(report.cases[0].scores) == 2
 
 
-@pytest.mark.anyio
 async def test_unnamed_cases():
     dataset = Dataset[TaskInput, TaskOutput, TaskMetadata](
         name='unnamed_cases',
@@ -1640,7 +1639,6 @@ async def test_unnamed_cases():
     assert [case.name for case in result.cases] == ['Case 1', 'My Case', 'Case 3']
 
 
-@pytest.mark.anyio
 async def test_duplicate_case_names():
     with pytest.raises(ValueError) as exc_info:
         Dataset[TaskInput, TaskOutput, TaskMetadata](

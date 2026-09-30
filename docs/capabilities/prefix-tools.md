@@ -1,3 +1,7 @@
+---
+description: "Namespace a capability's tool names with the Pydantic AI PrefixTools capability to avoid conflicts when composing capabilities with overlapping tool names."
+---
+
 # Prefix Tools
 
 [`PrefixTools`][pydantic_ai.capabilities.PrefixTools] is a [capability](overview.md) that wraps another capability and prefixes all of its tool names, useful for namespacing when composing multiple capabilities that might have conflicting tool names:

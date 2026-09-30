@@ -59,7 +59,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='cohere not installed'),
-    pytest.mark.anyio,
 ]
 
 
@@ -760,6 +759,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                 provider_details={
                     'finish_reason': 'completed',
                     'timestamp': datetime(2025, 9, 5, 22, 7, 17, tzinfo=timezone.utc),
+                    'service_tier': 'default',
                 },
                 provider_response_id='resp_68bb5f153efc81a2b3958ddb1f257ff30886f4f20524f3b9',
                 finish_reason='stop',
@@ -774,6 +774,7 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
         model=co_model,
         message_history=result.all_messages(),
     )
+    # Cohere does not charge per-token API rates for Command A Reasoning, so no cost is calculated.
     assert result.new_messages() == snapshot(
         [
             ModelRequest(
@@ -796,7 +797,6 @@ async def test_cohere_model_thinking_part(allow_model_requests: None, co_api_key
                     input_tokens=2190,
                     output_tokens=1257,
                     details={'input_tokens': 431, 'output_tokens': 661},
-                    cost=Decimal('0.018045'),
                 ),
                 model_name='command-a-reasoning-08-2025',
                 timestamp=IsDatetime(),

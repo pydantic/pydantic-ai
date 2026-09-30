@@ -1,0 +1,80 @@
+"""The built-in `mcp` plugin: `/mcp` manages MCP servers the way Code Puppy's `/mcp` does.
+
+Servers live in `mcp.json` in the CLAI config folder, written by the `/mcp install` and `/mcp edit` form.
+A repository's `.clai/mcp_servers.json` and Claude Code-style `.mcp.json` load after `/mcp trust accept`. Servers given as plugin
+settings (`/plugins add mcp pydantic_clai2.mcp JSON`) still load, read-only.
+"""
+
+from pydantic_ai.capabilities import Toolset
+from pydantic_ai.toolsets import DynamicToolset
+from pydantic_clai2.commands import Command
+from pydantic_clai2.mcp._command import HELP, MCPCommand
+from pydantic_clai2.mcp._form import EXAMPLES, ServerForm, edit_form, edit_in_editor, install_form, run_form
+from pydantic_clai2.mcp._runtime import MCPServers, ServerEntry, State
+from pydantic_clai2.mcp._settings import (
+    OAUTH_TIMEOUT,
+    HTTPServer,
+    MCPSettings,
+    RemoteServer,
+    Server,
+    ServerSettings,
+    SSEServer,
+    StdioServer,
+    http_client,
+)
+from pydantic_clai2.mcp._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
+from pydantic_clai2.mcp._tokens import SignIn, TokenStore, oauth, sign_in
+from pydantic_clai2.plugins import PluginHost, SessionEnd
+
+__all__ = [
+    'CLAUDE_MCP_FILE',
+    'EXAMPLES',
+    'HELP',
+    'OAUTH_TIMEOUT',
+    'PROJECT_MCP_FILE',
+    'PROJECT_MCP_FILES',
+    'HTTPServer',
+    'MCPCommand',
+    'MCPServers',
+    'MCPSettings',
+    'MCPStore',
+    'RemoteServer',
+    'SSEServer',
+    'Server',
+    'ServerEntry',
+    'ServerForm',
+    'ServerSettings',
+    'SignIn',
+    'State',
+    'StdioServer',
+    'TokenStore',
+    'UserFile',
+    'activate',
+    'edit_form',
+    'edit_in_editor',
+    'http_client',
+    'install_form',
+    'oauth',
+    'run_form',
+    'sign_in',
+]
+
+
+def activate(host: PluginHost[None], *, store: MCPStore | None = None) -> None:
+    """Offer enabled servers to every run; nothing connects until a run or `/mcp start`."""
+    servers = MCPServers(store or MCPStore(), host.settings(MCPSettings).servers)
+    host.add(Toolset(DynamicToolset(servers.toolset, per_run_step=False)))
+    command = MCPCommand(servers=servers)
+
+    @host.on('session_end')
+    async def release(_: SessionEnd) -> None:
+        await servers.close()
+
+    host.commands.register(
+        Command(
+            name='mcp',
+            description='Manage MCP servers: install, start, stop, status, logs, and more (/mcp help).',
+            handler=command,
+            complete=command.complete,
+        )
+    )

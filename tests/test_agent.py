@@ -3,7 +3,7 @@ import json
 import re
 import sys
 from collections import defaultdict
-from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -20,6 +20,7 @@ from pydantic_ai import (
     Agent,
     AgentRetries,
     AgentRunResultEvent,
+    AgentSpec,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -39,11 +40,13 @@ from pydantic_ai import (
     ModelResponse,
     ModelResponsePart,
     ModelRetry,
+    ModelSelectionContext,
     PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
     RunContext,
     SystemPromptPart,
+    TemplateStr,
     TextPart,
     ThinkingPart,
     ToolCallPart,
@@ -64,7 +67,7 @@ from pydantic_ai._output import (
     PromptedOutput,
     TextOutput,
 )
-from pydantic_ai.agent import AbstractAgent, AgentRunResult, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Hooks,
@@ -72,11 +75,13 @@ from pydantic_ai.capabilities import (
     PrepareOutputTools,
     PrepareTools,
     RaiseContentFilterError,
+    SelectModel,
     WrapRunHandler,
 )
+from pydantic_ai.durable_exec._base import construction_toolsets
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
-from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -92,6 +97,7 @@ from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolDenied
+from pydantic_ai.workspaces import WorkspaceUnavailableError
 from pydantic_graph import End
 
 if TYPE_CHECKING:
@@ -118,6 +124,7 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.sambanova import SambaNovaProvider
     from pydantic_ai.providers.together import TogetherProvider
     from pydantic_ai.providers.vercel import VercelProvider
+    from pydantic_ai.providers.vllm import VLLMProvider
 else:
     try:
         from pydantic_ai.providers.alibaba import AlibabaProvider
@@ -137,12 +144,13 @@ else:
         from pydantic_ai.providers.sambanova import SambaNovaProvider
         from pydantic_ai.providers.together import TogetherProvider
         from pydantic_ai.providers.vercel import VercelProvider
+        from pydantic_ai.providers.vllm import VLLMProvider
     except ImportError:  # pragma: lax no cover
         AlibabaProvider = AzureProvider = CerebrasProvider = DeepSeekProvider = None
         CrusoeProvider = FireworksProvider = GitHubProvider = HerokuProvider = None
         MoonshotAIProvider = NebiusProvider = OllamaProvider = OpenAIProvider = None
         OpenRouterProvider = OVHcloudProvider = SambaNovaProvider = None
-        TogetherProvider = VercelProvider = None
+        TogetherProvider = VercelProvider = VLLMProvider = None
 
     try:
         from pydantic_ai.providers.anthropic import AnthropicProvider
@@ -177,8 +185,6 @@ else:
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, iter_message_parts, message, message_part
 from .continuation_utils import ScriptedContinuationModel, scripted_response
-
-pytestmark = pytest.mark.anyio
 
 requires_openai = pytest.mark.skipif(OpenAIProvider is None, reason='openai not installed')  # pyright: ignore[reportUnnecessaryComparison]
 requires_anthropic = pytest.mark.skipif(AnthropicProvider is None, reason='anthropic not installed')  # pyright: ignore[reportUnnecessaryComparison]
@@ -1603,7 +1609,7 @@ def test_output_type_tool_output_union():
         c: bool
 
     m = TestModel()
-    marker: ToolOutput[Foo | Bar] = ToolOutput(Foo | Bar, strict=False)  # pyright: ignore[reportArgumentType, reportAssignmentType]
+    marker = ToolOutput(Foo | Bar, strict=False)
     agent = Agent(m, output_type=marker)
     result = agent.run_sync('Hello')
     assert result.output == snapshot(Foo(a=0, b='a'))
@@ -2507,7 +2513,14 @@ def test_output_type_union_text_fallback_invalid_data_retries():
     assert retry_parts == snapshot(
         [
             RetryPromptPart(
-                content=[{'type': 'missing', 'loc': ('color',), 'msg': 'Field required', 'input': {'length': 12.0}}],
+                content=[
+                    {
+                        'type': 'missing',
+                        'loc': ('result', 'data', 'color'),
+                        'msg': 'Field required',
+                        'input': {'length': 12.0},
+                    }
+                ],
                 tool_call_id=IsStr(),
                 timestamp=IsDatetime(),
             )
@@ -2605,6 +2618,60 @@ def test_prompted_output_union_invalid_kind_retries():
             )
         ]
     )
+
+
+@pytest.mark.parametrize(
+    'output_type,output_mode',
+    [
+        pytest.param(NativeOutput([Apple, Banana]), 'native', id='native'),
+        pytest.param(PromptedOutput([Apple, Banana]), 'prompted', id='prompted'),
+    ],
+)
+def test_native_and_prompted_output_union_invalid_data_retries(
+    output_type: OutputSpec[Apple | Banana], output_mode: str
+):
+    """When a `NativeOutput` or `PromptedOutput` union envelope has the right `kind` but `data` that
+    doesn't match that member's schema, the re-prompt error is rooted under the envelope path
+    (`result.data`), matching the envelope-level errors for an invalid `kind`, so the failing input
+    is kept when the retry prompt is rendered for the model.
+    """
+
+    calls = 0
+
+    def model_fn(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        assert info.model_request_parameters.output_mode == output_mode
+        if calls == 1:
+            # Correct `kind`, but `data` has `length` as a string where `Banana` requires a float.
+            text = '{"result": {"kind": "Banana", "data": {"length": "long"}}}'
+        else:
+            text = '{"result": {"kind": "Banana", "data": {"length": 6.0}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(model_fn), output_type=output_type)
+    result = agent.run_sync('What fruit is it?')
+    assert result.output == snapshot(Banana(length=6.0))
+    assert calls == 2
+
+    retry_parts = list(iter_message_parts(result.all_messages(), ModelRequest, RetryPromptPart))
+    assert retry_parts == snapshot(
+        [
+            RetryPromptPart(
+                content=[
+                    {
+                        'type': 'float_parsing',
+                        'loc': ('result', 'data', 'length'),
+                        'msg': 'Input should be a valid number, unable to parse string as a number',
+                        'input': 'long',
+                    }
+                ],
+                tool_call_id=IsStr(),
+                timestamp=IsDatetime(),
+            )
+        ]
+    )
+    assert '"input": "long"' in retry_parts[0].model_response()
 
 
 def test_output_type_union_text_fallback_invalid_kind_exhausts_retries():
@@ -4208,6 +4275,70 @@ async def test_agent_iter_metadata_surfaces_on_result() -> None:
     assert agent_run.result.metadata == {'env': 'tests'}
 
 
+async def test_agent_iter_prepares_all_run_inputs() -> None:
+    selected_steps: list[int] = []
+    seen_tools: list[list[str]] = []
+    output_retries: list[int] = []
+
+    def output(ctx: RunContext[object], result: str) -> str:
+        assert ctx.max_retries == 1
+        output_retries.append(ctx.retry)
+        if ctx.retry == 0:
+            raise ModelRetry('retry once')
+        return result
+
+    run_toolset = FunctionToolset()
+
+    @run_toolset.tool_plain
+    def run_tool() -> str:
+        return 'from run toolset'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.append([tool.name for tool in info.function_tools])
+        has_run_tool_return = any(
+            isinstance(part, ToolReturnPart) and part.tool_name == 'run_tool'
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not has_run_tool_return:
+            return ModelResponse(parts=[ToolCallPart('run_tool', {})])
+
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'result': 'done'})])
+
+    selected_model = FunctionModel(respond)
+
+    def select(ctx: ModelSelectionContext[object]) -> Model:
+        selected_steps.append(ctx.run_step)
+        return selected_model
+
+    agent = Agent(
+        None,
+        metadata={'agent': 'metadata'},
+        output_type=ToolOutput(output),
+        retries={'output': 3},
+    )
+
+    async with agent.iter(
+        'hi',
+        spec=AgentSpec(metadata={'spec': 'metadata'}, retries={'output': 0}),
+        capabilities=[SelectModel(select)],
+        toolsets=[run_toolset],
+        metadata={'run': 'metadata'},
+        retries={'output': 1},
+    ) as agent_run:
+        assert agent_run.metadata == {'agent': 'metadata', 'spec': 'metadata', 'run': 'metadata'}
+        async for _ in agent_run:
+            pass
+
+    assert agent_run.result is not None
+    assert agent_run.result.output == 'done'
+    assert agent_run.result.metadata == {'agent': 'metadata', 'spec': 'metadata', 'run': 'metadata'}
+    assert selected_steps == [1, 2, 3]
+    assert seen_tools == [['run_tool'], ['run_tool'], ['run_tool']]
+    assert output_retries == [0, 1]
+
+
 async def test_agent_metadata_persisted_when_run_fails() -> None:
     agent = Agent(
         TestModel(),
@@ -4349,7 +4480,55 @@ def test_unknown_tool():
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
         ]
+    )
+
+
+def test_failed_run_history_is_resumable():
+    """A history captured from a run that raised is resumable, not just one from a cancelled run.
+
+    The run ends on a response whose tool call never got a result, and the interrupted request
+    that closes out the turn is empty because nothing completed. It's still recorded, so the
+    dangling call is closed out with a synthesized return and the history takes a new prompt.
+    """
+    seen_by_model: list[list[ModelMessage]] = []
+
+    def model_func(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        seen_by_model.append(list(messages))
+        if any(isinstance(part, UserPromptPart) and part.content == 'Never mind.' for part in messages[-1].parts):
+            return ModelResponse(parts=[TextPart('success')])
+        return ModelResponse(parts=[ToolCallPart('foobar', '{}', tool_call_id='call_foobar')])
+
+    agent = Agent(FunctionModel(model_func))
+
+    with capture_run_messages() as messages:
+        with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'foobar' exceeded max retries count of 1"):
+            agent.run_sync('Hello')
+
+    result = agent.run_sync('Never mind.', message_history=messages)
+    assert result.output == 'success'
+    assert seen_by_model[-1][-1] == snapshot(
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='foobar',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='call_foobar',
+                    metadata={'pydantic_ai_synthesized_tool_return': True},
+                    timestamp=IsNow(tz=timezone.utc),
+                    outcome='interrupted',
+                ),
+                UserPromptPart(content='Never mind.', timestamp=IsNow(tz=timezone.utc)),
+            ],
+            timestamp=IsNow(tz=timezone.utc),
+        )
     )
 
 
@@ -4473,6 +4652,13 @@ def test_unknown_tool_multiple_retries():
                 timestamp=IsNow(tz=timezone.utc),
                 run_id=IsStr(),
                 conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
             ),
         ]
     )
@@ -8210,6 +8396,7 @@ def test_binary_content_serializable():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -8225,6 +8412,7 @@ def test_binary_content_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             },
         ]
     )
@@ -8286,6 +8474,7 @@ def test_image_url_serializable_missing_media_type():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -8301,6 +8490,7 @@ def test_image_url_serializable_missing_media_type():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             },
         ]
     )
@@ -8368,6 +8558,7 @@ def test_image_url_serializable():
                     'input_audio_tokens': 0,
                     'cache_audio_read_tokens': 0,
                     'output_audio_tokens': 0,
+                    'audio_seconds': 0.0,
                     'details': {},
                     'cost': None,
                 },
@@ -8383,6 +8574,7 @@ def test_image_url_serializable():
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             },
         ]
     )
@@ -8667,6 +8859,7 @@ def test_instructions_during_run():
             timestamp=IsNow(tz=timezone.utc),
             instructions="""\
 You are a helpful assistant.
+
 Your task is to greet people.\
 """,
             run_id=IsStr(),
@@ -9025,6 +9218,7 @@ async def test_azure_provider_lifecycle_closes_client():
         pytest.param(lambda: TogetherProvider(api_key='t'), marks=[requires_openai], id='together'),
         pytest.param(lambda: VercelProvider(api_key='t'), marks=[requires_openai], id='vercel'),
         pytest.param(lambda: AlibabaProvider(api_key='t'), marks=[requires_openai], id='alibaba'),
+        pytest.param(lambda: VLLMProvider(base_url='http://localhost:8000/v1'), marks=[requires_openai], id='vllm'),
     ],
 )
 async def test_provider_reentry_recreates_http_client(provider_factory: Callable[[], Provider[Any]]):
@@ -9381,6 +9575,115 @@ def test_override_toolsets():
         result = agent.run_sync('Hello', toolsets=[bar_toolset])
     assert prepared_tool_names[-1] == snapshot(['baz'])
     assert result.output == snapshot('{"baz":"Hello from baz"}')
+
+
+class _ToolsetOnlyAgent(AbstractAgent[None, str]):
+    """A third-party `AbstractAgent`: it has toolsets, and no way to add more after construction.
+
+    `construction_toolsets` has to answer for agents like this too, and the answer is simply their
+    `toolsets` -- there is nothing later to subtract. Written out here rather than mocked so the
+    claim is about a real `AbstractAgent` subclass.
+    """
+
+    def __init__(self, toolsets: Sequence[AbstractToolset[None]]) -> None:
+        self._toolsets = toolsets
+
+    @property
+    def toolsets(self) -> Sequence[AbstractToolset[None]]:
+        return self._toolsets
+
+    @property
+    def model(self) -> Model | KnownModelName | str | None:
+        raise NotImplementedError
+
+    @property
+    def name(self) -> str | None:
+        raise NotImplementedError
+
+    @name.setter
+    def name(self, value: str | None) -> None:
+        raise NotImplementedError
+
+    @property
+    def description(self) -> str | None:
+        raise NotImplementedError
+
+    @description.setter
+    def description(self, value: TemplateStr[None] | str | None) -> None:
+        raise NotImplementedError
+
+    @property
+    def deps_type(self) -> type:
+        raise NotImplementedError
+
+    @property
+    def output_type(self) -> OutputSpec[str]:
+        raise NotImplementedError
+
+    @property
+    def event_stream_handler(self) -> EventStreamHandler[None] | None:
+        raise NotImplementedError
+
+    def iter(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def override(self, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    async def __aenter__(self) -> AbstractAgent[None, str]:
+        raise NotImplementedError
+
+    async def __aexit__(self, *args: Any) -> bool | None:
+        raise NotImplementedError
+
+
+def test_construction_toolsets_ignores_overrides():
+    """`_construction_toolsets` reports what the agent was built with, not later additions.
+
+    Durable execution reads it to tell construction-time toolsets — wrapped in activities/steps/tasks
+    when the capability bound — from ones that arrive later and were never wrapped. `toolsets`
+    can't serve that purpose because it includes decorator registrations and returns the *overridden*
+    list while an override is in scope.
+    Not reachable through the public API on a plain `Agent`: the distinction only matters inside a
+    workflow or flow. This unit test pins the list arithmetic itself: what `override` and a
+    `@agent.toolset` each do to the two lists, wrapper unwrapping, and the plain-`AbstractAgent`
+    fallback. The end-to-end rejection they enable there is covered by the durability corpora:
+    `tests/durable_exec/temporal/test_durability.py`, `tests/durable_exec/test_dbos.py`, and
+    `tests/durable_exec/test_prefect.py`.
+    """
+    registered = FunctionToolset(id='registered')
+    agent = Agent('test', toolsets=[registered])
+    overriding = FunctionToolset(id='overriding')
+
+    with agent.override(toolsets=[overriding], tools=[lambda: 'hi']):
+        # The agent's own function toolset leads both lists; only the user toolsets differ.
+        assert list(agent.toolsets)[1:] == [overriding]
+        assert list(agent._construction_toolsets)[1:] == [registered]  # pyright: ignore[reportPrivateUsage]
+        assert agent.toolsets[0] is not agent._construction_toolsets[0]  # pyright: ignore[reportPrivateUsage]
+
+    assert list(agent._construction_toolsets) == list(agent.toolsets)  # pyright: ignore[reportPrivateUsage]
+
+    @agent.toolset(id='decorated')
+    def decorated_toolset(ctx: RunContext[Any]) -> FunctionToolset[Any]:
+        return FunctionToolset()
+
+    assert isinstance(decorated_toolset(RunContext(deps=None, model=TestModel(), usage=RunUsage())), FunctionToolset)
+    assert [toolset.id for toolset in agent.toolsets] == ['<agent>', 'registered', 'decorated']
+    assert [toolset.id for toolset in agent._construction_toolsets] == [  # pyright: ignore[reportPrivateUsage]
+        '<agent>',
+        'registered',
+    ]
+
+    # `construction_toolsets` unwraps to the agent underneath, even during an override.
+    wrapper = WrapperAgent(agent)
+    with agent.override(toolsets=[overriding]):
+        assert list(wrapper.toolsets)[1:] == [overriding]
+        assert [toolset.id for toolset in construction_toolsets(wrapper)] == ['<agent>', 'registered']
+
+    # Any other `AbstractAgent` has nothing to subtract -- it supports neither overrides nor
+    # decorator registration -- so its own `toolsets` is already the answer. That is why this is a
+    # function rather than a hook every implementation would have to answer.
+    assert list(construction_toolsets(_ToolsetOnlyAgent([registered]))) == [registered]
 
 
 def test_override_tools():
@@ -10281,8 +10584,10 @@ async def test_wrapper_agent():
         system_prompt='You are a wrapped agent',
         toolsets=[foo_toolset],
         output_type=Foo,
+        validation_context={'tenant': 'acme'},
     )
     wrapper_agent = WrapperAgent(agent)
+    assert wrapper_agent.validation_context == agent.validation_context == {'tenant': 'acme'}
     assert [p.content for p in await wrapper_agent.system_prompt_parts()] == ['You are a wrapped agent']
     assert wrapper_agent.toolsets == agent.toolsets
     assert wrapper_agent.model == agent.model
@@ -10323,6 +10628,15 @@ async def test_wrapper_agent():
     assert run.result.output == snapshot(Foo(a=0, b='a'))
     assert test_model.last_model_request_parameters is not None
     assert [t.name for t in test_model.last_model_request_parameters.function_tools] == snapshot(['bar'])
+
+
+def test_wrapper_agent_validation_context_defaults_to_none():
+    class CustomAgent(WrapperAgent[object, str]):
+        def _get_validation_context(self) -> Any | Callable[[RunContext[object]], Any]: return AbstractAgent._get_validation_context(self)  # fmt: skip  # pragma: no branch
+
+    wrapper = WrapperAgent(WrapperAgent(CustomAgent(Agent('test', deps_type=object))))
+
+    assert wrapper.validation_context is None
 
 
 async def test_abstract_agent_system_prompt_parts_default_is_empty():
@@ -10658,7 +10972,8 @@ async def test_thinking_only_response_after_tool_call_retries():
     )
 
 
-async def test_hitl_tool_approval():
+@pytest.mark.parametrize('serialize_history', [False, True])
+async def test_hitl_tool_approval(serialize_history: bool):
     def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(
@@ -10682,9 +10997,11 @@ async def test_hitl_tool_approval():
     model = FunctionModel(model_function)
 
     agent = Agent(model, output_type=[str, DeferredToolRequests])
+    deleted_files: list[str] = []
 
     @agent.tool_plain(requires_approval=True)
     def delete_file(path: str) -> str:
+        deleted_files.append(path)
         return f'File {path!r} deleted'
 
     @agent.tool_plain
@@ -10692,6 +11009,7 @@ async def test_hitl_tool_approval():
         return f'File {path!r} created with content: {content}'
 
     result = await agent.run('Create new_file.py and delete ok_to_delete.py and never_delete.py')
+    assert deleted_files == []
     messages = result.all_messages()
     assert messages == snapshot(
         [
@@ -10750,12 +11068,17 @@ async def test_hitl_tool_approval():
         )
     )
 
+    if serialize_history:
+        messages = ModelMessagesTypeAdapter.validate_json(result.all_messages_json())
+        assert messages == result.all_messages()
+
     result = await agent.run(
         message_history=messages,
         deferred_tool_results=DeferredToolResults(
             approvals={'ok_to_delete': True, 'never_delete': ToolDenied('File cannot be deleted')},
         ),
     )
+    assert deleted_files == ['ok_to_delete.py']
     assert result.all_messages() == snapshot(
         [
             ModelRequest(
@@ -11360,7 +11683,7 @@ def test_override_instructions_sequence_mixed_types():
             agent.run_sync('Hello', model=TestModel(custom_output_text='ok'))
 
     req = message(messages, ModelRequest)
-    assert req.instructions == 'OVERRIDE1\nOVERRIDE2\n\nFUNC_PART\n\nFUNC_PART_2'
+    assert req.instructions == 'OVERRIDE1\n\nOVERRIDE2\n\nFUNC_PART\n\nFUNC_PART_2'
     assert 'BASE' not in req.instructions
 
 
@@ -11902,6 +12225,29 @@ async def test_agent_capability_for_run_called_once_per_run():
     assert for_run_calls == {'agent': 1, 'run': 1}
 
 
+async def test_no_workspace_for_run_keeps_unresolved_root_capability() -> None:
+    class InspectCapability(AbstractCapability):
+        async def for_run(self, ctx: RunContext) -> AbstractCapability:
+            assert ctx.root_capability is None
+            return self
+
+    await Agent(TestModel(), capabilities=[InspectCapability()]).run('Hello')
+
+
+async def test_no_workspace_preserves_history_response_identity() -> None:
+    agent = Agent(TestModel())
+    first = await agent.run('Hello')
+    response = first.all_messages()[-1]
+    second = await agent.run(message_history=first.all_messages())
+    assert second.all_messages()[-1] is response
+
+
+async def test_no_workspace_rejects_commands() -> None:
+    result = await Agent(TestModel()).run('Hello')
+    with pytest.raises(WorkspaceUnavailableError, match='No workspace is attached'):
+        await result.workspace.run('pwd')
+
+
 async def test_run_with_unapproved_tool_call_in_history():
     def should_not_call_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
         raise ValueError('The agent should not call the model.')  # pragma: no cover
@@ -12142,6 +12488,47 @@ async def test_central_content_filter_handling():
         await agent.run('Trigger filter')
 
 
+async def test_central_content_filter_on_thinking_only_response():
+    """A refusal after the model has emitted only thinking raises `ContentFilterError` rather than re-prompting.
+
+    Claude Opus 5 can refuse (`stop_reason: 'refusal'`) after emitting a thinking block; re-prompting the same
+    transcript is refused again, so the run would otherwise end in `Exceeded maximum output retries`.
+    """
+    calls = 0
+
+    async def filtered_response(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return ModelResponse(
+            parts=[ThinkingPart(content='Considering the request.', signature='sig'), TextPart('')],
+            model_name='test-model',
+            finish_reason='content_filter',
+            provider_details={'refusal': {'category': 'reasoning_extraction'}},
+        )
+
+    agent = Agent(FunctionModel(function=filtered_response, model_name='test-model'))
+
+    with pytest.raises(ContentFilterError, match=re.escape('Content filter triggered. Refusal:')):
+        await agent.run('Trigger filter')
+    assert calls == 1
+
+
+async def test_central_thinking_only_response_without_content_filter_is_retried():
+    """A thinking-only response with no content-filter finish reason is still re-prompted."""
+    calls = 0
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ThinkingPart(content='Thinking.')], finish_reason='stop')
+        return ModelResponse(parts=[TextPart('done')])
+
+    result = await Agent(FunctionModel(respond)).run('Hello')
+    assert result.output == 'done'
+    assert calls == 2
+
+
 async def test_central_content_filter_with_partial_content():
     """
     Test that the agent graph returns partial content (does not raise exception)
@@ -12236,15 +12623,15 @@ async def test_raise_content_filter_error_capability_streaming():
 
     class ContentFilterStreamModel(Model):
         @property
-        def system(self) -> str:  # pragma: no cover
+        def system(self) -> str:
             return 'test'
 
         @property
-        def model_name(self) -> str:  # pragma: no cover
+        def model_name(self) -> str:
             return 'test-model'
 
         @property
-        def base_url(self) -> str:  # pragma: no cover
+        def base_url(self) -> str:
             return 'https://test.example.com'
 
         async def request(  # pragma: no cover
@@ -12466,6 +12853,86 @@ async def test_agent_blank_text_response_token_limit(output_type: Any):
 
     with pytest.raises(UnexpectedModelBehavior, match='token limit'):
         await agent.run('hello')
+
+
+async def test_run_stream_max_output_tokens_raises_unexpected_model_behavior(allow_model_requests: None):
+    """A length-exhausted stream raises `UnexpectedModelBehavior` instead of silently finalizing `None`."""
+
+    pytest.importorskip('openai')
+    from openai.types import responses as resp
+    from openai.types.responses.response import IncompleteDetails
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, response_message
+
+    created_response = response_message([])
+    created_response.status = 'in_progress'
+    incomplete_response = created_response.model_copy(update={'status': 'incomplete'})
+    incomplete_response.incomplete_details = IncompleteDetails(reason='max_output_tokens')
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseCreatedEvent(
+                response=created_response,
+                type='response.created',
+                sequence_number=0,
+            ),
+            resp.ResponseIncompleteEvent(
+                response=incomplete_response,
+                type='response.incomplete',
+                sequence_number=1,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, output_type=str | None)
+
+    with pytest.raises(UnexpectedModelBehavior, match='token limit'):
+        async with agent.run_stream('hello'):
+            pass
+
+
+async def test_run_stream_content_filter_raises_content_filter_error(allow_model_requests: None):
+    """A content-filtered stream raises `ContentFilterError`, matching the non-streaming path."""
+
+    pytest.importorskip('openai')
+    from openai.types import responses as resp
+    from openai.types.responses.response import IncompleteDetails
+
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import MockOpenAIResponses, response_message
+
+    created_response = response_message([])
+    created_response.status = 'in_progress'
+    incomplete_response = created_response.model_copy(update={'status': 'incomplete'})
+    incomplete_response.incomplete_details = IncompleteDetails(reason='content_filter')
+
+    mock_client = MockOpenAIResponses.create_mock_stream(
+        [
+            resp.ResponseCreatedEvent(
+                response=created_response,
+                type='response.created',
+                sequence_number=0,
+            ),
+            resp.ResponseIncompleteEvent(
+                response=incomplete_response,
+                type='response.incomplete',
+                sequence_number=1,
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model, output_type=str | None)
+
+    with pytest.raises(
+        ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'content_filter'")
+    ):
+        async with agent.run_stream('hello'):
+            pass
 
 
 async def test_agent_allows_none_output_after_tool():
@@ -12712,17 +13179,17 @@ async def test_agent_still_fails_if_none_not_allowed():
 def test_agent_output_type_bare_none_error():
     """Test that Agent(output_type=None) raises a clear error."""
     with pytest.raises(UserError, match='At least one output type must be provided other than `None`'):
-        Agent('test', output_type=None)  # type: ignore[arg-type]
+        Agent('test', output_type=None)
 
 
 async def test_agent_allows_none_output_tool_mode_none_via_tool():
-    """Test that `int | None` exposes a separate `final_result_NoneType` tool the model can call."""
+    """Test that `int | None` exposes a separate `final_result_None` tool the model can call."""
     seen_tool_names: list[str] = []
 
     async def call_none_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         assert info.output_tools is not None
         seen_tool_names[:] = [t.name for t in info.output_tools]
-        none_tool = next(t for t in info.output_tools if 'NoneType' in t.name)
+        none_tool = next(t for t in info.output_tools if t.name.endswith('_None'))
         return ModelResponse(
             parts=[ToolCallPart(tool_name=none_tool.name, args={'response': None}, tool_call_id='pyd_ai_id')]
         )
@@ -12730,7 +13197,9 @@ async def test_agent_allows_none_output_tool_mode_none_via_tool():
     agent = Agent(FunctionModel(function=call_none_tool), output_type=int | None)
     result = await agent.run('hello')
     assert result.output is None
-    assert seen_tool_names == snapshot(['final_result_int', 'final_result_NoneType'])
+    assert seen_tool_names == snapshot(['final_result_int', 'final_result_None'])
+    # `NoneType` is Python's name for the type; the model is offered the name the user wrote.
+    assert 'final_result_NoneType' not in seen_tool_names
 
 
 async def test_agent_allows_none_output_tool_mode_int_via_tool():
@@ -12760,11 +13229,11 @@ async def test_agent_allows_none_output_tool_mode_empty_response():
 
 
 async def test_agent_allows_none_output_native_structured_none():
-    """Test that `NativeOutput(int | None)` returns `None` when the model emits the NoneType branch."""
+    """Test that `NativeOutput(int | None)` returns `None` when the model emits the `None` branch."""
 
     async def native_none(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
-            parts=[TextPart(content=json.dumps({'result': {'kind': 'NoneType', 'data': {'response': None}}}))]
+            parts=[TextPart(content=json.dumps({'result': {'kind': 'None', 'data': {'response': None}}}))]
         )
 
     agent = Agent(FunctionModel(function=native_none), output_type=NativeOutput([int, type(None)]))
@@ -12773,11 +13242,11 @@ async def test_agent_allows_none_output_native_structured_none():
 
 
 async def test_agent_allows_none_output_prompted_structured_none():
-    """Test that `PromptedOutput(int | None)` returns `None` when the model emits the NoneType branch."""
+    """Test that `PromptedOutput(int | None)` returns `None` when the model emits the `None` branch."""
 
     async def prompted_none(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
-            parts=[TextPart(content=json.dumps({'result': {'kind': 'NoneType', 'data': {'response': None}}}))]
+            parts=[TextPart(content=json.dumps({'result': {'kind': 'None', 'data': {'response': None}}}))]
         )
 
     agent = Agent(FunctionModel(function=prompted_none), output_type=PromptedOutput([int, type(None)]))
@@ -12793,7 +13262,7 @@ async def test_agent_allows_none_output_tool_output_union_null():
             parts=[ToolCallPart(tool_name='final_result', args={'response': None}, tool_call_id='pyd_ai_id')]
         )
 
-    agent = Agent(FunctionModel(function=call_final_result), output_type=ToolOutput(int | None))  # type: ignore[arg-type]
+    agent = Agent(FunctionModel(function=call_final_result), output_type=ToolOutput(int | None))
     result = await agent.run('hello')
     assert result.output is None
 
@@ -12803,7 +13272,7 @@ async def test_agent_allows_none_output_explicit_none_tool():
 
     async def call_none_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(
-            parts=[ToolCallPart(tool_name='final_result_NoneType', args={'response': None}, tool_call_id='pyd_ai_id')]
+            parts=[ToolCallPart(tool_name='final_result_None', args={'response': None}, tool_call_id='pyd_ai_id')]
         )
 
     agent = Agent(
@@ -13880,15 +14349,15 @@ async def test_image_output_validator_model_retry():
 
     class ImageStreamModel(Model):
         @property
-        def system(self) -> str:  # pragma: no cover
+        def system(self) -> str:
             return 'test'
 
         @property
-        def model_name(self) -> str:  # pragma: no cover
+        def model_name(self) -> str:
             return 'image-model'
 
         @property
-        def base_url(self) -> str:  # pragma: no cover
+        def base_url(self) -> str:
             return 'https://test.example.com'
 
         async def request(  # pragma: no cover
@@ -13953,15 +14422,15 @@ async def test_image_output_validators_run_stream():
 
     class ImageStreamModel(Model):
         @property
-        def system(self) -> str:  # pragma: no cover
+        def system(self) -> str:
             return 'test'
 
         @property
-        def model_name(self) -> str:  # pragma: no cover
+        def model_name(self) -> str:
             return 'image-model'
 
         @property
-        def base_url(self) -> str:  # pragma: no cover
+        def base_url(self) -> str:
             return 'https://test.example.com'
 
         async def request(  # pragma: no cover
