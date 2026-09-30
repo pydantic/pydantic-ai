@@ -495,6 +495,7 @@ class TestAgentSpec:
     def test_spec_schema_includes_exa_search(self) -> None:
         schema = AgentSpec.model_json_schema_with_capabilities([ExaSearch])
         assert 'ExaSearch' in json.dumps(schema)
+        assert {'id', 'description', 'defer_loading'} <= schema['$defs']['spec_params_ExaSearch']['properties'].keys()
 
     def test_from_spec_builds_capability(self) -> None:
         capability = ExaSearch[None].from_spec(
@@ -508,6 +509,9 @@ class TestAgentSpec:
         assert capability.include_deep_search is True
         assert capability.include_domains == ['a.dev']
         assert capability.client is None
+        assert (capability.id, capability.description, capability.defer_loading) == (None, None, False)
+        named = ExaSearch[None].from_spec(id='search', description='web', defer_loading=True)
+        assert (named.id, named.description, named.defer_loading) == ('search', 'web', True)
 
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')

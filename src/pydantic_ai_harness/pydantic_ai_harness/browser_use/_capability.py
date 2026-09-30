@@ -352,6 +352,9 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
         session_scope: Literal['call', 'agent'] = 'call',
         cdp_url: str | None = None,
         guidance: str | None = None,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> BrowserUse[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -371,4 +374,7 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
             session_scope=session_scope,
             cdp_url=cdp_url,
             guidance=guidance,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
         )

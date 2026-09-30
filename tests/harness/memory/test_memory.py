@@ -1359,7 +1359,13 @@ class TestConfigurationAndSpecs:
         assert 'storage-id' not in instructions
 
     def test_from_spec_backends_and_cross_backend_validation(self, tmp_path: Path) -> None:
-        assert isinstance(Memory.from_spec().store, InMemoryStore)
+        default = Memory.from_spec()
+        assert isinstance(default.store, InMemoryStore)
+        assert (default.id, default.description, default.defer_loading) == ('memory', None, False)
+        named = Memory.from_spec(id='notes', description='team memory', defer_loading=True)
+        assert (named.id, named.description, named.defer_loading) == ('notes', 'team memory', True)
+        schema = AgentSpec.model_json_schema_with_capabilities([Memory])
+        assert {'id', 'description', 'defer_loading'} <= schema['$defs']['spec_params_Memory']['properties'].keys()
         assert isinstance(Memory.from_spec(backend='file', directory='memory').store, FileStore)
         assert isinstance(
             Memory.from_spec(backend='sqlite', database=str(tmp_path / 'memory.db')).store, SqliteMemoryStore

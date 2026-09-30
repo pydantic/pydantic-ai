@@ -205,6 +205,9 @@ class Planning(AbstractCapability[AgentDepsT]):
         guidance: str | None = None,
         cache_ttl: Literal['5m', '1h'] = '5m',
         tools: list[str] | None = None,
+        id: str | None = 'planning',
+        description: str | None = None,
+        defer_loading: bool = False,
     ) -> Planning[AgentDepsT]:
         """Construct a `Planning` capability from serializable options."""
         if backend != 'sqlite' and database != '.agent-plan.db':
@@ -227,6 +230,9 @@ class Planning(AbstractCapability[AgentDepsT]):
             guidance=guidance,
             cache_ttl=cache_ttl,
             tools=tools,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
         )
 
     @classmethod

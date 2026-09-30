@@ -1280,6 +1280,7 @@ class TestAgentSpec:
     def test_spec_schema_includes_browser_use(self) -> None:
         schema = AgentSpec.model_json_schema_with_capabilities([BrowserUse])
         assert 'BrowserUse' in json.dumps(schema)
+        assert {'id', 'description', 'defer_loading'} <= schema['$defs']['spec_params_BrowserUse']['properties'].keys()
 
     def test_from_spec_builds_capability(self) -> None:
         capability = BrowserUse[None].from_spec(
@@ -1309,6 +1310,9 @@ class TestAgentSpec:
         assert capability.output_schema is None
         assert capability.agent_settings is None
         assert capability.browser_agent is None
+        assert (capability.id, capability.description, capability.defer_loading) == (None, None, False)
+        named = BrowserUse[None].from_spec(id='browser', description='browse', defer_loading=True)
+        assert (named.id, named.description, named.defer_loading) == ('browser', 'browse', True)
 
     def test_agent_loads_from_spec_file(self, tmp_path: Path) -> None:
         spec = tmp_path / 'agent.yaml'

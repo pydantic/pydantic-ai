@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, AgentSpec
 from pydantic_ai.messages import (
     CachePoint,
     ModelMessage,
@@ -860,7 +860,13 @@ class TestCapability:
         assert stores == [first.resolve_store(_ctx()), second.resolve_store(_ctx())]
 
     def test_from_spec(self, tmp_path: str) -> None:
-        assert Planning.from_spec().store is None
+        default = Planning.from_spec()
+        assert default.store is None
+        assert (default.id, default.description, default.defer_loading) == ('planning', None, False)
+        named = Planning.from_spec(id='plan', description='task list', defer_loading=True)
+        assert (named.id, named.description, named.defer_loading) == ('plan', 'task list', True)
+        schema = AgentSpec.model_json_schema_with_capabilities([Planning])
+        assert {'id', 'description', 'defer_loading'} <= schema['$defs']['spec_params_Planning']['properties'].keys()
         sqlite_cap = Planning.from_spec(backend='sqlite', database=str(tmp_path))
         assert isinstance(sqlite_cap.store, SqlitePlanStore)
         with pytest.raises(ValueError, match='database is only valid'):

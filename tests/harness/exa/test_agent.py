@@ -425,6 +425,7 @@ class TestAgentSpec:
     def test_spec_schema_includes_exa_agent(self) -> None:
         schema = AgentSpec.model_json_schema_with_capabilities([ExaAgent])
         assert 'ExaAgent' in json.dumps(schema)
+        assert {'id', 'description', 'defer_loading'} <= schema['$defs']['spec_params_ExaAgent']['properties'].keys()
 
     def test_from_spec_builds_capability(self) -> None:
         schema: dict[str, object] = {'type': 'object', 'properties': {'name': {'type': 'string'}}}
@@ -445,6 +446,9 @@ class TestAgentSpec:
         assert capability.timeout_ms == 120_000
         assert capability.guidance == 'Delegate.'
         assert capability.runs is None
+        assert (capability.id, capability.description, capability.defer_loading) == (None, None, False)
+        named = ExaAgent[None].from_spec(id='researcher', description='deep research', defer_loading=True)
+        assert (named.id, named.description, named.defer_loading) == ('researcher', 'deep research', True)
 
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')
