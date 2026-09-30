@@ -12,8 +12,10 @@ from logfire.testing import CaptureLogfire
 from stackone_defender import DefenseResult, PromptDefense
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability, Instrumentation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CachePoint, TextContent, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -293,12 +295,12 @@ async def test_agent_passes_clean_result_through() -> None:
 
 
 def _detection_spans(capfire: CaptureLogfire) -> list[dict[str, Any]]:
-    return [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'prompt_injection_detected']
+    return [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'prompt injection detected']
 
 
-def _fetch_agent(body: str) -> Agent[None, str]:
-    """A bare `PromptInjectionDefender()` on an instrumented agent whose tool returns `body`."""
-    agent: Agent[None, str] = Agent(TestModel(call_tools=['fetch']), capabilities=[PromptInjectionDefender()])
+def _fetch_agent(body: str, *capabilities: AbstractCapability[object]) -> Agent[object, str]:
+    """A bare `PromptInjectionDefender()` on an agent whose tool returns `body`."""
+    agent = Agent(TestModel(call_tools=['fetch']), capabilities=[PromptInjectionDefender(), *capabilities])
 
     @agent.tool_plain
     def fetch() -> dict[str, str]:
@@ -327,6 +329,16 @@ async def test_default_defender_records_detection_span(capfire: CaptureLogfire) 
     )
     # The flagged tool content itself is never recorded.
     assert INJECTION not in str(attributes)
+
+
+async def test_detection_span_omits_field_paths_without_content(capfire: CaptureLogfire) -> None:
+    # Field paths come from the result's own mapping keys, which can be data.
+    instrumentation = Instrumentation(settings=InstrumentationSettings(include_content=False))
+    await _fetch_agent(INJECTION, instrumentation).run('go')
+    spans = _detection_spans(capfire)
+    assert len(spans) == 1
+    assert 'prompt_injection.fields_sanitized' not in spans[0]['attributes']
+    assert spans[0]['attributes']['prompt_injection.detections'] == ('ignore_previous',)
 
 
 @pytest.mark.usefixtures('instrument_all_agents')

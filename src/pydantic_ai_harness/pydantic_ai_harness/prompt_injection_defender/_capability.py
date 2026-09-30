@@ -37,8 +37,8 @@ _METADATA_KEY = 'prompt_injection'
 _ESCALATED_RISKS = ('high', 'critical')
 """Risk levels that indicate the defender escalated beyond its `'medium'` starting level."""
 
-_SPAN_NAME = 'prompt_injection_detected'
-"""Static, low-cardinality span name emitted for every flagged verdict."""
+_SPAN_NAME = 'prompt injection detected'
+"""Static, low-cardinality name of the zero-duration span recorded for every flagged verdict."""
 
 
 OnDetection = Callable[[RunContext[AgentDepsT], ToolCallPart, DefenseResult], None | Awaitable[None]]
@@ -75,19 +75,26 @@ def _diagnostics(verdict: DefenseResult) -> dict[str, object]:
     }
 
 
-def _span_attributes(call: ToolCallPart, verdict: DefenseResult) -> dict[str, AttributeValue]:
-    """Verdict fields for the detection span. Tool content (`sanitized`, `max_sentence`) is never recorded."""
+def _trace_detection(ctx: RunContext[AgentDepsT], call: ToolCallPart, verdict: DefenseResult) -> None:
+    """Record a zero-duration span marking a flagged verdict.
+
+    Tool content (`sanitized`, `max_sentence`) is never recorded. Sanitized field paths are built from
+    the result's own mapping keys, which can be data (`customers.alice@example.com.body`), so they are
+    attached only when `ctx.trace_include_content` is set. `ctx.tracer` is a no-op on runs without
+    instrumentation.
+    """
     attributes: dict[str, AttributeValue] = {
         'gen_ai.tool.name': call.tool_name,
         'gen_ai.tool.call.id': call.tool_call_id,
         'prompt_injection.blocked': not verdict.allowed,
         'prompt_injection.risk_level': verdict.risk_level,
         'prompt_injection.detections': list(verdict.detections),
-        'prompt_injection.fields_sanitized': list(verdict.fields_sanitized),
     }
     if verdict.tier2_score is not None:
         attributes['prompt_injection.tier2_score'] = verdict.tier2_score
-    return attributes
+    if ctx.trace_include_content:
+        attributes['prompt_injection.fields_sanitized'] = list(verdict.fields_sanitized)
+    ctx.tracer.start_span(_SPAN_NAME, attributes=attributes).end()
 
 
 def _payload(value: object) -> object:
@@ -106,7 +113,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     the defense rejects it. With `block_high_risk=True`, the built-in defense rejects
     detected high or critical risk results, which are replaced with `blocked_message` so
     their content never reaches the model. Every flagged verdict is recorded as a
-    `prompt_injection_detected` span on instrumented runs and reported through
+    `prompt injection detected` span on instrumented runs and reported through
     `on_detection`, and a withheld result carries a diagnostics summary on
     `ToolReturn.metadata` (not visible to the model).
 
@@ -159,8 +166,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     on_detection: OnDetection[AgentDepsT] | None = None
     """Called for each verdict with detections, sanitization, rejection, or escalated risk.
 
-    Runs inside the `prompt_injection_detected` span, which is emitted for every flagged verdict
-    whether or not this is set.
+    A `prompt injection detected` span is recorded for every flagged verdict whether or not this is set.
     """
 
     blocked_message: str = _DEFAULT_BLOCKED_MESSAGE
@@ -257,10 +263,9 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         return unchanged if blocked is None else blocked
 
     async def _notify(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, verdict: DefenseResult) -> None:
-        # `ctx.tracer` is a no-op tracer on non-instrumented runs, so this costs nothing there.
-        with ctx.tracer.start_as_current_span(_SPAN_NAME, attributes=_span_attributes(call, verdict)):
-            if self.on_detection is None:
-                return
-            outcome = self.on_detection(ctx, call, verdict)
-            if isinstance(outcome, Awaitable):
-                await outcome
+        _trace_detection(ctx, call, verdict)
+        if self.on_detection is None:
+            return
+        outcome = self.on_detection(ctx, call, verdict)
+        if isinstance(outcome, Awaitable):
+            await outcome
