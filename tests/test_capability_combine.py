@@ -869,6 +869,30 @@ def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
     assert cast('Any', local).function.__self__.model == 'xai:grok-4.3'
 
 
+@pytest.mark.parametrize('capability_type', [ImageGeneration, XSearch])
+def test_a_merge_takes_the_later_of_two_models_differing_only_in_settings(
+    capability_type: type[ImageGeneration[Any]] | type[XSearch[Any]],
+) -> None:
+    """Two model instances are two values, so the later one wins even where the models compare equal.
+
+    A model's `settings` live on the non-dataclass `Model` base, outside the field equality its
+    dataclass subclasses generate, so these two models compare equal. Merging them to the first
+    would run the subagent with the earlier model's settings under the later capability.
+    """
+    first = TestModel(settings={'temperature': 0.0})
+    later = TestModel(settings={'temperature': 1.0})
+
+    merged = capability_type.combine(
+        [capability_type(fallback_subagent_model=first), capability_type(fallback_subagent_model=later)]
+    )
+
+    assert isinstance(merged, capability_type)
+    assert merged.fallback_subagent_model is later
+    local = merged.local
+    assert isinstance(local, Tool)
+    assert cast('Any', local).function.__self__.model is later
+
+
 def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:
     """A value set through the deprecated `fallback_model` setter is configuration the merge keeps.
 

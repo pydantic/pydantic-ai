@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT
 
 if TYPE_CHECKING:
@@ -50,7 +51,7 @@ def merge_capability_fields(
     a field a `__post_init__` has already materialized (`NativeOrLocalTool` turns `native=True` into
     a tool instance and `local=None` into its default) can no longer be told apart from one the user
     stated, so those take the later value; and two objects that carry no meaningful equality (two
-    stores, two clients) likewise take the later. A capability that needs either reconciled — or
+    stores, two clients, two model instances) likewise take the later. A capability that needs either reconciled — or
     needs a numeric budget to take the *smaller* value rather than the later one — overrides
     `combine` itself.
 
@@ -219,9 +220,17 @@ def _as_declared(first: Any, merged: Any, field_name: str) -> Any:
 
 
 def _same_value(left: Any, right: Any) -> bool:
-    """Whether two field values are interchangeable, treating an unusable `__eq__` as "no"."""
+    """Whether two field values are interchangeable, treating an unusable `__eq__` as "no".
+
+    Two distinct `Model` instances are never interchangeable. A model's `settings` and `profile`
+    live on the non-dataclass `Model` base, outside the field equality its dataclass subclasses
+    generate, so two differently configured models can compare equal -- and merging them to the
+    first would drop the later one's configuration.
+    """
     if left is right:
         return True
+    if isinstance(left, Model):
+        return False
     try:
         return bool(left == right)
     except Exception:
