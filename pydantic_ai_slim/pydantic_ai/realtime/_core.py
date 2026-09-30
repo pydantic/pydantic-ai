@@ -494,11 +494,11 @@ class SessionCore:
         ]
 
     def _usage(self, event: SessionUsage) -> None:
-        self.usage.incr(event.usage)
+        self.usage.incr(event.usage)  # usage-attribution: the core's own tally
         if not event.response_scoped:
             return
         if not self._responses_are_requests:
-            self.usage.requests += 1
+            self.usage.requests += 1  # usage-attribution: the core's own tally
         response = self._responses.get(event.provider_response_id) if event.provider_response_id else None
         if response is None or response.status is not None:
             # Usage for a response already recorded counts toward the session, never toward its message.
@@ -547,8 +547,8 @@ class SessionCore:
         provider_cost = message.usage.cost
         fill_response_cost(message)
         if provider_cost is None:
-            self.usage.incr(RequestUsage(cost=message.usage.cost))
-        self.usage.requests += int(self._responses_are_requests)
+            self.usage.incr(RequestUsage(cost=message.usage.cost))  # usage-attribution: the core's own tally
+        self.usage.requests += int(self._responses_are_requests)  # usage-attribution: the core's own tally
         response.message = message
 
     def _open_response(self, response_id: str | None) -> _Response | None:
