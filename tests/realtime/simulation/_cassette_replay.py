@@ -11,7 +11,7 @@ from __future__ import annotations as _annotations
 import json
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import yaml
 from google.genai import _live_converters as live_converters, types as genai_types
@@ -96,23 +96,9 @@ def _segments(cassette: RealtimeCassette) -> Iterator[list[dict[str, Any]]]:
             yield frames
             frames = []
         elif isinstance(interaction, CassetteMessage) and interaction.direction == 'received':
-            frames.append(_untagged(interaction.data))
+            frames.append(interaction.data)
     if frames:
         yield frames
-
-
-def _untagged(frame: dict[str, Any]) -> dict[str, Any]:
-    """The frame without the request metadata a provider echoes on its response.
-
-    The metadata names the inputs the recorded session sent, which the replaying connection, sending
-    nothing, never did.
-    """
-    response = frame.get('response')
-    if not isinstance(response, dict) or 'metadata' not in response:
-        return frame
-    untagged = dict(cast('dict[str, Any]', response))
-    del untagged['metadata']
-    return {**frame, 'response': untagged}
 
 
 class _InboundOnlySocket:
