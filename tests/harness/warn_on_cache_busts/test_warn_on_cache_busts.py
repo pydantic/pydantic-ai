@@ -349,10 +349,11 @@ async def test_retention_requested_by_settings_extends_the_window(monkeypatch: p
         def resolve_cache_retention(self, model_settings: object) -> timedelta | None:
             return timedelta(hours=1)
 
+    usages = [_usage(read=0, write=8000), _usage(read=100)]
+
     def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         return ModelResponse(parts=[TextPart('done')], usage=usages.pop(0))
 
-    usages = [_usage(read=0, write=8000), _usage(read=100)]
     clock = _Clock(monkeypatch)
     agent = Agent(
         OneHourCacheModel(fn, profile=_profile(timedelta(minutes=5))),
@@ -474,18 +475,16 @@ async def test_retention_is_timed_per_key_after_switch_away_and_back(monkeypatch
     timed from Anthropic's own previous request (6 minutes) it is an expiry and stays silent.
     """
     clock = _Clock(monkeypatch)
-
-    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        response = responses.pop(0)
-        clock.now = times.pop(0)
-        return response
-
     responses = [
         ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000), provider_name='anthropic'),
         ModelResponse(parts=[ToolCallPart('noop', {})], usage=_usage(read=0, write=8000), provider_name='openai'),
         ModelResponse(parts=[TextPart('done')], usage=_usage(read=100), provider_name='anthropic'),
     ]
     times = [T0, T0 + timedelta(minutes=4), T0 + timedelta(minutes=6)]
+
+    def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        clock.now = times.pop(0)
+        return responses.pop(0)
 
     def noop() -> str:
         return 'ok'

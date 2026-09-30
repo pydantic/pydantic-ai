@@ -17,8 +17,9 @@ from pydantic_ai import (
     TextPart,
     ToolCallPart,
 )
-from pydantic_ai._cache_health import CacheMark, ConversationCacheMarkStore
+from pydantic_ai._cache_health import CacheHealthDetector, CacheMark, ConversationCacheMarkStore
 from pydantic_ai.capabilities.instrumentation import Instrumentation
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -739,3 +740,28 @@ def test_marks_without_a_conversation_are_not_stored() -> None:
 
     assert store.get(None) == {}
     assert not store._conversations  # pyright: ignore[reportPrivateUsage]
+
+
+def test_concurrent_runs_of_a_new_conversation_keep_each_others_marks() -> None:
+    """Runs of a new conversation that start concurrently each get their own marks before either stores
+    any; the second to update merges into what the first stored, so a later run sees both."""
+    store = ConversationCacheMarkStore()
+    request_context = ModelRequestContext(
+        model=ConversationModel(), messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+    )
+    first = CacheHealthDetector(store, 'conversation', 'run-1', alert_on={'unexpected'})
+    second = CacheHealthDetector(store, 'conversation', 'run-2', alert_on={'unexpected'})
+    for detector, provider_name in ((first, 'provider-a'), (second, 'provider-b')):
+        detector.observe(
+            request_context,
+            ModelResponse(
+                parts=[TextPart('done')],
+                usage=RequestUsage(input_tokens=20000, cache_write_tokens=14000),
+                model_name='cache-model',
+                provider_name=provider_name,
+            ),
+        )
+
+    later = CacheHealthDetector(store, 'conversation', 'run-3', alert_on={'unexpected'})
+    assert set(later.marks) == {('provider-a', None, 'cache-model'), ('provider-b', None, 'cache-model')}
+    assert second.marks is later.marks
