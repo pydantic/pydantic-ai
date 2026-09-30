@@ -21,8 +21,7 @@ def typesafe_model_profile(model_name: str) -> ModelProfile | None:
 
     Jev is a [decision model][pydantic_ai.models.decision.DecisionModel], so this is the
     [decision model profile][pydantic_ai.profiles.decision.decision_model_profile] with Jev's caps on options and
-    rubric levels. It applies to Jev however it is reached: through [`TypeSafeModel`][pydantic_ai.models.typesafe.TypeSafeModel],
-    or through [`SystemOneModel`][pydantic_ai.models.system_one.SystemOneModel] over the same API.
+    rubric levels.
     """
     # No `context_window`: it comes from genai-prices, whose Jev entry records the 32k tokens `jev-1.13` takes
     # for the state plus the longest question. That is the limit a growing conversation hits, since the state

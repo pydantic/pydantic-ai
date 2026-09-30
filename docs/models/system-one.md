@@ -1,17 +1,17 @@
 ---
-description: "Run Pydantic AI agents on any decision model behind the /v1/systemone API, such as Contrastive Language Models (CLM) and Laya."
+description: "Run Pydantic AI agents on any decision model behind the /v1/systemone API, such as Contrastive Language Models (CLM), Laya, and the decision models Ollama runs locally."
 ---
 
 # System One API
 
-A [decision model](decision.md) answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text: the fast, one-look "System 1" judgement, next to a language model's step-by-step "System 2" reasoning. TypeSafe's Jev answers these questions over a `POST /v1/systemone` API, and other decision models are available over the same API, such as [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) (CLM) and [Laya](https://huggingface.co/convaiinnovations/laya).
+A [decision model](decision.md) answers typed questions about a text, each with a probability or a distribution over the options, rather than writing text: the fast, one-look "System 1" judgement, next to a language model's step-by-step "System 2" reasoning. TypeSafe's Jev answers these questions over a `POST /v1/systemone` API, and other decision models are available over the same API, such as [Contrastive Language Models](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B) (CLM) and [Laya](https://huggingface.co/convaiinnovations/laya), and [Ollama](#ollama) runs decision models locally over it.
 
 [`SystemOneModel`][pydantic_ai.models.system_one.SystemOneModel] is the Pydantic AI model class for any decision model behind this API, and a subclass of [`DecisionModel`][pydantic_ai.models.decision.DecisionModel], like [`TypeSafeModel`](typesafe.md). An agent built for one runs on the other by changing the model. All it needs is the API's URL, and its key if it has one.
 
 As with every model in Pydantic AI, the work is split in two:
 
 - The **model**, [`SystemOneModel`][pydantic_ai.models.system_one.SystemOneModel], speaks the API: it turns an agent run into `/v1/systemone` requests and reads the answers.
-- The **provider**, [`SystemOneProvider`][pydantic_ai.providers.system_one.SystemOneProvider], says where the API is and how to authenticate, and, through the [profile](#limits) for the model name, what the model there can be asked.
+- The **provider**, [`SystemOneProvider`][pydantic_ai.providers.system_one.SystemOneProvider], says where the API is and how to authenticate. What the model there can be asked goes in its [profile](#limits).
 
 [`TypeSafeModel`](typesafe.md) and its provider split the same way, for Jev through TypeSafe's SDK.
 
@@ -111,7 +111,7 @@ Each model has limits of its own, such as how many options a pick-one can have o
 - `decision_max_choice_options`: a pick-one with more options is refused before a request is sent.
 - `decision_max_score_levels`: whole numbers with more levels are [asked as a pick-one](decision.md#what-each-field-type-does) instead of a rubric.
 
-`SystemOneProvider` sets them for the model names it knows, such as Jev's [below](#typesafes-jev), and you can set them with `profile=` for any other:
+Set them with `profile=`:
 
 ```python
 from pydantic_ai.models.system_one import SystemOneModel
@@ -125,21 +125,34 @@ model = SystemOneModel(
 
 A request over a limit the profile does not know about gets an error response from the API, which is raised as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so a [`FallbackModel`](overview.md#fallback-model) can take over. Where a model reads a limited number of tokens, set its [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] the same way, and a processor that [compacts when the context window fills](../message-history.md#compact-when-the-context-window-fills) keeps the history under it.
 
-## TypeSafe's Jev
+## Ollama
 
-Jev is behind this API too, so `SystemOneModel` can reach it with TypeSafe's URL and key, without the `typesafe-sdk` package. The provider recognises `jev-*` model names and applies Jev's [limits](typesafe.md#limits), so the request is the same one [`TypeSafeModel`](typesafe.md) sends:
+[Ollama](https://ollama.com) v0.35.0 and later runs decision models locally over the same API, such as [Nimble](https://ollama.com/library/nimble) from Bespoke Labs and [Tev1](https://ollama.com/library/tev1) from Together AI. Pull one:
+
+```bash
+ollama pull nimble
+```
+
+Then point the provider at Ollama. Local requests need no API key, and the base URL has no `/v1` suffix, unlike the one for Ollama's [OpenAI-compatible API](ollama.md):
 
 ```python
+from pydantic_ai import Agent
 from pydantic_ai.models.system_one import SystemOneModel
+from pydantic_ai.profiles.decision import DecisionModelProfile
 from pydantic_ai.providers.system_one import SystemOneProvider
 
 model = SystemOneModel(
-    'jev-latest',
-    provider=SystemOneProvider(base_url='https://api.typesafe.ai', api_key='your-typesafe-api-key'),
+    'nimble',
+    provider=SystemOneProvider(base_url='http://localhost:11434'),
+    profile=DecisionModelProfile(decision_max_choice_options=26, decision_max_score_levels=26),
 )
+agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
+result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
+print(result.output)
+#> True
 ```
 
-`TypeSafeModel` remains the way to use Jev through TypeSafe's SDK, with its `typesafe:` model names and `TYPESAFE_API_KEY`.
+The profile sets Ollama's limit of 26 options in a pick-one and 26 levels in a rubric. Ollama also takes at most 64 questions and a 64 KiB request, and answers only with models pulled locally. See [Ollama's decision docs](https://docs.ollama.com/capabilities/decision) for the models and their limits.
 
 !!! note "Measure on your own data"
     Each model's confidence is its own, and a threshold tuned on one model does not carry over to another. Measure

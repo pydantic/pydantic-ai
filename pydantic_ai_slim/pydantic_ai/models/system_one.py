@@ -44,7 +44,7 @@ class SystemOneModelSettings(DecisionModelSettings, total=False):
 class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
     """The model class for [decision models][pydantic_ai.models.decision.DecisionModel] served over the `/v1/systemone` API.
 
-    Decision models such as [Contrastive Language Models](https://github.com/Contrastive-LM/CLM) and
+    Decision models such as [Contrastive Language Models](https://huggingface.co/Contrastive-LM/CLM-v0.1-8B) and
     [Laya](https://huggingface.co/convaiinnovations/laya) are available over this API, and an agent whose job is to
     decide something runs on one like on any other model, with the `output_type` as the questions:
 

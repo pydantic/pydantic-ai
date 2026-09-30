@@ -61,12 +61,11 @@ def mock_model(
     handler: Handler,
     *,
     api_key: str | None = None,
-    model_name: str = 'clm-latest',
     profile: DecisionModelProfile | None = None,
 ) -> SystemOneModel:
     http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
     provider = SystemOneProvider(base_url=BASE_URL, api_key=api_key, http_client=http_client)
-    return SystemOneModel(model_name, provider=provider, profile=profile)
+    return SystemOneModel('clm-latest', provider=provider, profile=profile)
 
 
 def answers(**answers: Mapping[str, object]) -> httpx2.Response:
@@ -167,14 +166,14 @@ def test_profile():
 
 
 def test_jev_profile():
-    """Jev's profile is the shared decision model profile with Jev's caps, whichever client reaches it."""
+    """Jev's profile is the shared decision model profile with Jev's caps."""
     assert typesafe_model_profile('jev-latest') == {
         **decision_model_profile('jev-latest'),
         'decision_max_choice_options': 255,
         'decision_max_score_levels': 10,
     }
-    assert SystemOneProvider.model_profile('jev-1.13.0') == typesafe_model_profile('jev-1.13.0')
-    assert SystemOneProvider.model_profile('clm-latest') == decision_model_profile('clm-latest')
+    # Jev is used through `TypeSafeModel`, so this provider gives no model name limits of its own.
+    assert SystemOneProvider.model_profile('jev-latest') == decision_model_profile('jev-latest')
 
 
 async def test_output_type(allow_model_requests: None):
@@ -404,11 +403,15 @@ def eleven_levels(request: httpx2.Request) -> httpx2.Response:
     return answers(score={'type': 'choice', 'choice': '3', 'confidence': 0.5, 'probabilities': probabilities})
 
 
-@pytest.mark.parametrize(('model_name', 'question_type'), [('clm-latest', 'score'), ('jev-latest', 'choice')])
-async def test_limits_come_from_the_model_name(model_name: str, question_type: str, allow_model_requests: None):
-    """Eleven levels are a rubric where the model sets no limit, and a pick-one on Jev, which scores at most ten."""
+@pytest.mark.parametrize(
+    ('profile', 'question_type'), [(None, 'score'), (DecisionModelProfile(decision_max_score_levels=10), 'choice')]
+)
+async def test_score_limit_from_profile(
+    profile: DecisionModelProfile | None, question_type: str, allow_model_requests: None
+):
+    """Eleven levels are a rubric where the profile sets no limit, and a pick-one where it allows ten."""
     captured = Captured(eleven_levels)
-    result = await Agent(mock_model(captured, model_name=model_name), output_type=Review).run('Great product.')
+    result = await Agent(mock_model(captured, profile=profile), output_type=Review).run('Great product.')
     assert result.output == Review(score=3)
     questions = captured.body['questions']
     assert isinstance(questions, dict)

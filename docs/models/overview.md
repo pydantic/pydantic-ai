@@ -39,7 +39,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
 | [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
-| [System One API](system-one.md) | [Decision models](decision.md) such as CLM and Laya | `system-one:` |
+| [System One API](system-one.md) | [Decision models](decision.md) such as CLM, Laya, and Ollama's | `system-one:` |
 | [Together AI](compatible-apis.md#together-ai) | Inference platform | `together:` |
 | [TypeSafe (Jev)](typesafe.md) | [Decision model](decision.md) | `typesafe:` |
 | [Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway) | Gateway | `vercel:` |
