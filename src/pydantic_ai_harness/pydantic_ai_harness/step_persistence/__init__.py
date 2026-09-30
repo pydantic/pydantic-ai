@@ -9,6 +9,7 @@ eagerly.
 
 from typing import TYPE_CHECKING
 
+from pydantic_ai_harness.media import PostgresConnection, PostgresPool
 from pydantic_ai_harness.step_persistence._capability import StepPersistence
 from pydantic_ai_harness.step_persistence._events import SnapshotSaved
 from pydantic_ai_harness.step_persistence._helpers import (
@@ -17,11 +18,7 @@ from pydantic_ai_harness.step_persistence._helpers import (
     fork_run,
     is_provider_valid,
 )
-from pydantic_ai_harness.step_persistence._postgres import (
-    PostgresConnection,
-    PostgresPool,
-    PostgresStepStore,
-)
+from pydantic_ai_harness.step_persistence._postgres import PostgresStepStore
 from pydantic_ai_harness.step_persistence._store import (
     FileStepStore,
     InMemoryStepStore,
