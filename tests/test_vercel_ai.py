@@ -6121,34 +6121,35 @@ async def test_adapter_dump_messages_with_thinking():
     )
 
 
-def test_dump_messages_extensionless_url_round_trips() -> None:
+@pytest.mark.parametrize('url_type', [ImageUrl, AudioUrl, VideoUrl, DocumentUrl])
+def test_dump_messages_extensionless_url_round_trips(
+    url_type: type[ImageUrl | AudioUrl | VideoUrl | DocumentUrl],
+) -> None:
     """A URL whose media type can't be inferred dumps an empty `media_type`, and comes back as itself.
 
     `FileUIPart.media_type` is a required string, so a URL Pydantic AI can't read a media type out of is
     dumped with an empty one rather than raising. That value is also what the load side reads the URL's
     kind from, and an empty one reads as no kind at all, so the kind rides along in `provider_metadata`
-    instead of the image coming back as a document.
+    instead of every URL kind coming back as a document.
     """
     messages: list[ModelMessage] = [
-        ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/image')])])
+        ModelRequest(parts=[UserPromptPart(content=[url_type(url='https://example.com/file')])])
     ]
 
     ui_messages = VercelAIAdapter.dump_messages(messages)
     file_part = next(part for part in ui_messages[0].parts if isinstance(part, FileUIPart))
-    assert file_part.model_dump(exclude_none=True) == snapshot(
-        {
-            'type': 'file',
-            'media_type': '',
-            'url': 'https://example.com/image',
-            'provider_metadata': {'pydantic_ai': {'kind': 'image-url'}},
-        }
-    )
+    assert file_part.model_dump(exclude_none=True) == {
+        'type': 'file',
+        'media_type': '',
+        'url': 'https://example.com/file',
+        'provider_metadata': {'pydantic_ai': {'kind': url_type.kind}},
+    }
 
     reloaded = VercelAIAdapter.load_messages(ui_messages)
-    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == snapshot(
-        [UserPromptPart(content=[ImageUrl(url='https://example.com/image')], timestamp=IsDatetime())]
-    )
-    # `ImageUrl.__eq__` ignores the media type, so pin the whole dumped part rather than the part alone.
+    assert list(iter_message_parts(reloaded, ModelRequest, UserPromptPart)) == [
+        UserPromptPart(content=[url_type(url='https://example.com/file')], timestamp=IsDatetime())
+    ]
+    # URL parts compare without their media type, so pin the whole dumped part rather than the part alone.
     assert VercelAIAdapter.dump_messages(reloaded)[0].parts[-1] == file_part
 
 
