@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
@@ -72,7 +73,9 @@ with try_import() as cohere_imports_successful:
     from pydantic_ai.providers.cohere import CohereProvider
 
 with try_import() as bedrock_imports_successful:
+    from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
     from botocore.exceptions import ClientError
+    from urllib3 import HTTPResponse
 
     from pydantic_ai.embeddings.bedrock import (
         BedrockEmbeddingModel,
@@ -2437,6 +2440,34 @@ async def test_google_embedding_non_json_response_body_raises_model_api_error(ca
                 await model.count_tokens('hello')
             else:
                 await model.embed('hello', input_type='query')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.skipif(not bedrock_imports_successful(), reason='Bedrock not installed')
+@pytest.mark.parametrize('body', [b'', b'not json'], ids=['empty', 'not-json'])
+async def test_bedrock_embedding_non_json_response_body_raises_model_api_error(body: bytes):
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    The response is injected at `before-send` because no real endpoint returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+    provider = BedrockProvider(
+        region_name='us-east-1',
+        aws_access_key_id='AKIA6666666666666666',
+        aws_secret_access_key='6666666666666666666666666666666666666666',
+    )
+    model = BedrockEmbeddingModel('cohere.embed-english-v3', provider=provider)
+
+    def respond(request: AWSPreparedRequest, **_: object) -> AWSResponse:
+        return AWSResponse(request.url, 200, HTTPHeaders(), HTTPResponse(body=io.BytesIO(body), preload_content=False))
+
+    # botocore sends the response a `before-send` handler returns instead of the request, though the stubs type every
+    # handler as returning `None`.
+    model.client.meta.events.register_last('before-send.bedrock-runtime', respond)  # pyright: ignore[reportArgumentType]
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.embed('hello', input_type='query')
 
     assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')

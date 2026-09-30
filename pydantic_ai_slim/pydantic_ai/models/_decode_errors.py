@@ -1,7 +1,8 @@
 """Map a provider response body the SDK could not decode to `ModelAPIError`.
 
-Some gateways answer 200 with a body that isn't JSON (e.g. keep-alive whitespace before an upstream failure). Every
-provider SDK then raises its JSON decoder's error, which isn't a `ModelAPIError`, so `FallbackModel` wouldn't fall back.
+Some gateways answer 200 with a body that isn't JSON (e.g. keep-alive whitespace before an upstream failure). Most
+provider SDKs then raise their JSON decoder's error, which isn't a `ModelAPIError`, so `FallbackModel` wouldn't
+fall back.
 """
 
 from __future__ import annotations as _annotations
