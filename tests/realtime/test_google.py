@@ -468,6 +468,45 @@ def test_tool_def_rejects_a_recursive_schema() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    'kids',
+    [
+        pytest.param({'type': 'object', 'additionalProperties': {'$ref': '#/$defs/Node'}}, id='dict'),
+        pytest.param({'additionalProperties': {'$ref': '#/$defs/Node'}}, id='typeless-additional-properties'),
+        pytest.param({'patternProperties': {'^k': {'$ref': '#/$defs/Node'}}}, id='typeless-pattern-properties'),
+        pytest.param({'additionalProperties': {'$ref': '#'}}, id='root-ref'),
+    ],
+)
+def test_tool_def_accepts_a_recursive_map(kids: dict[str, Any]) -> None:
+    """A map's value schema never reaches Gemini, so a recursive `$ref` in it doesn't refuse the tool.
+
+    `additionalProperties` is dropped because Gemini mishandles it, and `Schema` has no
+    `patternProperties`, so the map arrives empty like any other `dict` field.
+    """
+    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
+        ToolDefinition(
+            name='walk_tree',
+            parameters_json_schema={
+                '$defs': {'Node': {'type': 'object', 'properties': {'name': {'type': 'string'}, 'kids': kids}}},
+                'type': 'object',
+                'properties': {'root': {'$ref': '#/$defs/Node'}},
+            },
+        )
+    )
+    assert tool.parameters == genai_types.Schema(
+        type=genai_types.Type.OBJECT,
+        properties={
+            'root': genai_types.Schema(
+                type=genai_types.Type.OBJECT,
+                properties={
+                    'name': genai_types.Schema(type=genai_types.Type.STRING),
+                    'kids': genai_types.Schema(type=genai_types.Type.OBJECT if 'type' in kids else None),
+                },
+            )
+        },
+    )
+
+
 @pytest.mark.parametrize('async_tool_calls', [False, True])
 def test_tool_def_async_behavior(async_tool_calls: bool) -> None:
     # The expected enum is resolved in the body, not the `parametrize` decorator: decorators are

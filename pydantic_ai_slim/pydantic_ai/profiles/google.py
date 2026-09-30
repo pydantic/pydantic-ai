@@ -477,6 +477,14 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         # inlined and a nullable union becomes the plain type plus `nullable: true`.
         super().__init__(schema, strict=strict, prefer_inlined_defs=True, simplify_nullable_unions=True)
 
+    def _handle_object(self, schema: JsonSchema) -> JsonSchema:
+        # Neither map keyword reaches Gemini (`transform` drops `additionalProperties`, and `Schema` has no
+        # `patternProperties`), so they go before the walk: a recursive `$ref` in a map's values would
+        # otherwise refuse the whole tool over a subschema the declaration never carries.
+        schema.pop('additionalProperties', None)
+        schema.pop('patternProperties', None)
+        return super()._handle_object(schema)
+
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives
         # empty. Dropping it is what makes the rest of the schema usable; the alternative is refusing
