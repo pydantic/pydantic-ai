@@ -858,10 +858,9 @@ class ShadowChecker(Checker):
             findings = [f.id for f in matching_findings(self.sim, InvariantViolation(code, detail, [], context))]
             violation.findings = findings
             pending = [finding for finding in findings if finding in SHADOW_PENDING]
-            if self.strict or not pending:
+            if self.strict or not pending:  # pragma: no cover (only when the core breaks an invariant)
                 raise violation
-            # Only reached by randomized exploration: the pinned scenarios reproduce their finding first.
-            self.known_hits.append((pending[0], f'shadow.{code}'))  # pragma: lax no cover
+            self.known_hits.append((pending[0], f'shadow.{code}'))
 
     def waiter_started(self, waiter: Waiter) -> None:
         from ._simulation import Waiter
