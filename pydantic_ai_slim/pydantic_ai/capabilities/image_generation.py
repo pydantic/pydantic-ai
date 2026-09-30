@@ -82,9 +82,10 @@ def _routed_profiles(model: AbstractModel | None) -> Iterator[tuple[str, ModelPr
             profile = model.profile
         except NotImplementedError:
             # Forwarded to a model with no profile. That is `wrapped` unless the wrapper selected
-            # another one for this run, which nothing public exposes, so a `wrapped` that can't be
-            # the source says nothing rather than standing in for the model that is.
-            if isinstance(model.wrapped, FallbackModel | WrapperModel):
+            # another one for this run -- `TemporalModel.using_model()` does, and its `model_id`
+            # names the selection -- so a `wrapped` that isn't the selection says nothing rather
+            # than standing in for the model that is, whose members nothing public exposes.
+            if model.model_id == model.wrapped.model_id:
                 yield from _routed_profiles(model.wrapped)
         else:
             yield model.model_name, profile
@@ -110,7 +111,7 @@ class _DirectImageGenerationTool:
             raise UserError(_EDIT_ACTION_UNSUPPORTED)
         if self.image_model is not None:
             warnings.warn(
-                'Direct `ImageGeneration` fallback ignored `image_model`; '
+                f'Direct `ImageGeneration` fallback ignored image model {self.image_model!r}; '
                 'the direct image model is already selected by `local` or `fallback_image_model`',
                 UserWarning,
                 stacklevel=2,
@@ -473,7 +474,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 if native_only := self._native_only_settings():
                     # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
                     warnings.warn(
-                        _NATIVE_ONLY_SETTINGS_DROPPED.format(on='', settings=', '.join(native_only)),
+                        _NATIVE_ONLY_SETTINGS_DROPPED.format(
+                            on='', settings=', '.join(f'`{name}`' for name in native_only)
+                        ),
                         UserWarning,
                         stacklevel=3,
                     )
@@ -481,6 +484,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         # The native tool's kwargs are collected once for the default native tool and again for the
         # `fallback_subagent_model` subagent's copy, so the notice lives here to fire exactly once.
         ignored: list[str] = []
+        unapplied: list[str] = []
         if self.native is not False or (self.local is None and self.fallback_subagent_model is not None):
             _, ignored = self._native_geometry()
         elif not self._has_direct_generator:
@@ -501,23 +505,24 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                     if value is not None
                 ),
             ]
-            if unapplied:
-                # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
-                warnings.warn(
-                    f'`ImageGeneration` ignored native-tool setting(s): {", ".join(unapplied)}. '
-                    'With `native=False` the `local` tool you supplied is the only implementation, and the '
-                    'capability passes it no settings; configure that tool instead.',
-                    UserWarning,
-                    stacklevel=3,
-                )
+        # The notices follow the base's validation, which is what rejects a `local` that is no tool.
         super().__post_init__()
         # Built here only so a subagent this configuration can't run -- an image-only model, a
         # `native` of the wrong type -- fails at construction; `get_toolset` builds the tool it uses.
         self._fallback_subagent_tool()
+        if unapplied:
+            # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
+            warnings.warn(
+                f'`ImageGeneration` ignored native-tool setting(s): {", ".join(f"`{name}`" for name in unapplied)}. '
+                'With `native=False` the `local` tool you supplied is the only implementation, and the '
+                'capability passes it no settings; configure that tool instead.',
+                UserWarning,
+                stacklevel=3,
+            )
         if ignored:
             # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
             warnings.warn(
-                f'`ImageGeneration` ignored direct-only setting(s): {", ".join(ignored)}. '
+                f'`ImageGeneration` ignored direct-only setting(s): {", ".join(f"`{name}`" for name in ignored)}. '
                 'Only a direct generator applies them: use `native=False` with '
                 "`fallback_image_model='provider:image-model'` or `local=ImageGenerator(...)`.",
                 UserWarning,
@@ -875,15 +880,17 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 native_supersedes = ImageGenerationTool in profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS)
                 if native_supersedes and direct_only:
                     warnings.warn(
-                        f'The `ImageGeneration` native tool supersedes the direct generator on {model_name}, '
-                        f'so direct-only setting(s) go unapplied: {", ".join(direct_only)}. '
+                        f'The `ImageGeneration` native tool supersedes the direct generator on {model_name!r}, '
+                        f'so direct-only setting(s) go unapplied: {", ".join(f"`{name}`" for name in direct_only)}. '
                         'Pass `native=False` to guarantee them.',
                         UserWarning,
                         stacklevel=2,
                     )
                 elif not native_supersedes and native_only:
                     warnings.warn(
-                        _NATIVE_ONLY_SETTINGS_DROPPED.format(on=f' on {model_name}', settings=', '.join(native_only)),
+                        _NATIVE_ONLY_SETTINGS_DROPPED.format(
+                            on=f' on {model_name!r}', settings=', '.join(f'`{name}`' for name in native_only)
+                        ),
                         UserWarning,
                         stacklevel=2,
                     )

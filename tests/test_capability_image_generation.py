@@ -268,7 +268,8 @@ class TestImageGenerationCapability:
         the native-only settings have nothing left to apply them.
         """
         with pytest.warns(
-            UserWarning, match=r'ignored native-tool setting\(s\): quality, size, action, image_model, aspect_ratio'
+            UserWarning,
+            match=r'ignored native-tool setting\(s\): `quality`, `size`, `action`, `image_model`, `aspect_ratio`',
         ) as recorded:
             ImageGeneration(
                 native=False,
@@ -503,7 +504,7 @@ class TestImageGenerationCapability:
             ],
         )
 
-        with pytest.warns(UserWarning, match=r'ignored `image_model`'):
+        with pytest.warns(UserWarning, match=r"ignored image model 'gpt-image-1'"):
             result = await agent.run('Generate an image')
 
         assert result.output == 'done'
@@ -512,6 +513,12 @@ class TestImageGenerationCapability:
         """`local=True` is not an image generation strategy: the capability has no bundled local tool."""
         with pytest.raises(UserError, match=r'`local=True` is not supported'):
             ImageGeneration(local=True)  # pyright: ignore[reportArgumentType]
+
+    @pytest.mark.parametrize('local', [False, True, 'duckduckgo'])
+    def test_image_generation_native_false_rejects_an_invalid_local_without_a_settings_notice(self, local: bool | str):
+        """An invalid `local` is refused outright, not first reported as a tool that ignores the capability's settings."""
+        with pytest.raises(UserError):
+            ImageGeneration(native=False, local=local, quality='high')  # pyright: ignore[reportArgumentType]
 
     def test_image_generation_rejects_a_local_strategy_string(self):
         """Every `local` string is rejected, and the message names the field a model belongs on."""
@@ -594,7 +601,7 @@ class TestImageGenerationCapability:
             capabilities=[ImageGeneration(local=ImageGenerator(image_model), dimensions=(1280, 720))],
         )
 
-        with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: dimensions'):
+        with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: `dimensions`'):
             result = await agent.run('Generate an image')
 
         assert result.output == 'native path'
@@ -621,7 +628,7 @@ class TestImageGenerationCapability:
         copy = replace(capability, aspect_ratio=None)
 
         agent = Agent(outer_model, capabilities=[copy])
-        with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: dimensions'):
+        with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: `dimensions`'):
             result = await agent.run('Generate an image')
 
         assert result.output == 'native path'
@@ -704,7 +711,7 @@ class TestImageGenerationCapability:
         either instance on its own would send the other's settings.
         """
         image_model = TestImageGenerationModel()
-        with pytest.warns(UserWarning, match=r'ignored direct-only setting\(s\): dimensions'):
+        with pytest.warns(UserWarning, match=r'ignored direct-only setting\(s\): `dimensions`'):
             agent = Agent(
                 direct_generation_model,
                 capabilities=[
@@ -1010,7 +1017,7 @@ class TestImageGenerationCapability:
             capabilities=[ImageGeneration(local=ImageGenerator(image_model), output_format='webp', quality='high')],
         )
 
-        with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): output_format, quality'):
+        with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): `output_format`, `quality`'):
             result = await agent.run('Generate an image')
 
         assert result.output == 'done'
@@ -1029,7 +1036,7 @@ class TestImageGenerationCapability:
         )
         agent = Agent(direct_generation_model, capabilities=[capability])
 
-        with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): output_format, quality'):
+        with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): `output_format`, `quality`'):
             result = await agent.run('Generate an image')
 
         assert result.output == 'done'
@@ -1044,7 +1051,7 @@ class TestImageGenerationCapability:
         )
         agent = Agent(direct_generation_model, capabilities=[capability])
 
-        with pytest.warns(UserWarning, match=r'ignored `image_model`'):
+        with pytest.warns(UserWarning, match=r"ignored image model 'gpt-image-2'"):
             result = await agent.run('Generate an image')
 
         assert result.output == 'done'
@@ -1085,12 +1092,12 @@ class TestImageGenerationCapability:
         [
             pytest.param(
                 {'dimensions': (1280, 720)},
-                r'supersedes the direct generator on native, so direct-only setting\(s\) go unapplied: dimensions',
+                r"""supersedes the direct generator on 'native', so direct-only setting\(s\) go unapplied: `dimensions`""",
                 id='direct-only',
             ),
             pytest.param(
                 {'quality': 'high'},
-                r'fallback on no_native ignored native-tool setting\(s\): quality',
+                r"""fallback on 'no_native' ignored native-tool setting\(s\): `quality`""",
                 id='native-only',
             ),
         ],
@@ -1173,7 +1180,7 @@ class TestImageGenerationCapability:
             capabilities=[ImageGeneration(local=ImageGenerator(image_model), aspect_ratio='2:1')],
         )
 
-        with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: aspect_ratio'):
+        with pytest.warns(UserWarning, match=r'direct-only setting\(s\) go unapplied: `aspect_ratio`'):
             result = await agent.run('Generate an image')
 
         assert result.output == 'native path'
@@ -1261,7 +1268,7 @@ class TestImageGenerationCapability:
         ('kwargs', 'ignored'),
         [
             ({'dimensions': (2048, 1152)}, 'dimensions'),
-            ({'size': '2048x1024', 'aspect_ratio': '2:1'}, 'size, aspect_ratio'),
+            ({'size': '2048x1024', 'aspect_ratio': '2:1'}, '`size`, `aspect_ratio`'),
         ],
     )
     def test_image_generation_legacy_ignores_direct_only_geometry(self, kwargs: dict[str, Any], ignored: str):

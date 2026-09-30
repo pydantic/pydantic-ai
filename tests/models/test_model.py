@@ -700,6 +700,11 @@ def test_profile_context_window_callable_override():
 
 
 def test_wrapper_model_deepcopy():
+    """`deepcopy` builds the copy without `__init__`, so `wrapped` is unset when `__getattr__` runs.
+
+    `copy` probes the new instance for `__setstate__`; forwarding that to an unset `wrapped` recursed
+    until `RecursionError`. No request is involved, so this is not a VCR test.
+    """
     model = WrapperModel(TestModel(custom_output_text='wrapped'))
 
     copied = deepcopy(model)

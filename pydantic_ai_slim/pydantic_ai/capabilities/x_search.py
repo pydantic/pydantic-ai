@@ -44,6 +44,9 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
 
     Can be a model name string, `Model` instance, or a callable taking `RunContext`
     that returns a `Model` instance or model name string.
+
+    The model is kept as declared; the `x_search` tool is derived from it and the
+    capability's settings each time the toolset is requested.
     """
 
     allowed_x_handles: list[str] | None

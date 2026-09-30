@@ -24,7 +24,7 @@ image_generator = ImageGenerator(
 )
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-sonnet-5-5',
     capabilities=[
         ImageGeneration(
             native=False,
@@ -143,7 +143,7 @@ that last response carries it. Where the image lands depends on the path that pr
 - A direct generator or the `fallback_subagent_model` subagent returns it from the `generate_image` tool call, so it
   is in that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], among its
   [`files`][pydantic_ai.messages.BaseToolReturnPart.files]. A `local` tool of your own is found under its own tool
-  name; return a `BinaryImage` so the image lands among its `files`, since raw `bytes` reach the model as base64
+  name; return a [`BinaryImage`][pydantic_ai.messages.BinaryImage] so the image lands among its `files`, since raw `bytes` reach the model as base64
   text.
 
 Collecting both covers whichever path each request took:
@@ -154,7 +154,7 @@ from pydantic_ai.capabilities import ImageGeneration
 from pydantic_ai.messages import ModelResponse, ToolReturnPart
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-sonnet-5-5',
     capabilities=[ImageGeneration(fallback_image_model='openai:gpt-image-2')],
 )
 result = agent.run_sync('Generate an illustration of a cafe, then write alt text for it.')
@@ -177,7 +177,9 @@ print(len(images))
 To make the image the run's output instead, set `output_type=BinaryImage` (see [Image Output](../output.md#image-output)).
 That setting is checked against the agent's model, not against the fallback: a model that doesn't generate images
 itself raises [`UserError`][pydantic_ai.exceptions.UserError] even when a fallback is configured to generate them, so
-collect the image from the history on those models.
+collect the image from the history on those models. On a model that does, it enables that model's own native image
+generation even beside `native=False`, so the output image comes from the model rather than from the generator you
+configured.
 
 ## Fallback Options
 
@@ -235,7 +237,7 @@ exposing the same setting names. Write `dimensions` as the two-item array used b
 it to the `(width, height)` tuple used by the Python API:
 
 ```yaml
-model: anthropic:claude-sonnet-4-6
+model: anthropic:claude-sonnet-5-5
 capabilities:
   - ImageGeneration:
       native: false

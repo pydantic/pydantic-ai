@@ -198,6 +198,11 @@ class TestXSearchCapability:
         assert cap.fallback_subagent_model is None
         assert cap.get_toolset() is None
 
+    def test_xsearch_native_false_without_local_raises(self):
+        """XSearch(native=False) without a local tool or `fallback_subagent_model` → UserError at construction."""
+        with pytest.raises(UserError, match='requires an explicit local tool'):
+            XSearch(native=False)
+
     def test_xsearch_with_subagent_model(self):
         """XSearch(fallback_subagent_model=...) → native XSearchTool, local subagent fallback."""
         cap = XSearch(fallback_subagent_model='xai:grok-4-1-fast-non-reasoning')

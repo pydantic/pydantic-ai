@@ -3240,13 +3240,9 @@ async def test_image_generation_prepare_function_reads_the_model_temporal_select
     `TemporalModel` prepares a request against its current model's profile, and `wrapped` is only
     the default, so the notice has to read the `TemporalModel`'s own profile to match that routing.
     """
-
-    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        return ModelResponse(parts=[TextPart(content='done')])  # pragma: no cover
-
-    no_native = FunctionModel(reply, model_name='no_native', profile=ModelProfile(supported_native_tools=frozenset()))
-    native = FunctionModel(
-        reply, model_name='native', profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}))
+    no_native = TestModel(model_name='no_native', profile=ModelProfile(supported_native_tools=frozenset()))
+    native = TestModel(
+        model_name='native', profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}))
     )
     temporal_model = TemporalModel(
         no_native,
@@ -3257,38 +3253,41 @@ async def test_image_generation_prepare_function_reads_the_model_temporal_select
     )
     ctx = RunContext(deps=None, model=temporal_model, usage=RunUsage(), run_id='run-123')
     tool_def = ToolDefinition(name='generate_image')
+    quality_toolset = ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high').get_toolset()
+    assert isinstance(quality_toolset, PreparedToolset)
+    dimensions_toolset = ImageGeneration(
+        fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)
+    ).get_toolset()
+    assert isinstance(dimensions_toolset, PreparedToolset)
 
     with temporal_model.using_model('native'):
-        quality = ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high').get_toolset()
-        assert isinstance(quality, PreparedToolset)
         # `filterwarnings = ['error']` turns an absent notice into the assertion: `native` applies it.
-        prepared = quality.prepare_func(ctx, [tool_def])
+        prepared = quality_toolset.prepare_func(ctx, [tool_def])
         assert inspect.isawaitable(prepared)
         assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
 
-        dimensions = ImageGeneration(
-            fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)
-        ).get_toolset()
-        assert isinstance(dimensions, PreparedToolset)
-        with pytest.warns(UserWarning, match=r'supersedes the direct generator on native'):
-            prepared = dimensions.prepare_func(ctx, [tool_def])
+        with pytest.warns(UserWarning, match=r"supersedes the direct generator on 'native'"):
+            prepared = dimensions_toolset.prepare_func(ctx, [tool_def])
         assert inspect.isawaitable(prepared)
         await prepared
 
-    # A selected `FallbackModel` has no profile, and nothing public says which model was selected, so
-    # the notice says nothing rather than reading the default `no_native` in its place.
-    registry_model = TemporalModel(
-        no_native,
-        activity_name_prefix='image_generation_selected_fallback',
-        activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)),
-        deps_type=type(None),
-        models={'fallback': FallbackModel(native)},
-    )
-    registry_ctx = RunContext(deps=None, model=registry_model, usage=RunUsage(), run_id='run-123')
-    with registry_model.using_model('fallback'):
-        prepared = quality.prepare_func(registry_ctx, [tool_def])
-    assert inspect.isawaitable(prepared)
-    assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
+    # A selected `FallbackModel` has no profile, and nothing public says which of its models runs, so
+    # the notice says nothing rather than reading the default in its place -- including a default
+    # that is itself a `FallbackModel`, whose members would otherwise stand in for the selected one's.
+    for default in (no_native, FallbackModel(no_native)):
+        registry_model = TemporalModel(
+            default,
+            activity_name_prefix='image_generation_selected_fallback',
+            activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)),
+            deps_type=type(None),
+            models={'fallback': FallbackModel(native)},
+        )
+        registry_ctx = RunContext(deps=None, model=registry_model, usage=RunUsage(), run_id='run-123')
+        with registry_model.using_model('fallback'):
+            for toolset in (quality_toolset, dimensions_toolset):
+                prepared = toolset.prepare_func(registry_ctx, [tool_def])
+                assert inspect.isawaitable(prepared)
+                assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
 
 
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
