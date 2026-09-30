@@ -1,7 +1,8 @@
 # Runtime and Extension
 
 How a harness agent is persisted, made durable, configured, extended, and served. This covers saving and
-resuming runs (`StepPersistence`), AWS Lambda durable functions (`AWSLambdaDurability`), harness
+resuming runs (`StepPersistence`), Restate handlers (`RestateDurability`), AWS Lambda durable
+functions (`AWSLambdaDurability`), harness
 capabilities under core durable execution, Logfire-managed instructions (`ManagedPrompt`), agent-written
 capabilities (`CapabilityCreation`), loading harness capabilities from YAML/JSON specs, serving an agent
 to editors over ACP, and running one as a GitHub Agentic Workflow.
@@ -12,6 +13,7 @@ to editors over ACP, and running one as a GitHub Agentic Workflow.
 |---|---|
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
+| Journal model and tool operations in a Restate service handler | `RestateDurability` |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
@@ -172,6 +174,42 @@ Rules that apply to every harness capability:
 
 The per-engine feature matrix for workspace tools (commands, background jobs, live events, delegation,
 timeouts) is in `CODING-AND-WORKSPACES.md` and the durable execution docs page.
+
+## RestateDurability
+
+Journals model requests, tool calls, MCP I/O, dynamic-toolset resolution, event handlers, durable
+capability operations, and workspace calls as Restate run steps. Use it only inside an async Restate
+service handler; outside an active Restate context it is transparent.
+
+```bash
+uv add "pydantic-ai-harness[restate]" "pydantic-ai-slim[openai]"
+```
+
+```python {test="skip"}
+import restate
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import RestateDurability
+
+agent = Agent('openai:gpt-5', name='analyst', capabilities=[RestateDurability()])
+service = restate.Service('analyst')
+
+
+@service.handler()
+async def analyse(_ctx: restate.Context, prompt: str) -> str:
+    return (await agent.run(prompt)).output
+
+
+app = restate.app([service])
+```
+
+Parameters: `RestateDurability(*, models=None, event_stream_handler=None, name=None, max_attempts=3)`.
+The attempt limit accepts integers from 1 through 4,294,967,295; set `max_attempts=None` only when
+the Restate invocation retry policy should govern step retries. Function tools can opt out with
+`metadata={'restate': False}`; MCP tools cannot. Tool calls are sequential inside a Restate handler,
+toolsets need stable ids, step side effects must be idempotent, and `ctx.enqueue()` is unavailable
+inside a step. A nested agent invoked by a step executes inline and is covered by the parent step.
+Do not combine this capability with the Restate SDK's separate `RestateAgent` adapter.
 
 ## AWSLambdaDurability
 

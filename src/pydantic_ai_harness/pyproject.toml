@@ -67,6 +67,7 @@ exa = ["exa-py>=2.16.0"]
 aws-lambda = ["aws-durable-execution-sdk-python>=1.7.0,<2 ; python_full_version >= '3.11'"]
 # 3.2 types `page_age` as `datetime | str`, and the toolset formats it as a `datetime`.
 youdotcom = ["youdotcom>=3.1.2,<3.2"]
+restate = ["restate-sdk>=1.0.2"]
 mongodb = ["pymongo>=4.17.0"]
 skills = ["pyyaml>=6.0.2"]
 browser-use = ["browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'"]
