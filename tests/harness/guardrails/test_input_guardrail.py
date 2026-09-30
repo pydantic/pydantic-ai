@@ -202,9 +202,7 @@ class TestInputGuardrailBlockSticks:
 
         @agent.output_validator
         def reject_refusal(output: str) -> str:
-            if output != 'ok':
-                raise ModelRetry('Keep going.')
-            return output
+            raise ModelRetry('Keep going.')
 
         with pytest.raises(UnexpectedModelBehavior, match='output retries'):
             await agent.run('forbidden request')
