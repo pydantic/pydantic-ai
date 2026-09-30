@@ -19,18 +19,19 @@ from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
-from pydantic_clai2 import chat, theme
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2 import chat
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions
 from pydantic_clai2.config import Settings
-from pydantic_clai2.field_menu import Runners
-from pydantic_clai2.image_input import ImageInput
-from pydantic_clai2.interrupts import Interrupts
-from pydantic_clai2.live_prompt import LivePrompt
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.spinner_picker import SpinnerPicker, spinner_command, spinner_completions
-from pydantic_clai2.spinners import (
+from pydantic_clai2.ui.menus.field_menu import Runners
+from pydantic_clai2.ui.menus.spinner_picker import SpinnerPicker, spinner_command, spinner_completions
+from pydantic_clai2.ui.prompt.image_input import ImageInput
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.spinners import (
     BUILTIN_SPINNERS,
     DEFAULT_SPINNER,
     STARTER_FILE,
@@ -290,7 +291,7 @@ class TestCommand:
         spinners = spinners_for(context, tmp_path)
         monkeypatch.setattr('sys.stdout', io.StringIO())
         keys = iter([*'bone', '+', '+', '=', 'right', '-', 'left', '+', 'enter'])
-        monkeypatch.setattr('pydantic_clai2.spinner_picker.menu_key', lambda: next(keys))
+        monkeypatch.setattr('pydantic_clai2.ui.menus.spinner_picker.menu_key', lambda: next(keys))
         message = await spinner_command(context, spinners, [], runners=Runners(run_list=lambda menu: menu.run()))
         assert message.startswith('Spinner set to bone (8 frames at 0.14s). Speed saved')
         assert context.settings.spinner == 'bone'
@@ -323,7 +324,7 @@ class TestPicker:
         monkeypatch.setenv('COLUMNS', '100')
         monkeypatch.setenv('LINES', '30')
         keys = iter(['', '', 'escape'])
-        monkeypatch.setattr('pydantic_clai2.spinner_picker.menu_key', lambda: next(keys))
+        monkeypatch.setattr('pydantic_clai2.ui.menus.spinner_picker.menu_key', lambda: next(keys))
         ticks = iter([0.0, 0.1, 0.2, 0.3])
         picker = SpinnerPicker(catalogue(tmp_path), clock=lambda: next(ticks))
         assert picker.build().run().cancelled

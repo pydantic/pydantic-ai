@@ -29,13 +29,13 @@ from pydantic_ai_harness.code_mode import (
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
 from pydantic_clai2 import StreamRenderer
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
-from pydantic_clai2.eager_timing import EagerExecutionCompletedEvent
-from pydantic_clai2.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.speculation import Speculation, SpeculationCounters
-from pydantic_clai2.speculative_mode import (
+from pydantic_clai2.runtime.eager_timing import EagerExecutionCompletedEvent
+from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
+from pydantic_clai2.runtime.speculative_mode import (
     NATIVE_TOOLS,
     SPECULATIVE_TOOLS,
     ShowSandboxCalls,

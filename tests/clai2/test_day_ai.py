@@ -15,21 +15,21 @@ from rich.console import Console
 from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 
-import pydantic_clai2.day_ai as day_ai
+import pydantic_clai2.builtin_plugins.day_ai as day_ai
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.day_ai import DayAI
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys
-from pydantic_clai2.api_keys import KeyReference, SavedKey
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins.day_ai import SETUP, DayAISource
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.day_ai import SETUP, DayAISource
+from pydantic_clai2.config import PluginSettings, api_keys
+from pydantic_clai2.config.api_keys import KeyReference, SavedKey
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import TokenStore
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
-from pydantic_clai2.plugin_menu import Configure, PluginMenu, open_plugins_menu
 from pydantic_clai2.plugins import PluginHost, SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import Script, pick
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'day_ai')
@@ -109,7 +109,7 @@ def key_choice(monkeypatch: pytest.MonkeyPatch, choice: str | KeyReference | Non
         labels.append(label)
         return choice
 
-    monkeypatch.setattr('pydantic_clai2.plugin_keys.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
     return labels
 
 
@@ -123,7 +123,7 @@ async def store_sign_in() -> None:
 
 
 def test_declared_disabled_with_no_settings() -> None:
-    assert BUILTIN == PluginSettings(id='day_ai', factory='pydantic_clai2.day_ai', enabled=False)
+    assert BUILTIN == PluginSettings(id='day_ai', factory='pydantic_clai2.builtin_plugins.day_ai', enabled=False)
 
 
 async def test_enable_opens_the_menu_and_every_option_saves_immediately(
@@ -279,7 +279,9 @@ async def test_add_replacing_the_builtin_opens_the_menu(tmp_path: Path, monkeypa
     api_keys.save_key(name='DAY_AI_ACCESS_TOKEN', value='saved')
     shell = Shell(tmp_path)
     script(monkeypatch, lists=[pick('include_instructions')], choices=[pick('true')])
-    added = await shell.loader.command(['add', 'day_ai', 'pydantic_clai2.day_ai', '{"include_instructions": false}'])
+    added = await shell.loader.command(
+        ['add', 'day_ai', 'pydantic_clai2.builtin_plugins.day_ai', '{"include_instructions": false}']
+    )
     assert added == 'Replaced built-in day_ai.\nSaved Server instructions.'
     assert shell.loader.capabilities() == with_key()
     await shell.loader.close('exit')
@@ -289,7 +291,9 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu(tmp_path: Path) -> No
     shell = Shell(tmp_path)
     with pytest.raises(ValueError, match='not loaded; enable it before configuring'):
         await shell.loader.command(['configure', 'day_ai'])
-    shell.store.save_plugin(BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.repo_context'}))
+    shell.store.save_plugin(
+        BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.builtin_plugins.repo_context'})
+    )
     assert await shell.loader.command(['enable', 'plain']) == 'Enabled plain.'
     with pytest.raises(ValueError, match='no settings menu'):
         await shell.loader.configure('plain')
@@ -319,7 +323,9 @@ async def test_plugins_menu_enabling_opens_the_settings_menu(tmp_path: Path, mon
 async def test_plugins_menu_stays_open_when_there_is_nothing_to_configure(tmp_path: Path) -> None:
     shell = Shell(tmp_path)
     shell.store.save_plugin(
-        BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.repo_context', 'enabled': True})
+        BUILTIN.model_copy(
+            update={'id': 'plain', 'factory': 'pydantic_clai2.builtin_plugins.repo_context', 'enabled': True}
+        )
     )
     await shell.loader.load_all()
 
@@ -351,7 +357,7 @@ async def test_cancelling_configure_cancels_an_open_key_picker(tmp_path: Path, m
             finished.append(label)
         return None  # pragma: no cover -- unreachable; keeps the signature honest
 
-    monkeypatch.setattr('pydantic_clai2.plugin_keys.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
     script(monkeypatch, lists=[pick('auth')], choices=[pick('key')])
     with anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:

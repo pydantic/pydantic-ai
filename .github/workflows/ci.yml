@@ -23,9 +23,6 @@ env:
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
   GIT_CONFIG_VALUE_0: https://github.com/
-  # Pin the testmon coverage cache while its upstream integration is evaluated.
-  # Install it into the synced environment; uv --with rebuilds workspace packages in a temporary overlay.
-  TESTMON_PACKAGE: "git+https://github.com/Kludex/pytest-testmon@574bf98677878e42007abd2aaa232ebb77c3edd7"
 
 permissions:
   contents: read
@@ -45,7 +42,8 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      docs_only: ${{ steps.classify.outputs.docs_only }}
+      content_only: ${{ steps.classify.outputs.content_only }}
+      docs_changed: ${{ steps.classify.outputs.docs_changed }}
       clai2_only: ${{ steps.classify.outputs.clai2_only }}
       pyright_changed: ${{ steps.classify.outputs.pyright_changed }}
     steps:
@@ -56,7 +54,8 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           run_all_checks() {
-            echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+            echo 'content_only=false' >> "$GITHUB_OUTPUT"
+            echo 'docs_changed=false' >> "$GITHUB_OUTPUT"
             echo 'clai2_only=false' >> "$GITHUB_OUTPUT"
             echo 'pyright_changed=true' >> "$GITHUB_OUTPUT"
           }
@@ -71,6 +70,16 @@ jobs:
             run_all_checks
             exit 0
           fi
+          if ! [[ "$total" =~ ^[0-9]+$ ]]; then
+            echo "::warning::PR changed-file count is not numeric ($total); running full CI."
+            run_all_checks
+            exit 0
+          fi
+          if [ "$total" -eq 0 ] || [ "$total" -ge 3000 ]; then
+            echo "::warning::PR changed-file count is $total; running full CI."
+            run_all_checks
+            exit 0
+          fi
           if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
             --jq '.[] | [.filename, (.previous_filename // "")] | @tsv' > "$RUNNER_TEMP/changed-files.txt"; then
             echo '::warning::Could not list the PR changed files; running full CI.'
@@ -79,13 +88,13 @@ jobs:
           fi
 
           mapfile -t changed_files < "$RUNNER_TEMP/changed-files.txt"
-          if [ "$total" -eq 0 ] || [ "${#changed_files[@]}" -ne "$total" ]; then
+          if [ "${#changed_files[@]}" -ne "$total" ]; then
             echo "::warning::Expected $total changed files, received ${#changed_files[@]}; running full CI."
             run_all_checks
             exit 0
           fi
 
-          is_docs_markdown() {
+          is_published_docs_markdown() {
             case "$1" in
               README.md|docs/*.md|examples/*.md) ;;
               *) return 1 ;;
@@ -93,6 +102,10 @@ jobs:
             case "$1" in
               AGENTS.md|CLAUDE.md|*/AGENTS.md|*/CLAUDE.md) return 1 ;;
             esac
+          }
+
+          is_instruction_skill() {
+            [[ "$1" =~ ^\.agents/skills/[^/]+/SKILL\.md$ ]]
           }
 
           # Nothing outside `pydantic-clai2` imports it, so a change confined to these paths cannot
@@ -115,14 +128,19 @@ jobs:
             esac
           }
 
-          docs_only=true
+          content_only=true
+          docs_changed=false
           clai2_only=true
           pyright_changed=false
           for changed_file in "${changed_files[@]}"; do
             IFS=$'\t' read -r filename previous_filename <<< "$changed_file"
-            if ! is_docs_markdown "$filename" || \
-              { [ -n "$previous_filename" ] && ! is_docs_markdown "$previous_filename"; }; then
-              docs_only=false
+            if { ! is_published_docs_markdown "$filename" && ! is_instruction_skill "$filename"; } || \
+              { [ -n "$previous_filename" ] && ! is_published_docs_markdown "$previous_filename" && ! is_instruction_skill "$previous_filename"; }; then
+              content_only=false
+            fi
+            if is_published_docs_markdown "$filename" || \
+              { [ -n "$previous_filename" ] && is_published_docs_markdown "$previous_filename"; }; then
+              docs_changed=true
             fi
             if ! is_clai2 "$filename" || \
               { [ -n "$previous_filename" ] && ! is_clai2 "$previous_filename"; }; then
@@ -133,14 +151,15 @@ jobs:
               pyright_changed=true
             fi
           done
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "content_only=$content_only" >> "$GITHUB_OUTPUT"
+          echo "docs_changed=$docs_changed" >> "$GITHUB_OUTPUT"
           echo "clai2_only=$clai2_only" >> "$GITHUB_OUTPUT"
           echo "pyright_changed=$pyright_changed" >> "$GITHUB_OUTPUT"
 
   quality:
     name: quality checks
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: ubuntu-latest
     # `pull-requests: read` is for the lock-regeneration guard's PR file listing. Reading
     # it works today on `contents: read` alone only because this repo is public; declaring
@@ -182,6 +201,7 @@ jobs:
           .github/scripts/test_agent_spend_report.py
           .github/scripts/test_docs_navigation_workflow.py
           .github/scripts/test_protect_github_dir.py
+          .github/scripts/test_ci_content_classifier.py
 
       # `make typecheck-changed` narrows Pyright to the files a change reaches, so a wrong
       # answer here silently stops type errors reaching a developer's terminal.
@@ -332,7 +352,7 @@ jobs:
   # mypy and quality checks are a bit slower than other jobs, so we run them separately
   mypy:
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -352,6 +372,8 @@ jobs:
   # The unified-docs repository renders and validates published documentation.
   # Keep this source-repository check for assets that live alongside Pydantic AI docs.
   docs-assets:
+    needs: classify
+    if: needs.classify.outputs.content_only != 'true' || needs.classify.outputs.docs_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -381,7 +403,7 @@ jobs:
   docs-only:
     name: docs-only checks on Python 3.13
     needs: classify
-    if: needs.classify.outputs.docs_only == 'true'
+    if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -414,10 +436,27 @@ jobs:
       - name: Test documentation snippets
         run: uv run --no-sync pytest tests/test_examples.py -n logical --dist=loadgroup
 
+  instructions-only:
+    name: instruction text checks
+    needs: classify
+    if: needs.classify.outputs.content_only == 'true' && needs.classify.outputs.docs_changed != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd # v3.0.1
+        with:
+          extra_args: --all-files --verbose
+        env:
+          SKIP: no-commit-to-branch,check-yaml,check-toml,check-added-large-files,zizmor,clai-help,format,lint,check-cassettes
+
   test:
     name: test on ${{ matrix.python-version }} (${{ matrix.install.name }})
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true'
+    if: needs.classify.outputs.content_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -480,15 +519,6 @@ jobs:
 
       - run: uv sync --only-dev
 
-      - name: cache incremental coverage
-        if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .testmon-cache
-          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.install.name }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.install.name }}-
-
       # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
       # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
       # runners want. `psutil` is not in `uv.lock` and `UV_FROZEN` pins CI to it, so both
@@ -508,23 +538,19 @@ jobs:
           fi
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
-            uv run ${{ matrix.install.command }} "${extra[@]}" python -c 'pass'
-            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
-            uv_extra=(--no-sync)
-            runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
-              --output "$COVERAGE_FILE.testmon" --)
+            runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
-            uv_extra=()
             runner=(pytest)
           fi
-          uv run ${{ matrix.install.command }} "${extra[@]}" "${uv_extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run ${{ matrix.install.command }} "${extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec -m "not temporal" ${{ matrix.install.paths }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
-      # The runner merges per-worker data into its cached output. Combine its output and any
-      # subprocess fragments here so the final coverage job receives one file per matrix leg.
+      # Merge this job's per-worker/per-subprocess data files into one before upload: the
+      # combine work runs in parallel across the matrix instead of serially in the `coverage`
+      # job, which would otherwise merge hundreds of files on the critical path.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         shell: bash
@@ -549,9 +575,9 @@ jobs:
   # optional dependency -- so it gets its own job, split into shards, instead of sharing the
   # `test` job's timeout budget with the three much lighter install shapes.
   test-all-extras:
-    name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/2)
+    name: test on ${{ matrix.python-version }} (all-extras, shard ${{ matrix.shard }}/${{ matrix.python-version == '3.10' && 3 || 2 }})
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -559,18 +585,49 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         shard: [1, 2]
+        include:
+          # The third 3.10 shard `SPLITS` accounts for; `shard: 3` matches no base combination,
+          # so this adds a cell rather than overriding one.
+          - python-version: "3.10"
+            shard: 3
     env:
       CI: true
       # Collect every shard on 3.14, where coverage uses the faster sys.monitoring core, plus
       # every shard on 3.10 for version-specific branches -- both are combined across shards
       # and install shapes in the `coverage` job. The other versions run without duplicate
       # coverage.
+      # 3.10 also covers the extras that do not install on 3.14 -- `voyageai` for one, which
+      # nothing else imports -- so it cannot hand this back to 3.14 (#9288 tried, and
+      # `coverage` came to 99.97%), and coverage's cheap `sys.monitoring` core does not measure
+      # branches before 3.14, so no pre-3.14 cell can avoid the legacy tracer.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.python-version == '3.10' }}
+      # That tracer more than doubles what these cells run and the gap grows with the suite: on
+      # run 36695601609 the 3.10 shards took 1047s and 1098s where their two-way siblings took
+      # 359-503s and the same shard without coverage (3.10 lowest-versions) took 484s. It cannot
+      # be removed, so divide it. Three ways lands each 3.10 shard around 730s, which is where
+      # this stops: `test-lowest-versions` shard 2 runs ~660s, so a fourth shard (measured at
+      # 561s on run 36709751517) only trades a whole job for the ~60s between them.
+      SPLITS: ${{ matrix.python-version == '3.10' && 3 || 2 }}
       # Rebenchmark after https://github.com/cbornet/blockbuster/pull/61 is released in a
       # compatible version; re-enable if a shard then stays comfortably within its timeout.
       BLOCKBUSTER_ENABLED: false
       # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
       TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
+      # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
+      ABSURD_REQUIRE_LIVE: "1"
+      ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    services:
+      postgres:
+        image: postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -585,15 +642,6 @@ jobs:
       - run: mkdir .coverage
 
       - run: uv sync --only-dev
-
-      - name: cache incremental coverage
-        if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .testmon-cache
-          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-all-extras-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-all-extras-${{ matrix.shard }}-
 
       # Cache only the immutable model used by `TestSentenceTransformers`. The old
       # shared HF cache could be populated first by a matrix job that never downloaded
@@ -644,11 +692,13 @@ jobs:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
           key: ${{ steps.sentence-transformers-cache.outputs.cache-primary-key }}
 
-      # `-n logical` (see note on the `test` job). Split into 2 shards with `pytest-split` so
-      # this, the slowest install shape, keeps pace with the rest of the matrix. The split is
+      # `-n logical` (see note on the `test` job). Split into `SPLITS` shards with `pytest-split`
+      # so this, the slowest install shape, keeps pace with the rest of the matrix. The split is
       # by test count, not measured duration -- no `.test_durations` file is committed -- so
       # rebalance with `--store-durations` if `ci_duration.py`'s report shows the shards
-      # drifting apart.
+      # drifting apart. `pytest-split` repartitions when `--splits` changes, so 3.10's three
+      # shards hold a different partition than the other versions' two; every test still runs
+      # exactly once per version, but a shard is only comparable to the same version's.
       # Everything under `tests/durable_exec` and every test marked `temporal` runs in
       # `test-durable-exec` instead: those tests pin xdist groups around real local servers, so
       # the chains they form would otherwise be this job's critical-path floor.
@@ -657,20 +707,15 @@ jobs:
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
-            uv run --all-packages --all-extras --no-extra mcp-tasks python -c 'pass'
-            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
-            uv_extra=(--no-sync)
-            runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
-              --output "$COVERAGE_FILE.testmon" --)
+            runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
-            uv_extra=()
             runner=(pytest)
           fi
           # `--all-packages` so the extras of every workspace member are installed, not just the
           # root package's: that is where `pydantic-ai-harness`'s optional integrations get tested.
-          uv run --all-packages --all-extras --no-extra mcp-tasks "${uv_extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
-            --ignore=tests/durable_exec -m "not temporal" --splits 2 --group ${{ matrix.shard }}
+          uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+            --ignore=tests/durable_exec -m "not temporal" --splits "$SPLITS" --group ${{ matrix.shard }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
@@ -704,7 +749,7 @@ jobs:
   test-durable-exec:
     name: test durable-exec on ${{ matrix.python-version }} (${{ matrix.resolution }})
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -744,15 +789,6 @@ jobs:
 
       - run: mkdir .coverage
 
-      - name: cache incremental coverage
-        if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .testmon-cache
-          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}-
-
       # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
       # tests/durable_exec/temporal/conftest.py and the harness `temporal` tests); cache it so a
       # CDN hiccup can't fail the suite at setup (#5399).
@@ -782,25 +818,15 @@ jobs:
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
-            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
-              python -c 'pass'
-            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
-            uv_run=(--no-sync)
-            runner=(python -m testmon.incremental_coverage)
+            runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
-            uv_run=(${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }})
             runner=(pytest)
           fi
-          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            uv run "${uv_run[@]}" "${runner[@]}" --cache .testmon-cache/durable --no-report \
-              --output "$COVERAGE_FILE.durable.testmon" -- --durations=20 -n logical --dist=loadgroup tests/durable_exec
-            uv run "${uv_run[@]}" "${runner[@]}" --cache .testmon-cache/harness-temporal --no-report \
-              --output "$COVERAGE_FILE.harness-temporal.testmon" -- --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
-          else
-            uv run "${uv_run[@]}" "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
-            uv run "${uv_run[@]}" "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
-          fi
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
@@ -824,7 +850,7 @@ jobs:
   test-lowest-versions:
     name: test on ${{ matrix.python-version }} (lowest-versions, shard ${{ matrix.shard }}/2)
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -853,15 +879,6 @@ jobs:
           cache-suffix: lowest-versions
 
       - run: mkdir .coverage
-
-      - name: cache incremental coverage
-        if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .testmon-cache
-          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}-
 
       - name: restore sentence-transformers test model
         id: sentence-transformers-cache
@@ -914,9 +931,7 @@ jobs:
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
-            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
-            runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
-              --output "$COVERAGE_FILE.testmon" --)
+            runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
             runner=(pytest)
@@ -944,7 +959,7 @@ jobs:
   test-temporal-latest:
     name: test Temporal latest on Python 3.10
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -970,7 +985,7 @@ jobs:
   test-examples:
     name: test examples on ${{ matrix.python-version }}
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -999,7 +1014,7 @@ jobs:
   test-harness-browser-use:
     name: test harness browser-use
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1028,7 +1043,7 @@ jobs:
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
     needs: classify
-    if: needs.classify.outputs.docs_only != 'true' && needs.classify.outputs.clai2_only != 'true'
+    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -1266,7 +1281,7 @@ jobs:
     needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4]
     # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
     # otherwise skip this job too.
-    if: ${{ !failure() && !cancelled() && needs.classify.outputs.docs_only != 'true' }}
+    if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1311,6 +1326,7 @@ jobs:
       - mypy
       - docs-assets
       - docs-only
+      - instructions-only
       - test
       - test-all-extras
       - test-durable-exec
@@ -1333,21 +1349,25 @@ jobs:
         with:
           # The canary is advisory because it tests dependency versions we do not lock; its failures
           # signal upstream drift rather than release blockers. It runs on tag refs only, and
-          # `docs-only` runs only for Markdown-only PRs, and a PR confined to `pydantic-clai2` skips the
-          # jobs that exercise the rest of the workspace.
-          # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
+          # `docs-only` covers published Markdown changes; `instructions-only` covers skill-only
+          # changes. Each lightweight path must run its selected check, while full CI jobs may skip
+          # only on either reduced PR path.
           # The harness integration jobs run only when their paths change (always on tags), and
           # LocalStack also skips where its secret is unreadable.
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
-              needs.classify.outputs.docs_only == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage'
+              needs.classify.outputs.content_only == 'true'
+              && needs.classify.outputs.docs_changed == 'true'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,instructions-only'
+              || needs.classify.outputs.content_only == 'true'
+              && needs.classify.outputs.docs_changed != 'true'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage,docs-only,docs-assets'
               || needs.classify.outputs.clai2_only == 'true'
-              && 'docs-only,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,instructions-only,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || github.ref_type == 'tag'
-              && 'docs-only,harness-integration-changes,harness-localstack-integration'
-              || 'docs-only,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
+              && 'docs-only,instructions-only,harness-integration-changes,harness-localstack-integration'
+              || 'docs-only,instructions-only,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}
 
