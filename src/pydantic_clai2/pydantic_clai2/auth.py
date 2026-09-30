@@ -19,9 +19,9 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexOAuthFlow,
     OpenAICodexProvider,
 )
-
-from . import github_copilot, theme
-from .credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.models import github_copilot
+from pydantic_clai2.ui.rendering import theme
 
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
 _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '

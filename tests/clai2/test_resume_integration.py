@@ -22,12 +22,12 @@ from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord,
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_ai_harness.step_persistence.naming import SessionNamer
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
-from pydantic_clai2._session import Session
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import Settings
-from pydantic_clai2.session_browser import SessionBrowser
-from pydantic_clai2.sessions import Sessions
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.sessions import Sessions
+from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup
