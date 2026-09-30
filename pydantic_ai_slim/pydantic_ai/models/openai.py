@@ -4039,7 +4039,10 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
+    # Both keys rotate when a different part starts, so text or reasoning that resumes later in
+    # the stream opens a new part instead of sending a delta to the ended one.
     _vendor_part_id: str = field(default='content', init=False)
+    _thinking_vendor_part_suffix: str = field(default='', init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _has_finish_reason: bool = field(default=False, init=False)
@@ -4175,12 +4178,17 @@ class OpenAIStreamedResponse(StreamedResponse):
                     UserWarning,
                 )
                 continue
-            yield from self._parts_manager.handle_thinking_delta(
-                vendor_part_id=field_name,
+            for event in self._parts_manager.handle_thinking_delta(
+                vendor_part_id=f'{field_name}{self._thinking_vendor_part_suffix}',
                 id=field_name,
                 content=reasoning,
                 provider_name=self.provider_name,
-            )
+            ):
+                if isinstance(event, PartStartEvent) and isinstance(
+                    self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
+                ):
+                    self._vendor_part_id = f'{self._vendor_part_id}-{event.index}'
+                yield event
             break
 
     def _map_text_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
@@ -4197,9 +4205,11 @@ class OpenAIStreamedResponse(StreamedResponse):
                 thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
                 ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
             ):
-                if isinstance(event, PartStartEvent) and isinstance(event.part, ThinkingPart):
-                    event.part.id = 'content'
-                    event.part.provider_name = self.provider_name
+                if isinstance(event, PartStartEvent):
+                    self._thinking_vendor_part_suffix = f'-{event.index}'
+                    if isinstance(event.part, ThinkingPart):
+                        event.part.id = 'content'
+                        event.part.provider_name = self.provider_name
                 yield event
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
@@ -4215,10 +4225,10 @@ class OpenAIStreamedResponse(StreamedResponse):
                 tool_call_id=dtc.id,
             )
             if maybe_event is not None:
-                if isinstance(maybe_event, PartStartEvent) and isinstance(
-                    self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
-                ):
-                    self._vendor_part_id = f'{self._vendor_part_id}-{maybe_event.index}'
+                if isinstance(maybe_event, PartStartEvent):
+                    self._thinking_vendor_part_suffix = f'-{maybe_event.index}'
+                    if isinstance(self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart):
+                        self._vendor_part_id = f'{self._vendor_part_id}-{maybe_event.index}'
                 yield maybe_event
 
     def _map_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
