@@ -1726,10 +1726,9 @@ def test_extensionless_url_media_type_serializes_null_and_round_trips(
 ) -> None:
     """A URL whose media type can't be inferred serializes `media_type: null` and round-trips.
 
-    A provider that forwards the URL as it is never reads the media type, as OpenAI Chat and Responses do
-    for an image URL, so a history that ran there has to dump, and dump to something that loads back into
-    the same part, in a user prompt as in a tool return
-    ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+    A provider that forwards an image URL as it is, as OpenAI Chat and Responses do, never reads its media
+    type, so a history that ran there has to dump, and dump to something that loads back into the same
+    part, in a user prompt as in a tool return ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
     """
     item = url_type(url='https://example.com/file')
     with pytest.raises(ValueError, match='Could not infer media type'):
