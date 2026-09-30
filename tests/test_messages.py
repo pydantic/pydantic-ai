@@ -1690,8 +1690,8 @@ def test_tool_return_url_items_rehydrate_only_with_media_type(
     case, so a reconstructed item is proven to dump again.
 
     The requirement stops at the URL kinds. `UploadedFile` falls back to `application/octet-stream`
-    instead of raising and `BinaryContent.media_type` is a required field, so both keep rehydrating
-    from the fields they declare.
+    and `BinaryContent.media_type` is a required field, so both keep rehydrating from the fields they
+    declare.
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[ToolReturnPart(tool_name='t', content=content, tool_call_id='c')])

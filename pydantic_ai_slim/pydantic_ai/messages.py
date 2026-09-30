@@ -321,9 +321,10 @@ class FileUrl(ABC):
         """Dump the media type `media_type` would return, or `None` where it can't be inferred.
 
         The dump records the resolved media type rather than only the one given, so a history reloads
-        with the media type it ran with. It used to be read off `media_type` itself, which raises for a
-        URL with no usable extension, so a run that had completed could no longer be persisted or sent
-        to a frontend ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
+        with the media type it ran with. This serializer reads `_media_type_or_none()` rather than
+        `media_type`, which raises for a URL with no usable extension and no given media type: reading
+        `media_type` here would leave a run that completed impossible to persist or send to a frontend
+        ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
 
         This is the `_media_type` field's own serializer, so the key it is written under is the field's
         `media_type` alias, which `serialize_by_alias` makes the default. A dump that explicitly asks for
