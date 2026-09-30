@@ -502,6 +502,9 @@ class _JsonSchemaTestData:
         """Generate data for a JSON Schema `oneOf`."""
         one_of = schema['oneOf']
         member = one_of[self.seed % len(one_of)]
+        if not _utils.is_str_dict(member):
+            # a boolean subschema has no structure to generate from
+            return self._char()
         # Pydantic leaves a defaulted discriminator tag out of `required`, but validation needs it to pick the
         # member. A nested union passes on the `required` its parent union added.
         required = schema.get('required', [])

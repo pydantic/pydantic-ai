@@ -848,6 +848,24 @@ def test_structured_dict_oneof_without_discriminator(discriminator: dict[str, st
     assert result.output == snapshot({'value': 0})
 
 
+def test_structured_dict_oneof_boolean_member():
+    """A boolean subschema in `oneOf` has no structure to generate from, so `TestModel` writes a character."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'value': {'oneOf': [True, {'type': 'integer'}]}},
+                'required': ['value'],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'value': 'a'})
+
+
 def test_structured_dict_oneof_beside_type():
     """A `oneOf` beside a `type` only narrows it, so the `type` drives generation."""
     agent = Agent(
