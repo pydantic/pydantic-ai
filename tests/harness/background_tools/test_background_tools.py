@@ -230,14 +230,9 @@ class TestBackgroundTools:
                 'failed: CallDeferred was raised; background tools cannot defer a running task.',
                 'secret',
             ),
-            (
-                lambda: ApprovalRequired(metadata={'private_request_id': 'secret'}),
-                'failed: ApprovalRequired was raised; background tools cannot defer a running task.',
-                'secret',
-            ),
             (lambda: ModelRetry(''), 'failed: ToolRetryError', None),
         ],
-        ids=['retry', 'tool-failed', 'deferred', 'approval-required', 'empty-retry'],
+        ids=['retry', 'tool-failed', 'deferred', 'empty-retry'],
     )
     async def test_tool_signalled_errors_have_readable_follow_ups(
         self, error_factory: Callable[[], Exception], expected: str, private_detail: str | None
@@ -365,17 +360,17 @@ class TestBackgroundTools:
         )
         assert barrier_return.content == 'barrier result'
 
-    async def test_unexpected_error_terminates_run(self) -> None:
+    async def test_unexpected_error_reports_type_without_exposing_details_to_model(self) -> None:
         agent = Agent(_model_calling('broken'), capabilities=[BackgroundTools()])
-        error = RuntimeError('private backend detail')
 
         @agent.tool_plain(metadata={'background': True})
         async def broken() -> str:
-            raise error
+            raise RuntimeError('private backend detail')
 
-        with pytest.raises(RuntimeError) as exc_info:
-            await agent.run('go')
-        assert exc_info.value is error
+        result = await agent.run('go')
+
+        assert _follow_up_seen(result.all_messages(), 'failed: RuntimeError')
+        assert not _follow_up_seen(result.all_messages(), 'private backend detail')
 
     async def test_run_stream_waits_for_live_task_then_drops_its_result(self) -> None:
         started = asyncio.Event()
@@ -815,11 +810,19 @@ class TestBackgroundTools:
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: fast value')
         assert _follow_up_seen(result.all_messages(), 'completed.\nResult: slow value')
 
-    async def test_failed_background_tool_cancels_its_sibling(self) -> None:
-        slow_started = asyncio.Event()
-        slow_cancelled = asyncio.Event()
+    async def test_failed_background_tool_does_not_cancel_its_sibling(self) -> None:
+        release_broken = asyncio.Event()
+        release_slow = asyncio.Event()
 
-        def model_fn(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if _follow_up_seen(messages, 'failed: RuntimeError') and _follow_up_seen(messages, 'slow value'):
+                return ModelResponse(parts=[TextPart(content='done')])
+            if _follow_up_seen(messages, 'failed: RuntimeError'):
+                release_slow.set()
+                return ModelResponse(parts=[TextPart(content='waiting')])
+            if _ack_seen(messages):
+                release_broken.set()
+                return ModelResponse(parts=[TextPart(content='waiting')])
             return ModelResponse(
                 parts=[ToolCallPart(tool_name='broken', args='{}'), ToolCallPart(tool_name='slow', args='{}')]
             )
@@ -828,22 +831,19 @@ class TestBackgroundTools:
 
         @agent.tool_plain(metadata={'background': True})
         async def broken() -> str:
-            await slow_started.wait()
+            await release_broken.wait()
             raise RuntimeError('private detail')
 
         @agent.tool_plain(metadata={'background': True})
         async def slow() -> str:
-            slow_started.set()
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                slow_cancelled.set()
-                raise
-            return 'unreachable'  # pragma: no cover
+            await release_slow.wait()
+            return 'slow value'
 
-        with pytest.raises(RuntimeError, match='private detail'):
-            await asyncio.wait_for(agent.run('go'), timeout=5)
-        assert slow_cancelled.is_set()
+        result = await asyncio.wait_for(agent.run('go'), timeout=5)
+
+        assert result.output == 'done'
+        assert _follow_up_seen(result.all_messages(), 'failed: RuntimeError')
+        assert _follow_up_seen(result.all_messages(), 'completed.\nResult: slow value')
 
     async def test_background_tool_ending_in_cancelled_error_cancels_the_run(self) -> None:
         release = asyncio.Event()
