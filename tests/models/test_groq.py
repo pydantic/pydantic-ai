@@ -6004,6 +6004,7 @@ async def test_groq_extra_headers_not_mutated(allow_model_requests: None):
             'text/event-stream',
             id='stream',
         ),
+        pytest.param(True, b'data: {not json\n\n', 'text/event-stream', id='stream-first-chunk'),
     ],
 )
 async def test_non_json_response_body_raises_model_api_error(

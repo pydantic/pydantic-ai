@@ -15581,6 +15581,12 @@ _ANTHROPIC_MESSAGE_START = (
             'text/event-stream',
             id='stream',
         ),
+        pytest.param(
+            'stream',
+            b'event: content_block_start\ndata: {not json\n\n',
+            'text/event-stream',
+            id='stream-first-event',
+        ),
         pytest.param('count_tokens', b'   ', 'application/json', id='count_tokens'),
     ],
 )
