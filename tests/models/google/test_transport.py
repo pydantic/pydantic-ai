@@ -24,7 +24,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelRequest, UploadedFileProviderName, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.profiles.google import GoogleModelProfile
+from pydantic_ai.profiles.google import GoogleModelProfile, GoogleThinkingLevel
 from pydantic_ai.tools import ToolDefinition
 
 from ...conftest import try_import
@@ -262,7 +262,7 @@ class FlashImageThinkingCase:
 
     id: str
     make_provider: Callable[[], Provider[Client]]
-    expected: tuple[str, str]
+    expected: tuple[GoogleThinkingLevel, GoogleThinkingLevel]
     profile: GoogleModelProfile | None = None
 
 
