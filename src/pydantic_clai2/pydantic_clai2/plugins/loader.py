@@ -237,6 +237,15 @@ class PluginLoader(Generic[DepsT]):
         shipped = sorted((entry for entry in entries if entry.name in order), key=lambda entry: order[entry.name])
         return [*shipped, *(entry for entry in entries if entry.name not in order)]
 
+    def _ensure_plugins_dir(self) -> None:
+        """Create the drop-in folder, so installing a plugin is one copy into a folder that already exists."""
+        try:
+            self._store.plugins_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._console.print(
+                f'Cannot create the plugins folder: {exc}', style=theme.color(theme.ERROR), markup=False
+            )
+
     def _discover(self) -> dict[str, Path]:
         folder = self._store.plugins_dir
         if not folder.is_dir():
@@ -294,6 +303,8 @@ class PluginLoader(Generic[DepsT]):
         version, is skipped quietly: `/plugins list` still shows the failure. Loading it explicitly
         with `/plugins enable`, `add`, or `reload` still raises.
         """
+        if self.enabled:
+            self._ensure_plugins_dir()
         for entry in self._registration_order():
             if entry.declaration.enabled and entry.host is None:
                 try:

@@ -595,7 +595,8 @@ Two ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
    `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
-   Its name is the file name without `.py`.
+   Its name is the file name without `.py`. CLAI creates the folder at startup, so it
+   is there to copy into after the first run.
 2. Point CLAI at anything importable, from the shell or from inside CLAI:
 
    ```sh
