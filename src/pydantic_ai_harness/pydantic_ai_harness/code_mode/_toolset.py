@@ -792,8 +792,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     `run_code` description, which lives in the prompt-cache-keyed tool-definitions block.
     When `True`, the description keeps only the static base prose and the catalog is
     surfaced as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart] via
-    [`get_instructions`][pydantic_ai_harness.code_mode.CodeModeToolset.get_instructions],
-    so Tool Search discoveries don't bust the tool-definitions cache prefix.
+    [`get_instructions`][pydantic_ai_harness.code_mode.CodeModeToolset.get_instructions].
+    Discovering sandboxed tools then preserves the tool-definitions cache prefix;
+    discovering native tools can still change the tool-definitions block.
     """
 
     capability: AbstractCapability[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)

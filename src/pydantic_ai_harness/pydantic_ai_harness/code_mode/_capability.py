@@ -190,8 +190,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     Set `dynamic_catalog=True` to instead:
 
     - keep only the static base prose (sandbox restrictions, return-value contract) in
-      `run_code.description`, so the tool-definitions block stays byte-stable across
-      discoveries;
+      `run_code.description`, so discovering sandboxed tools does not change its entry
+      in the tool-definitions block;
     - move the "available functions" catalog (TypedDict definitions + signatures) into
       agent instructions as a dynamic
       [`InstructionPart`][pydantic_ai.messages.InstructionPart], which providers with
@@ -199,13 +199,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       breakpoint;
     - announce newly-discovered tools via a short
       [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] enqueued through
-      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], so the model knows the
-      new functions are callable without rewriting the cached description.
+      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. Announcements direct
+      the model to the catalog for sandbox calls and to call native tools directly.
 
-    This pays off when paired with [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]: the
-    tool-definitions cache survives discoveries at the cost of a larger (but
-    cache-friendly) system prompt. With a fixed toolset and no `ToolSearch`, the default
-    keeps the system prompt shorter and is the better choice.
+    With [`ToolSearch`][pydantic_ai.capabilities.ToolSearch], this preserves the
+    tool-definitions cache across discoveries of sandboxed tools, at the cost of a larger
+    system prompt. Discovering native tools can still change the tool-definitions block.
+    With a fixed toolset and no `ToolSearch`, the default keeps the system prompt shorter
+    and is the better choice.
     """
 
     speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False)
