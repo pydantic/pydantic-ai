@@ -2327,6 +2327,8 @@ def test_wrapper_embedding_model_deepcopy():
     assert copied is not model
     assert copied.wrapped is not model.wrapped
     assert copied.model_name == 'wrapped'
+    # Only the wrapped `TestEmbeddingModel` defines it, so reading it proves the copy still forwards.
+    assert copied.last_settings is None
 
 
 def test_result():

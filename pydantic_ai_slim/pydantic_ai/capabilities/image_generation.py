@@ -515,7 +515,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         if unapplied:
             # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
             warnings.warn(
-                f'`ImageGeneration` ignored native-tool setting(s): {", ".join(f"`{name}`" for name in unapplied)}. '
+                f'`ImageGeneration` ignored setting(s): {", ".join(f"`{name}`" for name in unapplied)}. '
                 'With `native=False` the `local` tool you supplied is the only implementation, and the '
                 'capability passes it no settings; configure that tool instead.',
                 UserWarning,

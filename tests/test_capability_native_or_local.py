@@ -199,7 +199,10 @@ class TestXSearchCapability:
         assert cap.get_toolset() is None
 
     def test_xsearch_native_false_without_local_raises(self):
-        """XSearch(native=False) without a local tool or `fallback_subagent_model` → UserError at construction."""
+        """XSearch(native=False) without a local tool or `fallback_subagent_model` → UserError at construction.
+
+        It raises at construction, before any request, so this is not a VCR test.
+        """
         with pytest.raises(UserError, match='requires an explicit local tool'):
             XSearch(native=False)
 

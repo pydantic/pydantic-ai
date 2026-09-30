@@ -3234,65 +3234,83 @@ async def test_image_generation_prepare_function_reads_the_model_inside_an_activ
     assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
 
 
-async def test_image_generation_prepare_function_reads_the_model_temporal_selected():
+@pytest.mark.parametrize(
+    ('default', 'selection', 'capability', 'notice'),
+    [
+        pytest.param(
+            'no_native',
+            'native',
+            ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high'),
+            None,
+            id='selected-native-applies-quality',
+        ),
+        pytest.param(
+            'no_native',
+            'native',
+            ImageGeneration(fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)),
+            r"supersedes the direct generator on 'native'",
+            id='selected-native-drops-dimensions',
+        ),
+        *(
+            pytest.param(
+                default,
+                selection,
+                capability,
+                None,
+                id=f'{default}-default-{selection or "unselected"}-{setting}',
+            )
+            for default, selection in (('no_native', 'fallback'), ('fallback', 'fallback'), ('fallback', None))
+            for setting, capability in (
+                ('quality', ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high')),
+                (
+                    'dimensions',
+                    ImageGeneration(fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)),
+                ),
+            )
+        ),
+    ],
+)
+async def test_image_generation_prepare_function_reads_the_model_temporal_selected(
+    default: Literal['no_native', 'fallback'],
+    selection: Literal['native', 'fallback'] | None,
+    capability: ImageGeneration[None],
+    notice: str | None,
+):
     """`ImageGeneration`'s per-request notice reads the model `using_model()` selected, not the default.
 
     `TemporalModel` prepares a request against its current model's profile, and `wrapped` is only
-    the default, so the notice has to read the `TemporalModel`'s own profile to match that routing.
+    the default, so the notice reads the `TemporalModel`'s own profile to match that routing. A
+    current `FallbackModel` has no profile, and nothing public says which model is current or which
+    of its members runs -- a registered selection can share the default's `model_id` -- so the notice
+    says nothing rather than reading `wrapped` in its place, whether that `FallbackModel` was
+    selected or is the default. `using_model()` is reachable from public code only inside a
+    `TemporalAgent` workflow, so this drives the prepare function directly rather than a VCR run.
     """
     no_native = TestModel(model_name='no_native', profile=ModelProfile(supported_native_tools=frozenset()))
     native = TestModel(
         model_name='native', profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}))
     )
     temporal_model = TemporalModel(
-        no_native,
+        no_native if default == 'no_native' else FallbackModel(no_native),
         activity_name_prefix='image_generation_selected_model',
         activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)),
         deps_type=type(None),
-        models={'native': native},
+        models={'native': native, 'fallback': FallbackModel(native)},
     )
     ctx = RunContext(deps=None, model=temporal_model, usage=RunUsage(), run_id='run-123')
     tool_def = ToolDefinition(name='generate_image')
-    quality_toolset = ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high').get_toolset()
-    assert isinstance(quality_toolset, PreparedToolset)
-    dimensions_toolset = ImageGeneration(
-        fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)
-    ).get_toolset()
-    assert isinstance(dimensions_toolset, PreparedToolset)
+    toolset = capability.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
 
-    with temporal_model.using_model('native'):
-        # `filterwarnings = ['error']` turns an absent notice into the assertion: `native` applies it.
-        prepared = quality_toolset.prepare_func(ctx, [tool_def])
-        assert inspect.isawaitable(prepared)
-        assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
-
-        with pytest.warns(UserWarning, match=r"supersedes the direct generator on 'native'"):
-            prepared = dimensions_toolset.prepare_func(ctx, [tool_def])
-        assert inspect.isawaitable(prepared)
-        await prepared
-
-    # A current `FallbackModel` has no profile, and nothing public says which model is current or
-    # which of its members runs -- a registered selection can share the default's `model_id` -- so
-    # the notice says nothing rather than reading `wrapped` in its place, whether the selection is a
-    # registered `FallbackModel` or the default one.
-    for default, selection in (
-        (no_native, 'fallback'),
-        (FallbackModel(no_native), 'fallback'),
-        (FallbackModel(no_native), None),
-    ):
-        registry_model = TemporalModel(
-            default,
-            activity_name_prefix='image_generation_selected_fallback',
-            activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)),
-            deps_type=type(None),
-            models={'fallback': FallbackModel(native)},
-        )
-        registry_ctx = RunContext(deps=None, model=registry_model, usage=RunUsage(), run_id='run-123')
-        with registry_model.using_model(selection):
-            for toolset in (quality_toolset, dimensions_toolset):
-                prepared = toolset.prepare_func(registry_ctx, [tool_def])
-                assert inspect.isawaitable(prepared)
-                assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
+    with temporal_model.using_model(selection):
+        if notice is None:
+            # `filterwarnings = ['error']` turns an unexpected notice into the failure.
+            prepared = toolset.prepare_func(ctx, [tool_def])
+        else:
+            with pytest.warns(UserWarning, match=notice):
+                prepared = toolset.prepare_func(ctx, [tool_def])
+    assert inspect.isawaitable(prepared)
+    assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
 
 
 class LegacyFieldsRunContext(TemporalRunContext[Any]):

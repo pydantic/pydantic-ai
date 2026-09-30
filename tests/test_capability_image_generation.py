@@ -261,15 +261,17 @@ class TestImageGenerationCapability:
 
         assert [warning.filename for warning in recorded] == [inspect.getsourcefile(ImageGeneration)]
 
-    def test_image_generation_native_false_with_a_custom_local_tool_warns_for_native_only_settings(self):
+    def test_image_generation_native_false_with_a_custom_local_tool_warns_for_every_setting_it_ignores(self):
         """With `native=False` the tool you supply is the only implementation, and the capability hands it nothing.
 
         No native tool is built and the capability passes no settings to a tool it didn't build, so
-        the native-only settings have nothing left to apply them.
+        none of the capability's settings reach anything.
+
+        It warns at construction, before any request, so this is not a VCR test.
         """
         with pytest.warns(
             UserWarning,
-            match=r'ignored native-tool setting\(s\): `quality`, `size`, `action`, `image_model`, `aspect_ratio`',
+            match=r'`ImageGeneration` ignored setting\(s\): `quality`, `size`, `action`, `image_model`, `aspect_ratio`',
         ) as recorded:
             ImageGeneration(
                 native=False,
@@ -525,7 +527,10 @@ class TestImageGenerationCapability:
     def test_image_generation_native_false_rejects_an_invalid_local_without_a_settings_notice(
         self, local: bool | str, error: str
     ):
-        """An invalid `local` is refused outright, not first reported as a tool that ignores the capability's settings."""
+        """An invalid `local` is refused outright, not first reported as a tool that ignores the capability's settings.
+
+        It raises at construction, before any request, so this is not a VCR test.
+        """
         # `filterwarnings = ['error']` turns a notice emitted first into the failure this test guards against.
         with pytest.raises(UserError, match=error):
             ImageGeneration(native=False, local=local, quality='high')  # pyright: ignore[reportArgumentType]
@@ -1039,6 +1044,8 @@ class TestImageGenerationCapability:
         """A static `native` instance's native-only settings reach the direct generator no more than the capability's do.
 
         Only its `aspect_ratio` is inherited, so the request that runs the direct tool names the rest.
+
+        The notice fires while the toolset is prepared, before any request, so this is not a VCR test.
         """
         image_model = TestImageGenerationModel()
         capability = ImageGeneration(
@@ -1055,7 +1062,11 @@ class TestImageGenerationCapability:
     async def test_image_generation_direct_fallback_warns_for_a_native_instances_model(
         self, allow_model_requests: None, direct_generation_model: FunctionModel
     ):
-        """A static `native` instance's `model` is the capability's `image_model`, so the direct fallback ignores it the same way."""
+        """A static `native` instance's `model` is the capability's `image_model`, so the direct fallback ignores it the same way.
+
+        The warning is raised inside the direct tool before its generator is called, and the ignored model
+        never reaches the image API, so a recording would pin nothing this asserts.
+        """
         capability = ImageGeneration(
             native=ImageGenerationTool(model='gpt-image-2'), fallback_image_model=TestImageGenerationModel()
         )
@@ -1069,7 +1080,10 @@ class TestImageGenerationCapability:
     async def test_image_generation_direct_fallback_rejects_a_native_instances_edit_action(
         self, allow_model_requests: None, direct_generation_model: FunctionModel
     ):
-        """A static `native` instance's `action='edit'` is refused like the capability's, not served as a fresh image."""
+        """A static `native` instance's `action='edit'` is refused like the capability's, not served as a fresh image.
+
+        The direct tool raises before it calls any model, so this is not a VCR test.
+        """
         capability = ImageGeneration(
             native=ImageGenerationTool(action='edit'), fallback_image_model=TestImageGenerationModel()
         )
@@ -1084,6 +1098,9 @@ class TestImageGenerationCapability:
         """Capability-level `action` takes precedence over the instance's.
 
         The same precedence the `fallback_subagent_model` subagent's native tool gets.
+
+        `action` is settled inside the direct tool and never reaches the image API, so a recording would
+        pin nothing this asserts.
         """
         capability = ImageGeneration(
             native=ImageGenerationTool(action='edit'),
@@ -1096,33 +1113,48 @@ class TestImageGenerationCapability:
 
         assert result.output == 'done'
 
-    @pytest.mark.parametrize('wrapped', [False, True], ids=['fallback', 'wrapped-fallback'])
     @pytest.mark.parametrize(
-        ('settings', 'notice'),
+        ('agent_model', 'capability', 'notice'),
         [
             pytest.param(
-                {'dimensions': (1280, 720)},
+                agent_model,
+                ImageGeneration(fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)),
                 r"""supersedes the direct generator on 'native', so direct-only setting\(s\) go unapplied: `dimensions`""",
-                id='direct-only',
-            ),
+                id=f'{agent_model}-direct-only',
+            )
+            for agent_model in ('fallback', 'wrapped-fallback')
+        ]
+        + [
             pytest.param(
-                {'quality': 'high'},
+                agent_model,
+                ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high'),
                 r"""fallback on 'no_native' ignored native-tool setting\(s\): `quality`""",
-                id='native-only',
+                id=f'{agent_model}-native-only',
+            )
+            for agent_model in ('fallback', 'wrapped-fallback', 'wrapped')
+        ]
+        + [
+            pytest.param(
+                'wrapped',
+                ImageGeneration(fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)),
+                None,
+                id='wrapped-direct-only',
             ),
         ],
     )
-    async def test_image_generation_dropped_settings_notice_reads_each_fallback_model(
+    async def test_image_generation_dropped_settings_notice_reads_each_routed_model(
         self,
         allow_model_requests: None,
-        wrapped: bool,
-        settings: dict[str, Any],
-        notice: str,
+        agent_model: Literal['fallback', 'wrapped-fallback', 'wrapped'],
+        capability: ImageGeneration[object],
+        notice: str | None,
     ):
-        """A `FallbackModel` has no profile: each of its models resolves the swap against its own.
+        """Each model a request can reach resolves the swap against its own profile, and the notice follows.
 
-        The notice follows that resolution, so each setting is named for the model that would drop
-        it, whether the `FallbackModel` is the agent's model or sits inside a wrapper.
+        A `FallbackModel` has no profile, so each of its models is named for the setting it would drop,
+        whether the `FallbackModel` is the agent's model or sits inside a wrapper; a wrapper over a
+        regular model is read through its own profile, which drops `quality` but applies `dimensions`.
+        The notice fires while the toolset is prepared, before any request, so this is not a VCR test.
         """
 
         def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -1136,15 +1168,23 @@ class TestImageGenerationCapability:
             model_name='native',
             profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
         )
-        capability = ImageGeneration(fallback_image_model=TestImageGenerationModel(), **settings)
         fallback_model = FallbackModel(no_native, native)
-        agent = Agent(WrapperModel(fallback_model) if wrapped else fallback_model, capabilities=[capability])
+        models = {
+            'fallback': fallback_model,
+            'wrapped-fallback': WrapperModel(fallback_model),
+            'wrapped': WrapperModel(no_native),
+        }
+        agent = Agent(models[agent_model], capabilities=[capability])
 
-        with pytest.warns(UserWarning, match=notice) as recorded:
+        if notice is None:
+            # `filterwarnings = ['error']` turns an unexpected notice into the failure.
             result = await agent.run('Generate an image')
+        else:
+            with pytest.warns(UserWarning, match=notice) as recorded:
+                result = await agent.run('Generate an image')
+            assert len(recorded) == 1
 
         assert result.output == 'done'
-        assert len(recorded) == 1
 
     async def test_image_generation_native_only_settings_are_silent_when_the_native_tool_runs(
         self, allow_model_requests: None
