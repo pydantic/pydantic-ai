@@ -488,9 +488,12 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
     def _should_walk_untyped_keywords(self, schema: JsonSchema, keywords: tuple[str, ...]) -> bool:
         # A recursive definition can't be expressed, and inlining one raises below. Left unwalked, its `$ref` is
         # dropped on the way to Gemini instead, which a typeless `allOf` member, flattened into a typed one,
-        # survives.
+        # survives. That includes one already being walked above this node, where the recursion runs through
+        # sibling keywords of a `$ref` rather than through the definitions themselves.
         reached = self._reachable_defs([schema[keyword] for keyword in keywords if keyword in schema])
-        return bool(reached) and not any(key in (self._reachable_defs([self.defs[key]]) or ()) for key in reached)
+        return bool(reached) and not any(
+            key in self.refs_stack or key in (self._reachable_defs([self.defs[key]]) or ()) for key in reached
+        )
 
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives

@@ -538,6 +538,46 @@ def test_tool_def_keeps_a_recursive_ref_in_an_all_of_member_uninlined() -> None:
     )
 
 
+def test_tool_def_keeps_a_ref_back_to_the_definition_being_walked_uninlined() -> None:
+    """A `$ref` under untyped keywords that leads back to the definition being walked is left to be dropped too.
+
+    `x` walks `E` merged with its sibling `properties`, and from there `q` reaches `A`, which refers back to
+    `E`: recursion that `E` alone doesn't show. The field arrives unconstrained, as it did before `$ref`s under
+    untyped keywords were inlined. Not a cassette test: the declaration is built before a session opens.
+    """
+    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
+        ToolDefinition(
+            name='save_node',
+            parameters_json_schema={
+                '$defs': {
+                    'E': {'type': 'object', 'properties': {'name': {'type': 'string'}}},
+                    'A': {'type': 'object', 'properties': {'e': {'$ref': '#/$defs/E'}}},
+                },
+                'type': 'object',
+                'properties': {
+                    'x': {
+                        '$ref': '#/$defs/E',
+                        'properties': {
+                            'p': {'type': 'object', 'allOf': [{'properties': {'q': {'$ref': '#/$defs/A'}}}]}
+                        },
+                    }
+                },
+            },
+        )
+    )
+    assert tool.parameters == genai_types.Schema(
+        type=genai_types.Type.OBJECT,
+        properties={
+            'x': genai_types.Schema(
+                type=genai_types.Type.OBJECT,
+                properties={
+                    'p': genai_types.Schema(type=genai_types.Type.OBJECT, properties={'q': genai_types.Schema()})
+                },
+            )
+        },
+    )
+
+
 @pytest.mark.parametrize('async_tool_calls', [False, True])
 def test_tool_def_async_behavior(async_tool_calls: bool) -> None:
     # The expected enum is resolved in the body, not the `parametrize` decorator: decorators are
