@@ -242,7 +242,7 @@ def _multi_modal_content_identifier(identifier: str | bytes) -> str:
     return hashlib.sha1(identifier, usedforsecurity=False).hexdigest()[:6]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class FileUrl(ABC):
     """Abstract base class for any URL-based file."""
 
@@ -271,7 +271,7 @@ class FileUrl(ABC):
     - `MistralModel`: `ImageUrl.vendor_metadata['detail']` is used as `detail` setting for images
     """
 
-    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None)] = field(
+    _media_type: Annotated[str | None, pydantic.Field(alias='media_type', default=None, exclude=True)] = field(
         compare=False, default=None
     )
 
@@ -294,43 +294,11 @@ class FileUrl(ABC):
         _identifier: str | None = None,
     ) -> None: ...  # pragma: no cover
 
+    @pydantic.computed_field
     @property
     def media_type(self) -> str:
-        """Return the media type of the file, based on the URL or the provided `media_type`.
-
-        Raises:
-            ValueError: If the media type can't be inferred from the URL and wasn't provided.
-        """
+        """Return the media type of the file, based on the URL or the provided `media_type`."""
         return self._media_type or self._infer_media_type()
-
-    def _media_type_or_none(self) -> str | None:
-        """The media type `media_type` would return, or `None` where that would raise.
-
-        Serialization, the UI adapters and OpenTelemetry message parts read the media type through this
-        instead of [`media_type`][pydantic_ai.messages.FileUrl.media_type], so that a URL Pydantic AI
-        cannot read a media type out of is dumped rather than raised over. Everything that hands the file
-        to a provider keeps reading `media_type`, and keeps raising.
-        """
-        try:
-            return self.media_type
-        except ValueError:
-            return None
-
-    @pydantic.field_serializer('_media_type')
-    def _serialize_media_type(self, _media_type: str | None) -> str | None:
-        """Dump the media type `media_type` would return, or `None` where it can't be inferred.
-
-        The dump records the resolved media type rather than only the one given, so a history reloads
-        with the media type it ran with. This serializer reads `_media_type_or_none()` rather than
-        `media_type`, which raises for a URL with no usable extension and no given media type: reading
-        `media_type` here would leave a run that completed impossible to persist or send to a frontend
-        ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
-
-        This is the `_media_type` field's own serializer, so the key it is written under is the field's
-        `media_type` alias, which `serialize_by_alias` makes the default. A dump that explicitly asks for
-        `by_alias=False` gets the field's name, `_media_type`, and so do `include` and `exclude`.
-        """
-        return self._media_type_or_none()
 
     @pydantic.computed_field
     @property
@@ -349,6 +317,30 @@ class FileUrl(ABC):
         """
         return self._identifier or _multi_modal_content_identifier(self.url)
 
+    @pydantic.model_serializer(mode='wrap')
+    def _serialize(self, handler: pydantic.SerializerFunctionWrapHandler, info: pydantic.SerializationInfo):
+        # Left unannotated: a return annotation would replace the serialization JSON schema with its own.
+        try:
+            return handler(self)
+        except ValueError:
+            try:
+                self.media_type
+            except ValueError:
+                pass
+            else:
+                raise
+        # A URL with no usable extension and no given media type: `media_type` raises, and the computed field
+        # reads it before any serializer of its own could step in. Dumping must not raise, or a history that
+        # ran can't be saved or sent to a frontend (issue #8388). So serialize a stand-in that has a media
+        # type and write the `None` this item holds in its place, which validates back into this item.
+        serialized: dict[str, object] = handler(replace(self, _media_type='application/octet-stream'))
+        if 'media_type' in serialized:  # absent under `round_trip`, `exclude_computed_fields` or an exclude
+            if info.exclude_none:
+                del serialized['media_type']
+            else:
+                serialized['media_type'] = None
+        return serialized
+
     @abstractmethod
     def _infer_media_type(self) -> str:
         """Infer the media type of the file based on the URL."""
@@ -363,7 +355,7 @@ class FileUrl(ABC):
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class VideoUrl(FileUrl):
     """A URL to a video."""
 
@@ -429,7 +421,7 @@ class VideoUrl(FileUrl):
         return _video_format_lookup[self.media_type]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class AudioUrl(FileUrl):
     """A URL to an audio file."""
 
@@ -476,7 +468,7 @@ class AudioUrl(FileUrl):
         return _audio_format_lookup[self.media_type]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class ImageUrl(FileUrl):
     """A URL to an image."""
 
@@ -522,7 +514,7 @@ class ImageUrl(FileUrl):
         return _image_format_lookup[self.media_type]
 
 
-@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True, serialize_by_alias=True))
+@pydantic_dataclass(repr=False, config=pydantic.ConfigDict(validate_by_name=True))
 class DocumentUrl(FileUrl):
     """The URL of the document."""
 
@@ -1213,9 +1205,10 @@ class UserPromptPart:
                     modality = _kind_to_modality_lookup.get(part.kind)
                     if modality is not None:
                         uri_part['modality'] = modality
-                    # don't fail the whole message if media type can't be inferred, just omit it
-                    if (media_type := part._media_type_or_none()) is not None:  # pyright: ignore[reportPrivateUsage]
-                        uri_part['mime_type'] = media_type
+                    try:  # don't fail the whole message if media type can't be inferred for some reason, just omit it
+                        uri_part['mime_type'] = part.media_type
+                    except ValueError:
+                        pass
                     if settings.include_content:
                         uri_part['uri'] = part.url
                     parts.append(uri_part)

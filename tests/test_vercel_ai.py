@@ -5439,8 +5439,8 @@ async def test_adapter_load_tool_return_non_multimodal_binary_kind_dict_preserve
                     'url': 'https://e.com/report',
                     'force_download': False,
                     'vendor_metadata': None,
-                    'media_type': None,
                     'kind': 'image-url',
+                    'media_type': None,
                     'identifier': '41cafe',
                 }
             ),

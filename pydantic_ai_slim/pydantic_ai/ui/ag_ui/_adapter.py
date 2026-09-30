@@ -218,11 +218,11 @@ def _user_content_to_input(
             from ._multimodal import media_url_to_multimodal
 
             return media_url_to_multimodal(item)
-        return BinaryInputContent(
-            type='binary',
-            url=item.url,
-            mime_type=item._media_type_or_none() or '',  # pyright: ignore[reportPrivateUsage]
-        )
+        try:
+            mime_type = item.media_type
+        except ValueError:
+            mime_type = ''  # reloads as no media type
+        return BinaryInputContent(type='binary', url=item.url, mime_type=mime_type)
     elif isinstance(item, BinaryContent):
         if use_multimodal:
             from ._multimodal import binary_to_multimodal

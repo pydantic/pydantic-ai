@@ -1120,11 +1120,14 @@ def _convert_user_prompt_part(part: UserPromptPart) -> list[UIMessagePart]:
                     )
                 )
             elif isinstance(item, ImageUrl | AudioUrl | VideoUrl | DocumentUrl):
-                media_type = item._media_type_or_none()  # pyright: ignore[reportPrivateUsage]
+                try:
+                    media_type = item.media_type
+                except ValueError:
+                    media_type = ''
                 ui_parts.append(
                     FileUIPart(
                         url=item.url,
-                        media_type=media_type or '',
+                        media_type=media_type,
                         # Round-trip vendor_metadata (e.g. OpenAI/xAI image `detail`,
                         # Google `video_metadata`) and non-default `force_download`; see `FileUrl`.
                         # `kind` only for a URL we could not read a media type out of: the media type
