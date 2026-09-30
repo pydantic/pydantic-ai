@@ -11,7 +11,7 @@ import pytest
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._docs_examples import python_blocks, run_block
-from .conftest import skip_temporal_sandbox_on_314
+from tests.harness._temporal import skip_temporal_sandbox_on_314
 
 _PAGE = 'docs/harness/durable-execution.md'
 
