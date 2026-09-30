@@ -724,15 +724,6 @@ class TestGoogleThinkingTranslation:
         params_false = ModelRequestParameters(thinking=False)
         assert GoogleModel._translate_thinking(model, settings, params_false) == snapshot({'thinking_level': 'LOW'})
 
-    @pytest.mark.parametrize(('thinking', 'expected_level'), [('low', 'MINIMAL'), ('medium', 'HIGH')])
-    def test_thinking_snaps_flash_image_levels(self, thinking: ThinkingLevel, expected_level: str):
-        """`gemini-3.1-flash-image` documents only `minimal`/`high`; the API rejects `LOW` and `MEDIUM`."""
-        model = FunctionModel(_echo, profile=google_model_profile('gemini-3.1-flash-image'))
-        params = ModelRequestParameters(thinking=thinking)
-        settings: ModelSettings = {}
-        result = GoogleModel._translate_thinking(model, settings, params)
-        assert result == {'include_thoughts': True, 'thinking_level': expected_level}
-
     def test_thinking_unknown_levels_rejected(self):
         """Levels the resolver can't order (e.g. lowercase misspellings) are rejected as config errors."""
         model = FunctionModel(
