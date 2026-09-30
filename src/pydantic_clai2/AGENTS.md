@@ -218,6 +218,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `_app.py` | the prompt loop and built-in `/commands` |
 | `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, per-run plugins |
 | `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
+| `runtime/session_naming.py` | resume-browser naming prompt, `SessionName` card schema, and the bounded `SessionNamer` worker |
 | `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `ui/rendering/_rendering.py` | streaming Markdown and thinking |

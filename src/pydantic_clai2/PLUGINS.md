@@ -2273,7 +2273,7 @@ This is a notification, not the durable source of truth or permission to replay 
 tool. A durable replay may notify again. An observer failure cannot roll back the
 already committed snapshot. No new CLAI lifecycle hooks are introduced.
 
-Session naming is a shell-owned background service over Harness's `SessionNamer`.
+Session naming is a shell-owned background service (`runtime/session_naming.py`).
 It never writes into the agent transcript or loads plugin code. `/resume` does
 not fire plugin load/unload hooks or restore previous plugin approvals. Cross-project
 resume keeps the current working directory and the saved conversation's original
