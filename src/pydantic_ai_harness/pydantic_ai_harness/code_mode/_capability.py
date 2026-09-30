@@ -29,6 +29,7 @@ from pydantic_ai_harness.code_mode._speculation import (
     SpeculationStats,
 )
 from pydantic_ai_harness.code_mode._toolset import (
+    TOOL_DISCOVERY_GUIDANCE,
     CodeModeMount,
     CodeModeOS,
     CodeModeResourceLimits,
@@ -43,10 +44,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 
-_DISCOVERY_ANNOUNCEMENT_PREFIX = (
-    'New functions are now available inside `run_code`. Their signatures have been '
-    'added to the available-functions catalog in the system prompt'
-)
+_DISCOVERY_ANNOUNCEMENT_PREFIX = f'{TOOL_DISCOVERY_GUIDANCE} Newly available tools'
 _DISCOVERY_ANNOUNCEMENT_RE = re.compile(
     rf'{re.escape(_DISCOVERY_ANNOUNCEMENT_PREFIX)}: '
     r'(?P<names>`[^`]+`(?:, `[^`]+`)*)\.'

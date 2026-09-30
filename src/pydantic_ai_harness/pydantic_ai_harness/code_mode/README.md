@@ -111,7 +111,7 @@ Tools that match the selector are wrapped inside `run_code`. Non-matching tools 
 
 ### Tool Search
 
-When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](https://ai.pydantic.dev/tools-advanced/#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered -- they pass straight through, so Tool Search drives them as usual (sent on the wire with `defer_loading` on providers with native tool search; otherwise dropped until discovered, with a `search_tools` tool alongside `run_code`). `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool from then on, so it's callable from generated code. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
+When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](https://ai.pydantic.dev/tools-advanced/#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered -- they pass straight through, so Tool Search drives them as usual (sent on the wire with `defer_loading` on providers with native tool search; otherwise dropped until discovered, with a `search_tools` tool alongside `run_code`). `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. After discovery or capability loading, the tool follows the same sandboxing rules as any other tool: eligible tools matching `tools` become callable inside `run_code`, while the rest stay native. In particular, approval-required and external tools stay native under `tools='all'` even after discovery. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
 
 That fold-in grows `run_code`'s description, which invalidates the prompt-cache prefix once at the moment of discovery (turns with no discovery stay cache-warm). Two ways to avoid the bust:
 
@@ -123,7 +123,7 @@ from pydantic_ai_harness import CodeMode
 CodeMode(dynamic_catalog=True)
 ```
 
-  This pays off when paired with Tool Search: the tool-definitions block stays byte-stable so the prefix cache survives discoveries, at the cost of a larger (but cache-friendly) system prompt. With a fixed toolset and no Tool Search, the default keeps the system prompt shorter and is the better choice.
+  For tools folded into `run_code`, this keeps the tool-definitions block byte-stable across discoveries, at the cost of a larger (but cache-friendly) system prompt. Discovering native tools can still change the tool-definitions block. With a fixed toolset and no Tool Search, the default keeps the system prompt shorter and is the better choice.
 
 - To instead keep a Tool Search corpus fully native -- never folded into `run_code`, but not callable from inside it -- exclude it with a `tools` selector; corpus members carry `with_native` set to the managing native tool:
 

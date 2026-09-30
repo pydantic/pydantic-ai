@@ -501,15 +501,12 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
     )
 
 
-_SEARCH_TOOLS_MODIFIER = (
-    ' Note: discovered tools become callable as functions inside the run_code sandbox in subsequent invocations.'
+TOOL_DISCOVERY_GUIDANCE = (
+    'Only tools in the available-functions catalog can be called inside `run_code`; '
+    'call separately exposed tools directly.'
 )
-
-_TOOL_SEARCH_ADDENDUM = (
-    f'\n\nNot all functions may be available initially.'
-    f' Use the `{_SEARCH_TOOLS_NAME}` tool to discover additional functions'
-    f' that will become callable in subsequent `run_code` invocations.'
-)
+_SEARCH_TOOLS_MODIFIER = f' Note: {TOOL_DISCOVERY_GUIDANCE}'
+_TOOL_SEARCH_ADDENDUM = f'\n\nUse `{_SEARCH_TOOLS_NAME}` to discover additional tools. {TOOL_DISCOVERY_GUIDANCE}'
 
 _INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
 

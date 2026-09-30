@@ -194,7 +194,7 @@ CodeMode(
 )
 ```
 
-- `dynamic_catalog=True`: keeps `run_code`'s description byte-stable and moves sandboxed-tool signatures into dynamic instructions, announcing newly discovered tools with a system prompt part. Worth it only with `ToolSearch`; with a fixed toolset the default is better.
+- `dynamic_catalog=True`: keeps `run_code`'s description byte-stable and moves sandboxed-tool signatures into dynamic instructions, announcing newly discovered tools with a system prompt part. Announced tools can be native; only tools in the catalog are callable inside `run_code`. Worth it only with `ToolSearch`; with a fixed toolset the default is better.
 - `eager=True`: side effects from early statements cannot be rolled back, and hooks/approval on `run_code` run only after the call finishes streaming. Only applies when `run_code` is the first tool call in the response.
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
