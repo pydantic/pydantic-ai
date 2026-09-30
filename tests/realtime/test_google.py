@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
     CachePoint,
     CompactionPart,
     FilePart,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -3882,6 +3883,67 @@ def test_turn_complete_reports_whether_more_is_expected(status: str | None, more
         )
     )
     assert events == [ResponseDone(interrupted=False, more_expected=more_expected)]
+
+
+@pytest.mark.parametrize(
+    ('reason', 'finish_reason'),
+    [
+        # Shared with a standard response's finish reason, so mapped by `GoogleModel`'s table.
+        ('MALFORMED_FUNCTION_CALL', 'error'),
+        ('BLOCKLIST', 'content_filter'),
+        # Live's own refusals of input or generated content.
+        ('PROHIBITED_INPUT_CONTENT', 'content_filter'),
+        ('GENERATED_AUDIO_SAFETY', 'content_filter'),
+        # No clear counterpart: no `finish_reason`, but the raw reason is kept.
+        ('NEED_MORE_INPUT', None),
+        ('RESPONSE_REJECTED', None),
+    ],
+)
+def test_turn_complete_reason_maps_to_finish_reason(reason: str, finish_reason: FinishReason | None) -> None:
+    conn = GoogleRealtimeConnection(cast('AsyncSession', _RecordingSession()))
+    events = conn._map_message(  # pyright: ignore[reportPrivateUsage]
+        genai_types.LiveServerMessage(
+            server_content=genai_types.LiveServerContent(
+                turn_complete=True, turn_complete_reason=genai_types.TurnCompleteReason(reason)
+            )
+        )
+    )
+    assert events == [ResponseDone(finish_reason=finish_reason, provider_details={'finish_reason': reason})]
+
+
+async def test_turn_complete_reason_reaches_the_model_response() -> None:
+    # A turn Gemini ends on a malformed function call is recorded as an errored response, not a clean stop,
+    # so an app can tell it from a model that simply answered without calling the tool.
+    provider_session = _RecordingSession(
+        [
+            [
+                genai_types.LiveServerMessage(
+                    server_content=genai_types.LiveServerContent(
+                        output_transcription=genai_types.Transcription(text='Let me check.', finished=True)
+                    )
+                ),
+                genai_types.LiveServerMessage(
+                    server_content=genai_types.LiveServerContent(
+                        turn_complete=True,
+                        turn_complete_reason=genai_types.TurnCompleteReason.MALFORMED_FUNCTION_CALL,
+                    )
+                ),
+            ]
+        ]
+    )
+    session = RealtimeSession(
+        _conn(provider_session),
+        model=FakeRealtimeModel(_conn(provider_session), model_name='gemini-live', system='google'),
+        tool_manager=make_tool_manager(),
+    )
+    async with session:
+        async for event in session:
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+
+    response = next(message for message in session.new_messages() if isinstance(message, ModelResponse))
+    assert response.finish_reason == 'error'
+    assert response.provider_details == {'finish_reason': 'MALFORMED_FUNCTION_CALL'}
 
 
 @pytest.mark.parametrize(

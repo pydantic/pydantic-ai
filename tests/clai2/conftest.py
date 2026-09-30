@@ -57,7 +57,7 @@ def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
         fake.opened.append(url)
         return True
 
-    monkeypatch.setattr('pydantic_clai2.github.OPEN_BROWSER', open_browser)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.OPEN_BROWSER', open_browser)
     return fake
 
 
@@ -87,7 +87,8 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
         credentials[service, account] = value
 
     def delete_password(service: str, account: str) -> None:
-        del credentials[service, account]
+        if credentials.pop((service, account), None) is None:
+            raise PasswordDeleteError(account)
 
     monkeypatch.setattr(keyring, 'get_password', get_password)
     monkeypatch.setattr(keyring, 'set_password', set_password)

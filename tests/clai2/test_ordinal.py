@@ -27,13 +27,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.ordinal import Ordinal
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2._app import create_shell
-from pydantic_clai2.api_keys import KeyReference, delete_key, load_keys, rename_key, save_key
-from pydantic_clai2.commands import Commands
-from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.credential_store import save_codex_credentials
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore
-from pydantic_clai2.ordinal import (
+from pydantic_clai2.builtin_plugins.ordinal import (
     INSTRUCTIONS,
     INVALID,
     KEY,
@@ -47,15 +41,21 @@ from pydantic_clai2.ordinal import (
     OrdinalSource,
     activate,
 )
-from pydantic_clai2.plugin_loader import (
+from pydantic_clai2.commands import Commands
+from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.api_keys import KeyReference, delete_key, load_keys, rename_key, save_key
+from pydantic_clai2.config.credential_store import save_codex_credentials
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore
+from pydantic_clai2.plugins import PluginHost, SessionStart
+from pydantic_clai2.plugins.loader import (
     _RETIRED_BUILTINS,  # pyright: ignore[reportPrivateUsage]
     PluginError,
     PluginLoader,
 )
-from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
-from pydantic_clai2.plugins import PluginHost, SessionStart
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import Script, pick, typed
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'ordinal')
@@ -100,7 +100,7 @@ def script(
 ) -> Script:
     """Answer the settings menu's widgets in order; the list closes after `lists`."""
     scripted = Script(lists=[*lists, CLOSE], choices=choices or [], texts=texts or [])
-    monkeypatch.setattr('pydantic_clai2.ordinal.RUNNERS', scripted.runners)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.ordinal.RUNNERS', scripted.runners)
     return scripted
 
 
@@ -112,7 +112,7 @@ def key_choice(monkeypatch: pytest.MonkeyPatch, choice: Picked) -> list[str]:
         labels.append(label)
         return choice
 
-    monkeypatch.setattr('pydantic_clai2.ordinal.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.ordinal.prompt_api_key', prompt_api_key)
     return labels
 
 
@@ -169,7 +169,7 @@ async def run(plugin: PluginHost[None], *args: str) -> str:
 
 
 def test_declared_as_a_disabled_built_in_with_no_settings() -> None:
-    assert BUILTIN.factory == 'pydantic_clai2.ordinal'
+    assert BUILTIN.factory == 'pydantic_clai2.builtin_plugins.ordinal'
     assert not BUILTIN.enabled
     assert BUILTIN.settings == {}
     assert _RETIRED_BUILTINS['ordinal'].factory == 'pydantic_ai_harness.ordinal:Ordinal'
@@ -317,7 +317,7 @@ async def test_a_key_saved_meanwhile_by_another_process_is_not_replaced_unasked(
         save_key(name=KEY_NAME, value='theirs')
         return 'mine'
 
-    monkeypatch.setattr('pydantic_clai2.ordinal.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.ordinal.prompt_api_key', prompt_api_key)
     shown = script(monkeypatch, lists=[pick('key')], choices=[pick(False)])
     assert await shell.loader.configure('ordinal') == 'Ordinal settings unchanged.'
     assert shown.opened == ['list', 'choice', 'list']
@@ -479,7 +479,7 @@ async def test_add_replacing_the_builtin_opens_the_menu(
     shell = Shell(tmp_path)
     script(monkeypatch, lists=[pick('include_instructions')], choices=[pick('true')])
     assert await shell.loader.command(
-        ['add', 'ordinal', 'pydantic_clai2.ordinal', '{"include_instructions": false}']
+        ['add', 'ordinal', 'pydantic_clai2.builtin_plugins.ordinal', '{"include_instructions": false}']
     ) == ('Replaced built-in ordinal.\nSaved Server instructions.')
     assert (await shell.next_run()).include_instructions
 
@@ -488,7 +488,9 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu(vault: Vault, tmp_pat
     shell = Shell(tmp_path)
     with pytest.raises(ValueError, match='not loaded; enable it before configuring'):
         await shell.loader.command(['configure', 'ordinal'])
-    shell.store.save_plugin(BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.repo_context'}))
+    shell.store.save_plugin(
+        BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.builtin_plugins.repo_context'})
+    )
     assert await shell.loader.command(['enable', 'plain']) == 'Enabled plain.'
     with pytest.raises(ValueError, match='no settings menu'):
         await shell.loader.configure('plain')
@@ -545,11 +547,11 @@ async def test_saved_catalog_toggle_becomes_the_built_in(
     loader = shell().loader
     [entry] = loader.entries()
     assert entry.builtin and entry.declaration.enabled
-    assert entry.declaration.factory == 'pydantic_clai2.ordinal'
+    assert entry.declaration.factory == 'pydantic_clai2.builtin_plugins.ordinal'
     await loader.load_all()
     [capability] = loader.capabilities()
     # `/plugins reload` re-imports the module, so compare where the class lives rather than its identity.
-    assert type(capability).__module__ == 'pydantic_clai2.ordinal'
+    assert type(capability).__module__ == 'pydantic_clai2.builtin_plugins.ordinal'
 
     customized = PluginSettings(id='ordinal', factory='pydantic_ai_harness.ordinal:Ordinal', settings={'id': 'mine'})
     store.save_plugin(customized)

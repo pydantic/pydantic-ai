@@ -7,8 +7,8 @@ import pytest
 from pydantic import SecretStr
 
 from pydantic_ai.exceptions import UserError
-from pydantic_clai2 import vllm
-from pydantic_clai2.model_menu import open_add_model_menu
+from pydantic_clai2.models import vllm
+from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
 from tests.clai2.menu_script import make_context
 
 
@@ -107,7 +107,7 @@ async def test_saved_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 async def test_provider_menu_connection(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     context, _ = make_context(tmp_path)
     keys = iter([*'vllm', 'enter', *'vllm', 'enter'])
-    monkeypatch.setattr('pydantic_clai2.model_menu.menu_key', lambda: next(keys))
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_menu.menu_key', lambda: next(keys))
     results = iter(['Connection cancelled.', 'Saved model. Applied.'])
 
     async def connect(context: object, args: list[str]) -> str:

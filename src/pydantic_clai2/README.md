@@ -16,6 +16,11 @@ The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive wit
 token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
 entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
 [its settings](PLUGINS.md#google_workspace-gmail-calendar-and-drive-tools).
+`/plugins enable logfire_mcp` lets the agent query your Logfire telemetry and opens
+a settings menu (region, tools, and a key picked from `/keys`, never stored in plugin
+settings; otherwise browser sign-in, which also signs new users up and works over SSH:
+`/logfire_mcp login`). Reopen it with `/plugins configure logfire_mcp`; see
+[Logfire MCP](PLUGINS.md#logfire-mcp-query-your-telemetry).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
 `stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON
@@ -48,6 +53,15 @@ Use `/set display.tool_output true` to show detailed output again, or
 `/set display.tool_output false` to return to summaries. In detailed mode,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
+
+## Source layout
+
+The shell entry point lives in `_app.py`. Related implementations live in
+`cli/`, `config/`, `runtime/`, `models/`, `plugins/`, and `ui/` (`prompt/`,
+`menus/`, and `rendering/`). Built-in plugins live in `builtin_plugins/`; MCP has its own
+`mcp/` package. Plugin authors can still import `pydantic_clai2.plugins` and
+`pydantic_clai2.commands` directly. See [the plugin guide](PLUGINS.md) for
+examples.
 
 ## Startup
 
@@ -371,7 +385,7 @@ no agent telemetry spans.
 ## Codex authentication
 
 The built-in model catalog and `/set model` completions include
-`openai-codex:gpt-6-sol` and `openai-codex:gpt-6-luna`.
+`openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
@@ -514,8 +528,9 @@ The currently configured model is kept in the list when upgrading.
 `/add_model` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
-`gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, and `gpt-6-astra`; availability
-depends on your account. Unknown prices and context limits are not inferred.
+`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
+`gpt-5.6-terra`, and `gpt-5.6-sol`; availability depends on your account.
+Unknown prices and context limits are not inferred.
 
 The model catalog combines genai-prices' catalog
 filtered to providers Pydantic AI can run, plus core's own model list, plus
@@ -685,7 +700,7 @@ repository.
   "request_limit": 50,
   "plugins": [
     {"id": "exa", "factory": "pydantic_ai_harness.exa:ExaSearch", "settings": {"num_results": 8}},
-    {"id": "repo_context", "factory": "pydantic_clai2.repo_context", "settings": {"inventory_tool": true}}
+    {"id": "repo_context", "factory": "pydantic_clai2.builtin_plugins.repo_context", "settings": {"inventory_tool": true}}
   ]
 }
 ```
@@ -982,7 +997,7 @@ redeclare the plugin with your own settings; `/plugins disable compaction`
 turns it off, `/compact` included:
 
 ```text
-/plugins add compaction pydantic_clai2.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
+/plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
 ```
 
 | Key | Default | Does |
@@ -1400,6 +1415,11 @@ settings menu (`/plugins configure notion` reopens it). The token is picked from
 signs in through the browser. Plugin settings never hold the token. See
 [PLUGINS.md](PLUGINS.md#notion-workspace-tools).
 
+`/plugins enable linear` gives the agent Linear's hosted MCP tools, read-only by
+default, and opens its settings menu (`/plugins configure linear` reopens it). The
+key is picked from `/keys` by name (a new one is saved there as `LINEAR_API_KEY`),
+or choose browser sign-in. See [PLUGINS.md](PLUGINS.md#linear-issues-and-projects).
+
 ## Questions from the model
 
 When the task is ambiguous, the model can call `ask_user_question` instead of
@@ -1456,7 +1476,7 @@ credentials. Keep tokens out of plugin settings, which are saved as plaintext.
 /plugins disable logfire
 /plugins enable logfire
 /plugins reload logfire
-/plugins add logfire pydantic_clai2.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
 The last command replaces the built-in configuration. Its options are
@@ -1510,6 +1530,15 @@ and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letter
 numbers, and underscores, starting with a letter or underscore. Saving an existing
 name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
 the secret on the command line.
+
+Consumers store a key's name, not its value, and look it up each time they
+connect, so replacing a value in `/keys` updates every consumer and a deleted key
+makes them fail with an error. Renaming a key that vLLM, OpenRouter, or a
+plugin uses is refused until they are pointed at another key. Several
+consumers can share one entry: name keys with the conventional variable name for
+the service, such as `LINEAR_API_KEY` or `GITHUB_TOKEN`, and every plugin for that
+service can pick the same entry. The names are labels only; CLAI does not export
+them as environment variables.
 
 When saved keys exist, vLLM's token prompt and OpenRouter's **Enter API key** flow
 show a searchable list of names. Choose one, enter a different key privately, or

@@ -23,12 +23,13 @@ from termflow.tui.completion import Completion
 
 from pydantic_ai import PartStartEvent, TextPart, ThinkingPart
 from pydantic_ai.messages import BinaryContent
-from pydantic_clai2 import StreamRenderer, theme
+from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.commands import Command, Commands
-from pydantic_clai2.image_input import ImageInput
-from pydantic_clai2.interrupts import Interrupts
-from pydantic_clai2.live_prompt import LivePrompt
-from pydantic_clai2.prompt_completion import CompletionWorker
+from pydantic_clai2.ui.prompt.image_input import ImageInput
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.prompt.prompt_completion import CompletionWorker
+from pydantic_clai2.ui.rendering import theme
 from tests.clai2.surface_terminal import SurfaceTerminal
 
 
@@ -205,14 +206,14 @@ async def test_paste_is_atomic_and_alt_word_editing_works() -> None:
 async def test_image_paste_and_failure_notice(monkeypatch: pytest.MonkeyPatch) -> None:
     async with editor() as (live, _, _):
         image = BinaryContent(data=b'png', media_type='image/png')
-        monkeypatch.setattr('pydantic_clai2.live_prompt.clipboard_images', lambda: [image])
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.clipboard_images', lambda: [image])
         live.feed('alt-v')
         assert live.images.resolve(live.buffer.text) == ('', [image])
 
         def fail() -> list[BinaryContent]:
             raise ValueError('clipboard unavailable')
 
-        monkeypatch.setattr('pydantic_clai2.live_prompt.clipboard_images', fail)
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.clipboard_images', fail)
         live.feed('ctrl-v')
         assert 'clipboard unavailable' in live.images.notice
         live.feed('paste', 'plain\r\ntext')

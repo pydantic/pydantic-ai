@@ -15,7 +15,7 @@ from rich.console import Console
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
 from pydantic_clai2.auth import CodexAuth, CodexCredentials
-from pydantic_clai2.credential_store import (
+from pydantic_clai2.config.credential_store import (
     credentials_path,
     delete_credentials,
     load_codex_credentials,
@@ -194,7 +194,7 @@ def test_planted_staging_symlink_is_not_followed(
     target.write_text('untouched')
     staging = fallback.with_name(f'credentials.json.{"0" * 32}.tmp')
     staging.symlink_to(target)
-    monkeypatch.setattr('pydantic_clai2.credential_store.uuid4', lambda: UUID(int=0))
+    monkeypatch.setattr('pydantic_clai2.config.credential_store.uuid4', lambda: UUID(int=0))
     save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
     assert target.read_text() == 'untouched'
     assert not staging.is_symlink()
@@ -210,7 +210,7 @@ def test_staging_race_is_refused(fallback: Path, no_keyring: None, monkeypatch: 
             Path(path).write_text('{"access_token":"attacker"}', encoding='utf-8')
         return real_open(path, flags, mode)
 
-    monkeypatch.setattr('pydantic_clai2.credential_store.os.open', planting_open)
+    monkeypatch.setattr('pydantic_clai2.config.credential_store.os.open', planting_open)
     with pytest.raises(FileExistsError):
         save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
     assert not fallback.exists()
@@ -293,6 +293,12 @@ def test_delete_clears_a_corrupt_manifest(vault: dict[str, str], fallback: Path)
     vault['pydantic-clai2'] = 'clai-chunks-v1:broken'
     delete_credentials(fallback=fallback)
     assert vault == {}
+
+
+def test_delete_skips_chunks_that_are_already_gone(fallback: Path) -> None:
+    keyring.set_password('pydantic-clai2', 'openai-codex', f'clai-chunks-v1:{"0" * 32}:2')
+    delete_credentials(fallback=fallback)
+    assert load_codex_credentials(fallback=fallback) is None
 
 
 def test_delete_without_keyring_removes_the_file(no_keyring: None, fallback: Path) -> None:
