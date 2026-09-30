@@ -697,7 +697,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             # Unlike a cancellation, the turn is committed up to the limit: its tools may already
             # have edited files, and rolling the history back would leave the next turn unaware
             # of those changes. The interrupted pass reported no usage, so none is claimed.
-            await self._fail_outstanding_tool_calls(turn)
+            await self._fail_outstanding_tool_calls(turn, record=True)
             if captured:
                 history = _committable_history(captured)
             stop_reason = _usage_limit_stop_reason(exc)
@@ -727,19 +727,20 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                 stop_reason = 'cancelled'
         return schema.PromptResponse(stop_reason=stop_reason, usage=None if limited else _to_acp_usage(usage))
 
-    async def _fail_outstanding_tool_calls(self, turn: _TurnState) -> None:
+    async def _fail_outstanding_tool_calls(self, turn: _TurnState, *, record: bool = False) -> None:
         """Drive every announced-but-unfinished tool call to a terminal `failed` status.
 
-        Called when a turn is cancelled, so a client does not keep rendering a `pending`/`in_progress`
-        tool call as running. Sent directly (not recorded for the transcript) and best-effort: the
-        connection may already be going away.
+        Called when a turn ends early, so a client does not keep rendering a `pending`/`in_progress`
+        tool call as running. Sent best-effort: the connection may already be going away. Recorded
+        for the transcript only when `record` is set, for a turn that is still committed (one ended
+        by a usage limit); a cancelled or failed turn's transcript is never persisted.
         """
         for tool_call_id in turn.started - turn.resulted:
+            update = acp.update_tool_call(tool_call_id=tool_call_id, status='failed')
+            if record:
+                turn.updates.append(update)
             with contextlib.suppress(Exception):
-                await turn.conn.session_update(
-                    session_id=turn.session_id,
-                    update=acp.update_tool_call(tool_call_id=tool_call_id, status='failed'),
-                )
+                await turn.conn.session_update(session_id=turn.session_id, update=update)
 
     async def _send_update(self, turn: _TurnState, update: SessionUpdate) -> None:
         """Send one `session/update` to the client, recording it for the transcript."""

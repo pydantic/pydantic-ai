@@ -280,8 +280,9 @@ def _last_prompt(messages: list[ModelMessage]) -> str | None:
     """The text of the most recent user prompt in `messages`."""
     for message in reversed(messages):
         for part in reversed(message.parts):
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                return part.content
+            if isinstance(part, UserPromptPart):
+                content = [part.content] if isinstance(part.content, str) else part.content
+                return ''.join(item for item in content if isinstance(item, str))
     return None
 
 
@@ -805,14 +806,19 @@ class TestStopReason:
         def spin() -> str:
             return 'again'
 
-        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(agent, usage_limits=UsageLimits(tool_calls_limit=1))
+        adapter: PydanticAIACPAgent[None, str] = PydanticAIACPAgent(
+            agent, usage_limits=UsageLimits(tool_calls_limit=1), session_store=InMemorySessionStore()
+        )
         session_id = await _start(adapter, FakeClient())
 
         response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
         assert response.stop_reason == 'max_turn_requests'
 
-        history = adapter._sessions[session_id].history  # pyright: ignore[reportPrivateUsage]
+        state = adapter._sessions[session_id]  # pyright: ignore[reportPrivateUsage]
+        history = state.history
         assert not (isinstance(history[-1], ModelResponse) and history[-1].tool_calls)
+        # The committed transcript ends the unrun call as failed, so `session/load` does not replay it as running.
+        assert any(getattr(update, 'status', None) == 'failed' for update in state.transcript)
         # A dangling call would make this prompt fail with "unprocessed tool calls".
         follow_up = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
         assert follow_up.stop_reason == 'end_turn'
