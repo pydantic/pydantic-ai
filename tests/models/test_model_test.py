@@ -23,6 +23,7 @@ from pydantic_ai import (
     ModelRetry,
     RetryPromptPart,
     RunContext,
+    StructuredDict,
     TextPart,
     ToolCallPart,
     ToolOutput,
@@ -746,15 +747,7 @@ def test_tool_output_oneof_discriminated_union():
 
     result = agent.run_sync('hello')
 
-    assert isinstance(result.output, (Cat, Dog))
-
-
-def test_tool_output_anyof_plain_union_control():
-    agent = Agent(model=TestModel(), output_type=ToolOutput(Cat | Dog))
-
-    result = agent.run_sync('hello')
-
-    assert isinstance(result.output, (Cat, Dog))
+    assert result.output == snapshot(Cat(kind='cat', name='a'))
 
 
 def test_function_tool_oneof_discriminated_union_arg():
@@ -769,16 +762,64 @@ def test_function_tool_oneof_discriminated_union_arg():
 
     agent.run_sync('hello')
 
-    assert len(received) == 1
-    assert isinstance(received[0], (Cat, Dog))
+    assert received == snapshot([Cat(kind='cat', name='a')])
 
 
-def test_custom_output_args_oneof_control():
+class DefaultedCat(BaseModel):
+    kind: Literal['cat'] = 'cat'
+    color: Literal['black'] = 'black'
+
+
+class DefaultedDog(BaseModel):
+    kind: Literal['dog'] = 'dog'
+    breed: str
+
+
+def test_tool_output_oneof_discriminated_union_defaulted_tag():
+    """Pydantic leaves a defaulted tag out of `required`, but validation needs it to pick the member."""
     agent = Agent(
-        model=TestModel(custom_output_args={'kind': 'cat', 'name': 'x'}),
-        output_type=ToolOutput(Discriminated),
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[DefaultedCat | DefaultedDog, Field(discriminator='kind')]),
     )
 
     result = agent.run_sync('hello')
 
-    assert result.output == Cat(kind='cat', name='x')
+    assert result.output == snapshot(DefaultedCat())
+
+
+class WhiteCat(BaseModel):
+    kind: Literal['cat'] = 'cat'
+    color: Literal['white'] = 'white'
+
+
+DefaultedCats = Annotated[DefaultedCat | WhiteCat, Field(discriminator='color')]
+
+
+def test_tool_output_oneof_nested_discriminated_union_defaulted_tags():
+    """The outer tag must reach the member the inner union picks."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[DefaultedCats | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat())
+
+
+def test_structured_dict_oneof_without_discriminator():
+    """A `oneOf` without a `discriminator` keyword, which a callable `Discriminator` also emits, picks like `anyOf`."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'value': {'oneOf': [{'type': 'integer'}, {'type': 'string'}]}},
+                'required': ['value'],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'value': 0})

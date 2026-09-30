@@ -472,8 +472,8 @@ class _JsonSchemaTestData:
             return self._gen_any(js_def)
         elif any_of := schema.get('anyOf'):
             return self._gen_any(any_of[self.seed % len(any_of)])
-        elif one_of := schema.get('oneOf'):
-            return self._gen_any(one_of[self.seed % len(one_of)])
+        elif schema.get('oneOf'):
+            return self._one_of_gen(schema)
 
         type_ = schema.get('type')
         if type_ is None:
@@ -495,6 +495,18 @@ class _JsonSchemaTestData:
             return None
         else:
             raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
+
+    def _one_of_gen(self, schema: dict[str, Any]) -> Any:
+        """Generate data for a JSON Schema `oneOf`."""
+        one_of = schema['oneOf']
+        member = one_of[self.seed % len(one_of)]
+        if tag := schema.get('discriminator', {}).get('propertyName'):
+            # Pydantic leaves a defaulted tag out of `required`, but validation needs it to pick the member.
+            # A nested union also passes on the `required` its parent union added.
+            if ref := member.get('$ref'):
+                member = self.defs[re.sub(r'^#/\$defs/', '', ref)]
+            member = {**member, 'required': [*member.get('required', []), *schema.get('required', []), tag]}
+        return self._gen_any(member)
 
     def _object_gen(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Generate data for a JSON Schema object."""
