@@ -78,6 +78,13 @@ Python or set `PYTHONWARNINGS=default` to see them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
+## Herdr integration
+
+Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report
+CLAI2's state, session reference, model/token metadata, and conversation title.
+It starts disabled and does nothing outside herdr. See
+[the plugin guide](PLUGINS.md#herdr-integration) for details and limitations.
+
 ## Desktop notifications
 
 The built-in `notifications` plugin is enabled by default. Interactive sessions

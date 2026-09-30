@@ -256,6 +256,49 @@ belongs to the separate [`github` plugin](#github-tools-from-githubs-hosted-mcp-
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
 Bare `/login` continues to sign in to Codex.
 
+## Herdr integration
+
+The built-in `herdr` plugin (`pydantic_clai2.builtin_plugins.herdr`) starts disabled.
+Run `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane. Use
+`/plugins disable herdr` to release the pane and stop reporting. No herdr-side
+integration install is needed. The plugin requires `HERDR_ENV=1`,
+`HERDR_SOCKET_PATH`, and `HERDR_PANE_ID`; optional `HERDR_TAB_ID` enables tab titles.
+Outside herdr, or on Windows, it registers nothing and starts no worker.
+
+It reports `working` while agent runs are in flight, `blocked` while `AskUser`
+waits for an answer, and `idle` otherwise. Failed and cancelled runs return to
+`idle` too. Nested runs are counted; concurrent question waits are tracked by
+request ID. Tool names supply activity text, never tool arguments or results.
+User-opened menus do not report `blocked`. Other approval UIs are not tracked:
+CLAI2 has no universal approval-wait event. Herdr owns attention notifications;
+this plugin sends none. To avoid duplicate desktop alerts, separately disable
+CLAI2's `notifications` plugin if you prefer herdr's alerts.
+
+Persisted sessions report their stable conversation ID and SQLite database path,
+not a per-run ID. Resume manually with `clai2 --resume SESSION-ID` using the same
+CLAI2 config directory. Automatic restoration by herdr is not verified. Hosts
+without CLAI2 session persistence still report state and token metadata.
+
+Metadata has a 24-hour TTL and reports `$model`, `$tokens` (retained-history
+input plus output tokens), and `$context` (percentage from the compaction
+plugin's context events, omitted when unknown). Add those fields to your herdr
+sidebar's `rows_by_agent.clai2` configuration to display them. No prompts,
+answers, or tool contents are sent; session IDs, database paths, and conversation
+titles are sent to the local herdr socket.
+
+The pane title follows the persisted conversation title, including background
+naming and manual renames, checked every two seconds. Each metadata update keeps
+the current title. Only single-pane tabs are renamed. The original tab label is
+restored on session changes or clean unload, but a manually renamed or shared
+tab is left alone. An abrupt exit may leave the last tab label in place.
+
+Socket IO uses a plugin-owned daemon worker with bounded, latest-wins mailboxes.
+State and session reports take priority over activity and metadata. Requests
+retry up to three times with the same sequence number; missing sockets and
+server errors are nonfatal. Unloading cancels and drains the title watcher,
+discards queued work, and attempts one release with bounded shutdown. A departed
+or unresponsive herdr may miss reports; they do not fail the agent turn.
+
 ## Desktop notifications
 
 The default-enabled `notifications` plugin (`pydantic_clai2.builtin_plugins.notifications`)
