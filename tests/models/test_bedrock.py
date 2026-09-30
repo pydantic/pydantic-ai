@@ -78,6 +78,7 @@ from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, TestEnv, try_import
 with try_import() as imports_successful:
     from botocore.awsrequest import AWSPreparedRequest, AWSResponse, HTTPHeaders
     from botocore.client import BaseClient
+    from botocore.eventstream import ParserError as EventStreamParserError
     from botocore.exceptions import (
         BotoCoreError,
         ClientError,
@@ -7509,13 +7510,8 @@ def test_bedrock_anthropic_5_no_sampling_settings_pass_through_silently(
     [
         pytest.param('request', b'', "Response has no 'output' field", id='request'),
         pytest.param('request', b'not json', "Response has no 'output' field", id='request-not-json'),
-        pytest.param(
-            'stream',
-            # botocore parses no events at all from a body shorter than its 12-byte event stream prelude.
-            b' ' * 32,
-            'Failed to decode response as an event stream: Checksum mismatch: expected 0x20202020, calculated 0xa3114325',
-            id='stream',
-        ),
+        # At least botocore's 12-byte event stream prelude, since a shorter body parses to no events instead of failing.
+        pytest.param('stream', b' ' * 32, 'Failed to decode response as an event stream: ', id='stream'),
         pytest.param('count_tokens', b'', "Response has no 'inputTokens' field", id='count_tokens'),
     ],
 )
@@ -7550,4 +7546,6 @@ async def test_non_json_response_body_raises_model_api_error(
         else:
             await model.request(messages, None, ModelRequestParameters())
 
-    assert exc_info.value.message == message
+    assert exc_info.value.message.startswith(message)
+    if call == 'stream':
+        assert isinstance(exc_info.value.__cause__, EventStreamParserError)
