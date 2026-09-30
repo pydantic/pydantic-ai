@@ -1508,9 +1508,10 @@ values, or secrets.
 
 CLAI then creates a write token for that project, saves it in `/keys` as
 `LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
-reloads and the next turn is traced there. The sign-in itself is not kept. A
-self-hosted URL is saved as the plugin's `base_url`; hosted regions need none,
-since the write token names its region. Run the menu again to switch projects.
+reloads and the next turn is traced there. The sign-in itself is not kept. The
+URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
+send the token elsewhere, and sending is turned on if it was off. Run the menu
+again to switch projects.
 
 ### Sending UX telemetry to the Pydantic shared project
 

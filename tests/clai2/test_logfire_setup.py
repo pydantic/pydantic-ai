@@ -157,7 +157,7 @@ def configure(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> Configure:
 
 async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Configure) -> None:
     harness = Harness()
-    host = make_host(service_name='mine', ui_events=True)
+    host = make_host(service_name='mine', ui_events=True, send_to_logfire=False)
     message = await configure(host, harness.setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
     assert message == (
         'Logfire traces now go to pydantic/clai2. Its write token is saved in /keys as '
@@ -166,8 +166,10 @@ async def test_sign_in_pick_a_project_and_save_its_write_token(configure: Config
     assert load_keys()['LOGFIRE_TOKEN_PYDANTIC_CLAI2'].get_secret_value() == 'pylf_v1_us_write'
     saved = host.settings(LogfireSettings)
     assert saved.token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2')
-    assert saved.base_url is None  # The write token names its region.
+    # Saved even for a hosted region, so `LOGFIRE_BASE_URL` cannot send this token elsewhere.
+    assert saved.base_url == US
     assert (saved.service_name, saved.ui_events) == ('mine', True)  # Other settings are kept.
+    assert saved.send_to_logfire == 'if-token-present'  # Setting up a project turns sending on.
     assert harness.lines == [
         'Sign in to Logfire (new users can sign up there): https://logfire-us.pydantic.dev/auth/dev-123'
     ]

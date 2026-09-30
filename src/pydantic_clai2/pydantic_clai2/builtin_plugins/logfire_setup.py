@@ -29,7 +29,7 @@ from pydantic_clai2.ui.rendering._rendering import markdown_style
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 REGIONS = {'Logfire US': 'https://logfire-us.pydantic.dev', 'Logfire EU': 'https://logfire-eu.pydantic.dev'}
-"""The hosted regions; a write token names its region, so the SDK needs no URL for these."""
+"""The hosted regions. Setup saves whichever URL was picked, so `LOGFIRE_BASE_URL` cannot send elsewhere."""
 SELF_HOSTED = 'self-hosted'
 SIGN_IN_TIMEOUT = 600.0
 """Seconds to wait for the browser approval, as `logfire auth` does."""
@@ -92,10 +92,10 @@ class Setup:
 
 @dataclass(frozen=True)
 class Chosen:
-    """What setup produced: the saved key and, for self-hosted Logfire, its URL."""
+    """What setup produced: the saved key and the Logfire it belongs to."""
 
     token: KeyReference
-    base_url: str | None
+    base_url: str
     project: Project
 
 
@@ -123,7 +123,7 @@ async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | 
         span.set('outcome', 'saved')
     return Chosen(
         token=KeyReference(name=name),
-        base_url=None if base_url in REGIONS.values() else base_url,
+        base_url=base_url,
         project=project,
     )
 

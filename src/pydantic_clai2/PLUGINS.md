@@ -317,8 +317,9 @@ exports nothing rather than falling back to another project.
 Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled.
 
-`base_url` names a self-hosted Logfire (an https origin); hosted regions need
-none. `/plugins configure logfire` sets `token` and `base_url` for you: it asks
+`base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
+`LOGFIRE_BASE_URL`, else the region the token names. `/plugins configure logfire`
+sets `token`, `base_url`, and `send_to_logfire` for you: it asks
 where traces go, runs Logfire's own device sign-in there (the one behind
 `logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
 accepts), lists the projects you can write to, and saves a new write token for

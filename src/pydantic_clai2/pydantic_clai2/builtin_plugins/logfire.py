@@ -39,7 +39,8 @@ class LogfireSettings(BaseModel):
     )
     base_url: Annotated[str, AfterValidator(https_origin)] | None = Field(
         default=None,
-        description='A self-hosted Logfire to send to; hosted regions need none, since the write token names one.',
+        description='The Logfire to send to, as the setup menu saves it. Unset, the SDK uses LOGFIRE_BASE_URL, '
+        'else the region the token names.',
     )
     ui_events: bool = Field(
         default=False,
@@ -122,7 +123,9 @@ async def _configure(host: PluginHost[None], setup: Setup) -> str:
     chosen = await run_setup(setup, current=config.base_url, owned=config.token)
     if chosen is None:
         return 'Logfire setup cancelled; settings unchanged.'
-    host.save_settings(config.model_copy(update={'token': chosen.token, 'base_url': chosen.base_url}))
+    # Setting up a project means sending to it, even if sending had been turned off.
+    update = {'token': chosen.token, 'base_url': chosen.base_url, 'send_to_logfire': 'if-token-present'}
+    host.save_settings(config.model_copy(update=update))
     return (
         f'Logfire traces now go to {chosen.project.label}. Its write token is saved in /keys as '
         f'{chosen.token.name}; plugin settings keep only that name.'
