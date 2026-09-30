@@ -189,8 +189,11 @@ def config_command(store: SettingsStore, args: list[str]) -> str:
     return 'Saved. Applies when you restart CLAI.'
 
 
-def set_completions(args: list[str]) -> Iterable[str]:
-    """Complete setting names and values without network calls or credentials."""
+def set_completions(args: list[str], *, plugin_models: Iterable[str] = ()) -> Iterable[str]:
+    """Complete setting names and values without network calls or credentials.
+
+    `plugin_models` are `PREFIX:NAME` models that loaded plugins offer, completed beside the built-in ones.
+    """
     if len(args) <= 1:
         return (*SETTING_FIELDS, 'api_key')
     if len(args) == 2 and args[0] == 'display.theme':
@@ -200,7 +203,7 @@ def set_completions(args: list[str]) -> Iterable[str]:
     if len(args) == 2 and args[0] == 'model':
         from pydantic_clai2.models.model_catalog import CODEX_MODELS
 
-        names = known_model_names()
+        names = (*plugin_models, *known_model_names())
         providers = sorted({name.partition(':')[0] + ':' for name in names} | {'openai-codex:'})
         return tuple(dict.fromkeys((*providers, *CODEX_MODELS, *names)))
     if len(args) == 2 and args[0] in ('display.thinking', 'display.splash'):
