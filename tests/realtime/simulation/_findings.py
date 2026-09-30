@@ -221,7 +221,15 @@ RECEIVE_LOOP_SEND_FAILURE = Finding(
     tracked_by='an ordered outbox, so the receive loop never sends on the socket itself; found by this simulator',
     evidence='simulated',
     codes=frozenset(
-        {'usage.total', 'usage.attribution', 'response.missing', 'response.truncated', 'usage.requests', 'wait.hang'}
+        {
+            'usage.total',
+            'usage.attribution',
+            'response.missing',
+            'response.truncated',
+            'usage.requests',
+            'wait.hang',
+            'history.not_restored',
+        }
     ),
     providers=OPENAI_PROTOCOL,
     matches=_receive_loop_send_failed,
@@ -841,7 +849,7 @@ HAND_COMMIT_UNDER_SERVER_VAD = Finding(
     tracked_by='user turns recorded from the provider committing them (the rest of OR9); found by this simulator',
     evidence='simulated',
     codes=frozenset({'history.turn_missing'}),
-    providers=frozenset({'openai', 'azure'}),
+    providers=OPENAI_PROTOCOL,
     matches=lambda sim, violation: (
         bool(sim.truth.speech_started) and any(operation.name == 'commit_audio' for operation in sim.operations)
     ),
@@ -862,6 +870,36 @@ TURN_LOST_AT_CLOSE = Finding(
     matches=lambda sim, violation: _turn_without_its_transcript(sim),
 )
 
+
+def _sent_during_a_lost_reply(sim: Simulation, violation: InvariantViolation) -> bool:
+    """Everything the re-dialed conversation lacks is a user input sent while a reply the drop cut off was in flight."""
+    lost = [response for response in sim.truth.responses.values() if response.lost]
+
+    def held_back(fingerprint: str) -> bool:
+        role, _, key = fingerprint.partition(':')
+        input_ = sim.truth.input(key)
+        return (
+            role == 'user'
+            and input_ is not None
+            and any(response.connection == input_.connection and response.seq_start < input_.seq for response in lost)
+        )
+
+    return all(held_back(fingerprint) for fingerprint in violation.context['missing'])
+
+
+INPUT_HELD_BEHIND_A_LOST_REPLY = Finding(
+    id='SIM-28',
+    title=(
+        'an input sent while a reply is in flight, which history holds back until that reply is final, is left out of '
+        'the replay when a drop cuts the reply off: history records it, but the re-dialed conversation never gets it'
+    ),
+    tracked_by='replaying history only once the turn the drop cut off is settled; found by this simulator',
+    evidence='recorded',
+    codes=frozenset({'history.not_restored'}),
+    providers=OPENAI_PROTOCOL,
+    matches=_sent_during_a_lost_reply,
+)
+
 NON_AUDIO_SEND_DURING_RECONNECT = Finding(
     id='G3b',
     title=(
@@ -880,6 +918,7 @@ KNOWN_FINDINGS.extend(
     [
         NON_AUDIO_SEND_DURING_RECONNECT,
         TURN_LOST_AT_CLOSE,
+        INPUT_HELD_BEHIND_A_LOST_REPLY,
         AUDIO_AFTER_A_CLEAR,
         HAND_COMMIT_UNDER_SERVER_VAD,
         BARGE_IN_WITHOUT_A_VAD_REPLY,

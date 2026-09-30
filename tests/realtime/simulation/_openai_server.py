@@ -13,7 +13,8 @@ the session, each observed live:
   commits the user's audio item, and asks for a response on its own (`create_response`), when they stop;
 - the input transcript arrives on its own schedule, often after the response it prompted;
 - an empty `input_audio_buffer.commit` is refused;
-- a dropped connection loses whatever was in flight; a re-dial starts a fresh server session.
+- a dropped connection loses whatever was in flight; a re-dial starts a fresh server session, with an
+  empty conversation (a tool output for a call it never made is refused) unless xAI resumes it.
 
 Content the server can generate is driven by the simulation (`speak`, `call_tool`, `finish`, ...), so
 the trace decides *what* the model says and *when*; the server decides what the protocol makes of it.
@@ -26,7 +27,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from ._truth import GroundTruth, TruthResponse
+from ._truth import GroundTruth, Restoration, TruthResponse
 from ._wire import FakeWebSocket, Network
 
 AUDIO_CHUNK = b'\x00\x10' * 2400
@@ -54,6 +55,17 @@ def _usage(input_tokens: int, output_tokens: int) -> dict[str, Any]:
         'input_token_details': {'text_tokens': input_tokens, 'audio_tokens': 0, 'image_tokens': 0, 'cached_tokens': 0},
         'output_token_details': {'text_tokens': output_tokens, 'audio_tokens': 0},
     }
+
+
+def conversation_fingerprint(item: dict[str, Any]) -> str | None:
+    """What identifies a conversation item across sessions, whoever sent it (see `Restoration`)."""
+    if item.get('type') in ('function_call', 'function_call_output'):
+        return f'{item["type"]}:{item.get("call_id")}'
+    part: dict[str, Any] = (item.get('content') or [{}])[0]
+    text = part.get('text') or part.get('transcript')
+    if item.get('type') != 'message' or not text:
+        return None
+    return f'{item.get("role")}:{" ".join(text.split())}'
 
 
 def _error(code: str, message: str, event_id: str | None = None) -> dict[str, Any]:
@@ -107,6 +119,9 @@ class ServerSession:
     """xAI echoes `create_response: False` back but answers anyway (see `XaiRealtimeModelSettings`)."""
     uncommitted_answers: list[str] = field(default_factory=list[str])
     """Spoken turns committed without a reply (push-to-talk, or VAD not answering): the next request answers them."""
+    conversation: set[str] = field(default_factory=set[str])
+    """What this session's conversation holds, as `conversation_fingerprint`s: a re-dial starts empty."""
+    restoration_checked: bool = False
 
     @property
     def server_vad(self) -> bool:
@@ -164,6 +179,8 @@ class OpenAIServer:
         session = ServerSession(index=len(self.sessions), socket=socket)
         # xAI resumes a conversation natively: a re-dial naming it gets the finished conversation back.
         session.resumed = self.dialect == 'xai' and f'conversation_id={self._conversation_id}' in url
+        if session.resumed and self.sessions:
+            session.conversation = set(self.sessions[-1].conversation)
         session.answers_every_turn = self.dialect == 'xai'
         self.sessions.append(session)
         socket.emit(
@@ -254,6 +271,9 @@ class OpenAIServer:
         for response in self.truth.responses.values():
             if response.connection == session.index + 1 and response.terminal_read is None:
                 self.truth.lose(response)
+        if session.active is not None and session.active.message_words:
+            # The conversation keeps what a reply cut off had said so far.
+            session.conversation.add(f'assistant:{" ".join(session.active.message_words)}')
         session.active = None
 
     # --- queries used by the simulation ---------------------------------------------------------
@@ -346,8 +366,11 @@ class OpenAIServer:
         if item.get('type') == 'function_call_output':
             call_id = item.get('call_id', '')
             call = self.truth.tool_calls.get(call_id)
-            if call is None or call.cancelled_by_server:  # pragma: lax no cover (only an output for no call)
-                # The call was never made on this conversation (or was abandoned): the real API refuses it.
+            if (
+                call is None or call.cancelled_by_server or f'function_call:{call_id}' not in session.conversation
+            ):  # pragma: lax no cover (only an output for no call)
+                # The call was never made on this conversation (or was abandoned, or made on a session a
+                # re-dial replaced without replaying it): the real API refuses it.
                 self._emit(session, _error('invalid_value', f'No tool call found with call_id {call_id!r}.'))
                 return
             self._item_added(session, item)
@@ -461,6 +484,8 @@ class OpenAIServer:
 
     def _item_added(self, session: ServerSession, item: dict[str, Any], item_id: str | None = None) -> None:
         """Acknowledge an item joining the conversation, as the real API does for every item, whoever made it."""
+        if (fingerprint := conversation_fingerprint(item)) is not None:
+            session.conversation.add(fingerprint)
         self._emit(
             session,
             {
@@ -500,6 +525,20 @@ class OpenAIServer:
     ) -> None:
         truth = self.truth.new_response(trigger=trigger, answers=answers)
         truth.user_turn = user_turn
+        if session.index > 0 and not session.restoration_checked:
+            session.restoration_checked = True
+            self.truth.restorations.append(
+                Restoration(
+                    connection=session.index + 1,
+                    response=truth.key,
+                    before={
+                        fingerprint
+                        for earlier in self.sessions[: session.index]
+                        for fingerprint in earlier.conversation
+                    },
+                    held=set(session.conversation),
+                )
+            )
         session.active = _ActiveResponse(truth=truth, metadata=metadata)
         self._emit(
             session,
@@ -583,6 +622,7 @@ class OpenAIServer:
         self._finished_items.append(
             {'type': 'message', 'role': 'assistant', 'content': [{'type': 'text', 'text': transcript}]}
         )
+        session.conversation.add(f'assistant:{transcript}')
         self._emit(
             session,
             {
@@ -678,6 +718,7 @@ class OpenAIServer:
             'arguments': '{}',
         }
         active.output.append(item)
+        session.conversation.add(f'function_call:{call_id}')
         self._finished_items.append({key: item[key] for key in ('type', 'call_id', 'name', 'arguments')})
         self._emit(
             session,

@@ -102,6 +102,22 @@ class ToolCallTruth:
 
 
 @dataclass
+class Restoration:
+    """What a re-dialed session held when it started its first response, against what came before it.
+
+    Items are `conversation_fingerprint`s. A session that reports `state_restored` owes the new
+    conversation everything it recorded that an earlier one held (`history.not_restored`).
+    """
+
+    connection: int
+    response: str
+    before: set[str]
+    """What every earlier session's conversation held."""
+    held: set[str]
+    """What this session's conversation held."""
+
+
+@dataclass
 class GroundTruth:
     """The provider-side record of a simulated conversation."""
 
@@ -138,6 +154,8 @@ class GroundTruth:
     """When the client read each word (tracked by the Gemini server, for the async tool round)."""
     merged_requests: int = 0
     """How many requests for a response the client folded into another one's single request."""
+    restorations: list[Restoration] = field(default_factory=list[Restoration])
+    """Each re-dialed session's conversation as its first response started (OpenAI protocol only)."""
 
     def tick(self) -> int:
         self.clock += 1

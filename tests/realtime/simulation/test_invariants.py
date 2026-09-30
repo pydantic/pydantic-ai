@@ -43,3 +43,26 @@ def test_ambiguous_send_only_excuses_its_own_duplicate() -> None:
         truth.inputs.append(replace(t2))
         with pytest.raises(InvariantViolation, match=r"\[wire\.duplicate\] the server received 't2' 2 times"):
             sim.checker.check_at_rest()
+
+
+def test_reconnect_without_replay_loses_the_history() -> None:
+    """A re-dial the session doesn't replay history into starts a conversation that knows nothing said before."""
+    with OpenAISimulation(strict=True) as sim:
+        session = sim.session
+        assert session is not None
+        # What a connection that neither resumes nor replays would do.
+        session._connection._message_history = None  # pyright: ignore[reportPrivateUsage,reportAttributeAccessIssue]
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+        sim.drop()
+        sim.settle()
+        sim.send_text()
+        with pytest.raises(
+            InvariantViolation,
+            match=r"\[history\.not_restored\] connection 2 started resp_2 without \['assistant:r1w1', 'user:t1'\]",
+        ):
+            sim.settle()
+        first, second = sim.server.sessions
+        assert first.conversation.isdisjoint(second.conversation)

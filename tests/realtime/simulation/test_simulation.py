@@ -554,6 +554,20 @@ def test_known_hand_commit_under_server_vad_loses_a_turn() -> None:
     )
 
 
+@known('SIM-28')
+def test_known_input_held_behind_a_lost_reply_is_not_replayed() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.send_text(respond=False)
+        sim.drop()
+        sim.settle()
+        sim.send_text()
+        sim.settle()
+
+    reproduce('SIM-28', OpenAISimulation(), scenario)
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
@@ -1251,6 +1265,32 @@ def test_baseline_openai_tool_result_with_media(dialect: str) -> None:
         sim.finish()
 
     run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)  # pyright: ignore[reportArgumentType]
+
+
+@pytest.mark.parametrize('dialect', ['openai', 'azure'])
+def test_baseline_reconnect_replays_the_conversation(dialect: str) -> None:
+    """A re-dial starts an empty conversation: the local replay is what gives it the tool round back."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_text()
+        sim.speak()
+        sim.call_tool()
+        sim.finish()
+        sim.finish_tool()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+        sim.drop()
+        sim.settle()
+        sim.send_text()
+        sim.speak()
+        sim.finish()
+        sim.settle()
+        first, second = sim.server.sessions
+        assert first.conversation <= second.conversation
+        assert 'function_call:call_1' in second.conversation
+
+    run_clean(OpenAISimulation(openai=OpenAIOptions(dialect=dialect)), scenario)
 
 
 def test_baseline_xai_resumption_replays_a_tool_round() -> None:

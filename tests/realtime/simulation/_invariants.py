@@ -44,6 +44,8 @@ Checked at rest (`settle()`):
   the model keeps talking after the call);
 - `history.rejected_kept`: an input the provider refused is still in history;
 - `history.turn_missing`: fewer spoken user turns are recorded than the provider committed, as the client read;
+- `history.not_restored`: a re-dialed provider conversation started a response without something history
+  records and an earlier conversation held, other than the turn the drop cut off (which is settled instead);
 - `response.missing` / `response.truncated`: a response the server completed is missing from history,
   or recorded without all of what it said;
 - `usage.total`: `session.usage` tokens differ from what the server billed in the reports the client read;
@@ -150,6 +152,23 @@ def request_keys(message: ModelRequest) -> list[str]:
 def is_tool_return_request(message: ModelMessage) -> bool:
     """A request carrying tool returns (and the content that follows them), which is placed after its call."""
     return isinstance(message, ModelRequest) and isinstance(message.parts[0], (ToolReturnPart, RetryPromptPart))
+
+
+def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
+    """What recorded history replays into a provider conversation, keyed as the server's `conversation_fingerprint`."""
+    fingerprints: set[str] = set()
+    for message in messages:
+        for part in message.parts:
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
+                fingerprints.add(f'user:{" ".join(part.content.split())}')
+            elif isinstance(part, ToolReturnPart):
+                fingerprints.add(f'function_call_output:{part.tool_call_id}')
+            elif isinstance(part, ToolCallPart):
+                fingerprints.add(f'function_call:{part.tool_call_id}')
+        said = [part.content for part in message.parts if isinstance(part, TextPart)]
+        said += [part.transcript for part in message.parts if isinstance(part, SpeechPart) and part.speaker != 'user']
+        fingerprints |= {f'assistant:{" ".join(text.split())}' for text in said if text}
+    return fingerprints
 
 
 def is_user_speech_request(message: ModelMessage) -> bool:
@@ -462,6 +481,7 @@ class Checker:
         self._check_order(messages)
         self._check_completeness(messages)
         self._check_spoken_turns(messages)
+        self._check_restored(messages)
         self._check_usage(messages)
         self._check_playback(messages)
         roundtrip = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
@@ -612,6 +632,40 @@ class Checker:
             [(f'{len(committed)} spoken turns committed ({committed}), but {recorded} recorded', {'inputs': committed})]
             if recorded < len(committed)
             else [],
+        )
+
+    def _check_restored(self, messages: list[ModelMessage]) -> None:
+        """A re-dialed conversation must hold what history records and the one before held (a local replay's promise).
+
+        The turn a drop cut off is settled instead (a reconnect reports `state_restored=False` for it): that turn is
+        over, so what it said and called before the drop need not reach the new conversation.
+        """
+        sim = self.sim
+        recorded = conversation_fingerprints(messages)
+        settled: set[str] = set()
+        for response in sim.truth.responses.values():
+            if response.lost:
+                settled |= {f'assistant:{" ".join(response.words[:n])}' for n in range(1, len(response.words) + 1)}
+                settled |= {
+                    f'{kind}:{call}'
+                    for call in response.tool_calls
+                    for kind in ('function_call', 'function_call_output')
+                }
+        missing = [
+            (restoration, sorted((restoration.before & recorded) - restoration.held - settled))
+            for restoration in sim.truth.restorations
+        ]
+        self.report(
+            'history.not_restored',
+            [
+                (
+                    f'connection {restoration.connection} started {restoration.response} without {lost}, '
+                    'which history records and an earlier connection held',
+                    {'response': restoration.response, 'missing': lost},
+                )
+                for restoration, lost in missing
+                if lost
+            ],
         )
 
     def _check_completeness(self, messages: list[ModelMessage]) -> None:
