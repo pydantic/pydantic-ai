@@ -20,3 +20,10 @@ class UsageExtractionFailedWarning(Warning):
 
 class CostNotFoundWarning(Warning):
     """Warning raised when cost is not found."""
+
+
+class UsageNotReportedWarning(Warning):
+    """Warning raised when token or cost limits are set but a model response reported no usage.
+
+    Such a response counts as zero tokens, so the limits cannot account for it.
+    """

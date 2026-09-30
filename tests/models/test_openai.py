@@ -43,6 +43,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolReturnPart,
     UnexpectedModelBehavior,
+    UsageNotReportedWarning,
     UseEnumMemberDocstrings,
     UserError,
     UserPromptPart,
@@ -72,7 +73,7 @@ from pydantic_ai.profiles.openai import OpenAIModelProfile, openai_model_profile
 from pydantic_ai.result import RunUsage
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import Tool, ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from .._inline_snapshot import snapshot
 from ..conftest import IsDatetime, IsNow, IsStr, RequestCapture, TestEnv, message, try_import
@@ -607,6 +608,48 @@ async def test_stream_text(allow_model_requests: None):
         assert [c async for c in result.stream_text(debounce_by=None)] == snapshot(['hello ', 'hello world'])
         assert result.is_complete
         assert result.usage == snapshot(RunUsage(requests=1, input_tokens=6, output_tokens=3))
+
+
+@pytest.mark.parametrize(
+    'usage_limits',
+    [UsageLimits(input_tokens_limit=100), UsageLimits(cost_limit=Decimal('0.01'))],
+    ids=['token_limit', 'cost_limit'],
+)
+async def test_limits_warn_when_response_reports_no_usage(allow_model_requests: None, usage_limits: UsageLimits):
+    # A priced model, so the missing usage is priced as a confident zero rather than left unpriced.
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'), usage=None)
+    mock_client = MockOpenAI.create_mock(c.model_copy(update={'model': 'gpt-4o'}))
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
+
+    with pytest.warns(UsageNotReportedWarning, match="the response from 'gpt-4o' reported no usage"):
+        result = await agent.run('hello', usage_limits=usage_limits)
+
+    assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
+
+
+async def test_limits_warn_when_stream_reports_no_usage(allow_model_requests: None):
+    stream = [text_chunk('hello ').model_copy(update={'usage': None}), chunk([]).model_copy(update={'usage': None})]
+    agent = Agent(
+        OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
+    )
+
+    with pytest.warns(UsageNotReportedWarning, match="the response from 'gpt-4o-123' reported no usage"):
+        async with agent.run_stream('hello', usage_limits=UsageLimits(output_tokens_limit=100)) as result:
+            assert await result.get_output() == 'hello '
+
+    assert result.usage == snapshot(RunUsage(requests=1))
+
+
+async def test_no_usage_warning_without_token_or_cost_limits(allow_model_requests: None):
+    """The default `UsageLimits` only caps requests, which pydantic-ai counts itself, so there is nothing to warn about."""
+    c = completion_message(ChatCompletionMessage(content='hello', role='assistant'), usage=None)
+    agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c))))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UsageNotReportedWarning)
+        result = await agent.run('hello', usage_limits=UsageLimits(request_limit=5))
+
+    assert result.usage == snapshot(RunUsage(requests=1))
 
 
 def test_service_tier_comes_from_response(allow_model_requests: None) -> None:

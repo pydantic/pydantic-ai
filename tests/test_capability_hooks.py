@@ -35,6 +35,7 @@ from pydantic_ai.exceptions import (
     SkipToolValidation,
     ToolFailed,
     UnexpectedModelBehavior,
+    UsageNotReportedWarning,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -65,7 +66,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
@@ -426,6 +427,24 @@ class TestModelRequestHooks:
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[SkipCap()])
         result = await agent.run('hello')
+        assert result.output == 'skipped model'
+
+    async def test_skip_model_request_with_token_limits_does_not_warn_about_usage(self):
+        """A skipped request never reached the model, so its empty usage is accurate rather than unreported."""
+
+        @dataclass
+        class SkipCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self,
+                ctx: RunContext[Any],
+                request_context: ModelRequestContext,
+            ) -> ModelRequestContext:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart(content='skipped model')]))
+
+        agent = Agent(FunctionModel(simple_model_function), capabilities=[SkipCap()])
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', UsageNotReportedWarning)
+            result = await agent.run('hello', usage_limits=UsageLimits(input_tokens_limit=100))
         assert result.output == 'skipped model'
 
     async def test_before_model_request_swaps_model(self):
