@@ -13,7 +13,7 @@ from contextvars import Context, ContextVar, copy_context
 from copy import deepcopy
 from dataclasses import field, replace
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, SupportsIndex, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
 from typing_extensions import Self, TypeVar, assert_never
@@ -1303,7 +1303,7 @@ def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDe
 
 
 _PERSISTING_REQUEST_EDIT_WARNING = (
-    'Adding messages to `request_context.messages` in `before_model_request` also adds them to the message '
+    'Appending messages to `request_context.messages` in `before_model_request` also adds them to the message '
     'history for backward compatibility, but that will stop in v3: `request_context.messages` will only change '
     'the current model request. To keep the messages in history, assign a new list to `request_context.messages` '
     'and add the messages to `ctx.messages` as well.'
@@ -1314,9 +1314,9 @@ class _HistoryMirroringMessages(list[_messages.ModelMessage]):
     """The `ModelRequestContext.messages` list that `before_model_request` hooks receive.
 
     Before hooks used to have their final request list written back to the message history, so code
-    that appended to `request_context.messages` also changed history. Messages added in place here are
-    still added to history, with a deprecation warning, until the before-chain finishes and `detach()`
-    turns this into a plain request-only list. Assigning a new list opts out, as intended.
+    that appended to `request_context.messages` also changed history. Messages appended here with
+    `append`, `extend` or `+=` are still added to the end of history, with a deprecation warning, until
+    the before-chain finishes and `detach()` turns this into a plain request-only list.
     """
 
     def __init__(self, messages: Iterable[_messages.ModelMessage], history: list[_messages.ModelMessage]):
@@ -1326,33 +1326,25 @@ class _HistoryMirroringMessages(list[_messages.ModelMessage]):
     def detach(self) -> None:
         self._history = None
 
-    def _mirror_target(self) -> list[_messages.ModelMessage] | None:
-        if self._history is not None:
-            # stacklevel points at the hook's `append`/`extend`/`insert`/`+=` call.
+    def _add_to_history(self, messages: list[_messages.ModelMessage]) -> None:
+        if self._history is not None and messages:
+            # stacklevel points at the hook's `append`/`extend`/`+=` call.
             warnings.warn(_PERSISTING_REQUEST_EDIT_WARNING, PydanticAIDeprecationWarning, stacklevel=3)
-        return self._history
+            self._history.extend(messages)
 
     def append(self, message: _messages.ModelMessage) -> None:
         super().append(message)
-        if (history := self._mirror_target()) is not None:
-            history.append(message)
+        self._add_to_history([message])
 
     def extend(self, messages: Iterable[_messages.ModelMessage]) -> None:
         messages = list(messages)
         super().extend(messages)
-        if (history := self._mirror_target()) is not None:
-            history.extend(messages)
-
-    def insert(self, index: SupportsIndex, message: _messages.ModelMessage) -> None:
-        super().insert(index, message)
-        if (history := self._mirror_target()) is not None:
-            history.insert(index, message)
+        self._add_to_history(messages)
 
     def __iadd__(self, messages: Iterable[_messages.ModelMessage]) -> Self:
         messages = list(messages)
         super().extend(messages)
-        if (history := self._mirror_target()) is not None:
-            history.extend(messages)
+        self._add_to_history(messages)
         return self
 
 
@@ -1831,25 +1823,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # `_finish_handling` must append its replacement response after the base history, not
         # after the dangling suspended response. The wrapped lifecycle redoes this bookkeeping
         # on the (possibly hook-modified) messages; with unmodified messages it's idempotent.
-        self._trim_suspended_tail(ctx, request_context.messages)
+        # The request messages keep the suspended response as the continuation seed.
+        _set_resumed_history(ctx, request_context.messages[:-1])
         return request_context, run_context
-
-    @staticmethod
-    def _trim_suspended_tail(
-        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
-        messages: Sequence[_messages.ModelMessage],
-    ) -> None:
-        """Point the run state at the resumed turn's base history, without its suspended tail.
-
-        `resumed_request` = the request that triggered the paused turn, so `new_messages()`
-        yields just the completed (merged) response; it's tracked by object and by position so
-        `_first_new_message_index` can exclude it however processors mutate the list.
-        `ctx.state.message_history` is the same list used by `capture_run_messages`, so its
-        contents are replaced (dropping the suspended response) rather than the reference;
-        `_finish_handling` then appends the final merged response after the base history.
-        The request messages are untouched — they retain the suspended continuation seed.
-        """
-        _set_resumed_history(ctx, messages[:-1])
 
     async def _apply_before_model_request(
         self,
@@ -2025,7 +2001,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 and isinstance(persistent_tail := persistent_messages[-1], _messages.ModelResponse)
                 and persistent_tail.state == 'suspended'
             ):
-                self._trim_suspended_tail(ctx, persistent_messages)
+                _set_resumed_history(ctx, persistent_messages[:-1])
             else:
                 _set_resumed_history(ctx, persistent_messages)
 

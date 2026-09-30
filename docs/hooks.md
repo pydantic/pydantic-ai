@@ -154,12 +154,12 @@ Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_
 
 `before_model_request` and `model_request` (wrap) use the same message-persistence rules. Each receives two top-level views of the messages:
 
-- Mutating or assigning `request_context.messages` changes only the current model request.
+- Mutating or assigning `request_context.messages` changes only the current model request (except for the deprecated appends below).
 - Mutating the `ctx.messages` list changes persistent history returned by `all_messages()` and used by later requests, but not the current model request.
 - To change both, update both explicitly.
 
 !!! note "Deprecated: adding to `request_context.messages` in place in `before_model_request`"
-    For backward compatibility, messages that `before_model_request` adds to `request_context.messages` with `append`, `extend`, `insert` or `+=` are still also added to `ctx.messages`, with a [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning]. This stops in v3. To keep a message in both places without the warning, assign a new list to `request_context.messages` and add the message to `ctx.messages`.
+    For backward compatibility, messages that `before_model_request` appends to `request_context.messages` with `append`, `extend` or `+=` are still also added to the end of `ctx.messages`, with a [`PydanticAIDeprecationWarning`][pydantic_ai.exceptions.PydanticAIDeprecationWarning]. This stops in v3. To keep a message in both places without the warning, assign a new list to `request_context.messages` and add the message to `ctx.messages`.
 
 [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] and compaction deliberately update both, preserving their existing history-rewriting contract. Because a history processor transforms the current request view and makes its whole result persistent, its position relative to other message hooks remains significant.
 

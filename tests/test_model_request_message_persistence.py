@@ -126,7 +126,7 @@ def _count_markers(messages: list[ModelMessage]) -> int:
     )
 
 
-Edit = Literal['append', 'extend', 'insert', 'iadd']
+Edit = Literal['append', 'extend', 'iadd']
 
 
 def _add(messages: list[ModelMessage], edit: Edit, message: ModelMessage) -> None:
@@ -134,13 +134,11 @@ def _add(messages: list[ModelMessage], edit: Edit, message: ModelMessage) -> Non
         messages.append(message)
     elif edit == 'extend':
         messages.extend([message])
-    elif edit == 'insert':
-        messages.insert(0, message)
     else:
         messages += [message]
 
 
-@pytest.mark.parametrize('edit', ['append', 'extend', 'insert', 'iadd'])
+@pytest.mark.parametrize('edit', ['append', 'extend', 'iadd'])
 @pytest.mark.parametrize('streaming', [False, True])
 async def test_before_model_request_in_place_additions_still_persist_with_deprecation_warning(
     edit: Edit, streaming: bool
@@ -179,8 +177,37 @@ async def test_before_model_request_in_place_additions_still_persist_with_deprec
 
     assert _count_markers(model_messages[0]) == 1
     assert _count_markers(result_messages) == 1
-    if edit == 'insert':
-        assert result_messages[0] is marker
+
+
+@pytest.mark.parametrize('edit', ['insert', 'empty_extend', 'empty_iadd'])
+async def test_before_model_request_edits_that_append_nothing_are_request_only(
+    edit: Literal['insert', 'empty_extend', 'empty_iadd'],
+) -> None:
+    """Only appending keeps the old write-back: `insert` and empty additions change the request alone, silently."""
+    marker = ModelRequest(parts=[UserPromptPart(content='hook marker')])
+    model_messages: list[list[ModelMessage]] = []
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        model_messages.append(messages)
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    class EditMessages(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if edit == 'insert':
+                request_context.messages.insert(0, marker)
+            elif edit == 'empty_extend':
+                request_context.messages.extend([])
+            else:
+                request_context.messages += []
+            return request_context
+
+    # `filterwarnings = ['error']` fails this test if the deprecation warning fires.
+    result = await Agent(FunctionModel(model_function), capabilities=[EditMessages()]).run('hello')
+
+    assert _count_markers(model_messages[0]) == (1 if edit == 'insert' else 0)
+    assert _count_markers(result.all_messages()) == 0
 
 
 async def test_before_model_request_migrated_edit_persists_once_without_warning() -> None:
@@ -207,7 +234,7 @@ async def test_before_model_request_migrated_edit_persists_once_without_warning(
     assert _count_markers(result.all_messages()) == 1
 
 
-@pytest.mark.parametrize('edit', ['append', 'extend', 'insert', 'iadd'])
+@pytest.mark.parametrize('edit', ['append', 'extend', 'iadd'])
 async def test_before_model_request_list_stops_persisting_after_the_before_chain(edit: Edit) -> None:
     """A list kept from `before_model_request` and edited later changes neither history nor raises a warning."""
     marker = ModelRequest(parts=[UserPromptPart(content='hook marker')])

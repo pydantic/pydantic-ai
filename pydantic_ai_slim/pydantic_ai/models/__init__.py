@@ -326,6 +326,9 @@ class ModelRequestContext:
     message history, update [`RunContext.messages`][pydantic_ai.tools.RunContext.messages]
     instead, or update both explicitly when both effects are intended.
 
+    Until v3, messages a `before_model_request` hook appends here with `append`, `extend` or `+=`
+    are also added to the message history, with a deprecation warning.
+
     This is an independent top-level list, not an independent object graph. Retained messages
     and their parts may be the same objects as those in persistent history. Filtering, reordering,
     or assigning the outer sequence is request-only, but mutating a contained message or part in
