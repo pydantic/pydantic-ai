@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import base64
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from fastmcp.client.transports import StreamableHttpTransport
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai_harness.stackone import StackOne
+from pydantic_ai.toolsets import AbstractToolset
+from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import HarnessDeprecationWarning
+from pydantic_ai_harness.stackone import StackOne, StackOneToolset
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -23,15 +28,24 @@ def tool_call_names(messages: list[ModelMessage]) -> set[str]:
     return {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolCallPart)}
 
 
-def http_transport(capability: StackOne[None]) -> StreamableHttpTransport:
-    transport = capability.get_toolset().client.transport
-    assert isinstance(transport, StreamableHttpTransport)
-    return transport
+def transport(toolset: AbstractToolset[Any]) -> StreamableHttpTransport:
+    assert isinstance(toolset, StackOneToolset)
+    result = toolset.client.transport
+    assert isinstance(result, StreamableHttpTransport)
+    return result
+
+
+def http_transport(capability: StackOne[Any]) -> StreamableHttpTransport:
+    return transport(capability.get_toolset())
+
+
+def basic_auth(key: str) -> str:
+    return 'Basic ' + base64.b64encode(f'{key}:'.encode()).decode()
 
 
 class TestStackOne:
     def test_settings_reach_the_connection(self):
-        capability = StackOne[None](account_id='45320', api_key='key', base_url='https://api.eu1.stackone.com')
+        capability = StackOne[None](account_id='45320', auth='key', base_url='https://api.eu1.stackone.com')
         transport = http_transport(capability)
         assert (transport.url, transport.headers['x-account-id']) == (
             'https://api.eu1.stackone.com/mcp?tool-mode=search_execute',
@@ -41,8 +55,8 @@ class TestStackOne:
     @pytest.mark.parametrize(
         ('capability', 'toolset_id'),
         [
-            (StackOne[None](account_id='45320', api_key='key'), 'stackone-45320'),
-            (StackOne[None](account_id='45320', api_key='key', id='hr'), 'hr'),
+            (StackOne[None](account_id='45320', auth='key'), 'stackone-45320'),
+            (StackOne[None](account_id='45320', auth='key', id='hr'), 'hr'),
         ],
         ids=['derived', 'custom'],
     )
@@ -55,17 +69,17 @@ class TestStackOne:
         A fixed `'stackone'` id would make these two merge into one, and one linked account would
         silently drop out of the agent -- the failure mode a shared id is supposed to prevent.
         """
-        first = StackOne(account_id='45320', api_key='key')
-        second = StackOne(account_id='99811', api_key='key')
+        first = StackOne(account_id='45320', auth='key')
+        second = StackOne(account_id='99811', auth='key')
         assert (first.id, second.id) == ('stackone-45320', 'stackone-99811')
 
     @pytest.mark.parametrize(
         'capability',
         [
-            StackOne[None](account_id='45320', api_key='secret'),
-            StackOne[None](account_id='45320', api_key='key', client='https://user:secret@example.com/mcp'),
+            StackOne[None](account_id='45320', auth='secret'),
+            StackOne[None](account_id='45320', auth='key', client='https://user:secret@example.com/mcp'),
         ],
-        ids=['api-key', 'client'],
+        ids=['auth', 'client'],
     )
     def test_secrets_are_hidden_from_repr(self, capability: StackOne[None]):
         assert 'secret' not in repr(capability)
@@ -74,11 +88,17 @@ class TestStackOne:
         schema = AgentSpec.model_json_schema_with_capabilities([StackOne])
         assert '"client"' not in json.dumps(schema)
 
-    def test_agent_spec_forwards_api_key(self, monkeypatch: pytest.MonkeyPatch):
+    def test_agent_spec_forwards_auth(self, monkeypatch: pytest.MonkeyPatch):
         # With no `STACKONE_API_KEY` to fall back on, construction only succeeds if the spec's key arrives.
         monkeypatch.delenv('STACKONE_API_KEY', raising=False)
-        spec = {'capabilities': [{'StackOne': {'account_id': '45320', 'api_key': 'key'}}]}
+        spec = {'capabilities': [{'StackOne': {'account_id': '45320', 'auth': 'key'}}]}
         Agent.from_spec(spec, custom_capability_types=[StackOne], model=TestModel())
+
+    def test_agent_spec_forwards_deprecated_api_key(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv('STACKONE_API_KEY', raising=False)
+        spec = {'capabilities': [{'StackOne': {'account_id': '45320', 'api_key': 'key'}}]}
+        with pytest.warns(HarnessDeprecationWarning, match=r'`StackOne\(api_key=...\)` has been renamed'):
+            Agent.from_spec(spec, custom_capability_types=[StackOne], model=TestModel())
 
     @pytest.mark.parametrize(
         ('arguments', 'match'),
@@ -88,20 +108,20 @@ class TestStackOne:
         ],
     )
     def test_agent_spec_rejects_invalid_configuration(self, arguments: dict[str, object], match: str):
-        spec = {'capabilities': [{'StackOne': {'account_id': '45320', 'api_key': 'key', **arguments}}]}
+        spec = {'capabilities': [{'StackOne': {'account_id': '45320', 'auth': 'key', **arguments}}]}
         with pytest.raises(ValueError, match=match):
             Agent.from_spec(spec, custom_capability_types=[StackOne], model=TestModel())
 
     @pytest.mark.parametrize('actions', [['*_list_*'], '*_LIST_*'])
     async def test_agent_calls_only_matching_actions(self, stackone_server: FastMCP, actions: list[str] | str):
-        capability = StackOne(account_id='45320', api_key='key', client=stackone_server, actions=actions)
+        capability = StackOne(account_id='45320', auth='key', client=stackone_server, actions=actions)
         result = await Agent(TestModel(), capabilities=[capability]).run('list employees')
         assert tool_call_names(result.all_messages()) == {'bamboohr_list_employees'}
 
     async def test_metadata_overrides_server_metadata(self, stackone_server: FastMCP, run_context: RunContext[None]):
         # `task` collides with a server-provided key: user metadata must win, matching `.with_metadata()`.
         toolset = StackOne(
-            account_id='45320', api_key='key', client=stackone_server, metadata={'task': 'hr'}
+            account_id='45320', auth='key', client=stackone_server, metadata={'task': 'hr'}
         ).get_toolset()
         async with toolset:
             tools = await toolset.get_tools(run_context)
@@ -110,12 +130,12 @@ class TestStackOne:
     @pytest.mark.parametrize(
         ('capability', 'phrase'),
         [
-            (StackOne[None](account_id='45320', api_key='key'), 'must never be guessed'),
+            (StackOne[None](account_id='45320', auth='key'), 'must never be guessed'),
             (
-                StackOne[None](account_id='45320', api_key='key', tool_mode='individual'),
+                StackOne[None](account_id='45320', auth='key', tool_mode='individual'),
                 '{connector}_{action}_{entity}',
             ),
-            (StackOne[None](account_id='45320', api_key='key', actions='*_list_*'), '{connector}_{action}_{entity}'),
+            (StackOne[None](account_id='45320', auth='key', actions='*_list_*'), '{connector}_{action}_{entity}'),
         ],
         ids=['default', 'individual', 'actions'],
     )
@@ -123,4 +143,61 @@ class TestStackOne:
         assert phrase in (capability.get_instructions() or '')
 
     def test_instructions_can_be_disabled(self):
-        assert StackOne(account_id='45320', api_key='key', include_instructions=False).get_instructions() is None
+        assert StackOne(account_id='45320', auth='key', include_instructions=False).get_instructions() is None
+
+
+def per_user_key(ctx: RunContext[str | None]) -> str | None:
+    """Read the run's API key from its deps, as an app serving many users would."""
+    return ctx.deps
+
+
+async def connections_for(capability: StackOne[str | None], deps: str | None) -> list[StackOneToolset[str | None]]:
+    """The StackOne connections a run with `deps` would open."""
+    ctx = RunContext[str | None](deps=deps, model=TestModel(), usage=RunUsage())
+    toolset = await capability.get_toolset().for_run(ctx)
+    connections: list[StackOneToolset[str | None]] = []
+
+    def collect(leaf: AbstractToolset[str | None]) -> None:
+        if isinstance(leaf, StackOneToolset):
+            connections.append(leaf)
+
+    toolset.apply(collect)
+    return connections
+
+
+class TestAuth:
+    async def test_each_run_connects_with_its_own_key(self):
+        capability = StackOne[str | None](account_id='45320', auth=per_user_key)
+        [alice] = await connections_for(capability, 'alice-key')
+        [bob] = await connections_for(capability, 'bob-key')
+        assert (transport(alice).headers['Authorization'], transport(bob).headers['Authorization']) == (
+            basic_auth('alice-key'),
+            basic_auth('bob-key'),
+        )
+
+    async def test_function_keeps_the_derived_id(self):
+        capability = StackOne[str | None](account_id='45320', auth=per_user_key)
+        assert capability.get_toolset().id == 'stackone-45320'
+        [connection] = await connections_for(capability, 'alice-key')
+        assert connection.id == 'stackone-45320'
+
+    @pytest.mark.parametrize('missing', [None, ''])
+    async def test_no_key_means_no_tools(self, missing: str | None, monkeypatch: pytest.MonkeyPatch):
+        # The environment key is set to show a function never falls back to it.
+        monkeypatch.setenv('STACKONE_API_KEY', 'deployment-key')
+        capability = StackOne[str | None](account_id='45320', auth=per_user_key)
+        assert await connections_for(capability, missing) == []
+
+    def test_unset_auth_uses_the_environment(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv('STACKONE_API_KEY', 'env-key')
+        assert http_transport(StackOne[None](account_id='45320')).headers['Authorization'] == basic_auth('env-key')
+
+    def test_api_key_is_a_deprecated_alias(self):
+        with pytest.warns(HarnessDeprecationWarning, match=r'`StackOne\(api_key=...\)` has been renamed'):
+            capability = StackOne[None](account_id='45320', api_key='key')
+        assert (capability.auth, capability.api_key) == ('key', None)
+        assert http_transport(capability).headers['Authorization'] == basic_auth('key')
+
+    def test_api_key_and_auth_conflict(self):
+        with pytest.raises(UserError, match='Pass `auth` only'):
+            StackOne[None](account_id='45320', auth='key', api_key='other')

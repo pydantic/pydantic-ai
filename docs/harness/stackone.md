@@ -41,7 +41,7 @@ export OPENAI_API_KEY='your-openai-api-key'
 ```
 
 `StackOne` reads `STACKONE_API_KEY` automatically. The example reads `STACKONE_ACCOUNT_ID` explicitly so the account
-ID is not hard-coded. You can pass `api_key=` directly instead, but keep secrets out of source control.
+ID is not hard-coded. You can pass `auth=` directly instead, but keep secrets out of source control.
 
 ## Run your first agent
 
@@ -63,6 +63,44 @@ print(result.output)
 
 By default, the model receives two tools. It searches for an action that matches the request, then executes the
 returned action ID. The final output depends on the linked provider and its data.
+
+## Choose the API key per run
+
+`auth` decides which StackOne API key each run uses:
+
+| `auth` | API key used |
+| --- | --- |
+| Not set, `None`, or `''` | `STACKONE_API_KEY`. If that is not set either, creating the agent raises an error. |
+| An API key | That key, for every run. |
+| A function | Called at the start of each run. The key it returns is used for that run. If it returns `None` or `''`, that run has no StackOne tools. A function never uses `STACKONE_API_KEY`. |
+
+When one agent serves several tenants, each with its own StackOne project, the key cannot be fixed when the agent is
+created. Pass a function that reads the current tenant's key from the run's deps:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+from pydantic_ai_harness import StackOne
+
+
+@dataclass
+class Deps:
+    stackone_api_key: str | None
+
+
+def stackone_api_key(ctx: RunContext[Deps]) -> str | None:
+    return ctx.deps.stackone_api_key
+
+
+agent = Agent(
+    'openai:gpt-5',
+    deps_type=Deps,
+    capabilities=[StackOne(account_id='your-linked-account-id', auth=stackone_api_key)],
+)
+```
+
+`api_key=` is the deprecated name for `auth=` and still works, with a `HarnessDeprecationWarning`.
 
 ## Control available actions
 
