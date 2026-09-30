@@ -627,8 +627,8 @@ def test_only_inlining_transformers_walk_untyped_object_keywords(object_type: di
     """Only a transformer that drops `$defs` walks the object keywords of a node not typed `'object'`.
 
     A transformer that keeps `$defs` has no dangling `$ref` to fix there, and walking would change what
-    its `transform()` produces. Which subschemas get transformed is only observable through a
-    transformer subclass, not a provider request.
+    its `transform()` produces. A recording transformer isolates the gate: asserting on a provider's
+    request would also pin that provider's `transform()` output for these nodes.
     """
     schema = {**object_type, 'properties': {'a': {'type': 'string', 'title': 'A'}}}
     inlining = _TitleRecordingTransformer(deepcopy(schema))
