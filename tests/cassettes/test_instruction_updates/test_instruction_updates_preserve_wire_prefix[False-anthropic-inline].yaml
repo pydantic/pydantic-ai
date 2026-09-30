@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -28,7 +28,7 @@ interactions:
               routed?
             type: text
         model: claude-opus-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -43,52 +43,59 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-d312feb22d182fa8ca40e62d928478be-e2e03bd32b7d88f1-01
+      - 00-82b713cbcd3948b3111d02fa5420c732-a4bce7c1abbfa1d0-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-opus-5
-        id: msg_011CfYQHzaqoqETSivkFaXoB
-        type: message
-        role: assistant
-        content:
-        - type: thinking
-          thinking: ""
-          signature: >-
-            CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
-        - type: text
-          text: A
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 125
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 31
-          output_tokens_details:
-            thinking_tokens: 28
-          service_tier: standard
-          inference_geo: global
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:19.397293+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgocbhfWbketxcQPvYn","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":125,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}  }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISnAUKxgIIEhgCKkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeay8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMkNZwYeVozy/y/ugaGgyMwYnDgerBibdzib4iMNAF82qkQ2yuv0NwL1yF7osf6y56f/k1M1qj5L5LweXE3J4Qc04QjHduPW2Oul0SziqCAj4s4PeRGpXbi0ZxuhWQkHzGuUOhd+fmieDWkzJdhI78Uq+YM/5e2+KHehf+uYF+u5xLA7g71LBmyJLI5g+jP58in3WseLL33aBBYXErwcKEla9W1QFGICvM8UDDHRUyo05lYd20cMxjHNUvjH11fdedBx7UkHjVvbjVUcl4sK+pkWIMtdpYpFqnU7xovu3b7ctwSXuLrK2zal3wJ2KXuPaTHqL1h790lONNSGJoIh4uplRnxBp8AmNog8y6nNWG9zhw438y9Vdhc9mWXOgEu9/8YPEpvdLDJtnpxrOufrm2I9cYgbY3rNnfdcQ/0oJIHqzI0JfdAHwuT/CfyrhgDQQ0NBgB"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"A"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1     }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":125,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":78,"output_tokens_details":{"thinking_tokens":75}}        }
+
+        event: message_stop
+        data: {"type":"message_stop"     }
+
+  recorded_at: 2026-09-30T00:35:50.653567+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -100,7 +107,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1594"
+      - "1830"
       content-type:
       - application/json
       host:
@@ -108,7 +115,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -120,7 +127,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+              CAISnAUKxgIIEhgCKkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeay8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMkNZwYeVozy/y/ugaGgyMwYnDgerBibdzib4iMNAF82qkQ2yuv0NwL1yF7osf6y56f/k1M1qj5L5LweXE3J4Qc04QjHduPW2Oul0SziqCAj4s4PeRGpXbi0ZxuhWQkHzGuUOhd+fmieDWkzJdhI78Uq+YM/5e2+KHehf+uYF+u5xLA7g71LBmyJLI5g+jP58in3WseLL33aBBYXErwcKEla9W1QFGICvM8UDDHRUyo05lYd20cMxjHNUvjH11fdedBx7UkHjVvbjVUcl4sK+pkWIMtdpYpFqnU7xovu3b7ctwSXuLrK2zal3wJ2KXuPaTHqL1h790lONNSGJoIh4uplRnxBp8AmNog8y6nNWG9zhw438y9Vdhc9mWXOgEu9/8YPEpvdLDJtnpxrOufrm2I9cYgbY3rNnfdcQ/0oJIHqzI0JfdAHwuT/CfyrhgDQQ0NBgB
             type: thinking
           - text: A
             type: text
@@ -136,7 +143,7 @@ interactions:
               </context>
             type: text
         model: claude-opus-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -151,52 +158,59 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a18057977b85693cff4ef84374854512-2fdbf00763433c9b-01
+      - 00-e964a402fe48505e804638e8d7a66c6d-68822819f44efdd0-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-opus-5
-        id: msg_011CfYQJ7PsHMSMm5i9MkvCy
-        type: message
-        role: assistant
-        content:
-        - type: thinking
-          thinking: ""
-          signature: >-
-            CAIStwQKhAMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAanN8NUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk9w2HNlWjeK2qWXgaDLAFchJ0QpWrHdkeoSIwS8QOXf11i1LSHi2yVyO7mOFruGkxfao2BvcWvOIAGFW/bg88ZyR1FXOgfRtmKhPBKmBxXTHbmNnCK0O8PmYWngSEATUBsituGE0Z9O9INJw9i9dtr2mtm0cm/4DqeaI3FfYovsbJAYJqV20YwWZLgGnC+trGGagOTfQIb5pkmgZUBPRZAsFIN5Hfh9NIQeOehi0YAQ==
-        - type: text
-          text: B
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 218
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 29
-          output_tokens_details:
-            thinking_tokens: 26
-          service_tier: standard
-          inference_geo: global
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:22.516312+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgoke9CNxj4ZQXGbRnN","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":265,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}               }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISyQQKlgMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeey8dUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwfjgA8XhtLghQaFZIaDB3j1t09nxaCi1G0GSIwWGRSiuOA//zGYxp6dz32Dty+MiEY9tT5fYM8NCq5JzSXg/Ju5lcq1mp2aZYUu3YAKmA75YpYBMzYCBe7rcnikKyiSyDPvnphjdcC61fQADZZyZ+CkjJ2FZuI8/qCAj/X8hnrgWmxMCkEL6K6qfuCw5C7xNTlVHcwf0Ip+Jh72QAijJ7Hm8rXpYrAxzuHI9psQ/sYAQ=="}}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"B"}   }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":265,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":29,"output_tokens_details":{"thinking_tokens":26}}    }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-09-30T00:35:52.192921+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -208,7 +222,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "2582"
+      - "2842"
       content-type:
       - application/json
       host:
@@ -216,7 +230,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -228,7 +242,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+              CAISnAUKxgIIEhgCKkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeay8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMkNZwYeVozy/y/ugaGgyMwYnDgerBibdzib4iMNAF82qkQ2yuv0NwL1yF7osf6y56f/k1M1qj5L5LweXE3J4Qc04QjHduPW2Oul0SziqCAj4s4PeRGpXbi0ZxuhWQkHzGuUOhd+fmieDWkzJdhI78Uq+YM/5e2+KHehf+uYF+u5xLA7g71LBmyJLI5g+jP58in3WseLL33aBBYXErwcKEla9W1QFGICvM8UDDHRUyo05lYd20cMxjHNUvjH11fdedBx7UkHjVvbjVUcl4sK+pkWIMtdpYpFqnU7xovu3b7ctwSXuLrK2zal3wJ2KXuPaTHqL1h790lONNSGJoIh4uplRnxBp8AmNog8y6nNWG9zhw438y9Vdhc9mWXOgEu9/8YPEpvdLDJtnpxrOufrm2I9cYgbY3rNnfdcQ/0oJIHqzI0JfdAHwuT/CfyrhgDQQ0NBgB
             type: thinking
           - text: A
             type: text
@@ -247,7 +261,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAIStwQKhAMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAanN8NUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk9w2HNlWjeK2qWXgaDLAFchJ0QpWrHdkeoSIwS8QOXf11i1LSHi2yVyO7mOFruGkxfao2BvcWvOIAGFW/bg88ZyR1FXOgfRtmKhPBKmBxXTHbmNnCK0O8PmYWngSEATUBsituGE0Z9O9INJw9i9dtr2mtm0cm/4DqeaI3FfYovsbJAYJqV20YwWZLgGnC+trGGagOTfQIb5pkmgZUBPRZAsFIN5Hfh9NIQeOehi0YAQ==
+              CAISyQQKlgMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeey8dUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwfjgA8XhtLghQaFZIaDB3j1t09nxaCi1G0GSIwWGRSiuOA//zGYxp6dz32Dty+MiEY9tT5fYM8NCq5JzSXg/Ju5lcq1mp2aZYUu3YAKmA75YpYBMzYCBe7rcnikKyiSyDPvnphjdcC61fQADZZyZ+CkjJ2FZuI8/qCAj/X8hnrgWmxMCkEL6K6qfuCw5C7xNTlVHcwf0Ip+Jh72QAijJ7Hm8rXpYrAxzuHI9psQ/sYAQ==
             type: thinking
           - text: B
             type: text
@@ -256,7 +270,7 @@ interactions:
           - text: This one is a bicycle frame, oversized. Where does it go?
             type: text
         model: claude-opus-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -271,52 +285,59 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-1f92789eec59a2ba2787baea54ecda83-95331baad20977e9-01
+      - 00-fb24635d5817b7985d92cd3ccace1925-1483c47e5a1d312b-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-opus-5
-        id: msg_011CfYQJLq1ScEQvgtMj7qku
-        type: message
-        role: assistant
-        content:
-        - type: thinking
-          thinking: ""
-          signature: >-
-            CAISxAQKkAMIEhgCKkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAavN8NUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwEbTjkRRqPydFg3PAaDG5h0tgaMj8XJQDC6yIw7uz50aIq9ahmupWbZbaaTMMmnkj5TviJxdLpqzhXofCLNJst1MO/3V0dxBi6RgfAKmHs2x2T7z2jvAaG6kr2VuCByAX87TVDAAJBlRRFw/nK5BLwWPqOIn07ZeAZX/A5yK8r6dMGYJfl7RO60vQYMnMhYYgiGw5PIhoonGETP2tr/WsTXcCQppWgbTrXMBaYBuqxGAE=
-        - type: text
-          text: B
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 270
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 29
-          output_tokens_details:
-            thinking_tokens: 26
-          service_tier: standard
-          inference_geo: global
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:24.327280+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgosDXT1kvVcsHHveEA","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":317,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAIS7gQKogMIEhgCKkBwqQ+d7vnRv2ZRzYhd5WcbThIFAwzjtAkuizxmnDY5bHUqE1SmT2BzPpLRlGIpquNUgKPO8ICyVbkho4b3ihwtMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAemy8dUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwp3g8QBkVRLu8D4HcaDKm/o5Wop5Px641+/CIwcry9D1ae54Sk69kHu+lg7QKmp+bSHTkr9mabLOFWJQYIW3uViP6DLnLFWy1cP+2XKnl0J1Ry/Df9A3CxFZURF0fED1HuLrm1/pYt0UGUk7JPmc3T+jZMpIIkQN0KxHd1dxSQJCSXQAwlfd2jLiZbHK5b9LKM7f5CJomJwZngQBIp79JNne6ulORmNwN1/HY7js9fwKTKVgQby/dpWfBERTySLGdKPtsXBeV9GAE="}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"B"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":317,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":34,"output_tokens_details":{"thinking_tokens":31}} }
+
+        event: message_stop
+        data: {"type":"message_stop"       }
+
+  recorded_at: 2026-09-30T00:35:53.579237+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -328,7 +349,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "3710"
+      - "4026"
       content-type:
       - application/json
       host:
@@ -336,7 +357,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -348,7 +369,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+              CAISnAUKxgIIEhgCKkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeay8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMkNZwYeVozy/y/ugaGgyMwYnDgerBibdzib4iMNAF82qkQ2yuv0NwL1yF7osf6y56f/k1M1qj5L5LweXE3J4Qc04QjHduPW2Oul0SziqCAj4s4PeRGpXbi0ZxuhWQkHzGuUOhd+fmieDWkzJdhI78Uq+YM/5e2+KHehf+uYF+u5xLA7g71LBmyJLI5g+jP58in3WseLL33aBBYXErwcKEla9W1QFGICvM8UDDHRUyo05lYd20cMxjHNUvjH11fdedBx7UkHjVvbjVUcl4sK+pkWIMtdpYpFqnU7xovu3b7ctwSXuLrK2zal3wJ2KXuPaTHqL1h790lONNSGJoIh4uplRnxBp8AmNog8y6nNWG9zhw438y9Vdhc9mWXOgEu9/8YPEpvdLDJtnpxrOufrm2I9cYgbY3rNnfdcQ/0oJIHqzI0JfdAHwuT/CfyrhgDQQ0NBgB
             type: thinking
           - text: A
             type: text
@@ -367,7 +388,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAIStwQKhAMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAanN8NUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk9w2HNlWjeK2qWXgaDLAFchJ0QpWrHdkeoSIwS8QOXf11i1LSHi2yVyO7mOFruGkxfao2BvcWvOIAGFW/bg88ZyR1FXOgfRtmKhPBKmBxXTHbmNnCK0O8PmYWngSEATUBsituGE0Z9O9INJw9i9dtr2mtm0cm/4DqeaI3FfYovsbJAYJqV20YwWZLgGnC+trGGagOTfQIb5pkmgZUBPRZAsFIN5Hfh9NIQeOehi0YAQ==
+              CAISyQQKlgMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeey8dUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwfjgA8XhtLghQaFZIaDB3j1t09nxaCi1G0GSIwWGRSiuOA//zGYxp6dz32Dty+MiEY9tT5fYM8NCq5JzSXg/Ju5lcq1mp2aZYUu3YAKmA75YpYBMzYCBe7rcnikKyiSyDPvnphjdcC61fQADZZyZ+CkjJ2FZuI8/qCAj/X8hnrgWmxMCkEL6K6qfuCw5C7xNTlVHcwf0Ip+Jh72QAijJ7Hm8rXpYrAxzuHI9psQ/sYAQ==
             type: thinking
           - text: B
             type: text
@@ -379,7 +400,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAISxAQKkAMIEhgCKkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAavN8NUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwEbTjkRRqPydFg3PAaDG5h0tgaMj8XJQDC6yIw7uz50aIq9ahmupWbZbaaTMMmnkj5TviJxdLpqzhXofCLNJst1MO/3V0dxBi6RgfAKmHs2x2T7z2jvAaG6kr2VuCByAX87TVDAAJBlRRFw/nK5BLwWPqOIn07ZeAZX/A5yK8r6dMGYJfl7RO60vQYMnMhYYgiGw5PIhoonGETP2tr/WsTXcCQppWgbTrXMBaYBuqxGAE=
+              CAIS7gQKogMIEhgCKkBwqQ+d7vnRv2ZRzYhd5WcbThIFAwzjtAkuizxmnDY5bHUqE1SmT2BzPpLRlGIpquNUgKPO8ICyVbkho4b3ihwtMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAemy8dUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwp3g8QBkVRLu8D4HcaDKm/o5Wop5Px641+/CIwcry9D1ae54Sk69kHu+lg7QKmp+bSHTkr9mabLOFWJQYIW3uViP6DLnLFWy1cP+2XKnl0J1Ry/Df9A3CxFZURF0fED1HuLrm1/pYt0UGUk7JPmc3T+jZMpIIkQN0KxHd1dxSQJCSXQAwlfd2jLiZbHK5b9LKM7f5CJomJwZngQBIp79JNne6ulORmNwN1/HY7js9fwKTKVgQby/dpWfBERTySLGdKPtsXBeV9GAE=
             type: thinking
           - text: B
             type: text
@@ -395,7 +416,7 @@ interactions:
               </context>
             type: text
         model: claude-opus-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -410,52 +431,47 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-7cf0c5cfda3a2c3888fc5949bc6d0aed-d5851de7de9d7f73-01
+      - 00-aff73b3328b40bd0702223f528c96049-28a99658617f455b-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-opus-5
-        id: msg_011CfYQJUcJw4sxBf7CkefUW
-        type: message
-        role: assistant
-        content:
-        - type: thinking
-          thinking: ""
-          signature: >-
-            CAISsAQKnwMIEhgCKkDOW95P8kSbK7XrHpgqmE4B7VBBfIJbLDUg7oqoAdHGoa7rboFfoMieh/vtDc4i3r1kSVZXisfwSX9iVAddNiPPMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAa3N8NUGwgFqCBQQABo8AexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIHrX9YymJ8bXbh2GiYq7xw84Haz9hnAbGj7kVxHbDRTxIkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3MiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgzpNVkRuVFrvW7ejRUaDE7BQ0P1gv7quyN2FiIwj2wz5o3NwhZibTPg54KoW1ycdn/kgdY2kOPZyvEdhP/Fiju5sdGoAntfnU1gwQ5gKj6tz6vQRfV0yGG7CQaa0DhR/Nmb3qGwXMaXJUbiMbP5fZvwCb+MW9YMNFsKHEbf9ceN3diJb9p5Xo5NrEyjhxgB
-        - type: text
-          text: A
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 347
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 19
-          output_tokens_details:
-            thinking_tokens: 16
-          service_tier: standard
-          inference_geo: global
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:25.776184+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgoy9UAJn78hHp9jiKp","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":399,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}             }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A"}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":399,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}              }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-09-30T00:35:54.910184+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -467,7 +483,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "4827"
+      - "4338"
       content-type:
       - application/json
       host:
@@ -475,7 +491,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -487,7 +503,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+              CAISnAUKxgIIEhgCKkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeay8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMkNZwYeVozy/y/ugaGgyMwYnDgerBibdzib4iMNAF82qkQ2yuv0NwL1yF7osf6y56f/k1M1qj5L5LweXE3J4Qc04QjHduPW2Oul0SziqCAj4s4PeRGpXbi0ZxuhWQkHzGuUOhd+fmieDWkzJdhI78Uq+YM/5e2+KHehf+uYF+u5xLA7g71LBmyJLI5g+jP58in3WseLL33aBBYXErwcKEla9W1QFGICvM8UDDHRUyo05lYd20cMxjHNUvjH11fdedBx7UkHjVvbjVUcl4sK+pkWIMtdpYpFqnU7xovu3b7ctwSXuLrK2zal3wJ2KXuPaTHqL1h790lONNSGJoIh4uplRnxBp8AmNog8y6nNWG9zhw438y9Vdhc9mWXOgEu9/8YPEpvdLDJtnpxrOufrm2I9cYgbY3rNnfdcQ/0oJIHqzI0JfdAHwuT/CfyrhgDQQ0NBgB
             type: thinking
           - text: A
             type: text
@@ -506,7 +522,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAIStwQKhAMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAanN8NUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk9w2HNlWjeK2qWXgaDLAFchJ0QpWrHdkeoSIwS8QOXf11i1LSHi2yVyO7mOFruGkxfao2BvcWvOIAGFW/bg88ZyR1FXOgfRtmKhPBKmBxXTHbmNnCK0O8PmYWngSEATUBsituGE0Z9O9INJw9i9dtr2mtm0cm/4DqeaI3FfYovsbJAYJqV20YwWZLgGnC+trGGagOTfQIb5pkmgZUBPRZAsFIN5Hfh9NIQeOehi0YAQ==
+              CAISyQQKlgMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeey8dUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwfjgA8XhtLghQaFZIaDB3j1t09nxaCi1G0GSIwWGRSiuOA//zGYxp6dz32Dty+MiEY9tT5fYM8NCq5JzSXg/Ju5lcq1mp2aZYUu3YAKmA75YpYBMzYCBe7rcnikKyiSyDPvnphjdcC61fQADZZyZ+CkjJ2FZuI8/qCAj/X8hnrgWmxMCkEL6K6qfuCw5C7xNTlVHcwf0Ip+Jh72QAijJ7Hm8rXpYrAxzuHI9psQ/sYAQ==
             type: thinking
           - text: B
             type: text
@@ -518,7 +534,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAISxAQKkAMIEhgCKkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAavN8NUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwEbTjkRRqPydFg3PAaDG5h0tgaMj8XJQDC6yIw7uz50aIq9ahmupWbZbaaTMMmnkj5TviJxdLpqzhXofCLNJst1MO/3V0dxBi6RgfAKmHs2x2T7z2jvAaG6kr2VuCByAX87TVDAAJBlRRFw/nK5BLwWPqOIn07ZeAZX/A5yK8r6dMGYJfl7RO60vQYMnMhYYgiGw5PIhoonGETP2tr/WsTXcCQppWgbTrXMBaYBuqxGAE=
+              CAIS7gQKogMIEhgCKkBwqQ+d7vnRv2ZRzYhd5WcbThIFAwzjtAkuizxmnDY5bHUqE1SmT2BzPpLRlGIpquNUgKPO8ICyVbkho4b3ihwtMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAemy8dUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwp3g8QBkVRLu8D4HcaDKm/o5Wop5Px641+/CIwcry9D1ae54Sk69kHu+lg7QKmp+bSHTkr9mabLOFWJQYIW3uViP6DLnLFWy1cP+2XKnl0J1Ry/Df9A3CxFZURF0fED1HuLrm1/pYt0UGUk7JPmc3T+jZMpIIkQN0KxHd1dxSQJCSXQAwlfd2jLiZbHK5b9LKM7f5CJomJwZngQBIp79JNne6ulORmNwN1/HY7js9fwKTKVgQby/dpWfBERTySLGdKPtsXBeV9GAE=
             type: thinking
           - text: B
             type: text
@@ -535,10 +551,6 @@ interactions:
             type: text
         - role: assistant
           content:
-          - thinking: ""
-            signature: >-
-              CAISsAQKnwMIEhgCKkDOW95P8kSbK7XrHpgqmE4B7VBBfIJbLDUg7oqoAdHGoa7rboFfoMieh/vtDc4i3r1kSVZXisfwSX9iVAddNiPPMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAa3N8NUGwgFqCBQQABo8AexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIHrX9YymJ8bXbh2GiYq7xw84Haz9hnAbGj7kVxHbDRTxIkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3MiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgzpNVkRuVFrvW7ejRUaDE7BQ0P1gv7quyN2FiIwj2wz5o3NwhZibTPg54KoW1ycdn/kgdY2kOPZyvEdhP/Fiju5sdGoAntfnU1gwQ5gKj6tz6vQRfV0yGG7CQaa0DhR/Nmb3qGwXMaXJUbiMbP5fZvwCb+MW9YMNFsKHEbf9ceN3diJb9p5Xo5NrEyjhxgB
-            type: thinking
           - text: A
             type: text
         - role: user
@@ -553,7 +565,7 @@ interactions:
               </context>
             type: text
         model: claude-opus-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -568,52 +580,62 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-ea5923fe4c1b1a8ddecb3d775f2f4859-0eaa1cb487bebe76-01
+      - 00-0e47721e6ff1776f95f02a1e803aaa9f-f840be8303c6ef49-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-opus-5
-        id: msg_011CfYQJadTnTo9PVVKDb2rN
-        type: message
-        role: assistant
-        content:
-        - type: thinking
-          thinking: ""
-          signature: >-
-            CAISiwUKrgMIEhgCKkAXQkCe7FEzQhLaO09rWDBEzJJEdjA5ZyU+dslXE8DLW3d+pHAGXsh3mCQ+KfISI4/+ELRMtbchpEbFmg2RLLGIMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAa7N8NUGwgF5CBkQABpLAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatBUscA083BZWUEc77BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAKaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIJTti6K1NmeiOqAnWrHLAWxJjmsDyOmq/UQnxrze5GwKIkDOW95P8kSbK7XrHpgqmE4B7VBBfIJbLDUg7oqoAdHGoa7rboFfoMieh/vtDc4i3r1kSVZXisfwSX9iVAddNiPPMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwJKCzAONjyhftHFWQaDNj5wODIy9cHSsaVAyIwaXL4lDKlg9V5mFwgJRCVbZtn9YybXi/SkRMv4zqtPf0LQuTUN+8hVsG2Y8OuqmsPKokBUtrPPi/F1a4abAjiHqXBI1Grn2HlkZiiH0R6z8+kiRDvAwurfKz8n9UIlr1ZqAqBgLddg914y4rnXrzSCgz4Zby8wGp5Myffu+cgsjL4xFZdMELLFlGbEfIE6VZPHXFLOkcrJuFIQN+LX34PsNjdqjhB1NlX3QEbFStpJjoLkjYzb9kPq17sHv8YAQ==
-        - type: text
-          text: UNASSIGNED
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 418
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 55
-          output_tokens_details:
-            thinking_tokens: 45
-          service_tier: standard
-          inference_geo: global
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:27.507036+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgp4noNRdx7kNLgZSkF","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":454,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}         }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAISswUKwAMIEhgCKkB/4GUhw/3AnAh87yxI13gqSjI26xO9NOUgIyL1n0JbakRGKm3PpKDuimGH5zrQS90sDrQ10Qq54VEun3251Tk9Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeuy8dUGwgF5CBkQABpLAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatBUscA083BZWUEc77BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAKaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIJTti6K1NmeiOqAnWrHLAWxJjmsDyOmq/UQnxrze5GwKIkBwqQ+d7vnRv2ZRzYhd5WcbThIFAwzjtAkuizxmnDY5bHUqE1SmT2BzPpLRlGIpquNUgKPO8ICyVbkho4b3ihwtMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgzuUR6TiVZ+SryFCCEaDGRXEV1RCqt46BamPyIwIHO0e1MsLsMRYe+Usiqhqt46v4qSc4/ZmCD03ZYDufcy2UC18wjIq09vC6O1g1nwKp8BAZkLotlTH70hG0mHuL8aTV5PgxGxLLIwIyDWvTvgGf4KJENxHULxLKz+eKGbfoybBi8VhYg/8oZviklQX1BNbO0rMvZQiC3xLE9XoL8IhG+nI3TX7Yih1LKX+Uiuz6crD+C8BGH1+HaQYg0HhRAovIXFRLWuEc0mrigr3o2mfk+gg0tnbCeKIh3FbFsnGCa1Sinv7+WAQoeS/DhqUADpGAE="}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"U"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"NASSIGNED"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1          }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":454,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":60,"output_tokens_details":{"thinking_tokens":50}}         }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-09-30T00:35:56.466583+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -625,7 +647,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "6090"
+      - "5653"
       content-type:
       - application/json
       host:
@@ -633,7 +655,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -645,7 +667,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAIS6wMKtAIIEhgCKkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAafN8NUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMOUUCnvUGl0+SUledGgwQ/yQy3YAUwlPitdsiMFTcLB5y7E5aq+LL4Say7lci2u3KTQHUKsjGPnqiRDroNE3GzsY2dVMtX5MtLdvjjCpkGN0P+JXuIamCt13LAKSdvoGfgBVfEoKWYZe2y6SHI+U+lc2l9d2ScpvQBvZNFytEehVxGnjESypGJJitr44IotMZwrGMPmULMl3c2zHDfIMIZbpCPeQVTfkX+lLR2HXFZbZ7IhgB
+              CAISnAUKxgIIEhgCKkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeay8dUGwgFACAYQABoSAexoAWKAAtqKA083BfQqBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmACaAFwAtoBYAoWcHJlZml4X2JlZm9yZV9ibG9ja192MRIgB3abvwF3Uz1JFuN8arF79u55vOGQv7lAA2/Jojxmp+8iADIgwsATyGqckuIvlm89hhd2j4t6RMkCrcwJe/oeCYr7Th9IAxIMkNZwYeVozy/y/ugaGgyMwYnDgerBibdzib4iMNAF82qkQ2yuv0NwL1yF7osf6y56f/k1M1qj5L5LweXE3J4Qc04QjHduPW2Oul0SziqCAj4s4PeRGpXbi0ZxuhWQkHzGuUOhd+fmieDWkzJdhI78Uq+YM/5e2+KHehf+uYF+u5xLA7g71LBmyJLI5g+jP58in3WseLL33aBBYXErwcKEla9W1QFGICvM8UDDHRUyo05lYd20cMxjHNUvjH11fdedBx7UkHjVvbjVUcl4sK+pkWIMtdpYpFqnU7xovu3b7ctwSXuLrK2zal3wJ2KXuPaTHqL1h790lONNSGJoIh4uplRnxBp8AmNog8y6nNWG9zhw438y9Vdhc9mWXOgEu9/8YPEpvdLDJtnpxrOufrm2I9cYgbY3rNnfdcQ/0oJIHqzI0JfdAHwuT/CfyrhgDQQ0NBgB
             type: thinking
           - text: A
             type: text
@@ -664,7 +686,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAIStwQKhAMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAanN8NUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkArl8ChjS6JNxH11OvAKvyEz+6YaXRly+9lJjjCMhPckmIG6OGp6MSRDh+loSOc4N9nZMKq4nMPidqzvASvE9lHMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgxk9w2HNlWjeK2qWXgaDLAFchJ0QpWrHdkeoSIwS8QOXf11i1LSHi2yVyO7mOFruGkxfao2BvcWvOIAGFW/bg88ZyR1FXOgfRtmKhPBKmBxXTHbmNnCK0O8PmYWngSEATUBsituGE0Z9O9INJw9i9dtr2mtm0cm/4DqeaI3FfYovsbJAYJqV20YwWZLgGnC+trGGagOTfQIb5pkmgZUBPRZAsFIN5Hfh9NIQeOehi0YAQ==
+              CAISyQQKlgMIEhgCKkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeey8dUGwgFPCAsQABohAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAEaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIGJf7sNNPWsk4pLX7tjhE0+o2oz7AO7aiPeiYt7wo8PQIkCwS8K85MbjD9SgdhCOBszl7ST/4xSytH9KLvMHUJafiuCtuVTvm5xQrTYupIphzRuZEBaIlyR6xHFfxANfzJfWMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwfjgA8XhtLghQaFZIaDB3j1t09nxaCi1G0GSIwWGRSiuOA//zGYxp6dz32Dty+MiEY9tT5fYM8NCq5JzSXg/Ju5lcq1mp2aZYUu3YAKmA75YpYBMzYCBe7rcnikKyiSyDPvnphjdcC61fQADZZyZ+CkjJ2FZuI8/qCAj/X8hnrgWmxMCkEL6K6qfuCw5C7xNTlVHcwf0Ip+Jh72QAijJ7Hm8rXpYrAxzuHI9psQ/sYAQ==
             type: thinking
           - text: B
             type: text
@@ -676,7 +698,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAISxAQKkAMIEhgCKkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAavN8NUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwEbTjkRRqPydFg3PAaDG5h0tgaMj8XJQDC6yIw7uz50aIq9ahmupWbZbaaTMMmnkj5TviJxdLpqzhXofCLNJst1MO/3V0dxBi6RgfAKmHs2x2T7z2jvAaG6kr2VuCByAX87TVDAAJBlRRFw/nK5BLwWPqOIn07ZeAZX/A5yK8r6dMGYJfl7RO60vQYMnMhYYgiGw5PIhoonGETP2tr/WsTXcCQppWgbTrXMBaYBuqxGAE=
+              CAIS7gQKogMIEhgCKkBwqQ+d7vnRv2ZRzYhd5WcbThIFAwzjtAkuizxmnDY5bHUqE1SmT2BzPpLRlGIpquNUgKPO8ICyVbkho4b3ihwtMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAemy8dUGwgFbCA8QABotAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAGaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIKi+Q8+KIzpYserwSlKwhe8QTHywNvI6/Bum+OJVTBlPIkA7LjLDFs6ZsVFkBkWz2lIWClskAkd82koW7Lh/TA7sVyfuYgqQSTJl1EAnxqLZ/lIt2Hum7AABPkncNAQgJdRAMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwp3g8QBkVRLu8D4HcaDKm/o5Wop5Px641+/CIwcry9D1ae54Sk69kHu+lg7QKmp+bSHTkr9mabLOFWJQYIW3uViP6DLnLFWy1cP+2XKnl0J1Ry/Df9A3CxFZURF0fED1HuLrm1/pYt0UGUk7JPmc3T+jZMpIIkQN0KxHd1dxSQJCSXQAwlfd2jLiZbHK5b9LKM7f5CJomJwZngQBIp79JNne6ulORmNwN1/HY7js9fwKTKVgQby/dpWfBERTySLGdKPtsXBeV9GAE=
             type: thinking
           - text: B
             type: text
@@ -693,10 +715,6 @@ interactions:
             type: text
         - role: assistant
           content:
-          - thinking: ""
-            signature: >-
-              CAISsAQKnwMIEhgCKkDOW95P8kSbK7XrHpgqmE4B7VBBfIJbLDUg7oqoAdHGoa7rboFfoMieh/vtDc4i3r1kSVZXisfwSX9iVAddNiPPMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAa3N8NUGwgFqCBQQABo8AexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAIaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIHrX9YymJ8bXbh2GiYq7xw84Haz9hnAbGj7kVxHbDRTxIkCEd0dnCvZkEu7PZB6OVhsr9X9EUElk4ASLg9OtVizwB90FQ2sax9LMVPCGY6fbGn41TxpEqCpnnUG61ylHSZC3MiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgzpNVkRuVFrvW7ejRUaDE7BQ0P1gv7quyN2FiIwj2wz5o3NwhZibTPg54KoW1ycdn/kgdY2kOPZyvEdhP/Fiju5sdGoAntfnU1gwQ5gKj6tz6vQRfV0yGG7CQaa0DhR/Nmb3qGwXMaXJUbiMbP5fZvwCb+MW9YMNFsKHEbf9ceN3diJb9p5Xo5NrEyjhxgB
-            type: thinking
           - text: A
             type: text
         - role: user
@@ -714,7 +732,7 @@ interactions:
           content:
           - thinking: ""
             signature: >-
-              CAISiwUKrgMIEhgCKkAXQkCe7FEzQhLaO09rWDBEzJJEdjA5ZyU+dslXE8DLW3d+pHAGXsh3mCQ+KfISI4/+ELRMtbchpEbFmg2RLLGIMg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKoAa7N8NUGwgF5CBkQABpLAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatBUscA083BZWUEc77BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAKaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIJTti6K1NmeiOqAnWrHLAWxJjmsDyOmq/UQnxrze5GwKIkDOW95P8kSbK7XrHpgqmE4B7VBBfIJbLDUg7oqoAdHGoa7rboFfoMieh/vtDc4i3r1kSVZXisfwSX9iVAddNiPPMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgwJKCzAONjyhftHFWQaDNj5wODIy9cHSsaVAyIwaXL4lDKlg9V5mFwgJRCVbZtn9YybXi/SkRMv4zqtPf0LQuTUN+8hVsG2Y8OuqmsPKokBUtrPPi/F1a4abAjiHqXBI1Grn2HlkZiiH0R6z8+kiRDvAwurfKz8n9UIlr1ZqAqBgLddg914y4rnXrzSCgz4Zby8wGp5Myffu+cgsjL4xFZdMELLFlGbEfIE6VZPHXFLOkcrJuFIQN+LX34PsNjdqjhB1NlX3QEbFStpJjoLkjYzb9kPq17sHv8YAQ==
+              CAISswUKwAMIEhgCKkB/4GUhw/3AnAh87yxI13gqSjI26xO9NOUgIyL1n0JbakRGKm3PpKDuimGH5zrQS90sDrQ10Qq54VEun3251Tk9Mg1jbGF1ZGUtb3B1cy01OAFCCHRoaW5raW5nWiQ0NGFlNjc2Yy05NThmLTRkNjgtOTEwOC1lYWU5ZGU3YjM2NmKaAQ8KDWNsYXVkZS1vcHVzLTWoAeuy8dUGwgF5CBkQABpLAexoAWKAAtqKA083BfQqBCatBUscA083BXiOERazBCatBYlpA083BdVWBCatBYlpA083BUpgEX66BCatBUscA083BZWUEc77BCatIAMyBBJxzyU6BEKOhhlCBDgzI4pKBDgzI4pQAFoE2QXhVmAKaAFwAtoBoAEKFnByZWZpeF9iZWZvcmVfYmxvY2tfdjESIJTti6K1NmeiOqAnWrHLAWxJjmsDyOmq/UQnxrze5GwKIkBwqQ+d7vnRv2ZRzYhd5WcbThIFAwzjtAkuizxmnDY5bHUqE1SmT2BzPpLRlGIpquNUgKPO8ICyVbkho4b3ihwtMiDCwBPIapyS4i+Wbz2GF3aPi3pEyQKtzAl7+h4JivtOH0gDEgzuUR6TiVZ+SryFCCEaDGRXEV1RCqt46BamPyIwIHO0e1MsLsMRYe+Usiqhqt46v4qSc4/ZmCD03ZYDufcy2UC18wjIq09vC6O1g1nwKp8BAZkLotlTH70hG0mHuL8aTV5PgxGxLLIwIyDWvTvgGf4KJENxHULxLKz+eKGbfoybBi8VhYg/8oZviklQX1BNbO0rMvZQiC3xLE9XoL8IhG+nI3TX7Yih1LKX+Uiuz6crD+C8BGH1+HaQYg0HhRAovIXFRLWuEc0mrigr3o2mfk+gg0tnbCeKIh3FbFsnGCa1Sinv7+WAQoeS/DhqUADpGAE=
             type: thinking
           - text: UNASSIGNED
             type: text
@@ -730,7 +748,7 @@ interactions:
               </context>
             type: text
         model: claude-opus-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -745,45 +763,44 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-14d039ef8d34c632ba5c7484aa1d197c-f7b9b8413b294492-01
+      - 00-2cb417d96dc167f927ecb7346161af17-2fb6a8d7c86f7c86-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-opus-5
-        id: msg_011CfYQJi1yQGL8NPRqwr4y4
-        type: message
-        role: assistant
-        content:
-        - type: text
-          text: C
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 533
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 3
-          output_tokens_details:
-            thinking_tokens: 0
-          service_tier: standard
-          inference_geo: global
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:28.916171+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgpBStYeJHJjXYDe4mN","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":574,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":3,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"C"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0         }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":574,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":3,"output_tokens_details":{"thinking_tokens":0}}           }
+
+        event: message_stop
+        data: {"type":"message_stop"              }
+
+  recorded_at: 2026-09-30T00:35:57.681099+00:00

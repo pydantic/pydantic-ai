@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "601"
+      - "602"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -59,7 +59,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-72d564c3f7898882a5aeac2c8a6c4f1c-54ffdf34c9bfc68d-01
+      - 00-80b9edf9ffbd361d2ab119c0510bb7bc-d6aa0a14b49dc95d-01
       transfer-encoding:
       - chunked
       vary:
@@ -68,45 +68,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYPCnovCYDXsLAtTDm27","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":431,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}  }
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgs3cBmaSi62TBLHGoF","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":431,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":17,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}              }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01NcKhDtnF4KdZCWJrnBfgA7","name":"finish_todo","input":{},"caller":{"type":"direct"}}             }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I"}       }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'ll fin"}      }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ish the"}               }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pending todo."} }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}   }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0         }
-
-        event: content_block_start
-        data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_0116wXXyDsLV5JFJ7ct45gNN","name":"finish_todo","input":{},"caller":{"type":"direct"}}             }
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}           }
-
-        event: content_block_stop
-        data: {"type":"content_block_stop","index":1          }
+        data: {"type":"content_block_stop","index":0}
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":431,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":40,"output_tokens_details":{"thinking_tokens":0}}           }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":431,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":49,"output_tokens_details":{"thinking_tokens":0}}    }
 
         event: message_stop
-        data: {"type":"message_stop"              }
+        data: {"type":"message_stop"             }
 
-  recorded_at: 2026-09-29T20:45:02.270463+00:00
+  recorded_at: 2026-09-30T00:36:37.431308+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -118,7 +100,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1065"
+      - "1011"
       content-type:
       - application/json
       host:
@@ -126,7 +108,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 128000
         messages:
         - role: user
           content:
@@ -134,15 +116,13 @@ interactions:
             type: text
         - role: assistant
           content:
-          - text: I'll finish the pending todo.
-            type: text
-          - id: toolu_0116wXXyDsLV5JFJ7ct45gNN
+          - id: toolu_01NcKhDtnF4KdZCWJrnBfgA7
             type: tool_use
             name: finish_todo
             input: {}
         - role: user
           content:
-          - tool_use_id: toolu_0116wXXyDsLV5JFJ7ct45gNN
+          - tool_use_id: toolu_01NcKhDtnF4KdZCWJrnBfgA7
             type: tool_result
             content:
             - text: Saved.
@@ -189,7 +169,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-38be1596666a98afb5f7d91985f4cd4b-3426862ce35eb11b-01
+      - 00-c202652a7e35020e59b86e7040926aa6-367bf00adba0a2bf-01
       transfer-encoding:
       - chunked
       vary:
@@ -198,27 +178,24 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYPCvxoVesjhz5SByMYw","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":506,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}         }
+        data: {"type":"message_start","message":{"model":"claude-opus-5","id":"msg_011CfYgsCgPuEQWeMuyeKqEd","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":494,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":5,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}           }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}          }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"D"}}
-
-        event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ONE"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"DONE"}     }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0}
+        data: {"type":"content_block_stop","index":0          }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":506,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5,"output_tokens_details":{"thinking_tokens":0}}}
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":494,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5,"output_tokens_details":{"thinking_tokens":0}}}
 
         event: message_stop
-        data: {"type":"message_stop"     }
+        data: {"type":"message_stop"            }
 
-  recorded_at: 2026-09-29T20:45:03.205112+00:00
+  recorded_at: 2026-09-30T00:36:38.066895+00:00

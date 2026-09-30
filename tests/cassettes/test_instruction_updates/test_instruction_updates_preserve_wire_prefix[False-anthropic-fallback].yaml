@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "607"
+      - "606"
       content-type:
       - application/json
       host:
@@ -19,7 +19,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 64000
         messages:
         - role: user
           content:
@@ -28,7 +28,7 @@ interactions:
               routed?
             type: text
         model: claude-sonnet-4-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -43,46 +43,47 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-964b21b6e250706d0d8ad8feb53d5fe2-57efdf561806372c-01
+      - 00-df5b312a557b63bfa23acdb7298bdefe-7aaca8c91b8b0515-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-sonnet-4-5-20250929
-        id: msg_011CfYQHNZQ3TYYwKSqwLGTG
-        type: message
-        role: assistant
-        content:
-        - type: text
-          text: A
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 101
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 4
-          service_tier: standard
-          inference_geo: not_available
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:10.765450+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgnzZHF7TA89i7vDkfd","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":101,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}              }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":101,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}      }
+
+        event: message_stop
+        data: {"type":"message_stop"    }
+
+  recorded_at: 2026-09-30T00:35:41.892318+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -94,7 +95,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "913"
+      - "912"
       content-type:
       - application/json
       host:
@@ -102,7 +103,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 64000
         messages:
         - role: user
           content:
@@ -124,7 +125,7 @@ interactions:
               </context></system>
             type: text
         model: claude-sonnet-4-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -139,46 +140,47 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-5172b3f2067912753939f474e3c080c0-51307dd6c021f0c1-01
+      - 00-f7f0d67aaf8f12238828c5fe69dfa0a5-0c977169fd821519-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-sonnet-4-5-20250929
-        id: msg_011CfYQHUzrvNSASxyxnmZf7
-        type: message
-        role: assistant
-        content:
-        - type: text
-          text: B
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 152
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 4
-          service_tier: standard
-          inference_geo: not_available
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:12.254628+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgo7NJLS3qSd2VZf7qT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":152,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}          }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"B"}           }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":152,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}    }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-09-30T00:35:43.446135+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -190,7 +192,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1084"
+      - "1083"
       content-type:
       - application/json
       host:
@@ -198,7 +200,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 64000
         messages:
         - role: user
           content:
@@ -228,7 +230,7 @@ interactions:
           - text: This one is a bicycle frame, oversized. Where does it go?
             type: text
         model: claude-sonnet-4-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -243,46 +245,47 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-de4ff8fa51e5a3170b3c670b147854ff-2e7b2ad076661a38-01
+      - 00-c889077fc239948ada38356f07d90730-cfe0eca69ccfbb5d-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-sonnet-4-5-20250929
-        id: msg_011CfYQHaqLtcxfYp9SrCQGd
-        type: message
-        role: assistant
-        content:
-        - type: text
-          text: B
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 174
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 4
-          service_tier: standard
-          inference_geo: not_available
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:13.718353+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgoDqERAsv3nhAAGrK9","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":174,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}        }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"B"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":174,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}               }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-09-30T00:35:44.984023+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -294,7 +297,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1366"
+      - "1365"
       content-type:
       - application/json
       host:
@@ -302,7 +305,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 64000
         messages:
         - role: user
           content:
@@ -345,7 +348,7 @@ interactions:
               </context></system>
             type: text
         model: claude-sonnet-4-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -360,46 +363,47 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a0ef2670345361bfe8b367affe074887-23341d273b082762-01
+      - 00-a3f86bd7b9ddfe78dc56aeb1ff6ef4fe-6fb938c409daf50e-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-sonnet-4-5-20250929
-        id: msg_011CfYQHh4tJciJFuPjbqEVf
-        type: message
-        role: assistant
-        content:
-        - type: text
-          text: A
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 216
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 4
-          service_tier: standard
-          inference_geo: not_available
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:15.001368+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgoLKAUTcewKy63czZ2","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":216,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"A"}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":216,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}    }
+
+        event: message_stop
+        data: {"type":"message_stop"           }
+
+  recorded_at: 2026-09-30T00:35:46.090389+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -411,7 +415,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1722"
+      - "1721"
       content-type:
       - application/json
       host:
@@ -419,7 +423,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 64000
         messages:
         - role: user
           content:
@@ -475,7 +479,7 @@ interactions:
               </context></system>
             type: text
         model: claude-sonnet-4-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -490,46 +494,47 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-cacf7cba297d1975cfc2b5614a4e03dd-5f3b893ad9eca443-01
+      - 00-46e9ba27f4337be720af6c689faf8150-57e18585608f348f-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-sonnet-4-5-20250929
-        id: msg_011CfYQHnrQBXQjpPrEKR415
-        type: message
-        role: assistant
-        content:
-        - type: text
-          text: UNASSIGNED
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 273
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 7
-          service_tier: standard
-          inference_geo: not_available
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:16.350766+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgoRBbzkvax8JLZVhq5","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":273,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"UNASSIGNED"}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":273,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":7}       }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-09-30T00:35:47.350151+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -541,7 +546,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "2043"
+      - "2042"
       content-type:
       - application/json
       host:
@@ -549,7 +554,7 @@ interactions:
     body:
       type: json
       content:
-        max_tokens: 16384
+        max_tokens: 64000
         messages:
         - role: user
           content:
@@ -618,7 +623,7 @@ interactions:
               </context></system>
             type: text
         model: claude-sonnet-4-5
-        stream: false
+        stream: true
         system:
         - type: text
           text: >-
@@ -633,43 +638,44 @@ interactions:
   response:
     status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-f937776ec0d88907a61acb811dcfb106-e33fc5e303c577e4-01
+      - 00-efa3f4a81458a137a043f7c4999c9cc1-090ae2ce26f8ce37-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
     body:
-      type: json
-      content:
-        model: claude-sonnet-4-5-20250929
-        id: msg_011CfYQHtMHeV1PsjewFzEXW
-        type: message
-        role: assistant
-        content:
-        - type: text
-          text: C
-        container: null
-        stop_reason: end_turn
-        stop_sequence: null
-        stop_details: null
-        usage:
-          input_tokens: 323
-          cache_creation_input_tokens: 0
-          cache_read_input_tokens: 0
-          cache_creation:
-            ephemeral_5m_input_tokens: 0
-            ephemeral_1h_input_tokens: 0
-          output_tokens: 4
-          service_tier: standard
-          inference_geo: not_available
-        diagnostics: null
-  recorded_at: 2026-09-29T20:59:17.676383+00:00
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfYgoWbHv5ERQMQTZRG2C","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":323,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":4,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}      }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"C"}      }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0 }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":323,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":4}  }
+
+        event: message_stop
+        data: {"type":"message_stop"              }
+
+  recorded_at: 2026-09-30T00:35:48.694416+00:00
