@@ -100,12 +100,21 @@ class ConversationCacheMarkStore:
             stored = self._conversations.get(conversation_id) if conversation_id is not None else None
         return stored[1] if stored is not None else {}
 
-    def update(self, conversation_id: str | None, marks: CacheMarks, now: datetime) -> None:
-        """Record that the conversation's marks were updated at `now`, forgetting stale conversations."""
+    def update(self, conversation_id: str | None, marks: CacheMarks, now: datetime) -> CacheMarks:
+        """Record that the conversation's marks were updated at `now`, forgetting stale conversations.
+
+        Returns the conversation's marks to keep using. Runs of a new conversation that started
+        concurrently each got their own set from `get`; the first to update stores its set, and the
+        others merge theirs into it, so no run's marks are lost.
+        """
         if conversation_id is None:
-            return
+            return marks
         with self._lock:
             conversations = self._conversations
+            stored = conversations.get(conversation_id)
+            if stored is not None and stored[1] is not marks:
+                stored[1].update(marks)
+                marks = stored[1]
             conversations[conversation_id] = (now, marks)
             conversations.move_to_end(conversation_id)
             while (
@@ -113,6 +122,7 @@ class ConversationCacheMarkStore:
                 or now - next(iter(conversations.values()))[0] > self.horizon
             ):
                 conversations.popitem(last=False)
+        return marks
 
 
 @dataclass(frozen=True)
@@ -245,7 +255,7 @@ class CacheHealthDetector:
                 # a stale high-water mark on every later request.
                 updated_established, alerted = read + write, collapse.previous.alerted or collapse.alert
             self.marks[key] = CacheMark(updated_established, now, self.run_id, compactions, alerted)
-            self.store.update(self.conversation_id, self.marks, now)
+            self.marks = self.store.update(self.conversation_id, self.marks, now)
         # An unreported response tells us nothing about the provider's copy of the prefix -- it may
         # still be sitting there, aging toward its TTL -- so the mark, its idle clock, and its alert
         # latch stay put.
