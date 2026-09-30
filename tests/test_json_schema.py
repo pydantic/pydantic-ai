@@ -692,6 +692,9 @@ INTEGER: dict[str, Any] = {'type': 'integer'}
             },
             id='root-ref-in-referenced-def',
         ),
+        pytest.param(
+            {'$defs': {'Anything': True}, 'properties': {'extra': {'$ref': '#/$defs/Anything'}}}, id='boolean-def'
+        ),
     ],
 )
 def test_inline_defs_leaves_untyped_keywords_it_cannot_or_need_not_inline(schema: dict[str, Any]):

@@ -175,11 +175,12 @@ class JsonSchemaTransformer(ABC):
             elif isinstance(node, dict):
                 if isinstance(ref := node.get('$ref'), str):
                     key = _DEFS_REF_PREFIX.sub('', ref)
-                    if key not in self.defs:
+                    # A boolean definition is valid JSON Schema, but `_walk_def` can only merge a dict.
+                    if not isinstance(definition := self.defs.get(key), dict):
                         return False
                     if key not in seen:
                         seen.add(key)
-                        pending.append(self.defs[key])
+                        pending.append(definition)
                 pending.extend(node.values())
         return bool(seen)
 
