@@ -497,7 +497,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         stashed `run_step` is the last completed boundary's, so an error
         snapshot's `step_index` can lag the failing request by one.
         """
-        live_run_history.set((ctx.run_id, ctx.messages, ctx.run_step))
+        live_run_history.set((ctx.loaded_capability_ids, ctx.messages, ctx.run_step))
 
     async def _save_continuable_snapshot(
         self,
@@ -548,7 +548,7 @@ class StepPersistence(AbstractCapability[AgentDepsT]):
         snapshots stay off the default `latest_snapshot` read path.
         """
         stashed = live_run_history.get()
-        if stashed is not None and stashed[0] == ctx.run_id:
+        if stashed is not None and stashed[0] is ctx.loaded_capability_ids:
             _, messages, step_index = stashed
             captured = list(messages)
             if _has_model_response(captured) or (self.capture_frontier and captured):

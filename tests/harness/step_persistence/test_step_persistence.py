@@ -955,12 +955,12 @@ class TestStepPersistenceCapability:
 
         @parent.tool_plain
         async def delegate() -> str:
-            return (await child.run('child-visible prompt')).output
+            return (await child.run('child-visible prompt', run_id='shared-run-id')).output
 
         await limiter.acquire('occupied')
         try:
             with pytest.raises(RuntimeError if during_setup else ConcurrencyLimitExceeded) as exc_info:
-                await parent.run('parent-private prompt')
+                await parent.run('parent-private prompt', run_id='shared-run-id')
         finally:
             limiter.release()
 
