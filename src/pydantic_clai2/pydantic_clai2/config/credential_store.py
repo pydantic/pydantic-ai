@@ -86,8 +86,13 @@ def _stored_key() -> str | None:
 
 
 def _cipher() -> Fernet | None:
-    key = _stored_key()
-    return None if key is None else Fernet(key)
+    """`None` also for a malformed key: loads then ask to reconnect, and the next save replaces it."""
+    if (key := _stored_key()) is None:
+        return None
+    try:
+        return Fernet(key)
+    except ValueError:
+        return None
 
 
 def _create_cipher() -> Fernet:
@@ -166,8 +171,9 @@ def _migrate(*, root: str, account: str, encrypted: Path) -> str:
     value = _join_chunks(root=root, account=account)
     try:
         write_private(path=encrypted, value=_create_cipher().encrypt(value.encode()).decode(), replace=False)
-    except FileExistsError:
-        return _decrypt(encrypted)  # Another process saved a newer login first.
+    except (FileExistsError, FileNotFoundError):
+        # Another process saved or moved it first; its stale-file sweep may even have taken this staging file.
+        return _decrypt(encrypted) if encrypted.is_file() else value
     _delete_entries(root=root, account=account)
     return value
 

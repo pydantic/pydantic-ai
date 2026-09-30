@@ -150,6 +150,20 @@ def test_newer_login_wins_a_migration_race(vault: Vault, monkeypatch: pytest.Mon
     assert load_codex_credentials(fallback=fallback) == 'newer'
 
 
+def test_swept_staging_file_leaves_the_move_to_the_other_process(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch, fallback: Path
+) -> None:
+    """A concurrent migration's stale-file sweep removed this one's staging file before it was linked."""
+    vault[LEGACY] = 'older'
+
+    def swept(source: str, destination: Path) -> None:
+        raise FileNotFoundError(source)
+
+    monkeypatch.setattr('pydantic_clai2.config.credential_store.os.link', swept)
+    assert load_codex_credentials(fallback=fallback) == 'older'
+    assert vault[LEGACY] == 'older', 'the entry stays until a move succeeds'
+
+
 def test_key_created_by_another_process_is_used(vault: Vault, monkeypatch: pytest.MonkeyPatch) -> None:
     """Two first-ever saves race; the one that waited on the lock reuses the key instead of replacing it."""
     other = 'c2VjcmV0LWtleS1mcm9tLWFub3RoZXItcHJvY2VzcyE='
@@ -168,12 +182,14 @@ def test_key_created_by_another_process_is_used(vault: Vault, monkeypatch: pytes
     assert load_codex_credentials() == 'mine'
 
 
-@pytest.mark.parametrize('damage', ['lost key', 'corrupt file'])
+@pytest.mark.parametrize('damage', ['lost key', 'malformed key', 'corrupt file'])
 def test_undecryptable_login_asks_to_reconnect(vault: Vault, fallback: Path, damage: str) -> None:
     save_codex_credentials(fallback=fallback, value='secret')
     new_session()
     if damage == 'lost key':
         del vault[KEY]
+    elif damage == 'malformed key':
+        vault[KEY] = 'not a Fernet key'
     else:
         fallback.with_suffix('.enc').write_text('not a token')
     with pytest.raises(UserError, match='cannot be decrypted'):
