@@ -1035,6 +1035,47 @@ class TestImageGenerationCapability:
         assert result.output == 'done'
         assert image_model.last_settings == snapshot({})
 
+    async def test_image_generation_direct_fallback_warns_for_a_native_instances_model(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """A static `native` instance's `model` is the capability's `image_model`, so the direct fallback ignores it the same way."""
+        capability = ImageGeneration(
+            native=ImageGenerationTool(model='gpt-image-2'), fallback_image_model=TestImageGenerationModel()
+        )
+        agent = Agent(direct_generation_model, capabilities=[capability])
+
+        with pytest.warns(UserWarning, match=r'ignored `image_model`'):
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'done'
+
+    async def test_image_generation_direct_fallback_rejects_a_native_instances_edit_action(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """A static `native` instance's `action='edit'` is refused like the capability's, not served as a fresh image."""
+        capability = ImageGeneration(
+            native=ImageGenerationTool(action='edit'), fallback_image_model=TestImageGenerationModel()
+        )
+        agent = Agent(direct_generation_model, capabilities=[capability])
+
+        with pytest.raises(UserError, match='cannot honor `action="edit"`'):
+            await agent.run('Edit an image')
+
+    async def test_image_generation_capability_action_overrides_a_native_instances_edit_action(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """Capability-level `action` takes precedence over the instance's, as it does for the native tool."""
+        capability = ImageGeneration(
+            native=ImageGenerationTool(action='edit'),
+            fallback_image_model=TestImageGenerationModel(),
+            action='generate',
+        )
+        agent = Agent(direct_generation_model, capabilities=[capability])
+
+        result = await agent.run('Generate an image')
+
+        assert result.output == 'done'
+
     @pytest.mark.parametrize('wrapped', [False, True], ids=['fallback', 'wrapped-fallback'])
     @pytest.mark.parametrize(
         ('settings', 'notice'),

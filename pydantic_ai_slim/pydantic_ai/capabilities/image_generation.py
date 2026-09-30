@@ -156,7 +156,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     When passing a custom `native` instance or factory, its settings are also used for the
     `fallback_subagent_model` subagent; capability-level fields override any `native` settings. A static
-    instance's `aspect_ratio` is also inherited by the direct fallback.
+    instance's `aspect_ratio` is also inherited by the direct fallback, which refuses its `action='edit'`
+    and ignores its `model` as it does the capability's `action` and `image_model`.
     """
 
     local: str | ImageGenerator | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = (
@@ -680,7 +681,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         """Settings only the native tool can express, which a direct generator drops.
 
         Read from the capability and from a static `native` instance: the direct generator inherits
-        only that instance's `aspect_ratio`, so the rest of what it states is dropped the same way.
+        only that instance's `aspect_ratio`, and its tool checks `action` and `model` itself, so the
+        rest of what the instance states is dropped the same way.
         """
         native = self.native if isinstance(self.native, ImageGenerationTool) else _DEFAULT_NATIVE_TOOL
         default = _DEFAULT_NATIVE_TOOL
@@ -782,22 +784,24 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         if self.dimensions is not None:
             settings['dimensions'] = self.dimensions
         # A custom `native` instance is the base and capability-level fields override it, the same
-        # precedence `_resolved_native` gives the `fallback_subagent_model` subagent. `size` has no
-        # counterpart on the other side of that merge; `dimensions` is the capability's own
-        # spelling of the geometry the inherited `aspect_ratio` expresses, and the two are mutually
-        # exclusive in `ImageGenerationSettings`, so inheriting alongside it would fail the generate
-        # call over a setting the user never passed to the capability.
+        # precedence `_resolved_native` gives the `fallback_subagent_model` subagent, so the tool
+        # refuses an instance's `action='edit'` and ignores its `model` as it does the capability's.
+        # `size` has no counterpart on the other side of that merge; `dimensions` is the capability's
+        # own spelling of the geometry the inherited `aspect_ratio` expresses, and the two are
+        # mutually exclusive in `ImageGenerationSettings`, so inheriting alongside it would fail the
+        # generate call over a setting the user never passed to the capability.
+        native = self.native if isinstance(self.native, ImageGenerationTool) else _DEFAULT_NATIVE_TOOL
         aspect_ratio = self.aspect_ratio
-        if aspect_ratio is None and self.dimensions is None and isinstance(self.native, ImageGenerationTool):
-            aspect_ratio = self.native.aspect_ratio
+        if aspect_ratio is None and self.dimensions is None:
+            aspect_ratio = native.aspect_ratio
         if aspect_ratio is not None:
             settings['aspect_ratio'] = aspect_ratio
         return Tool[Any](
             _DirectImageGenerationTool(
                 generator=generator,
                 settings=settings,
-                action=self.action,
-                image_model=self.image_model,
+                action=self.action or native.action,
+                image_model=self.image_model or native.model,
             ).__call__,
             name='generate_image',
             description='Generate an image based on the given prompt.',

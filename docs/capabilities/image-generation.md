@@ -49,7 +49,7 @@ tool and is unprefixed (`image_model='gpt-image-2'`), while `fallback_image_mode
 its provider:
 
 ```python {title="image_generation_routing.py"}
-from pydantic_ai import ImageGenerator
+from pydantic_ai import BinaryImage, ImageGenerator
 from pydantic_ai.capabilities import ImageGeneration
 from pydantic_ai.images.openai import OpenAIImageGenerationSettings
 
@@ -71,7 +71,7 @@ ImageGeneration(native=False, local=generator, dimensions=(1280, 720))
 
 
 # A custom callable or Tool of your own also goes on `local`
-def my_image_tool(prompt: str) -> bytes: ...
+def my_image_tool(prompt: str) -> BinaryImage: ...
 
 
 ImageGeneration(local=my_image_tool)
@@ -86,7 +86,8 @@ the path its own profile selects, and each of them that would drop a setting get
 Native-tool-only settings such as
 `quality` and `output_format` do not apply to a direct fallback, whether they are set on the capability or on a
 static `native=ImageGenerationTool(...)` instance; configure their
-provider-prefixed equivalents on the generator. `action='edit'` and `image_model` do not apply either: the direct
+provider-prefixed equivalents on the generator. `action='edit'` and `image_model` do not apply either, nor do a static
+instance's `action='edit'` and `model`: the direct
 fallback raises [`UserError`][pydantic_ai.exceptions.UserError] for `action='edit'`, because the `generate_image` tool
 receives no reference images, and ignores `image_model` with a warning, because the generator already names the image
 model it generates with.
@@ -141,8 +142,8 @@ that last response carries it. Where the image lands depends on the path that pr
   [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images].
 - A direct generator or the `fallback_subagent_model` subagent returns it from the `generate_image` tool call, so it
   is in that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], among its
-  [`files`][pydantic_ai.messages.BaseToolReturnPart.files]. A `local` tool of your own returns whatever it returns,
-  under its own tool name, so match that name instead.
+  [`files`][pydantic_ai.messages.BaseToolReturnPart.files]. A `local` tool of your own is found under its own tool
+  name, and among `files` only when it returns a `BinaryImage`; raw `bytes` reach the model as base64 text.
 
 Collecting both covers whichever path each request took:
 
