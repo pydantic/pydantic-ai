@@ -1064,7 +1064,10 @@ class TestImageGenerationCapability:
     async def test_image_generation_capability_action_overrides_a_native_instances_edit_action(
         self, allow_model_requests: None, direct_generation_model: FunctionModel
     ):
-        """Capability-level `action` takes precedence over the instance's, as it does for the native tool."""
+        """Capability-level `action` takes precedence over the instance's.
+
+        The same precedence the `fallback_subagent_model` subagent's native tool gets.
+        """
         capability = ImageGeneration(
             native=ImageGenerationTool(action='edit'),
             fallback_image_model=TestImageGenerationModel(),

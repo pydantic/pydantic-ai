@@ -143,7 +143,8 @@ that last response carries it. Where the image lands depends on the path that pr
 - A direct generator or the `fallback_subagent_model` subagent returns it from the `generate_image` tool call, so it
   is in that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], among its
   [`files`][pydantic_ai.messages.BaseToolReturnPart.files]. A `local` tool of your own is found under its own tool
-  name, and among `files` only when it returns a `BinaryImage`; raw `bytes` reach the model as base64 text.
+  name; return a `BinaryImage` so the image lands among its `files`, since raw `bytes` reach the model as base64
+  text.
 
 Collecting both covers whichever path each request took:
 
