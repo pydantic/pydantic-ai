@@ -2066,7 +2066,7 @@ class TestRunErrorHooks:
     @pytest.mark.parametrize('failure_location', ['capability', 'toolset'])
     @pytest.mark.parametrize(
         ('control_error_type', 'grouped'),
-        [(GeneratorExit, False), (GeneratorExit, True), (KeyboardInterrupt, True)],
+        [(GeneratorExit, False), (GeneratorExit, True), (KeyboardInterrupt, True), (SystemExit, True)],
     )
     async def test_on_run_error_not_called_for_control_error_during_setup(
         self, failure_location: str, control_error_type: type[BaseException], grouped: bool
@@ -2112,7 +2112,7 @@ class TestRunErrorHooks:
             await agent.run('hello', toolsets=toolsets)
         assert not any(reconstruction_states[reconstruction_count_before_setup:])
 
-    @pytest.mark.parametrize('control_error_type', [GeneratorExit, KeyboardInterrupt])
+    @pytest.mark.parametrize('control_error_type', [GeneratorExit, KeyboardInterrupt, SystemExit])
     async def test_on_run_error_not_called_for_grouped_control_error_during_run(
         self, control_error_type: type[BaseException]
     ):
@@ -2125,8 +2125,9 @@ class TestRunErrorHooks:
             async with Agent(TestModel(), capabilities=[RecoveringCapability()]).iter('hello'):
                 raise control_error
 
-    def test_keyboard_interrupt_is_run_control_error(self):
-        assert _is_run_control_error(KeyboardInterrupt())
+    @pytest.mark.parametrize('control_error_type', [KeyboardInterrupt, SystemExit])
+    def test_process_exit_is_run_control_error(self, control_error_type: type[BaseException]):
+        assert _is_run_control_error(control_error_type())
 
     async def test_on_run_error_can_transform_error(self):
         @dataclass

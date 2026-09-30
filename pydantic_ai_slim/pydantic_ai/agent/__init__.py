@@ -233,7 +233,7 @@ def _prepare_run_capability_context(
 
 
 def _is_run_control_error(error: BaseException) -> bool:
-    if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+    if isinstance(error, (GeneratorExit, KeyboardInterrupt, SystemExit)):
         return True
     if isinstance(error, _utils.BaseExceptionGroup):
         # The exceptiongroup backport types the members as Unknown on Python 3.10.
@@ -414,7 +414,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
             yield _RunLifecycle(short_circuited=short_circuited)
         except BaseException as exc:
             _run_error = extract_error(exc) if extract_error is not None else exc
-            # Don't attempt recovery for GeneratorExit/KeyboardInterrupt — awaiting
+            # Don't attempt recovery for GeneratorExit/KeyboardInterrupt/SystemExit — awaiting
             # `_wrap_task` during cleanup could delay shutdown.
             if _is_run_control_error(_run_error):
                 raise
