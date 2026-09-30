@@ -97,11 +97,16 @@ on top of a Pydantic AI model. That buys three things:
 browser-use's own model wrappers (`ChatAnthropic`, `ChatOpenAI`, `ChatGoogle`,
 ...) are also accepted and used as-is.
 
-With `llm=None`, browser-use falls back to its own default model selection,
-which ends at its hosted `ChatBrowserUse` model. That is a separate account and
-API key (`BROWSER_USE_API_KEY`), billed by browser-use, and invisible to your
-own model observability. Pass an explicit `llm` to keep inference in your own
-stack.
+With `llm=None` (the default), the sub-agent runs on the host run's model,
+read from `RunContext.model` on each `browse_web` call and wrapped in
+`PydanticAIChatModel`. Browsing then stays on the provider, account, and
+observability you already configured, and follows the host agent when a run
+overrides its model.
+
+browser-use's hosted `ChatBrowserUse` model is opt-in: pass
+`llm=ChatBrowserUse()` (from `browser_use`) to use it. That is a separate
+account and API key (`BROWSER_USE_API_KEY`), billed by browser-use, and page
+content leaves your own provider stack.
 
 Two cost knobs to know about:
 
@@ -254,8 +259,14 @@ origin.
   Ending a call disconnects from an attached browser rather than terminating
   it -- browser-use only kills a browser process it launched itself -- so a
   browser you manage survives `'call'` scope.
-- **Telemetry.** browser-use collects anonymized telemetry by default; set
-  `ANONYMIZED_TELEMETRY=false` to disable it.
+- **Telemetry.** browser-use reports every agent run to its PostHog project by
+  default, including the task, the visited URLs, and the final result. The
+  capability turns that per-run event off for its own agents without touching
+  the process environment; set `browser_use_telemetry=True` to send it. The
+  capability cannot stop browser-use from creating its process-wide PostHog
+  client, which also captures uncaught exceptions: set
+  `ANONYMIZED_TELEMETRY=false` in the environment to disable browser-use
+  telemetry entirely.
 
 ## Session reuse
 
@@ -311,7 +322,7 @@ Every field of `BrowserUse` with its default:
 from pydantic_ai_harness import BrowserUse
 
 BrowserUse(
-    llm=None,                    # Pydantic AI model/string or browser-use chat model; None = browser-use's default
+    llm=None,                    # Pydantic AI model/string or browser-use chat model; None = the host run's model
     browser_profile=None,        # full BrowserProfile (proxy, user_data_dir, storage_state, ...)
     allowed_domains=None,        # navigation allowlist; None = unrestricted; overrides the profile
     block_ip_addresses=True,     # block IP addresses and localhost-style hostnames; False opts in
@@ -326,6 +337,7 @@ BrowserUse(
     cdp_url=None,                # attach to a remote Chromium over CDP; overrides the profile
     guidance=None,               # host-model instructions: None = default, '' = none, str = custom
     browser_agent=None,          # BrowserAgentFactory; None builds a real browser_use.Agent
+    browser_use_telemetry=False,  # send browser-use's per-run product telemetry
 )
 ```
 

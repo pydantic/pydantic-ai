@@ -12,11 +12,13 @@ from urllib.parse import urlsplit
 
 import anyio
 from pydantic import BaseModel, ValidationError
+from typing_extensions import TypeIs
 
-from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.exceptions import ModelRetry, UserError
+from pydantic_ai.models import AbstractModel, Model
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.browser_use._model import resolve_chat_model
+from pydantic_ai_harness.browser_use._model import PydanticAIChatModel, resolve_chat_model
 from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 
 try:
@@ -275,8 +277,8 @@ class BrowserTask:
     task: str
     """The natural-language goal for the browser agent."""
 
-    llm: BaseChatModel | None
-    """The resolved chat model; `None` means browser-use's own default."""
+    llm: BaseChatModel
+    """The resolved chat model: the capability's `llm`, or the host run's model wrapped in `PydanticAIChatModel`."""
 
     browser_session: BrowserSession
     """The session to browse in. Owned by the tool: killed after the call in
@@ -303,6 +305,21 @@ class BrowserTask:
     Its `*_llm` fields arrive resolved to browser-use chat models, so factories
     can forward them verbatim.
     """
+
+
+class _DisabledTelemetry:
+    """A no-op stand-in for browser-use's process-wide `ProductTelemetry` client on one agent.
+
+    browser-use's end-of-run event carries the task, the visited URLs, and the final
+    result. Replacing the client on the agent instance keeps that event in the process
+    without touching `ANONYMIZED_TELEMETRY` or the singleton other browser-use users share.
+    """
+
+    def capture(self, event: object) -> None:
+        """Drop the event."""
+
+    def flush(self) -> None:
+        """Nothing is queued, so there is nothing to flush."""
 
 
 class BrowserAgentFactory(Protocol):
@@ -406,6 +423,30 @@ def default_browser_agent(request: BrowserTask) -> BrowserAgent:
     )
 
 
+def _disable_browser_use_telemetry(agent: BrowserAgent) -> None:
+    """Replace a browser-use agent's telemetry client with a no-op; other agents are left alone."""
+    if isinstance(agent, _BrowserUseAgent):
+        # browser-use annotates the attribute with its `ProductTelemetry` class, but the
+        # `@singleton` decorator turns that name into a factory function, so no subclass
+        # of it can exist; the no-op matches the two methods the agent calls.
+        agent.telemetry = _DisabledTelemetry()  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
+    """Narrow a run's model without losing its provider client type."""
+    return isinstance(model, Model)
+
+
+def _run_chat_model(model: AbstractModel) -> BaseChatModel:
+    """The host run's model as the sub-agent's chat model, for a capability without an `llm`."""
+    if not _is_request_response_model(model):
+        raise UserError(
+            f"BrowserUse without an `llm` runs the browser agent on the host run's model, but "
+            f'{model.model_id!r} is not a request-response model. Pass `llm` to BrowserUse.'
+        )
+    return PydanticAIChatModel(model)
+
+
 class BrowserUseToolset(FunctionToolset[AgentDepsT]):
     """Provides the `browse_web` tool: run an autonomous browser-use agent per task."""
 
@@ -426,10 +467,12 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         settings: BrowserAgentSettings,
         session_scope: Literal['call', 'agent'],
         cdp_url: str | None,
+        browser_use_telemetry: bool = False,
     ) -> None:
         super().__init__()
         self._browser_agent = browser_agent
         self._llm = llm
+        self._browser_use_telemetry = browser_use_telemetry
         self._browser_profile = browser_profile
         self._allowed_domains = allowed_domains
         self._block_ip_addresses = block_ip_addresses
@@ -524,12 +567,12 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             keep_alive=True if self._session_scope == 'agent' else None,
         )
 
-    async def _run_agent(self, task: str, session: BrowserSession) -> BrowserAgentHistory:
+    async def _run_agent(self, task: str, llm: BaseChatModel, session: BrowserSession) -> BrowserAgentHistory:
         """Build the sub-agent for `task` against `session` and run its loop."""
         agent = self._browser_agent(
             BrowserTask(
                 task=task,
-                llm=self._llm,
+                llm=llm,
                 browser_session=session,
                 use_vision=self._use_vision,
                 output_schema=self._output_schema,
@@ -538,6 +581,10 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
                 settings=self._settings,
             )
         )
+        if not self._browser_use_telemetry:
+            # Applied here rather than in `default_browser_agent`, so a custom factory
+            # that builds a real browser-use agent gets the same policy.
+            _disable_browser_use_telemetry(agent)
         return await agent.run(max_steps=self._max_steps)
 
     def _render_result(self, history: BrowserAgentHistory) -> str:
@@ -571,10 +618,11 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         # land here, and its prose is a better answer than an invented failure.
         return structured.model_dump_json() if structured is not None else result
 
-    async def browse_web(self, task: str) -> str:
+    async def browse_web(self, ctx: RunContext[AgentDepsT], task: str) -> str:
         """Have an autonomous browser agent carry out a web task and return its result.
 
         Args:
+            ctx: The run context; its model drives the browser agent when no `llm` is configured.
             task: One self-contained web goal in natural language, e.g.
                 "find the price of the Pro plan on example.com and return it".
 
@@ -582,11 +630,14 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             The browser agent's final text result, or JSON conforming to the
             configured output schema when one is set.
         """
+        # Resolved per call rather than cached: the run's model can differ between runs
+        # (`agent.run(model=...)`, `agent.override(model=...)`) while the toolset is shared.
+        llm = self._llm if self._llm is not None else _run_chat_model(ctx.model)
         if self._session_scope == 'call':
-            history = await self._run_in_fresh_session(task)
+            history = await self._run_in_fresh_session(task, llm)
         else:
             await self._retry_pending_cleanup()
-            history = await self._run_in_shared_session(task)
+            history = await self._run_in_shared_session(task, llm)
         return self._render_result(history)
 
     async def _close_session(self, session: BrowserSession) -> None:
@@ -604,7 +655,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
                 if not await _kill(session):
                     self._pending_cleanup.append(session)
 
-    async def _run_in_fresh_session(self, task: str) -> BrowserAgentHistory:
+    async def _run_in_fresh_session(self, task: str, llm: BaseChatModel) -> BrowserAgentHistory:
         """One disposable session for one call, killed when the call ends, on success or failure."""
         async with self._call_condition:
             await self._call_condition.wait_for(lambda: not self._call_cleanup_in_progress)
@@ -613,7 +664,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         session: BrowserSession | None = None
         try:
             session = self._build_session()
-            return await self._run_agent(task, session)
+            return await self._run_agent(task, llm, session)
         finally:
             with anyio.CancelScope(shield=True):
                 if session is not None:
@@ -622,7 +673,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
                     self._active_call_sessions -= 1
                     self._call_condition.notify_all()
 
-    async def _run_in_shared_session(self, task: str) -> BrowserAgentHistory:
+    async def _run_in_shared_session(self, task: str, llm: BaseChatModel) -> BrowserAgentHistory:
         """The `'agent'`-scoped shared session; the lock serializes calls -- one browser, one driver at a time."""
         async with self._session_lock:
             if self._session_closed:
@@ -636,7 +687,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
             if self._shared_session is None:
                 self._shared_session = self._build_session()
             try:
-                return await self._run_agent(task, self._shared_session)
+                return await self._run_agent(task, llm, self._shared_session)
             except BaseException:
                 # A failed or cancelled run can leave the shared browser in an
                 # unknown state; kill it so the next call starts fresh. Dropping
