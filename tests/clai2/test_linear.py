@@ -35,6 +35,7 @@ from pydantic_clai2.mcp import TokenStore, http_client
 from pydantic_clai2.plugins import SessionStart
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus import field_menu
+from tests.clai2.conftest import stored_accounts
 
 Vault = dict[tuple[str, str], str]
 
@@ -344,7 +345,7 @@ async def test_oauth_signs_in_with_keyring_tokens(tmp_path: Path, vault: Vault, 
     with pytest.raises(ValueError, match='Usage: /linear logout'):
         await run(commands, '/linear')
     assert (await run(commands, '/linear logout')).startswith('Signed out of Linear.')
-    assert vault == {}
+    assert stored_accounts() == set()
 
     await loader.disable('linear')
     assert 'linear' not in {command.name for command in commands}

@@ -44,7 +44,7 @@ from pydantic_clai2.builtin_plugins.ordinal import (
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.api_keys import KeyReference, delete_key, load_keys, rename_key, save_key
-from pydantic_clai2.config.credential_store import save_codex_credentials
+from pydantic_clai2.config.credential_store import delete_credentials, save_codex_credentials
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore
@@ -56,6 +56,7 @@ from pydantic_clai2.plugins.loader import (
 )
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
+from tests.clai2.conftest import stored_accounts
 from tests.clai2.menu_script import Script, pick, typed
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'ordinal')
@@ -353,7 +354,7 @@ async def test_each_sign_in_method_is_used_alone(vault: Vault, tmp_path: Path, m
     # `MCPToolset` gives a bare transport a 5 second handshake, which would end the sign-in early.
     assert client._init_timeout == OAUTH_TIMEOUT  # pyright: ignore[reportPrivateUsage]
 
-    vault.pop(('pydantic-clai2', KEY_ACCOUNT))
+    delete_credentials(account=KEY_ACCOUNT)
     key = await enabled(tmp_path / 'key', monkeypatch, sign_in='key')
     with pytest.raises(UserError, match='no /keys entry'):
         await key.next_run()
@@ -392,7 +393,7 @@ async def test_logout_ends_the_browser_session(vault: Vault, monkeypatch: pytest
     context = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     signed_in = (await auth(context)).client
     assert 'Signed out' in await run(plugin, 'logout')
-    assert vault == {}
+    assert stored_accounts() == set()
     signed_out = (await auth(context)).client
     assert isinstance(signed_in, Client) and isinstance(signed_out, Client)
     # FastMCP keeps tokens inside the `OAuth` once connected; the next run must not reuse it.
