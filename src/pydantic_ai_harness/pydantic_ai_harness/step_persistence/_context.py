@@ -21,11 +21,11 @@ and the capability in `_capability.py` can share it without a circular
 import.
 """
 
-live_run_history: ContextVar[tuple[list[ModelMessage], int] | None] = ContextVar(
+live_run_history: ContextVar[tuple[str | None, list[ModelMessage], int] | None] = ContextVar(
     'pydantic_ai_harness.step_persistence.live_run_history',
     default=None,
 )
-"""Async-context-local `(live message list, run_step)` refreshed at each node boundary.
+"""Async-context-local `(agent run ID, live message list, run_step)` refreshed at each node boundary.
 
 The list is held by *reference*, not copied: `after_node_run` re-stashes
 `ctx.messages` at every boundary, and `on_run_error` reads the reference's
@@ -38,6 +38,7 @@ read the partial history from its own `ctx.messages`. See the stash site in
 `run_step` is the last completed boundary's step, so an error-path snapshot's
 `step_index` can lag the failing request by one.
 
-Reset to `None` in `wrap_run` so a run never inherits a prior run's tail.
+The agent run ID prevents a nested run that fails before `wrap_run` from
+persisting its parent's history. Reset to `None` in `wrap_run`.
 Task-isolated like `current_run_id`.
 """

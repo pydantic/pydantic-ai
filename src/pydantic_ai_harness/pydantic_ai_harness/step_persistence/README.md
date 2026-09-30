@@ -186,6 +186,8 @@ when captured. Snapshots are written at these boundaries:
   produces a `complete` snapshot; a crash mid-tool-cycle produces an
   `interrupted` one carrying every completed cycle.
 
+A nested run that fails during setup does not save its parent's history.
+
 An `interrupted` snapshot is sendable on resume -- pydantic-ai (>= 2.10)
 repairs broken tool-call/result pairing before every model request -- but
 not necessarily *safe*: a pending tool call may be re-executed (resuming

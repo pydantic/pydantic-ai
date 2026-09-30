@@ -17,7 +17,15 @@ from uuid import UUID
 
 import pytest
 
-from pydantic_ai import Agent, CallToolsNode, ModelRequestNode, ModelRetry, RunContext
+from pydantic_ai import (
+    Agent,
+    CallToolsNode,
+    ConcurrencyLimiter,
+    ConcurrencyLimitExceeded,
+    ModelRequestNode,
+    ModelRetry,
+    RunContext,
+)
 from pydantic_ai._agent_graph import GraphAgentState
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import AgentNode, NodeResult
@@ -918,6 +926,56 @@ class TestStepPersistenceCapability:
         # And the delegate's events also carry that parent_run_id.
         dele_events = await store.list_events(run_id=dele.run_id)
         assert {e.parent_run_id for e in dele_events} == {orch.run_id}
+
+    @pytest.mark.parametrize('during_setup', [True, False])
+    @pytest.mark.parametrize('same_persistence_id', [True, False])
+    async def test_nested_setup_failure_does_not_persist_parent_history(
+        self, during_setup: bool, same_persistence_id: bool
+    ) -> None:
+        parent_store = InMemoryStepStore()
+        child_store = InMemoryStepStore()
+        child_id = 'parent' if same_persistence_id else 'child'
+        limiter = ConcurrencyLimiter(max_running=1, max_queued=0)
+        setup_error = RuntimeError('child setup failed')
+
+        class FailingSetup(AbstractCapability[object]):
+            async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+                if during_setup:
+                    raise setup_error
+                return self
+
+        child: Agent[object, str] = Agent(
+            TestModel(),
+            capabilities=[StepPersistence(store=child_store, run_id=child_id), FailingSetup()],
+            max_concurrency=limiter,
+        )
+        parent: Agent[object, str] = Agent(
+            TestModel(), capabilities=[StepPersistence(store=parent_store, run_id='parent')]
+        )
+
+        @parent.tool_plain
+        async def delegate() -> str:
+            return (await child.run('child-visible prompt')).output
+
+        await limiter.acquire('occupied')
+        try:
+            with pytest.raises(RuntimeError if during_setup else ConcurrencyLimitExceeded) as exc_info:
+                await parent.run('parent-private prompt')
+        finally:
+            limiter.release()
+
+        if during_setup:
+            assert exc_info.value is setup_error
+        assert await child_store.latest_snapshot(run_id=child_id, include_interrupted=True) is None
+        parent_snapshot = await parent_store.latest_snapshot(run_id='parent', include_interrupted=True)
+        assert parent_snapshot is not None
+        assert any(
+            isinstance(message, ModelRequest)
+            and any(
+                isinstance(part, UserPromptPart) and part.content == 'parent-private prompt' for part in message.parts
+            )
+            for message in parent_snapshot.messages
+        )
 
     async def test_conversation_id_groups_two_runs(self) -> None:
         """Passing the same `conversation_id` to two `Agent.run` calls -> store.list_runs

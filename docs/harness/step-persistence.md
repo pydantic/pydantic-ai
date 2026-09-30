@@ -159,6 +159,8 @@ By default `continue_run` returns the messages of the latest `complete` snapshot
 
 An `interrupted` snapshot is sendable on resume -- pydantic-ai (>= 2.10) repairs broken tool-call/result pairing before every model request -- but not necessarily *safe*: a pending tool call may be re-executed (resuming without a new prompt) or closed out with a synthesized `interrupted` return, and neither says whether the original side effect happened. That is the tool-effect ledger's job. So the default read path skips `interrupted` snapshots; pass `include_interrupted=True` to `continue_run` / `fork_run` / `latest_snapshot` after checking `list_unresolved_tool_effects`. If no matching snapshot exists, `continue_run` raises `LookupError`.
 
+A nested run that fails during setup does not save its parent's history.
+
 ## Run lineage: `parent_run_id`
 
 `parent_run_id` is a lineage label, not a functional dependency. It does two things:
