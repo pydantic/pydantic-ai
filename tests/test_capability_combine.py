@@ -20,7 +20,7 @@ import pytest
 from inline_snapshot import snapshot
 
 import pydantic_ai.capabilities as capabilities_package
-from pydantic_ai import Agent, FunctionToolset, RunContext, Tool
+from pydantic_ai import Agent, BinaryImage, FunctionToolset, RunContext, Tool
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
@@ -50,13 +50,15 @@ from pydantic_ai.capabilities.abstract import (
 from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart
+from pydantic_ai.messages import FilePart, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool, XSearchTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
@@ -869,28 +871,57 @@ def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
     assert cast('Any', local).function.__self__.model == 'xai:grok-4.3'
 
 
-@pytest.mark.parametrize('capability_type', [ImageGeneration, XSearch])
-def test_a_merge_takes_the_later_of_two_models_differing_only_in_settings(
-    capability_type: type[ImageGeneration[Any]] | type[XSearch[Any]],
+@pytest.mark.parametrize(
+    ('capability_type', 'tool_call', 'subagent_output', 'subagent_profile'),
+    [
+        pytest.param(
+            ImageGeneration,
+            ToolCallPart(tool_name='generate_image', args={'prompt': 'tiny robot'}),
+            FilePart(content=BinaryImage(data=b'\x89PNG\r\n\x1a\n', media_type='image/png')),
+            ModelProfile(supports_image_output=True),
+            id='image_generation',
+        ),
+        pytest.param(
+            XSearch,
+            ToolCallPart(tool_name='x_search', args={'query': 'latest news'}),
+            TextPart(content='recent posts'),
+            ModelProfile(supported_native_tools=frozenset({XSearchTool})),
+            id='x_search',
+        ),
+    ],
+)
+async def test_a_merge_takes_the_later_of_two_models_differing_only_in_settings(
+    capability_type: type[ImageGeneration[object]] | type[XSearch[object]],
+    tool_call: ToolCallPart,
+    subagent_output: FilePart | TextPart,
+    subagent_profile: ModelProfile,
 ) -> None:
-    """Two model instances are two values, so the later one wins even where the models compare equal.
+    """Two model instances are two values, so the later one runs even where the models compare equal.
 
     A model's `settings` live on the non-dataclass `Model` base, outside the field equality its
-    dataclass subclasses generate, so these two models compare equal. Merging them to the first
-    would run the subagent with the earlier model's settings under the later capability.
+    dataclass subclasses generate. Merging these two to the first ran the fallback subagent with the
+    earlier model's settings under the later capability.
     """
-    first = TestModel(settings={'temperature': 0.0})
-    later = TestModel(settings={'temperature': 1.0})
+    subagent_settings: list[ModelSettings | None] = []
 
-    merged = capability_type.combine(
-        [capability_type(fallback_subagent_model=first), capability_type(fallback_subagent_model=later)]
+    def subagent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        subagent_settings.append(info.model_settings)
+        return ModelResponse(parts=[subagent_output])
+
+    first = FunctionModel(subagent, settings={'temperature': 0.0}, profile=subagent_profile)
+    later = FunctionModel(subagent, settings={'temperature': 1.0}, profile=subagent_profile)
+    assert first == later
+
+    def outer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='done')] if len(messages) > 1 else [tool_call])
+
+    agent = Agent(
+        FunctionModel(outer, profile=ModelProfile(supported_native_tools=frozenset())),
+        capabilities=[capability_type(fallback_subagent_model=first), capability_type(fallback_subagent_model=later)],
     )
+    await agent.run('go')
 
-    assert isinstance(merged, capability_type)
-    assert merged.fallback_subagent_model is later
-    local = merged.local
-    assert isinstance(local, Tool)
-    assert cast('Any', local).function.__self__.model is later
+    assert subagent_settings == snapshot([{'temperature': 1.0}])
 
 
 def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:
