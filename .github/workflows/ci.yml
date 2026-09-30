@@ -23,9 +23,6 @@ env:
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: url.https://x-access-token:${{ github.token }}@github.com/.insteadOf
   GIT_CONFIG_VALUE_0: https://github.com/
-  # Pin the testmon coverage cache while its upstream integration is evaluated.
-  # Install it into the synced environment; uv --with rebuilds workspace packages in a temporary overlay.
-  TESTMON_PACKAGE: "git+https://github.com/Kludex/pytest-testmon@67624c7d1a013a3c56e9c4c8813cb3befc07d7e7"
 
 permissions:
   contents: read
@@ -458,8 +455,6 @@ jobs:
             install: { name: standard }
     env:
       CI: true
-      # Stable workspace versions let coverage caches survive source commits.
-      UV_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
       # Coverage adds roughly 50% to test execution before Python 3.14. Collect every install shape
       # on 3.14, where coverage uses the faster sys.monitoring core; the other versions still run
       # every applicable test without duplicate coverage. A `pydantic-clai2`-only change also
@@ -482,15 +477,6 @@ jobs:
 
       - run: uv sync --only-dev
 
-      - name: cache incremental coverage
-        if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .testmon-cache
-          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.install.name }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.install.name }}-
-
       # `-n logical`, not `-n auto`: when `psutil` is importable, xdist's `auto` counts
       # *physical* cores while `logical` counts every vCPU, which is what hyperthreaded
       # runners want. `psutil` is not in `uv.lock` and `UV_FROZEN` pins CI to it, so both
@@ -510,23 +496,19 @@ jobs:
           fi
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
-            uv run ${{ matrix.install.command }} "${extra[@]}" python -c 'pass'
-            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
-            uv_extra=(--no-sync)
-            runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
-              --output "$COVERAGE_FILE.testmon" --)
+            runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
-            uv_extra=()
             runner=(pytest)
           fi
-          uv run ${{ matrix.install.command }} "${extra[@]}" "${uv_extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run ${{ matrix.install.command }} "${extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec -m "not temporal" ${{ matrix.install.paths }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-${{ matrix.install.name }}
 
-      # The runner merges per-worker data into its cached output. Combine its output and any
-      # subprocess fragments here so the final coverage job receives one file per matrix leg.
+      # Merge this job's per-worker/per-subprocess data files into one before upload: the
+      # combine work runs in parallel across the matrix instead of serially in the `coverage`
+      # job, which would otherwise merge hundreds of files on the critical path.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
         shell: bash
@@ -563,7 +545,6 @@ jobs:
         shard: [1, 2]
     env:
       CI: true
-      UV_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
       # Collect every shard on 3.14, where coverage uses the faster sys.monitoring core, plus
       # every shard on 3.10 for version-specific branches -- both are combined across shards
       # and install shapes in the `coverage` job. The other versions run without duplicate
@@ -588,15 +569,6 @@ jobs:
       - run: mkdir .coverage
 
       - run: uv sync --only-dev
-
-      - name: cache incremental coverage
-        if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .testmon-cache
-          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-all-extras-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-all-extras-${{ matrix.shard }}-
 
       # Cache only the immutable model used by `TestSentenceTransformers`. The old
       # shared HF cache could be populated first by a matrix job that never downloaded
@@ -660,19 +632,14 @@ jobs:
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
-            uv run --all-packages --all-extras --no-extra mcp-tasks python -c 'pass'
-            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
-            uv_extra=(--no-sync)
-            runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
-              --output "$COVERAGE_FILE.testmon" --)
+            runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
-            uv_extra=()
             runner=(pytest)
           fi
           # `--all-packages` so the extras of every workspace member are installed, not just the
           # root package's: that is where `pydantic-ai-harness`'s optional integrations get tested.
-          uv run --all-packages --all-extras --no-extra mcp-tasks "${uv_extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run --all-packages --all-extras --no-extra mcp-tasks "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec -m "not temporal" --splits 2 --group ${{ matrix.shard }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
@@ -717,7 +684,6 @@ jobs:
         resolution: [locked, lowest]
     env:
       CI: true
-      UV_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
       # Python 3.10 and 3.14 cover version endpoints; both 3.12 resolutions cover Temporal dependency branches.
       COLLECT_COVERAGE: >-
         ${{
@@ -748,15 +714,6 @@ jobs:
 
       - run: mkdir .coverage
 
-      - name: cache incremental coverage
-        if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .testmon-cache
-          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}-
-
       # The Temporal tests download the dev-server binary on first use (see `temporal_env` in
       # tests/durable_exec/temporal/conftest.py and the harness `temporal` tests); cache it so a
       # CDN hiccup can't fail the suite at setup (#5399).
@@ -786,25 +743,15 @@ jobs:
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
-            uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
-              python -c 'pass'
-            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
-            uv_run=(--no-sync)
-            runner=(python -m testmon.incremental_coverage)
+            runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
-            uv_run=(${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }})
             runner=(pytest)
           fi
-          if [[ "$COLLECT_COVERAGE" == "true" ]]; then
-            uv run "${uv_run[@]}" "${runner[@]}" --cache .testmon-cache/durable --no-report \
-              --output "$COVERAGE_FILE.durable.testmon" -- --durations=20 -n logical --dist=loadgroup tests/durable_exec
-            uv run "${uv_run[@]}" "${runner[@]}" --cache .testmon-cache/harness-temporal --no-report \
-              --output "$COVERAGE_FILE.harness-temporal.testmon" -- --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
-          else
-            uv run "${uv_run[@]}" "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
-            uv run "${uv_run[@]}" "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
-          fi
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup tests/durable_exec
+          uv run ${{ matrix.resolution == 'lowest' && '--no-sync' || '--all-packages --all-extras --no-extra mcp-tasks' }} \
+            "${runner[@]}" --durations=20 -n logical --dist=loadgroup -m temporal tests/harness
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-durable-exec-${{ matrix.resolution }}
 
@@ -838,7 +785,6 @@ jobs:
         shard: [1, 2]
     env:
       CI: true
-      UV_DYNAMIC_VERSIONING_BYPASS: "0.0.0"
       # Python 3.14's sys.monitoring coverage core is substantially cheaper than the legacy tracer.
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' }}
       # Blocking detection already runs in the Python 3.13 slim, evals, and standard jobs;
@@ -858,15 +804,6 @@ jobs:
           cache-suffix: lowest-versions
 
       - run: mkdir .coverage
-
-      - name: cache incremental coverage
-        if: env.COLLECT_COVERAGE == 'true'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .testmon-cache
-          key: testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            testmon-v1-${{ runner.os }}-${{ matrix.python-version }}-lowest-versions-${{ matrix.shard }}-
 
       - name: restore sentence-transformers test model
         id: sentence-transformers-cache
@@ -919,9 +856,7 @@ jobs:
         run: |
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
-            uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
-            runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
-              --output "$COVERAGE_FILE.testmon" --)
+            runner=(coverage run -m pytest)
           else
             unset COVERAGE_PROCESS_START
             runner=(pytest)
