@@ -6,6 +6,7 @@ from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from functools import cache
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
@@ -558,8 +559,8 @@ def response_attributes(
     attributes: dict[str, AttributeValue] = {**response.usage.opentelemetry_attributes()}
     if response_model is not None:
         attributes['gen_ai.response.model'] = response_model
-    if price_calculation is not None:
-        attributes['operation.cost'] = float(price_calculation.total_price)
+    if (cost := response_cost(response, price_calculation)) is not None:
+        attributes['operation.cost'] = float(cost)
     if response.provider_response_id is not None:
         attributes['gen_ai.response.id'] = response.provider_response_id
     if response.finish_reason is not None:
@@ -568,7 +569,14 @@ def response_attributes(
 
 
 def response_price_calculation(response: ModelResponse) -> PriceCalculation | None:
-    """Price a response, degrading any pricing-data failure to `None` (see `best_effort_price`)."""
+    """Price a response, degrading any pricing-data failure to `None` (see `best_effort_price`).
+
+    `None` too when the response already carries a cost, which `response_cost` then reports instead: whatever set it knew more than `model_name` does. OpenAI GPT-Live's
+    responses carry the tokens of the backend model it delegated to, priced at that model's rates,
+    while `model_name` names the Live model, so re-pricing from it would charge the wrong model.
+    """
+    if response.usage.cost is not None:
+        return None
     return best_effort_price(
         response.usage,
         model_name=response.model_name,
@@ -576,6 +584,11 @@ def response_price_calculation(response: ModelResponse) -> PriceCalculation | No
         provider_name=response.provider_name,
         genai_request_timestamp=response.timestamp,
     )
+
+
+def response_cost(response: ModelResponse, price_calculation: PriceCalculation | None) -> Decimal | None:
+    """The cost to report for a response: its calculated price, or the cost it already carries."""
+    return price_calculation.total_price if price_calculation is not None else response.usage.cost
 
 
 class _FinishModelRequestSpan(Protocol):

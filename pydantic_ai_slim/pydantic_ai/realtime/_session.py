@@ -24,6 +24,7 @@ from typing_extensions import Never, TypeAliasType, assert_never
 from .. import _agent_graph
 from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
 from .._genai_prices import fill_response_cost
+from .._run_context import context_window_fraction
 from .._tool_execution import (
     _reject_unloaded_capability_reveals,  # pyright: ignore[reportPrivateUsage]
     build_tool_return_part,
@@ -160,7 +161,7 @@ other shared message parts, including [`TextPart`][pydantic_ai.messages.TextPart
 [`ToolCallPart`][pydantic_ai.messages.ToolCallPart], and
 [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]), tool execution as
 [`FunctionToolCallEvent`][pydantic_ai.messages.FunctionToolCallEvent] /
-[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], inline deferred resolution
+[`FunctionToolResultEvent`][pydantic_ai.messages.FunctionToolResultEvent], deferred calls and their resolution
 as [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] /
 [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent], enqueued-message delivery
 as [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and the rest as realtime
@@ -207,6 +208,18 @@ class TranscriptUpdate:
     __repr__ = dataclasses_no_defaults_repr
 
 
+class _InFlightResponse:
+    """Where a user turn belongs when it began while the model was still answering: after that answer.
+
+    The answer isn't in history yet, so there is no message to anchor to. The placeholder is swapped for
+    the response once it is recorded (see `_resolve_in_flight_user_turn_anchors`).
+    """
+
+
+_IN_FLIGHT_RESPONSE = _InFlightResponse()
+_UserTurnAnchor = ModelMessage | _InFlightResponse | None
+
+
 @dataclass
 class _UserTurn:
     part: SpeechPart
@@ -247,6 +260,13 @@ _FULL_PROFILE = RealtimeModelProfile(
 # 24 kHz PCM16 is about 14 MB. Transcript items are short strings, and dropping one silently corrupts
 # the text a user is reading, so they get a deep window for a trivial cost.
 _AUDIO_TAP_SECONDS = 300
+_MAX_TRUNCATABLE_AUDIO_ITEMS = 32
+"""How many recent assistant audio parts a barge-in can still truncate: far more than can be queued for playback."""
+# How long a user turn that barged in waits for the response it interrupted to be recorded, so it can
+# follow that response in history. The provider's terminal for a cut-off response normally arrives within
+# a second of the user starting to speak; past this, the turn is recorded where history stands instead of
+# staying out of `all_messages()` for as long as a provider keeps talking.
+_BARGE_IN_TURN_HOLD_SECONDS = 5.0
 # The byte budget alone would let a stream of tiny deltas queue millions of objects, so the window is
 # also capped in chunks: five minutes at 10 ms apiece, well below any provider's real chunk size.
 _AUDIO_TAP_MAX_CHUNKS = 30_000
@@ -361,6 +381,42 @@ class _AudioTap:
     def finish(self) -> None:
         self.ended = True
         self.progress.set()
+
+
+@dataclass(eq=False)
+class _ToolBatch:
+    """The tool calls one model response made, which the model answers with a single reply.
+
+    Gemini answers a tool-call frame once it has every result, and the OpenAI-protocol connection asks
+    for one response once every call of the calling response has its output, so the session counts one
+    reply per tool-calling response, not one per result. The reply is counted when the last result is
+    about to go out (a provider may start answering the moment it arrives), or, when every result went
+    out before the calling response was complete, once it is.
+    """
+
+    calls: set[str] = field(default_factory=set[str])
+    """Every call in the batch."""
+    running: set[str] = field(default_factory=set[str])
+    """Calls still executing."""
+    sending: int = 0
+    """Results on their way to the wire."""
+    closed: bool = False
+    """Whether the response making the calls has been finalized, so no further call can join."""
+    counted: bool = False
+    """Whether the reply that answers the batch has been counted."""
+    abandoned: bool = False
+    """Whether no reply will come: the provider cancelled one of the calls (a barge-in abandons the
+    turn) or lost the conversation they were made in, a tool raised, or a result failed to send."""
+
+    @property
+    def reply_due(self) -> bool:
+        """Every result is out or on its way and no call can still join, so the reply is still to count."""
+        return self.closed and not self.running and not self.counted and not self.abandoned
+
+    @property
+    def settled(self) -> bool:
+        """No call can still join, run, or put a result on the wire."""
+        return self.closed and not self.running and not self.sending
 
 
 # The `RealtimeEvent` variants that `_translate_event` handles: the full union minus `ToolCall` and
@@ -665,6 +721,9 @@ class RealtimeSession:
         self._tool_manager_lock = Lock()
         self._instrumentation = instrumentation
         self._profile = profile if profile is not None else model.profile if model is not None else _FULL_PROFILE
+        self._responses_are_requests = self._profile.get('responses_are_requests', True)
+        # The latest context-window fraction the provider reported, if it reports one at all.
+        self._reported_context_window_used: float | None = None
         # Whether this session owns the audio transport. `False` for a WebRTC sideband session: the
         # browser exchanges audio with the provider directly, and this connection is only the control
         # plane, so the audio methods are unavailable and no audio bytes flow over it (transcripts still
@@ -739,6 +798,11 @@ class RealtimeSession:
         # would mean `for_run_step`, which is async and can't run here.
         if (ctx := self._tool_manager.ctx) is not None:
             ctx.usage = self.usage
+        # What the session span reports: only the token usage this session's own responses recorded.
+        # `self.usage` can start from a total carried in with `usage=` (or a `Conversation`), and a run
+        # a tool starts with `usage=ctx.usage` accumulates into it too; reporting that on the span would
+        # count both again against the spans they came from. Credited where `self.usage` records it.
+        self._span_usage = RunUsage()
 
         # History: `_seeded` is the conversation the session was opened with (surfaced by
         # `all_messages` only); `_history` is what happened during this session (surfaced by both).
@@ -780,7 +844,12 @@ class RealtimeSession:
         self._response_active = False
         self._exchange_progress = asyncio.Event()
         self._pending_provider_response_id: str | None = None
+        # The provider id carried by the latest content of the response being assembled, for a reply
+        # that never gets the terminal that would otherwise name it: one cut off by a dropped connection
+        # or by closing the session. Reset at each response boundary.
+        self._content_response_id: str | None = None
         self._pending_finish_reason: FinishReason | None = None
+        self._pending_provider_details: dict[str, Any] | None = None
         self._pending_interrupted_at_ms: int | None = None
         self._response_finalized_before_terminal = False
         # User requests sent while a response is in flight are held until that response is finalized,
@@ -823,9 +892,16 @@ class RealtimeSession:
         # `_open_user_turn_anchor`. Provider item IDs keep overlapping turns paired with their own
         # anchors; `_pending_anonymous_user_turn_anchors` is only for providers whose events carry no
         # item ID. It is a queue because a transcript can arrive after the next audio turn starts.
-        self._pending_anonymous_user_turn_anchors: deque[ModelMessage | None] = deque()
-        self._pending_user_turn_anchors: dict[str, tuple[ModelMessage | None]] = {}
-        self._user_turn_anchors: dict[str | None, ModelMessage | None] = {}
+        self._pending_anonymous_user_turn_anchors: deque[_UserTurnAnchor] = deque()
+        self._pending_user_turn_anchors: dict[str, tuple[_UserTurnAnchor]] = {}
+        self._user_turn_anchors: dict[str | None, _UserTurnAnchor] = {}
+        # User turns held in `_pending_sent_requests` until the response they interrupted is recorded, and
+        # the watchdog that records them anyway if it never is (see `_BARGE_IN_TURN_HOLD_SECONDS`).
+        self._held_user_turns: list[ModelRequest] = []
+        self._held_user_turn_watchdog: asyncio.TimerHandle | None = None
+        # Whether audio was sent since the last `commit_audio()` or `clear_audio()`: committing an empty
+        # buffer is no user turn.
+        self._audio_uncommitted = False
         # Retained input audio (`audio_retention='input_audio'`/`'all'`). `_input_audio` is the rolling buffer
         # of audio sent since the last turn boundary; on providers that report a per-item speech-stopped
         # boundary, each segment is cut into `_input_audio_by_id` keyed by its input item id, so overlapping
@@ -857,6 +933,10 @@ class RealtimeSession:
         self._turn_audio_start_bytes = 0
         self._audio_part_index: int | None = None
         self._interrupted_audio_part_index: int | None = None
+        # Where each recent assistant audio part begins in the emitted audio, with its provider output
+        # item. Generation outruns playback, so the reply being heard is often not the last one
+        # generated: a barge-in truncates the item actually playing (and later ones, never heard, at 0).
+        self._audio_items: deque[tuple[int, str | None]] = deque(maxlen=_MAX_TRUNCATABLE_AUDIO_ITEMS)
         # Transcript accumulated per streamed part index, so a `TranscriptUpdate` can carry the whole
         # turn so far and a renderer can replace rather than append.
         self._transcript_so_far: dict[int, str] = {}
@@ -884,6 +964,12 @@ class RealtimeSession:
         # finalizes the calling response. Hold their history requests until the call is present.
         self._pending_tool_returns: list[tuple[ToolCallPart, ModelRequest]] = []
         self._tool_calls_awaiting_usage: set[str] = set()
+        # The batch the response being assembled is adding tool calls to, closed when that response is
+        # finalized; the batch of every call whose batch hasn't settled; and batches just closed, which
+        # the pump checks for a reply still to count. See `_ToolBatch`.
+        self._open_tool_batch: _ToolBatch | None = None
+        self._tool_call_batches: dict[str, _ToolBatch] = {}
+        self._closed_tool_batches: list[_ToolBatch] = []
         # Set while a response the provider said isn't the last of its exchange is held open for the
         # tool call it was stalling for; the finish reason it will be recorded with if something else
         # arrives first. See `_handle_turn_complete`.
@@ -1030,7 +1116,7 @@ class RealtimeSession:
 
         self._traceparent_value = self._session_instrumentation.end_session_span(
             error,
-            usage=self.usage,
+            usage=self._span_usage,
             messages=self.all_messages(),
             new_message_index=len(self._seeded) if self._seeded else None,
             final_result=self._final_result_text(),
@@ -1040,6 +1126,7 @@ class RealtimeSession:
             queue_dropped_structural=self._queue_dropped_structural,
         )
         self._loop = None
+        self._stop_held_user_turn_watchdog()
 
         # Do not hide the caller's own exception, but make sure every receive-side failure has one
         # delivery point even when iteration stopped early or was never started. Stored rather than
@@ -1182,6 +1269,28 @@ class RealtimeSession:
         """
         return self._profile.get('audio_output_sample_rate', DEFAULT_AUDIO_SAMPLE_RATE)
 
+    @property
+    def context_window_used(self) -> float | None:
+        """Fraction of the model's context window occupied, as of the latest report.
+
+        When the provider reports it (OpenAI GPT-Live), this is the latest value it reported. Otherwise
+        it is computed as for a standard run's
+        [`RunContext.context_window_used`][pydantic_ai.tools.RunContext.context_window_used]: the latest
+        response's [`total_tokens`][pydantic_ai.usage.RequestUsage.total_tokens] over the model's
+        [`context_window`][pydantic_ai.realtime.RealtimeModelProfile.context_window].
+
+        The value can go down as the session continues, when the provider compacts or truncates the
+        conversation server-side. Returns `None` when the ratio cannot be calculated: when the context
+        window or usage is unknown, before the first response, or when the model's response usage
+        doesn't measure what the context holds (see
+        [`response_usage_covers_context`][pydantic_ai.realtime.RealtimeModelProfile.response_usage_covers_context]).
+        """
+        if self._reported_context_window_used is not None:
+            return self._reported_context_window_used
+        if not self._profile.get('response_usage_covers_context', True):
+            return None
+        return context_window_fraction(self.all_messages(), self._profile.get('context_window'))
+
     def stream_audio(self) -> AsyncIterator[bytes]:
         """Stream model audio chunks ready for playback.
 
@@ -1275,8 +1384,9 @@ class RealtimeSession:
         tool-calling turn, that is the answer that follows the tool results, not the response that
         called them. Returns immediately when the model owes nothing, so a reply that finished between
         the [`send()`][pydantic_ai.realtime.RealtimeSession.send] and this call is not waited for twice
-        over; it also returns if the session closes, or if the provider refuses the request for the
-        reply (reported as a [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
+        over; it also returns if the session closes, fails (a tool raised, or a usage limit tripped) so
+        the reply can no longer come, or the provider refuses the request for the reply (reported as a
+        [`RealtimeSessionErrorEvent`][pydantic_ai.realtime.RealtimeSessionErrorEvent]).
 
         This is the wait `async for event in session` would otherwise be written out to perform, and
         unlike that loop it can run while something else is iterating the session, so a caller that
@@ -1573,8 +1683,17 @@ class RealtimeSession:
     async def _send_image(self, content: BinaryContent, *, respond: bool) -> None:
         """Forward an image and retain it according to the session's sampling and cap policies."""
         self._require_capability('supports_image_input', method='send', feature='image input')
-        if respond:
+        if self._profile.get('image_input_requires_response', False):
+            # The model takes an image only to respond to it (GPT-Live hands it to the backend that
+            # runs on it), so asking for a response is the one way to send one, not manual turn-taking.
+            if not respond:
+                raise UserError(
+                    'This realtime model only takes an image to respond to it, so `session.send()` needs '
+                    '`respond=True` for an image; it cannot add one as context alone.'
+                )
+        elif respond:
             self._require_capability('supports_manual_turn_control', method='send', feature='manual turn-taking')
+        if respond:
             self._reserve_response_request()
         request: ModelRequest | None = None
         if self._retain_images_max != 0 and self._sent_image_count % self._retain_images_every_n == 0:
@@ -1614,6 +1733,11 @@ class RealtimeSession:
             self._pending_sent_requests.append(request)
         else:
             self._history.append(request)
+
+    @property
+    def _response_output_in_flight(self) -> bool:
+        """Whether the model has begun producing a response that isn't recorded yet."""
+        return self._active_assistant is not None or bool(self._response_parts or self._native_tool_parts)
 
     @property
     def _response_in_flight(self) -> bool:
@@ -1656,6 +1780,12 @@ class RealtimeSession:
         [`audio_input_sample_rate`][pydantic_ai.realtime.RealtimeSession.audio_input_sample_rate]
         first (24 kHz on the OpenAI-protocol providers, 16 kHz on Gemini):
         raw bytes carry no rate, so the wrong one is heard as a chipmunk rather than reported.
+
+        With a [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy, a chunk sent
+        while a dropped connection is being re-dialed is discarded rather than raised, so a microphone
+        task survives the reconnect. That includes a one-shot clip passed as a single chunk: resend it
+        after the
+        [`RealtimeSessionReconnectEvent`][pydantic_ai.realtime.RealtimeSessionReconnectEvent] if it matters.
         """
         self._require_media_ownership('send_audio')
         self._ensure_can_send()
@@ -1666,7 +1796,12 @@ class RealtimeSession:
                 await self.send_audio(chunk)
             return
         user_turn_was_active = self._user_turn_active
-        if not self._anonymous_user_turn_awaiting_answer:
+        audio_was_uncommitted = self._audio_uncommitted
+        # Without input transcription, a provider that reports speech boundaries opens each turn itself,
+        # at speech start. Audio alone is then no turn: an always-on microphone streams silence between
+        # utterances, and taking it for one would record a phantom turn per response and one at close.
+        audio_opens_turn = self._input_transcription_enabled or not self._provider_segments_input
+        if audio_opens_turn and not self._anonymous_user_turn_awaiting_answer:
             if (turn := self._user_turns.get(None)) is not None and turn.speech_ended:
                 for event in self._finalize_user():
                     self._publish_taps(event)
@@ -1690,11 +1825,24 @@ class RealtimeSession:
             # correctly skips the truncation for that case.
             if self._retain_input:
                 self._input_audio.extend(data)
+            self._audio_uncommitted = True
             await self._send_frame(BinaryAudio(data=data, media_type='audio/pcm'))
-        except BaseException:
+        except BaseException as e:
             self._user_turn_active = user_turn_was_active
+            self._audio_uncommitted = audio_was_uncommitted
             if previous_length is not None and len(self._input_audio) == previous_length + len(data):
                 del self._input_audio[previous_length:]
+            if (
+                isinstance(e, RealtimeError)
+                and isinstance(e.__cause__, self._connection.transport_errors)
+                and self._connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+                and not (self._pump_finished or self._receive_ending)
+            ):
+                # The link dropped and the connection's reconnect policy is replacing it, with receiving
+                # still live to deliver it. A chunk of live audio is worthless once late, so it is dropped
+                # rather than raised: the capture loop outlives the reconnect instead of dying on it. Once
+                # the reconnect fails, the next chunk raises again.
+                return
             raise
 
     async def commit_audio(self) -> None:
@@ -1703,6 +1851,17 @@ class RealtimeSession:
         self._require_media_ownership('commit_audio')
         self._require_capability('supports_manual_turn_control', method='commit_audio', feature='manual turn-taking')
         await self._send_frame(CommitAudio())
+        if not self._audio_uncommitted:
+            # The provider rejects an empty commit, so there is no user turn to record.
+            return
+        self._audio_uncommitted = False
+        if (
+            self._input_transcription_enabled
+            and len(self._pending_anonymous_user_turn_anchors) <= self._anonymous_user_turns_ended
+        ):
+            # The audio was sent while the model was still answering the previous turn, so it reserved no
+            # place in history; the committed turn belongs after that answer.
+            self._open_user_turn_anchor()
         self._user_turn_active = True
         for event in self._finalize_untranscribed_user():
             self._queue_put(event)
@@ -1713,6 +1872,7 @@ class RealtimeSession:
         self._require_media_ownership('clear_audio')
         self._require_capability('supports_manual_turn_control', method='clear_audio', feature='manual turn-taking')
         await self._send_frame(ClearAudio())
+        self._audio_uncommitted = False
         # Drop the locally retained copy too (with `audio_retention='input_audio'`/`'all'`), or the discarded
         # audio would still be attached to the next finalized user turn.
         self._input_audio.clear()
@@ -1743,7 +1903,9 @@ class RealtimeSession:
         """Barge-in: cancel the model's in-progress response, optionally truncating its audio first.
 
         This is server-side only — it stops generation and (when a playback position is given) syncs
-        the provider's transcript to what was actually heard.
+        the provider's transcript to what was actually heard. Generation outruns playback, so the reply
+        being heard has often finished generating: the provider's copy is still truncated, while the
+        reply keeps its full transcript and `complete` state in history, which is append-only.
 
         With `played_ms`, the caller owns all playback accounting: flushing locally buffered
         playback is the caller's responsibility, and deciding whether to interrupt at all is too.
@@ -1800,7 +1962,9 @@ class RealtimeSession:
             frames.append(CancelResponse())
         if frames:
             await self._send_frame(*frames)
-        self._pending_interrupted_at_ms = played_ms
+        # Only a response still being generated records the position: a finished one keeps what history
+        # recorded, and the position must not land on the next one instead.
+        self._pending_interrupted_at_ms = played_ms if self._response_in_flight else None
         # Mark the barge-in in the trace. When the caller supplied `played_ms` (the ms of output audio
         # actually played before truncating), record it so a reader can see how far the response got before
         # the user cut in; it's dropped when absent (a cancel without truncation).
@@ -1856,15 +2020,39 @@ class RealtimeSession:
             self._session_instrumentation.record_lifecycle('interrupt', played_ms=None)
             return True
         # A playhead still inside a previous turn's audio means none of the current turn was heard.
-        played_ms = max(0, playhead - self._turn_audio_start_bytes) * 1000 // (self.audio_output_sample_rate * 2)
+        played_ms = self._bytes_to_ms(playhead - self._turn_audio_start_bytes)
         # Truncate before cancelling, under one hold of the send lock, for the same reasons as above.
-        await self._send_frame(
-            TruncateOutput(audio_end_ms=played_ms),
-            *([CancelResponse()] if cancel else []),
-        )
-        self._pending_interrupted_at_ms = played_ms
+        await self._send_frame(*self._truncations_at(playhead), *([CancelResponse()] if cancel else []))
+        # Only a response still being generated can record the position: history is append-only, so a
+        # finished one keeps what it recorded, and the position must not land on the next one instead.
+        self._pending_interrupted_at_ms = played_ms if self._response_in_flight else None
         self._session_instrumentation.record_lifecycle('interrupt', played_ms=played_ms)
         return True
+
+    def _bytes_to_ms(self, audio_bytes: int) -> int:
+        """Milliseconds of output audio in `audio_bytes`; a negative span (a position before it) is 0."""
+        return max(0, audio_bytes) * 1000 // (self.audio_output_sample_rate * 2)
+
+    def _truncations_at(self, playhead: int) -> list[TruncateOutput]:
+        """Truncate every output item the listener didn't finish hearing at an emitted-audio playhead.
+
+        The item the playhead is inside is cut where playback stopped, and items generated after it,
+        never heard, at 0 — even when their replies have finished generating, since generation outruns
+        playback. An item the provider gave no id can only be truncated as its current item, the last.
+        """
+        items = list(self._audio_items)
+        ends = [start for start, _ in items[1:]] + [self._emitted_audio_bytes]
+        cuts = [
+            (item_id, self._bytes_to_ms(playhead - start))
+            for (start, item_id), end in zip(items, ends)
+            if end > playhead
+        ]
+        truncations = [
+            TruncateOutput(audio_end_ms=played_ms, item_id=item_id) for item_id, played_ms in cuts if item_id
+        ]
+        if cuts[-1][0] is None:
+            truncations.append(TruncateOutput(audio_end_ms=cuts[-1][1]))
+        return truncations
 
     def _flush_tap(self, tap: _AudioTap) -> None:
         """Discard the tap's buffered chunks, counting them as dropped for position mapping."""
@@ -1987,6 +2175,12 @@ class RealtimeSession:
         """Park a background failure for iteration or close, ending receive-only views if nobody is iterating."""
         self._parked_errors.append(error)
         self._queue_put(error)
+        if not self._response_limit_checked or any(isinstance(part, ToolCallPart) for part in self._response_parts):
+            # A tool that raised, or a usage limit tripped by the request its result would make, stops
+            # the model from getting that result, so the exchange waiting on it is over: a caller in
+            # `wait_for_reply()` is done waiting for it. Only that exchange: a reply already requested
+            # for something else stays owed, and one already streaming ends its exchange itself.
+            self._release_exchange()
         if not self._iterator_active and self._pump_task is not None:
             self._receive_ending = True
             self._pump_task.cancel()
@@ -2170,11 +2364,11 @@ class RealtimeSession:
         ):
             # A boundary that says nothing, in either sense: no output, and no provider detail or
             # abnormal finish reason explaining why. That isn't a response — it's one logical response
-            # arriving in two frames. Gemini Live closes the turn when it takes a tool result and again
-            # when it has finished speaking, and the first boundary carries only usage; recording it
-            # would make one tool round five messages there and four everywhere else. Carry the metadata
-            # onto the response that does say something, so a tool round has one shape on every
-            # provider. A response truncated by `length` (or any other abnormal reason) is real
+            # arriving in two frames. Vertex's `gemini-live-2.5-flash` closes the turn when the tool-call
+            # generation ends and again when it has finished speaking, and the first boundary carries only
+            # usage; recording it would make one tool round five messages there and four everywhere else.
+            # Carry the metadata onto the response that does say something, so a tool round has one shape
+            # on every provider. A response truncated by `length` (or any other abnormal reason) is real
             # information about what happened and stays, empty or not; so does anything left pending
             # when the session ends, which the flush in `__aexit__` records rather than lose.
             self._pending_provider_response_id = provider_response_id or self._pending_provider_response_id
@@ -2194,8 +2388,12 @@ class RealtimeSession:
                 model_name=self._connection.model_name or self._model_name,
                 provider_name=self._provider_name,
                 provider_url=self._provider_url,
-                provider_details=provider_details,
-                provider_response_id=provider_response_id or self._pending_provider_response_id,
+                # Details reported with the response's usage (e.g. the model GPT-Live delegated to)
+                # underlie those the terminal event reports for the response itself.
+                provider_details={**(self._pending_provider_details or {}), **(provider_details or {})} or None,
+                provider_response_id=provider_response_id
+                or self._pending_provider_response_id
+                or self._content_response_id,
                 finish_reason=finish_reason or self._pending_finish_reason,
                 conversation_id=self._conversation_id,
                 state='interrupted' if interrupted else 'complete',
@@ -2208,12 +2406,16 @@ class RealtimeSession:
                 # at this response boundary. A provider-reported cost arrived in those events too.
                 self.usage.incr(RequestUsage(cost=response.usage.cost))  # usage-attribution: the session owns its spans
             self._history.append(response)
+            self._resolve_in_flight_user_turn_anchors(response)
             if not any(isinstance(part, ToolCallPart) for part in parts):
                 # The model has said what it had to say (a tool call means its answer is still to come),
                 # so audio from here on can be the user's next turn again.
                 self._anonymous_user_turn_awaiting_answer = False
-            self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
+            # Counted here unless the profile says the requests are reported with usage instead.
+            requests = int(self._responses_are_requests)
+            self.usage.requests += requests  # usage-attribution: the session owns its spans; `wrap_run` opens none
             self._tool_run_step += 1
+            self._close_tool_batch()
             for part in parts:
                 if isinstance(part, ToolCallPart):
                     self._tool_calls_awaiting_usage.discard(part.tool_call_id)
@@ -2226,15 +2428,46 @@ class RealtimeSession:
         if self._pending_sent_requests:
             self._history.extend(self._pending_sent_requests)
             self._pending_sent_requests = []
+            self._stop_held_user_turn_watchdog()
         self._session_instrumentation.end_chat_span(input_messages, response)
         self._response_parts = []
         self._native_tool_parts = []
         self._pending_response_usage = RequestUsage()
         self._pending_provider_response_id = None
+        self._content_response_id = None
         self._pending_finish_reason = None
+        self._pending_provider_details = None
         self._response_limit_checked = False
         if response is not None:
             self._check_response_boundary_limits()
+
+    def _release_held_user_turns(self) -> None:
+        """Record the barge-in user turns still waiting on the response they interrupted, which never came."""
+        self._held_user_turn_watchdog = None
+        # Still waiting in `_pending_sent_requests`: the response that would have flushed them also ends the hold.
+        for request in self._held_user_turns:
+            self._remove_sent_request(request)
+            self._history.append(request)
+        self._held_user_turns = []
+
+    def _stop_held_user_turn_watchdog(self) -> None:
+        if self._held_user_turn_watchdog is not None:
+            self._held_user_turn_watchdog.cancel()
+            self._held_user_turn_watchdog = None
+        self._held_user_turns = []
+
+    def _resolve_in_flight_user_turn_anchors(self, response: ModelResponse) -> None:
+        """Anchor the user turns that began while `response` was being produced to it, now that it's recorded."""
+        anchors = self._pending_anonymous_user_turn_anchors
+        for index, anchor in enumerate(anchors):
+            if isinstance(anchor, _InFlightResponse):
+                anchors[index] = response
+        for item_id, (anchor,) in self._pending_user_turn_anchors.items():
+            if isinstance(anchor, _InFlightResponse):
+                self._pending_user_turn_anchors[item_id] = (response,)
+        for key, anchor in self._user_turn_anchors.items():
+            if isinstance(anchor, _InFlightResponse):
+                self._user_turn_anchors[key] = response
 
     def _check_response_boundary_limits(self) -> None:
         """Check the usage limits against a response that has just been finalized.
@@ -2499,9 +2732,15 @@ class RealtimeSession:
         if not self._input_transcription_enabled:
             return []
         events = self._finalize_user()
-        if not events and self._user_turn_active:
+        if (
+            not events
+            and not self._response_output_in_flight
+            and len(self._pending_anonymous_user_turn_anchors) > self._anonymous_user_turns_ended
+        ):
             # The transcript can lag behind the output that marks its boundary. Remember that the
             # anonymous turn is already over so the next audio segment can close it after it arrives.
+            # Only the reply's first output marks that boundary: audio sent while the model answers
+            # opens nothing that output could end.
             self._anonymous_user_turns_ended += 1
             self._user_turn_active = False
             self._anonymous_user_turn_awaiting_answer = True
@@ -2572,13 +2811,16 @@ class RealtimeSession:
         after the tool call and return in between; replaying that history reads as the model calling a tool
         unprompted. So the turn's position is taken when it starts (audio begins flowing, or the provider
         reports speech started), and `_record_user_request` inserts there however late the transcript is.
+
+        A turn that starts while the model is still answering (a barge-in) belongs after that answer, which
+        isn't in history yet: it's anchored to the in-flight response, resolved once that is recorded.
         """
-        anchor = self._history[-1] if self._history else None
+        anchor = self._user_turn_anchor_here()
+        anchors = self._pending_anonymous_user_turn_anchors
         if item_id is None:
             # Audio or a speech-start frame unambiguously opens the next anonymous turn, so later
             # transcript and speech-end frames must no longer be treated as stragglers for the last one.
             self._anonymous_user_turn_finalized = False
-            anchors = self._pending_anonymous_user_turn_anchors
             if len(anchors) > self._anonymous_user_turns_ended:
                 # An anonymous turn is still open — local audio reserved its place already — so a
                 # speech start now is the provider confirming that turn, not a new one: re-anchor it
@@ -2587,33 +2829,58 @@ class RealtimeSession:
             else:
                 anchors.append(anchor)
         else:
+            if len(anchors) > self._anonymous_user_turns_ended:
+                # The provider named the turn local audio opened: its speech start is the fresher position.
+                anchors.pop()
             self._pending_user_turn_anchors[item_id] = (anchor,)
+
+    def _user_turn_anchor_here(self) -> _UserTurnAnchor:
+        """Where a user turn starting now belongs: after the response being produced, or else the last message."""
+        if self._response_output_in_flight:
+            return _IN_FLIGHT_RESPONSE
+        return self._history[-1] if self._history else None
 
     def _claim_user_turn_anchor(self, item_id: str | None) -> None:
         """Attach the starting turn's remembered position to the item the transcript identified it as."""
-        if item_id is None:
-            has_anchor = bool(self._pending_anonymous_user_turn_anchors)
-            anchor = self._pending_anonymous_user_turn_anchors.popleft() if has_anchor else None
+        anchor: _UserTurnAnchor
+        anchors = self._pending_anonymous_user_turn_anchors
+        if item_id is not None and (pending_anchor := self._pending_user_turn_anchors.pop(item_id, None)):
+            (anchor,) = pending_anchor
+        elif anchors:
+            # With no speech start to name it (push-to-talk reports none), an identified turn is the one
+            # the audio sent for it opened.
+            anchor = anchors.popleft()
+            if item_id is not None and self._anonymous_user_turns_ended:
+                self._anonymous_user_turns_ended -= 1
         else:
-            pending_anchor = self._pending_user_turn_anchors.pop(item_id, None)
-            anchor = pending_anchor[0] if pending_anchor is not None else None
-            has_anchor = pending_anchor is not None
-        # No anchor when the first thing we ever hear about the turn is its transcript (text-only sessions
-        # seeded with audio, or a provider that reports nothing before it); the turn starts here instead.
-        self._user_turn_anchors[item_id] = anchor if has_anchor else (self._history[-1] if self._history else None)
+            # No anchor when the first thing we ever hear about the turn is its transcript (text-only
+            # sessions seeded with audio, a provider that reports nothing before it, or audio sent while the
+            # model was answering, which reserves no place); the turn starts here instead.
+            anchor = self._user_turn_anchor_here()
+        self._user_turn_anchors[item_id] = anchor
 
     def _record_user_request(self, item_id: str | None, request: ModelRequest) -> None:
         """Record a finalized user turn at the position it held when it started."""
         anchor = self._user_turn_anchors.pop(item_id)
+        if isinstance(anchor, _InFlightResponse):
+            # The response this turn began during is still being produced: the turn follows it, in the
+            # same place as a request sent meanwhile, for as long as `_BARGE_IN_TURN_HOLD_SECONDS` allows.
+            self._pending_sent_requests.append(request)
+            self._held_user_turns.append(request)
+            if self._held_user_turn_watchdog is None:
+                self._held_user_turn_watchdog = asyncio.get_running_loop().call_later(
+                    _BARGE_IN_TURN_HOLD_SECONDS, self._release_held_user_turns
+                )
+            return
         insert_at = 0
         if anchor is not None:
             for index in range(len(self._history) - 1, -1, -1):
                 if self._history[index] is anchor:
                     insert_at = index + 1
                     break
-            else:  # pragma: no cover
-                # An invariant fallback, like `_insert_tool_return`'s: nothing withdraws a message a user
-                # turn has already anchored to, but keep history complete rather than losing the turn.
+            else:
+                # The message a user turn anchored to can be withdrawn (a refused input taken back): keep
+                # history complete rather than losing the turn.
                 self._history.append(request)
                 return
         # Step over what already sits in the anchor's slot: an earlier response's tool returns, which must
@@ -2789,7 +3056,20 @@ class RealtimeSession:
         self._flush_pending_users()
         events.extend(self._finalize_untranscribed_user())
         self._input_audio.clear()
+        # The audio sent so far was just settled as a turn (and a reconnected provider has no buffer holding
+        # it), so a `commit_audio()` from here on commits nothing until more audio is sent.
+        self._audio_uncommitted = False
 
+        # Tool batches go with the conversation the provider lost: the running calls are cancelled below,
+        # and no reply is counted for results it may never have received, even from a tool that swallows
+        # its cancellation and returns anyway. Marked before the in-flight response is settled, which
+        # would otherwise close its batch and count one.
+        for batch in {*self._tool_call_batches.values(), *self._closed_tool_batches}:
+            batch.abandoned = True
+            # No call can join it any more, so it retires once its running calls are cancelled below.
+            batch.closed = True
+        self._closed_tool_batches.clear()
+        self._open_tool_batch = None
         if self._response_in_flight:
             events.extend(self._finalize_assistant_part())
             self._finalize_response(interrupted=True)
@@ -2885,11 +3165,13 @@ class RealtimeSession:
         if isinstance(event, AudioDelta):
             if not self._accept_item(event.item_id):
                 return []
+            self._content_response_id = event.response_id or self._content_response_id
             self._session_instrumentation.set_output_type('speech')
             return self._handle_assistant_audio(event.data, item_id=event.item_id)
         if isinstance(event, OutputTranscript):
             if not self._accept_item(event.item_id):
                 return []
+            self._content_response_id = event.response_id or self._content_response_id
             self._session_instrumentation.set_output_type('text' if event.output_text else 'speech')
             # `is_final` doesn't end the part — the turn ends on `ResponseDone`; a final transcript just
             # carries the full text, which `_accumulate_transcript` reconciles against the deltas. Plain
@@ -2949,6 +3231,13 @@ class RealtimeSession:
                 return text
         return None
 
+    async def _announce_deferred_requests(self, requests: DeferredToolRequests) -> None:
+        """Surface a deferred call before a handler is asked to resolve it, as a run does.
+
+        So a consumer can relay the request — e.g. to a person a handler is awaiting — while it's pending.
+        """
+        self._queue_put(DeferredToolRequestsEvent(requests))
+
     async def _execute_tool(
         self,
         call_part: ToolCallPart,
@@ -2972,11 +3261,7 @@ class RealtimeSession:
             for prerequisite in execution_prerequisites:
                 await prerequisite.wait()
 
-        async def on_inline_deferred(
-            requests: DeferredToolRequests,
-            results: DeferredToolResults,
-        ) -> None:
-            self._queue_put(DeferredToolRequestsEvent(requests))
+        async def on_inline_deferred(requests: DeferredToolRequests, results: DeferredToolResults) -> None:
             self._queue_put(DeferredToolResultsEvent(results))
 
         try:
@@ -3007,6 +3292,7 @@ class RealtimeSession:
             tool_result = await tool_manager.handle_call(
                 call_part,
                 on_validate=on_validate,
+                on_deferred_requests=self._announce_deferred_requests,
                 on_inline_deferred=on_inline_deferred,
             )
         except ToolRetryError as e:
@@ -3053,18 +3339,69 @@ class RealtimeSession:
         return result_part, user_content
 
     async def _send_tool_result(self, call_part: ToolCallPart, output: str, wire_content: list[UserContent]) -> None:
-        self._reserve_response_request()
+        result = ToolResult(tool_call_id=call_part.tool_call_id, output=output, content=wire_content or None)
+        if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is None:
+            # A connection that answers each result (or a call dispatched outside the pump): the result is
+            # a reply of its own, as it always has been.
+            self._reserve_response_request()
+            try:
+                await self._send_frame(result)
+            except BaseException:
+                self._release_response_reservation()
+                raise
+            return
+        batch.running.discard(call_part.tool_call_id)
+        if batch.reply_due:
+            # The last result: counted before it goes out, since a provider may answer on its arrival.
+            self._count_tool_batch_reply(batch)
+        elif not batch.abandoned:
+            # Not known to be the last, so nothing is counted yet, but the reply it may complete is
+            # checked against `request_limit` before the result goes out: once out, the connection asks
+            # for that reply as soon as the calling response is done, before the session can refuse it.
+            self._check_request_limit()
+        batch.sending += 1
         try:
-            await self._send_frame(
-                ToolResult(
-                    tool_call_id=call_part.tool_call_id,
-                    output=output,
-                    content=wire_content or None,
-                )
-            )
+            await self._send_frame(result)
         except BaseException:
-            self._release_response_reservation()
+            # A provider missing one of the batch's results won't answer it.
+            batch.abandoned = True
+            if batch.counted:
+                batch.counted = False
+                self._release_response_reservation()
             raise
+        finally:
+            batch.sending -= 1
+            self._retire_tool_batch_if_settled(batch)
+
+    def _count_tool_batch_reply(self, batch: _ToolBatch) -> None:
+        batch.counted = True
+        self._reserve_response_request()
+
+    def _retire_tool_batch_if_settled(self, batch: _ToolBatch) -> None:
+        """Forget a batch whose calls can no longer run or send, so nothing else can reach it."""
+        if batch.settled:
+            for call_id in batch.calls:
+                self._tool_call_batches.pop(call_id, None)
+
+    def _close_tool_batch(self) -> None:
+        """Close the batch of the response just finalized: its calls are all in, so its reply may be due."""
+        if (batch := self._open_tool_batch) is None:
+            return
+        self._open_tool_batch = None
+        batch.closed = True
+        self._closed_tool_batches.append(batch)
+
+    def _count_closed_tool_batch_replies(self) -> None:
+        """Count the reply of closed batches whose results all went out before they closed.
+
+        Run by the pump once the event that closed them is fully handled: after that event's usage-limit
+        checks, so a response over its limit doesn't count the next one.
+        """
+        while self._closed_tool_batches:
+            batch = self._closed_tool_batches.pop(0)
+            self._retire_tool_batch_if_settled(batch)
+            if batch.reply_due:
+                self._count_tool_batch_reply(batch)
 
     # --- streaming --------------------------------------------------------------------------------
 
@@ -3136,13 +3473,17 @@ class RealtimeSession:
         between: those solicited but not yet started, and the one in flight. Without them, sends
         issued back-to-back would each see the same count and oversubscribe the budget.
         """
-        if self._usage_limits is not None:
+        self._check_request_limit()
+        self._pending_response_requests += 1
+
+    def _check_request_limit(self) -> None:
+        """Check `request_limit` against one more response than those finalized, reserved and in flight."""
+        if self._usage_limits is not None and self._responses_are_requests:
             in_flight = 1 if self._response_limit_checked else 0
             projected = dataclasses.replace(
                 self.usage, requests=self.usage.requests + self._pending_response_requests + in_flight
             )
             self._usage_limits.check_before_request(projected)
-        self._pending_response_requests += 1
 
     def _begin_response(self) -> None:
         """Take the reservation for the response that's starting, or make the check now if it has none.
@@ -3155,16 +3496,22 @@ class RealtimeSession:
             return
         if self._pending_response_requests:
             self._pending_response_requests -= 1
-        elif self._usage_limits is not None:
+        elif self._usage_limits is not None and self._responses_are_requests:
             self._usage_limits.check_before_request(self.usage)
         self._response_limit_checked = True
         self._response_active = True
+        # A response that is starting is not the one whose terminal is still to come. Gemini finalizes a
+        # tool-call response through its usage with no terminal following, and a stale flag would read
+        # the next response's terminal as that one's.
+        self._response_finalized_before_terminal = False
 
     def _accumulate_response_usage(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
         self._pending_response_usage = self._pending_response_usage + event.usage
         self._pending_provider_response_id = event.provider_response_id or self._pending_provider_response_id
         self._pending_finish_reason = event.finish_reason or self._pending_finish_reason
+        if event.provider_details:
+            self._pending_provider_details = {**(self._pending_provider_details or {}), **event.provider_details}
         if self._tool_calls_awaiting_usage:
             events.extend(self._finalize_assistant_part())
             self._finalize_response(
@@ -3178,9 +3525,16 @@ class RealtimeSession:
 
     async def _handle_usage_event(self, event: SessionUsage) -> list[RealtimeEvent]:
         events: list[RealtimeEvent] = []
+        if event.context_window_used is not None:
+            self._reported_context_window_used = event.context_window_used
         if event.response_scoped:
             self._begin_response()
+            if not self._responses_are_requests:
+                # Each report is a request the model has already made: it is recorded in full, and the
+                # one past the limit ends the session below, once it is.
+                self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
         self.usage.incr(event.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
+        self._span_usage.incr(event.usage)  # usage-attribution: what the session span reports
         if event.response_scoped:
             # Measured before accumulating: a tool-call response is finalized by the accumulation
             # itself, which resets the accumulator.
@@ -3190,6 +3544,17 @@ class RealtimeSession:
                 self._usage_limits.check_per_request_input_tokens(response_input_tokens)
         # Response pricing happens at finalization, so cost is provisionally unavailable here.
         self._check_usage_limits(warn_if_cost_unavailable=False)
+        if (
+            event.response_scoped
+            and not self._responses_are_requests
+            and self._usage_limits is not None
+            and (request_limit := self._usage_limits.request_limit) is not None
+            and self.usage.requests > request_limit
+        ):
+            raise UsageLimitExceeded(
+                f'Exceeded the request_limit of {request_limit} (`usage.requests`={self.usage.requests})'
+            )
+        self._count_closed_tool_batch_replies()
         if self._asap_drain_ready:
             self._asap_drain_ready = False
             await self._drain_pending_messages('asap')
@@ -3219,8 +3584,16 @@ class RealtimeSession:
                 reserved_budget=reserved_budget,
             )
         except asyncio.CancelledError:
+            if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is not None:
+                batch.running.discard(call_part.tool_call_id)
+                self._retire_tool_batch_if_settled(batch)
             raise
         except BaseException as e:
+            if (batch := self._tool_call_batches.get(call_part.tool_call_id)) is not None:
+                # Its result will never go out, so the batch won't be answered.
+                batch.running.discard(call_part.tool_call_id)
+                batch.abandoned = True
+                self._retire_tool_batch_if_settled(batch)
             self._complete_tool_call(call_part, _unsettled_call_return(call_part, e))
             # Surface the failure through the queue so the consumer re-raises it, instead of letting it
             # vanish into `__aexit__`'s cleanup-only drain and hang the session on a completion that
@@ -3302,6 +3675,15 @@ class RealtimeSession:
         if reserves_budget:
             self._check_tool_call_limit()
             self._tool_calls_in_flight += 1
+        # Joined before the call is folded into the response below, which finalizes a response whose
+        # usage doesn't follow and so closes the batch with this call in it.
+        if self._connection._answers_tool_calls_per_response:  # pyright: ignore[reportPrivateUsage]
+            batch = self._open_tool_batch
+            if batch is None:
+                batch = self._open_tool_batch = _ToolBatch()
+            batch.calls.add(event.tool_call_id)
+            batch.running.add(event.tool_call_id)
+            self._tool_call_batches[event.tool_call_id] = batch
         # Captured at dispatch so every call from one response runs at the step in effect when the
         # response produced them, the way a graph run's whole batch shares the step advanced before
         # its request. Read at execution time instead, a call held behind a `sequential` barrier
@@ -3312,6 +3694,7 @@ class RealtimeSession:
             args=event.args,
             tool_call_id=event.tool_call_id,
         )
+        self._content_response_id = event.response_id or self._content_response_id
         for out in self._handle_tool_call_part(
             call_part,
             response_usage_follows=event.response_usage_follows,
@@ -3392,6 +3775,13 @@ class RealtimeSession:
             return False
         if isinstance(event, ToolCallCancelled):
             for tool_call_id in event.tool_call_ids:
+                if (batch := self._tool_call_batches.get(tool_call_id)) is not None:
+                    # A cancelled call means the model abandoned the turn (usually a barge-in): its
+                    # siblings' results still go out, but no reply is counted for them, since the
+                    # interruption starts the next one.
+                    batch.abandoned = True
+                    batch.running.discard(tool_call_id)
+                    self._retire_tool_batch_if_settled(batch)
                 if (pending := self._pending_tool_calls.pop(tool_call_id, None)) is None:
                     continue
                 task, call_part = pending
@@ -3422,6 +3812,7 @@ class RealtimeSession:
                 # barge-in rather than racing the session to handle it.
                 await self._auto_barge_in(out)
             self._queue_put(out)
+        self._count_closed_tool_batch_replies()
         if isinstance(event, ResponseDone):
             await self._drain_pending_messages('asap')
             await self._drain_pending_messages('when_idle')
@@ -3432,8 +3823,14 @@ class RealtimeSession:
         token = otel_context.attach(context) if context is not None else None
         try:
             async for event in self._connection:
+                if merged := self._connection._take_merged_response_requests():  # pyright: ignore[reportPrivateUsage]
+                    # Requests the connection answered with a response it was already asking for: none of
+                    # them gets one of its own.
+                    self._pending_response_requests = max(0, self._pending_response_requests - merged)
+                    self._exchange_progress.set()
                 if await self._handle_pump_event(event):
                     return  # a usage limit tripped: stop reading the upstream
+                self._count_closed_tool_batch_replies()
         except Exception as e:
             self._pump_error = e
         finally:
@@ -3471,6 +3868,10 @@ class RealtimeSession:
                         # everything before this offset belongs to earlier turns.
                         self._audio_part_index = event.index
                         self._turn_audio_start_bytes = self._emitted_audio_bytes
+                        item_id = (
+                            self._active_assistant_item_id if event.index == self._active_assistant_index else None
+                        )
+                        self._audio_items.append((self._emitted_audio_bytes, item_id))
                     self._emitted_audio_bytes += len(delta.audio_chunk)
                     for tap in self._audio_taps:
                         self._audio_tap_drops += tap.put(delta.audio_chunk)

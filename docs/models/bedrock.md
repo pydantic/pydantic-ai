@@ -2,7 +2,7 @@
 description: "Use Amazon Bedrock models like Claude, Nova and GPT-OSS with Pydantic AI via the Converse or Mantle API, with guardrails, prompt caching and inference profiles."
 ---
 
-# Bedrock
+# AWS Bedrock
 
 [Amazon Bedrock](https://aws.amazon.com/bedrock/) exposes foundation models from many providers, and Pydantic AI reaches it through two separate AWS APIs. Pick the route by model prefix:
 
@@ -106,18 +106,18 @@ When `trace` is set to `'enabled'` in the guardrail configuration (as in the exa
 
 ### Thinking and structured output
 
-For Claude models that support adaptive thinking and forced tool choice, `model_settings={'thinking': True}`
-works with both ordinary structured output (`output_type=MyModel`) and explicit
-[`ToolOutput`][pydantic_ai.output.ToolOutput]. Pydantic AI keeps using tool output instead of switching to native or
-prompted output. This also applies when adaptive thinking is the model's default.
+Claude answers a forced tool choice without thinking, and manual extended thinking
+(`bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', ...}}`) rejects one outright. So while a
+Claude request thinks, whether because of a thinking setting or because the model thinks by default (Claude Opus 5 and
+later, Claude Sonnet 5, Claude Fable 5), Pydantic AI doesn't force the output tool:
 
-Forced tool responses may omit visible thinking blocks. Use [`PromptedOutput`][pydantic_ai.output.PromptedOutput],
-or [`NativeOutput`][pydantic_ai.output.NativeOutput] when the model supports it, to avoid forcing an output tool.
+- A bare structured `output_type` uses [`NativeOutput`][pydantic_ai.output.NativeOutput] where Bedrock supports it for
+  the model. Otherwise it keeps tool output, with the output tool offered under `toolChoice={'auto': {}}` and a text
+  response retried. Extended thinking falls back to [`PromptedOutput`][pydantic_ai.output.PromptedOutput] instead.
+- An explicit [`ToolOutput`][pydantic_ai.output.ToolOutput] offers the output tool under `toolChoice={'auto': {}}`.
 
-Manual extended thinking (`bedrock_additional_model_requests_fields={'thinking': {'type': 'enabled', ...}}`)
-remains incompatible with forced tools: ordinary structured output falls back to native or prompted output,
-and explicit `ToolOutput` raises a `UserError`. Models that do not support forced tool choice retain this
-restriction with adaptive thinking too. See AWS's [adaptive thinking documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html)
+To keep forced tool output, turn thinking off with `thinking=False` where the model allows it.
+See AWS's [adaptive thinking documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/claude-messages-adaptive-thinking.html)
 and [forced tool use restrictions](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-tool-use.html#model-parameters-anthropic-claude-forced-tool-use).
 
 ### Custom HTTP headers
@@ -177,7 +177,7 @@ from pydantic_ai.models.bedrock import BedrockModelSettings
 
 agent = Agent(
     'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-    system_prompt='You are a helpful assistant.',
+    instructions='You are a helpful assistant.',
     model_settings=BedrockModelSettings(
         bedrock_cache_messages=True,  # Automatically caches the last message
     ),
@@ -203,7 +203,7 @@ from pydantic_ai.models.bedrock import BedrockConverseModel, BedrockModelSetting
 model = BedrockConverseModel('us.anthropic.claude-sonnet-4-5-20250929-v1:0')
 agent = Agent(
     model,
-    system_prompt='Detailed instructions...',
+    instructions='Detailed instructions...',
     model_settings=BedrockModelSettings(
         bedrock_cache_instructions=True,       # Cache system instructions
         bedrock_cache_tool_definitions='1h',   # Cache tool definitions with 1h TTL
@@ -231,7 +231,7 @@ from pydantic_ai import Agent, CachePoint
 
 agent = Agent(
     'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-    system_prompt='Instructions...',
+    instructions='Instructions...',
 )
 
 # Manually control cache points for specific content blocks
@@ -290,7 +290,7 @@ from pydantic_ai.models.bedrock import BedrockModelSettings
 
 agent = Agent(
     'bedrock:us.anthropic.claude-sonnet-4-5-20250929-v1:0',
-    system_prompt='Instructions...',
+    instructions='Instructions...',
     model_settings=BedrockModelSettings(
         bedrock_cache_instructions=True,      # 1 cache point
         bedrock_cache_tool_definitions=True,  # 1 cache point

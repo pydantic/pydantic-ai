@@ -235,7 +235,7 @@ When streaming, the timestamp is also emitted as a Vercel AI `message-metadata` 
 
 ## Trust model
 
-Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
+Vercel AI's request `messages` array is fully client-controlled, and the protocol round-trips approval responses and tool results through the message history. The [`VercelAIAdapter`][pydantic_ai.ui.vercel_ai.VercelAIAdapter] applies defaults to strip untrusted parts before the agent runs — see [Trust model for client-submitted messages](./overview.md#trust-model-for-client-submitted-messages) in the UI adapter overview, which covers system prompts, file URL schemes, uploaded files ([`allow_uploaded_files`][pydantic_ai.ui.UIAdapter.allow_uploaded_files]), workspace references ([`strip_workspace_refs`][pydantic_ai.ui.UIAdapter.strip_workspace_refs]), and unresolved tool calls. Those defaults don't make client-submitted history authentic — see [Trust boundary for client-supplied history](../message-history.md#trust-boundary-for-client-supplied-history).
 
 ## Compaction
 
@@ -247,6 +247,12 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
     Tool approval requires AI SDK UI v6 or later on the frontend.
 
 Pydantic AI supports human-in-the-loop tool approval workflows with AI SDK UI, allowing users to approve or deny tool executions before they run. See the [deferred tool calls documentation](../deferred-tools.md#human-in-the-loop-tool-approval) for details on setting up tools that require approval.
+
+If an approved tool needs the same workspace on the next request, save `result.workspace.ref`
+in `on_complete` on your server (keyed by an authorized conversation identity), then pass that
+saved ref as `workspace=` on the approval turn. Vercel AI messages do not carry workspace refs;
+client-submitted history alone cannot resume a sandbox. See
+[Continuing in the same workspace](../workspace.md#continuing-in-the-same-workspace).
 
 To enable tool approval streaming, pass `sdk_version=6` to `dispatch_request`:
 

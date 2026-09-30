@@ -33,8 +33,6 @@ with try_import() as bedrock_imports:
 with try_import() as groq_imports:
     from pydantic_ai.models.groq import GroqModel
 
-pytestmark = pytest.mark.anyio
-
 
 GatewayProvider = Literal['openai-responses', 'openai-chat', 'anthropic', 'google', 'groq']
 

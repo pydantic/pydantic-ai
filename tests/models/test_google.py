@@ -15,6 +15,7 @@ from enum import Enum
 from typing import Any, cast
 
 import pytest
+from cassetter import Cassette
 from httpx import Timeout
 from httpx2 import (
     AsyncClient as HTTPX2AsyncClient,
@@ -25,7 +26,6 @@ from httpx2 import (
 from pydantic import BaseModel, Field
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
-from vcr.cassette import Cassette
 
 from pydantic_ai import (
     AgentRunResult,
@@ -89,7 +89,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 
 from .._inline_snapshot import Is, snapshot
-from ..cassette_utils import single_request_body
+from ..cassette_utils import request_json, single_request_body
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, RequestCapture, try_import
 from ..parts_from_messages import part_types_from_messages
 
@@ -139,7 +139,6 @@ if not imports_successful():  # pragma: lax no cover
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -1053,6 +1052,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'run_id': IsStr(),
                 'conversation_id': IsStr(),
                 'metadata': None,
+                'workspace_ref': None,
             }
         ]
     )
@@ -1131,10 +1131,12 @@ Overall, today's weather in San Francisco is pleasant, with a mix of sun and clo
                         'tool_use_prompt_tokens': 119,
                         'text_prompt_tokens': 17,
                         'text_tool_use_prompt_tokens': 119,
+                        'web_search_requests': 1,
                     },
                     output_reasoning_tokens=213,
                     input_tool_tokens=119,
                     input_text_tool_tokens=119,
+                    web_searches=1,
                     cost=Decimal('0.00431'),
                 ),
                 model_name='gemini-2.5-pro',
@@ -1218,10 +1220,12 @@ Tonight, the skies will remain cloudy with a continued chance of showers, and th
                         'tool_use_prompt_tokens': 286,
                         'text_prompt_tokens': 209,
                         'text_tool_use_prompt_tokens': 286,
+                        'web_search_requests': 1,
                     },
                     output_reasoning_tokens=131,
                     input_tool_tokens=286,
                     input_text_tool_tokens=286,
+                    web_searches=1,
                     cost=Decimal('0.00398875'),
                 ),
                 model_name='gemini-2.5-pro',
@@ -1291,10 +1295,12 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                         'tool_use_prompt_tokens': 102,
                         'text_prompt_tokens': 17,
                         'text_tool_use_prompt_tokens': 102,
+                        'web_search_requests': 1,
                     },
                     output_reasoning_tokens=412,
                     input_tool_tokens=102,
                     input_text_tool_tokens=102,
+                    web_searches=1,
                     cost=Decimal('0.00667875'),
                 ),
                 model_name='gemini-2.5-pro',
@@ -1478,10 +1484,12 @@ There is a high chance of rain throughout the day, with some reports stating a 6
                         'tool_use_prompt_tokens': 319,
                         'text_prompt_tokens': 249,
                         'text_tool_use_prompt_tokens': 319,
+                        'web_search_requests': 1,
                     },
                     output_reasoning_tokens=301,
                     input_tool_tokens=319,
                     input_text_tool_tokens=319,
+                    web_searches=1,
                     cost=Decimal('0.00612'),
                 ),
                 model_name='gemini-2.5-pro',
@@ -1729,9 +1737,15 @@ async def test_google_model_receive_web_search_history_from_another_provider(
             [UserPromptPart],
             [
                 NativeToolCallPart,
+                NativeToolCallPart,
                 NativeToolReturnPart,
-                TextPart,
-                TextPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -1761,7 +1775,7 @@ async def test_google_model_receive_web_search_history_from_another_provider(
         ]
     )
 
-    google_model = GoogleModel('gemini-2.0-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    google_model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     google_agent = Agent(model=google_model)
     result = await google_agent.run('What day is tomorrow?', message_history=result.all_messages())
     assert part_types_from_messages(result.all_messages()) == snapshot(
@@ -1769,9 +1783,15 @@ async def test_google_model_receive_web_search_history_from_another_provider(
             [UserPromptPart],
             [
                 NativeToolCallPart,
+                NativeToolCallPart,
                 NativeToolReturnPart,
-                TextPart,
-                TextPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
+                NativeToolReturnPart,
+                NativeToolCallPart,
+                NativeToolReturnPart,
                 TextPart,
                 TextPart,
                 TextPart,
@@ -3305,9 +3325,9 @@ async def test_google_vertexai_count_tokens_forwards_native_tools(
         usage_limits=UsageLimits(input_tokens_limit=999_999, count_tokens_before_request=True),
     )
 
-    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    assert len(count_requests) == 1  # pyright: ignore[reportUnknownArgumentType]
-    assert json.loads(count_requests[0].body)['tools'] == snapshot([{'googleSearch': {}}])  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+    count_requests = [request for request in vcr.requests if 'countTokens' in request.uri]
+    assert len(count_requests) == 1
+    assert request_json(count_requests[0])['tools'] == snapshot([{'googleSearch': {}}])
     assert result.output == snapshot('The capital of France is Paris.')
 
 
@@ -3821,8 +3841,14 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                     output_tokens=2309,
                     input_text_tokens=33,
                     output_image_tokens=1120,
-                    details={'thoughts_tokens': 529, 'text_prompt_tokens': 33, 'image_candidates_tokens': 1120},
+                    details={
+                        'thoughts_tokens': 529,
+                        'text_prompt_tokens': 33,
+                        'image_candidates_tokens': 1120,
+                        'web_search_requests': 1,
+                    },
                     output_reasoning_tokens=529,
+                    web_searches=1,
                     cost=Decimal('0.148734'),
                 ),
                 model_name='gemini-3-pro-image-preview',
@@ -4083,8 +4109,8 @@ async def test_google_vertex_tool_combination_omits_include_server_side_tool_inv
 
     result = await agent.run('Look up the city I live in, then search the web for its weather today.')
 
-    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
-    request_bodies = [json.loads(request.body) for request in generate_requests]  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportUnknownVariableType]
+    generate_requests = [request for request in vcr.requests if 'generateContent' in request.uri]
+    request_bodies = [request_json(request) for request in generate_requests]
     # On the Gemini Developer API these requests carry `toolConfig.includeServerSideToolInvocations`;
     # on Vertex the field is skipped, so it is absent from every request Vertex actually accepted.
     assert [body.get('toolConfig', {}) for body in request_bodies] == snapshot(
@@ -4218,12 +4244,18 @@ Based on your location in **San Francisco**, here is the weather forecast for to
                     ),
                 ],
                 usage=RequestUsage(
-                    details={'thoughts_tokens': 456, 'text_prompt_tokens': 125, 'text_candidates_tokens': 250},
+                    details={
+                        'thoughts_tokens': 456,
+                        'text_prompt_tokens': 125,
+                        'text_candidates_tokens': 250,
+                        'web_search_requests': 1,
+                    },
                     input_tokens=125,
                     input_text_tokens=125,
                     output_text_tokens=250,
                     output_tokens=706,
                     output_reasoning_tokens=456,
+                    web_searches=1,
                     cost=Decimal('0.0021805'),
                 ),
                 model_name='gemini-3-flash-preview',
@@ -4795,6 +4827,41 @@ _USAGE_RETENTION_CASES = [
         ),
     ),
     _UsageRetentionCase(
+        id='empty_metadata_on_later_chunk',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo').model_copy(
+                update={'usage_metadata': GenerateContentResponseUsageMetadata()}
+            ),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_tokens=5,
+                details={'cached_content_tokens': 16365},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
+        id='single_field_chunk_extracts_through_guard',
+        make_chunks=lambda: [
+            _usage_chunk(cached=16365, candidates=5, text='hel'),
+            _usage_chunk(candidates=0, text='lo').model_copy(
+                update={'usage_metadata': GenerateContentResponseUsageMetadata(thoughts_token_count=70)}
+            ),
+        ],
+        expected=snapshot(
+            RequestUsage(
+                input_tokens=20025,
+                cache_read_tokens=16365,
+                output_reasoning_tokens=70,
+                output_tokens=70,
+                details={'cached_content_tokens': 16365, 'thoughts_tokens': 70},
+            )
+        ),
+    ),
+    _UsageRetentionCase(
         id='details_only_fields_dropped_by_later_chunk',
         make_chunks=lambda: [
             _usage_chunk(cached=16365, thoughts=100, candidates=5, text='hel'),
@@ -4816,7 +4883,7 @@ _USAGE_RETENTION_CASES = [
 async def test_gemini_streamed_response_usage_retained_across_chunks(case: _UsageRetentionCase):
     """Gemini streams usage as cumulative snapshots, but a later chunk can drop a field an earlier one
     carried (#5205): a gateway/proxy omits `cached_content_token_count`, a Vertex-direct stream omits
-    `usage_metadata` entirely, or a `details`-only field like `thoughts_tokens` disappears. The
+    `usage_metadata` or sends it empty, or a `details`-only field like `thoughts_tokens` disappears. The
     accumulated usage must survive instead of resetting to zero.
 
     These are deterministic unit tests rather than VCR tests because the direct Gemini APIs (GLA and
@@ -4881,6 +4948,60 @@ async def test_google_stream_usage_retains_dropped_field_mid_stream(
             usage_seen.append((result.usage.output_tokens, result.usage.cache_read_tokens))
 
     assert usage_seen == snapshot([(5, 16365), (10, 16365), (15, 16365)])
+
+
+@pytest.mark.parametrize(
+    'model_name,grounding_chunks,expected_web_searches',
+    [
+        pytest.param('gemini-3-flash-preview', [], 2, id='gemini-3-per-unique-query'),
+        pytest.param(
+            'gemini-2.5-flash', [{'web': {'uri': 'https://ai.pydantic.dev'}}], 1, id='gemini-2.5-per-sourced-prompt'
+        ),
+        pytest.param('gemini-2.5-flash', [], 0, id='gemini-2.5-no-sources-free'),
+    ],
+)
+async def test_google_web_search_grounding_usage(
+    allow_model_requests: None,
+    google_provider: GoogleProvider,
+    mocker: MockerFixture,
+    model_name: str,
+    grounding_chunks: list[dict[str, Any]],
+    expected_web_searches: int,
+):
+    """Grounding surfaces as billed `web_searches` and a `web_search_requests` detail of unique non-empty queries."""
+    response = GenerateContentResponse.model_validate(
+        {
+            'response_id': 'resp-grounding-1',
+            'model_version': model_name,
+            'candidates': [
+                {
+                    'content': {'role': 'model', 'parts': [{'text': 'Grounded answer.'}]},
+                    'grounding_metadata': {
+                        'web_search_queries': ['pydantic ai', '', 'web search', 'pydantic ai'],
+                        'grounding_chunks': grounding_chunks,
+                    },
+                }
+            ],
+            'usage_metadata': {
+                'prompt_token_count': 100,
+                'candidates_token_count': 50,
+                'total_token_count': 150,
+            },
+        }
+    )
+    model = GoogleModel(model_name, provider=google_provider)
+    mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    agent = Agent(model=model)
+    result = await agent.run('What is Pydantic AI?')
+
+    response_message = result.new_messages()[-1]
+    assert isinstance(response_message, ModelResponse)
+    usage = response_message.usage
+    assert usage.input_tokens == 100
+    assert usage.output_tokens == 50
+    assert getattr(usage, 'web_searches', 0) == expected_web_searches
+    assert usage.details['web_search_requests'] == 2
 
 
 async def test_google_stream_usage_limit_stops_stream_early(
@@ -5789,6 +5910,30 @@ async def test_google_stream_api_error_before_first_chunk_is_wrapped(allow_model
     assert exc_info.value.body == error_response
     assert isinstance(exc_info.value.__cause__, errors.ClientError)
     assert len(requests) == 1
+
+
+async def test_google_count_tokens_api_error_is_wrapped(allow_model_requests: None):
+    """An API error from `count_tokens` is mapped like one from the request, not raised as the SDK's own error."""
+    error_response = {'error': {'code': 429, 'message': 'Resource exhausted', 'status': 'RESOURCE_EXHAUSTED'}}
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(429, json=error_response, headers={'retry-after': '7'})
+
+    async with HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)) as http_client:
+        model = GoogleModel(
+            'gemini-2.5-flash',
+            provider=GoogleProvider(api_key='test-key', http_client=http_client, base_url='http://localhost'),
+        )
+
+        with pytest.raises(ModelHTTPError) as exc_info:
+            await Agent(model).run(
+                'test', usage_limits=UsageLimits(input_tokens_limit=100, count_tokens_before_request=True)
+            )
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.body == error_response
+    assert exc_info.value.retry_after == 7
+    assert isinstance(exc_info.value.__cause__, errors.ClientError)
 
 
 async def test_google_model_retrying_after_empty_response(allow_model_requests: None, google_provider: GoogleProvider):

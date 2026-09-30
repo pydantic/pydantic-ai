@@ -134,7 +134,7 @@ Jev's [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] is th
 
 ```python {title="jev_compaction.py" requires="compact_when_window_fills.py"}
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.models.fallback import FallbackModel
 
 from compact_when_window_fills import compact_when_window_fills
@@ -143,7 +143,7 @@ agent = Agent(
     FallbackModel('typesafe:jev-latest', 'openai:gpt-5.6-sol'),
     output_type=bool,
     instructions='Does the customer want a refund?',
-    capabilities=[ProcessHistory(compact_when_window_fills), ReinjectSystemPrompt()],
+    capabilities=[ProcessHistory(compact_when_window_fills)],
 )
 ```
 

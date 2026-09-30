@@ -1,11 +1,10 @@
 from __future__ import annotations as _annotations
 
-import json
 from typing import Any, cast, get_args
 
 import pytest
+from cassetter import Cassette
 from inline_snapshot import snapshot
-from vcr.cassette import Cassette
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse, TextPart, ThinkingPart
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -15,6 +14,7 @@ from pydantic_ai.profiles import DEFAULT_THINKING_TAGS
 from pydantic_ai.settings import ServiceTier
 from pydantic_ai.tools import ToolDefinition
 
+from ..cassette_utils import request_json
 from ..conftest import RequestCapture, iter_message_parts, try_import
 
 with try_import() as imports_successful:
@@ -29,7 +29,6 @@ with try_import() as imports_successful:
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
-    pytest.mark.anyio,
     pytest.mark.vcr,
 ]
 
@@ -107,8 +106,8 @@ async def test_cerebras_accepts_every_service_tier(
     Tiers are in Private Preview, so whether a request *gets* that tier is gated. Acceptance is
     not: `auto` / `default` / `flex` / `priority` all 200 rather than 400.
 
-    `request_capture` pins the four values on the live outgoing body; `vcr.responses` pins the
-    recorded HTTP 200s. Cassette matching ignores the body, so asserting on `vcr.requests` would
+    `request_capture` pins the four values on the live outgoing body; the cassette's interactions pin
+    the recorded HTTP 200s. Cassette matching ignores the body, so asserting on `vcr.requests` would
     keep passing after the code stopped sending `service_tier`.
     """
     provider = CerebrasProvider(api_key=cerebras_api_key, http_client=request_capture.client)
@@ -121,8 +120,7 @@ async def test_cerebras_accepts_every_service_tier(
 
     sent = [body.get('service_tier') for body in request_capture.bodies('/chat/completions')]
     assert sent == list(tiers)
-    recorded_responses = vcr.responses  # pyright: ignore[reportUnknownMemberType,reportUnknownVariableType]
-    assert [response['status']['code'] for response in recorded_responses] == [200] * len(tiers)  # pyright: ignore[reportUnknownVariableType]
+    assert [interaction.response.status for interaction in vcr.interactions] == [200] * len(tiers)
 
 
 async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, cerebras_api_key: str, vcr: Cassette):
@@ -142,7 +140,7 @@ async def test_cerebras_disable_reasoning_setting(allow_model_requests: None, ce
     text_part = cast(TextPart, response.parts[0])
     assert '4' in text_part.content
 
-    body = json.loads(vcr.requests[0].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    body = request_json(vcr.requests[0])
     assert body.get('reasoning_effort') == 'none'
     assert 'disable_reasoning' not in body
     # zai replays prior reasoning as `<think>` tags, so `clear_thinking=false` is injected by default.
@@ -174,7 +172,7 @@ async def test_cerebras_thinking_part_survives_multiturn(
     assert any(p.content == turn1_thinking[0].content for p in preserved)
 
     # On the wire, the decorative thinking is replayed as the assistant message's `reasoning` field.
-    turn2_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    turn2_body = request_json(vcr.requests[1])
     assistant_messages = [m for m in turn2_body['messages'] if m.get('role') == 'assistant']
     assert any(m.get('reasoning') == turn1_thinking[0].content for m in assistant_messages)
 
@@ -199,7 +197,7 @@ async def test_cerebras_zai_reasoning_replayed_as_think_tags(
 
     await agent.run('Now divide that by 2.', message_history=result1.all_messages())
 
-    turn2_body = json.loads(vcr.requests[1].body)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+    turn2_body = request_json(vcr.requests[1])
     assistant_messages = [m for m in turn2_body['messages'] if m.get('role') == 'assistant']
     start_tag, end_tag = model.profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
     assert any(

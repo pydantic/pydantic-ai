@@ -51,7 +51,6 @@ with try_import() as imports_successful:
     from pydantic_ai.realtime.xai import XaiRealtimeModel, XaiRealtimeModelSettings
 
 pytestmark = [
-    pytest.mark.anyio,
     pytest.mark.skipif(not imports_successful(), reason='xai-sdk / websockets not installed'),
 ]
 
@@ -508,6 +507,7 @@ def test_profile_allow_seeding() -> None:
     profile = XaiRealtimeModel(MODEL, provider=XaiProvider(api_key='xai-test-key')).profile
     assert profile == RealtimeModelProfile(
         supports_image_input=False,
+        image_input_requires_response=False,
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_output_truncation=False,
@@ -517,10 +517,15 @@ def test_profile_allow_seeding() -> None:
         supports_seeding_images=False,
         supports_seeding_audio=False,
         supports_thinking=True,
-        supports_async_tool_calls=False,
+        # Grok Voice answers the user while a tool call is outstanding (verified live).
+        async_tool_call_mode='always',
+        supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
         supports_tool_return_schema=False,
         supported_native_tools=frozenset(),
         emits_input_speech_events=True,
+        synthesizes_turn_boundary=False,
+        responses_are_requests=True,
+        response_usage_covers_context=False,
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         context_window=None,
