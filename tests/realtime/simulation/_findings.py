@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from ._simulation import InvariantViolation, Simulation
+    from ._simulation import InvariantViolation, Operation, Simulation
     from ._truth import TruthInput, TruthResponse
 
 Predicate = Callable[['Simulation', 'InvariantViolation'], bool]
@@ -728,16 +728,15 @@ BARGE_IN_ON_A_TOOL_ROUND = Finding(
 LOST_REFUSAL = Finding(
     id='SIM-21',
     title=(
-        'a request for a response whose refusal is lost with the connection (the client never reads it) is neither '
-        're-asked after the reconnect nor released, so `wait_for_reply()` hangs'
+        'a request for a response the provider refuses around a reconnect (the refusal lost with the connection, or '
+        'read just before it drops) leaves a reservation neither re-asked nor released, so `wait_for_reply()` hangs'
     ),
     tracked_by='a reconnect resolves the reply obligations its connection lost; found by this simulator',
     evidence='simulated',
     codes=frozenset({'wait.hang'}),
     providers=OPENAI_PROTOCOL,
     matches=lambda sim, violation: (
-        bool(sim.truth.connection_losses)
-        and any(input_.refused_at is not None and input_.refused_read is None for input_ in sim.truth.inputs)
+        bool(sim.truth.connection_losses) and any(input_.refused_at is not None for input_ in sim.truth.inputs)
     ),
 )
 
@@ -808,26 +807,44 @@ def _turn_without_its_transcript(sim: Simulation) -> bool:
 
 
 def _audio_after_a_clear(sim: Simulation) -> bool:
-    """Audio the microphone was still streaming when the app cleared the buffer reached the provider after the clear."""
-    clears = [operation.issued for operation in sim.operations if operation.name == 'clear_audio']
-    return any(
-        operation.name == 'send_audio' and operation.completed is not None and operation.completed > issued
-        for operation in sim.operations
-        for issued in clears
-    )
+    """Microphone audio was on its way at the same time as a clear or commit the app made (the two raced)."""
+
+    def span(operation: Operation) -> tuple[int, float]:
+        return operation.issued, operation.completed if operation.completed is not None else float('inf')
+
+    audio = [span(operation) for operation in sim.operations if operation.name == 'send_audio']
+    buffer_ops = [span(operation) for operation in sim.operations if operation.name in ('clear_audio', 'commit_audio')]
+    return any(start < end_b and start_b < end for start, end in audio for start_b, end_b in buffer_ops)
 
 
 AUDIO_AFTER_A_CLEAR = Finding(
     id='SIM-26',
     title=(
-        'audio still streaming from the microphone when the app calls `clear_audio()` lands after the clear, and the '
-        'turn a `commit_audio()` then commits on the provider is never recorded: the session thinks the buffer is empty'
+        'audio still streaming from the microphone when the app calls `clear_audio()` or `commit_audio()` lands after '
+        'it, and the turn a later `commit_audio()` commits on the provider is never recorded: the session thinks the '
+        'buffer is empty'
     ),
     tracked_by='user turns recorded from the provider committing them; found by this simulator',
     evidence='simulated',
     codes=frozenset({'history.turn_missing'}),
     providers=OPENAI_PROTOCOL,
     matches=lambda sim, violation: _audio_after_a_clear(sim),
+)
+
+
+HAND_COMMIT_UNDER_SERVER_VAD = Finding(
+    id='SIM-27',
+    title=(
+        'a `commit_audio()` while server VAD is hearing the user commits what was buffered as a turn of its own, and '
+        'VAD commits another when the user stops, but the session records only one of the two'
+    ),
+    tracked_by='user turns recorded from the provider committing them (the rest of OR9); found by this simulator',
+    evidence='simulated',
+    codes=frozenset({'history.turn_missing'}),
+    providers=frozenset({'openai', 'azure'}),
+    matches=lambda sim, violation: (
+        bool(sim.truth.speech_started) and any(operation.name == 'commit_audio' for operation in sim.operations)
+    ),
 )
 
 
@@ -864,6 +881,7 @@ KNOWN_FINDINGS.extend(
         NON_AUDIO_SEND_DURING_RECONNECT,
         TURN_LOST_AT_CLOSE,
         AUDIO_AFTER_A_CLEAR,
+        HAND_COMMIT_UNDER_SERVER_VAD,
         BARGE_IN_WITHOUT_A_VAD_REPLY,
         LOST_REFUSAL,
         TERMINAL_DISCARDED_WITH_THE_CONNECTION,

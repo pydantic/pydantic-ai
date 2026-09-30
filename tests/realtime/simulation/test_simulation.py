@@ -537,6 +537,23 @@ def test_known_turn_committed_after_a_racing_clear_is_lost() -> None:
     )
 
 
+@known('SIM-27')
+def test_known_hand_commit_under_server_vad_loses_a_turn() -> None:
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.speech_start()
+        sim.commit_audio()
+        sim.settle()
+
+    reproduce(
+        'SIM-27',
+        OpenAISimulation(
+            openai=OpenAIOptions(dialect='azure', transcription=False, vad_interrupts=False, vad_responds=False)
+        ),
+        scenario,
+    )
+
+
 @known('E')
 def test_known_late_transcript_inserted_into_recorded_history() -> None:
     def scenario(sim: OpenAISimulation) -> None:
