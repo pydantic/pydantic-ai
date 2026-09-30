@@ -13,7 +13,7 @@ from termflow.tui.keys import Key
 
 import pydantic_clai2.ui.menus.session_browser as module
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.runtime.project_identity import project_identity
+from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser, date_label, plain
 
 
@@ -299,10 +299,13 @@ def test_failed_idle_refresh_waits_before_retry(monkeypatch: pytest.MonkeyPatch)
     assert 'database unavailable' in widget.notice
 
 
-def test_repository_grouping_and_checkout_labels(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('repo_name', ['repo', 'repo\nname'])
+def test_repository_grouping_and_checkout_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo_name: str
+) -> None:
     """Real Git metadata, not directory naming conventions, unifies linked checkouts."""
-    repo = tmp_path / 'repo'
-    linked = tmp_path / '.herdr' / 'worktrees' / 'unrelated-long-directory'
+    repo = tmp_path / repo_name
+    linked = tmp_path / '.herdr' / 'worktrees' / f'unrelated-long-directory-{repo_name}'
 
     def git(*args: str) -> None:
         subprocess.run(['git', *args], check=True, capture_output=True)
@@ -332,10 +335,10 @@ def test_repository_grouping_and_checkout_labels(tmp_path: Path, monkeypatch: py
     widget.workspace = str(subdir)
     widget.reload()
     assert len(widget.projects) == 1
-    assert widget.project_label(widget.project) == 'repo'
+    assert widget.project_label(widget.project) == repo_name
     assert [e.id for e in widget.sessions] == ['one', 'two', 'three']
     frame = '\n'.join(widget.frame(width=120, height=24))
-    assert 'repo (3)' in frame
+    assert f'{plain(repo_name)} (3)' in frame
     assert '[main]' in frame and '[feature/resume]' in frame
     assert str(linked) not in frame
     widget.handle_key(Key.ENTER)
@@ -343,18 +346,23 @@ def test_repository_grouping_and_checkout_labels(tmp_path: Path, monkeypatch: py
     assert widget.handle_key(Key.ENTER) == 'three'
     widget.selected_id = 'two'
     assert widget.handle_key(Key.ENTER) is None
-    assert str(linked) in widget.footer()
+    assert plain(str(linked)) in widget.footer()
     assert widget.handle_key('y') == 'two'
     widget.reload()
     assert widget.selected is not None and widget.selected.id == 'two'
 
-    def fail_resolve(workspace: str) -> None:
-        pytest.fail('Git must not run during painting or repeated metadata refresh')
+    resolved: list[str] = []
 
-    monkeypatch.setattr(module, 'project_identity', fail_resolve)
+    def observe_resolve(workspace: str) -> ProjectIdentity:
+        resolved.append(workspace)
+        return project_identity(workspace)
+
+    monkeypatch.setattr(module, 'project_identity', observe_resolve)
+    assert module.project_identity(str(linked)).checkout == 'feature/resume'
     widget.reload()
     widget.query = 'global'
-    assert '[repo: feature/resume]' in '\n'.join(widget.frame(width=120, height=24))
+    assert f'[{plain(repo_name)}: feature/resume]' in '\n'.join(widget.frame(width=120, height=24))
+    assert resolved == [str(linked)]
     git('-C', str(linked), 'checkout', '--detach')
     assert project_identity(str(linked)).checkout == f'{linked.name} (detached)'
 
