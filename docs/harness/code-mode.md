@@ -655,7 +655,6 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv` / `os.environ` need an `os_access` handler.
 - Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry.
 - Tool results reach the sandbox in the JSON shape their generated stub declares, since the stub is derived from the tool's JSON schema. `Decimal`, `UUID` and `datetime` arrive as strings, and mapping keys are stringified, so a `dict[int, str]` of `{1: 'a'}` arrives as `{'1': 'a'}`. `bytes` and `bytearray` are the exception: Monty carries binary natively, so they cross unchanged even though the stub declares `str` for them.
-- Tools without a return schema remain available with `-> Any` in their generated signature. `CodeMode` does not warn because missing output schemas are common in MCP tools and may not be under the caller's control.
 
 ## Agent spec (YAML/JSON)
 
