@@ -4860,7 +4860,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseCodeInterpreterCallInterpretingEvent):
                     pass  # there's nothing we need to do here
 
-                elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):  # pragma: no cover
+                elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):
                     pass  # there's nothing we need to do here
 
                 elif isinstance(chunk, responses.ResponseImageGenCallGeneratingEvent):
