@@ -44,7 +44,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import RunContext
-from pydantic_ai.toolsets import DynamicToolset, ExternalToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolset, FunctionToolset
 from pydantic_ai_harness.absurd import AbsurdDurability
 
 from ._task import checkpoints, reenter_running_task, running_task_context
@@ -102,17 +102,6 @@ def _dynamic_toolset(tool_calls: dict[str, int], *, id: str | None) -> DynamicTo
     return DynamicToolset(build, id=id)
 
 
-def _calculator(calls: list[tuple[int, int]]) -> FastMCP[None]:
-    server: FastMCP[None] = FastMCP(name='calc', instructions='Use the calculator.')
-
-    @server.tool
-    def add(a: int, b: int) -> int:
-        calls.append((a, b))
-        return a + b
-
-    return server
-
-
 _RUNTIME_TOOLSET_ERROR = 'cannot be added at runtime with Absurd'
 _response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
 
@@ -130,42 +119,21 @@ class TestDurability:
         with pytest.raises(UserError, match="'default' is reserved"):
             Agent(_make_model(), name='a', capabilities=[AbsurdDurability(models={'default': _make_model()})])
 
-    async def test_leaf_toolset_without_id_is_durable(self, absurd: AsyncAbsurd) -> None:
-        tool_calls = {'calls': 0}
-        toolset = FunctionToolset[object]()
+    @pytest.mark.parametrize('kind', ['function', 'mcp', 'dynamic'])
+    async def test_leaf_toolset_without_id_raises(self, kind: str) -> None:
+        toolsets: dict[str, AbstractToolset[object]] = {
+            'function': FunctionToolset[object](),
+            'mcp': MCPToolset[object](FastMCP(name='calc')),
+            'dynamic': _dynamic_toolset({'calls': 0}, id=None),
+        }
+        toolset = toolsets[kind]
+        with pytest.raises(UserError, match='need to have a unique `id`'):
+            Agent(_make_model(), name='a', toolsets=[toolset], capabilities=[AbsurdDurability()])
 
-        @toolset.tool_plain
-        def charge_card(amount: int) -> str:
-            tool_calls['calls'] += 1
-            return f'charged {amount}'
-
-        agent = Agent(
-            _tool_calling_model(ToolCallPart('charge_card', {'amount': 7})),
-            name='idless',
-            toolsets=[toolset],
-            capabilities=[AbsurdDurability()],
-        )
-
-        async with running_task_context(absurd, 'idless') as ctx:
-            first = await agent.run('charge it')
-        # Without an `id`, the step name has no `__<id>` segment.
-        assert (await checkpoints(absurd, ctx.task_id))['idless__function_toolset.call_tool:charge_card'] == 'charged 7'
-        async with reenter_running_task(absurd, ctx.task_id):
-            replayed = await agent.run('charge it')
-
-        assert tool_calls['calls'] == 1
-        assert replayed.output == first.output == 'done'
-
-    @pytest.mark.parametrize(
-        ('toolset_id', 'step'),
-        [('shared', 'a__function_toolset__shared.call_tool:echo'), (None, 'a__function_toolset.call_tool:echo')],
-    )
-    async def test_same_toolset_instance_in_two_places_is_wrapped_once(
-        self, absurd: AsyncAbsurd, toolset_id: str | None, step: str
-    ) -> None:
+    async def test_same_toolset_instance_in_two_places_is_wrapped_once(self, absurd: AsyncAbsurd) -> None:
         # Both mounts checkpoint through the one wrapper, so the two calls take the same step name in
         # encounter order.
-        toolset = FunctionToolset[object](id=toolset_id)
+        toolset = FunctionToolset[object](id='shared')
 
         @toolset.tool_plain
         def echo(value: str) -> str:
@@ -181,6 +149,7 @@ class TestDurability:
             await agent.run('hi')
 
         stored = await checkpoints(absurd, ctx.task_id)
+        step = 'a__function_toolset__shared.call_tool:echo'
         assert {k: v for k, v in stored.items() if 'call_tool' in k} == {step: 'a', f'{step}#2': 'b'}
 
     async def test_duplicate_toolset_id_raises(self) -> None:
@@ -599,33 +568,6 @@ class TestStepNames:
             await agent.run('hi')
         assert list(await checkpoints(absurd, ctx.task_id)) == ['strdef__model.request']
 
-    async def test_id_less_mcp_server_drops_the_id_segment(self, absurd: AsyncAbsurd) -> None:
-        # An MCP toolset constructed without an `id` (for example an in-process server) is still
-        # checkpointed, under step names without the `__<id>` segment.
-        calls: list[tuple[int, int]] = []
-        agent = Agent(
-            _tool_calling_model(ToolCallPart('add', {'a': 2, 'b': 3})),
-            name='calc',
-            toolsets=[MCPToolset[object](_calculator(calls), include_instructions=True)],
-            capabilities=[AbsurdDurability()],
-        )
-        async with running_task_context(absurd) as ctx:
-            await agent.run('add 2 and 3')
-        stored = await checkpoints(absurd, ctx.task_id)
-        assert [name for name in stored if '__mcp_server' in name] == snapshot(
-            [
-                'calc__mcp_server.get_tools',
-                'calc__mcp_server.get_instructions',
-                'calc__mcp_server.call_tool',
-                'calc__mcp_server.get_instructions#2',
-            ]
-        )
-        assert stored['calc__mcp_server.call_tool'] == 5
-
-        async with reenter_running_task(absurd, ctx.task_id):
-            await agent.run('add 2 and 3')
-        assert calls == [(2, 3)]
-
     async def test_two_runs_in_one_task_disambiguate_by_encounter_order(self, absurd: AsyncAbsurd) -> None:
         counter = {'calls': 0}
         agent = Agent(_make_model(counter), name='a', capabilities=[AbsurdDurability()])
@@ -735,13 +677,12 @@ class TestCheckpointFormat:
 class TestDynamicToolset:
     """Function and MCP toolsets are checkpointed; a construction-time `DynamicToolset` runs as-is."""
 
-    @pytest.mark.parametrize('toolset_id', ['dyn', None])
-    async def test_runs_uncheckpointed_inside_a_task(self, absurd: AsyncAbsurd, toolset_id: str | None) -> None:
+    async def test_runs_uncheckpointed_inside_a_task(self, absurd: AsyncAbsurd) -> None:
         tool_calls = {'calls': 0}
         agent = Agent(
             _tool_calling_model(ToolCallPart('greet', {'name': 'ada'})),
             name='d',
-            toolsets=[_dynamic_toolset(tool_calls, id=toolset_id)],
+            toolsets=[_dynamic_toolset(tool_calls, id='dyn')],
             capabilities=[AbsurdDurability()],
         )
 

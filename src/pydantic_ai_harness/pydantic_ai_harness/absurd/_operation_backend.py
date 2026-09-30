@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Awaitable, Callable
 from typing import TypeGuard
 
@@ -14,16 +13,11 @@ from pydantic_ai.durable_exec import (
     ModelRequestId,
     RoleBasedOperationConfig,
     ToolsetCallToolId,
-    ToolsetGetInstructionsId,
-    ToolsetGetToolsId,
-    ToolsetValidateToolArgumentsId,
 )
 from pydantic_ai.messages import ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters
 
 from ._context import current_async_task_context
-
-_ToolsetOperationId = ToolsetGetToolsId | ToolsetGetInstructionsId | ToolsetValidateToolArgumentsId | ToolsetCallToolId
 
 # A tool-call checkpoint holds the raw return value; a `ToolReturn` has no raw form, so it goes under this key.
 _ENVELOPE_KEY = '__pydantic_ai_harness_absurd_tool_result__'
@@ -31,16 +25,6 @@ _RAW_RESULT_KINDS = frozenset({'tool_return', 'tool_content_result'})
 
 # Absurd steps take no per-operation options.
 _NO_CONFIG = RoleBasedOperationConfig[None](model=None, event=None, capability=None, tool=None)
-
-
-class AbsurdOperationNamer(JournalOperationNamer):
-    """Journal naming, where a toolset without an `id` drops the `__<id>` segment (`agent__mcp_server.call_tool`)."""
-
-    def operation_name(self, operation_id: DurableOperationId) -> str:
-        if isinstance(operation_id, _ToolsetOperationId) and not operation_id.toolset_id:
-            placeholder = dataclasses.replace(operation_id, toolset_id='\0')
-            return super().operation_name(placeholder).replace('__\0', '', 1)
-        return super().operation_name(operation_id)
 
 
 def _is_tool_return_object(value: object) -> bool:
@@ -93,7 +77,7 @@ def _from_checkpoint(stored: object) -> object:
 class AbsurdOperationBackend(CallableOperationBackend[None]):
     def __init__(self, *, agent_name: str, default_model_id: str | None) -> None:
         super().__init__(
-            namer=AbsurdOperationNamer(agent_name, default_model_id=default_model_id or 'default'), config=_NO_CONFIG
+            namer=JournalOperationNamer(agent_name, default_model_id=default_model_id or 'default'), config=_NO_CONFIG
         )
 
     async def execute(

@@ -266,8 +266,9 @@ Gotchas:
 
 - A run is durable only inside an async Absurd task handler. Outside a task nothing is checkpointed
   (only `parallel_execution_mode` still applies); a synchronous `TaskContext` raises `UserError`.
-- The agent needs a `name` (or `name=`). It and each toolset `id` are part of every step name, so
-  renaming either makes in-flight tasks re-run those steps.
+- The agent needs a `name` (or `name=`), and every function, MCP, or dynamic toolset needs a
+  unique `id`. Both are part of every step name, so renaming either makes in-flight tasks re-run
+  those steps.
 - Tool return values are stored as JSON. `ModelRetry`, `ToolFailed`, `CallDeferred`, and
   `ApprovalRequired` are not checkpointed, and `DynamicToolset`s are not wrapped, so that work re-runs.
 - Function, MCP, or dynamic toolsets passed per run with `run(toolsets=...)` inside a task raise

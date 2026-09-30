@@ -39,11 +39,9 @@ from pydantic_ai_harness.absurd import AbsurdDurability
 GOLDEN: dict[str, dict[str, JsonValue]] = json.loads(
     (Path(__file__).parent / 'fixtures' / 'pydantic_ai_absurd_0.8.0_checkpoints.json').read_text()
 )
-CASES = {
-    # (fixture key, MCP toolset id, whether the first `report_finding` call raises `ModelRetry`)
-    'id_mcp': ('logfire_mcp', False),
-    'id_less_mcp_with_retry': (None, True),
-}
+# Fixture key -> whether the first `report_finding` call raises `ModelRetry`. The retry case was recorded
+# with an id-less MCP server; its two MCP step names were renamed by hand to the id'd form.
+CASES = {'id_mcp': False, 'id_mcp_with_retry': True}
 
 
 class WorkflowOutput(BaseModel):
@@ -53,7 +51,7 @@ class WorkflowOutput(BaseModel):
     report: str
 
 
-def _agent(mcp_id: str | None, retry_first: bool, executions: list[str]) -> Agent[object, WorkflowOutput]:
+def _agent(retry_first: bool, executions: list[str]) -> Agent[object, WorkflowOutput]:
     def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         executions.append('model')
         done = [p.tool_name for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
@@ -124,7 +122,7 @@ def _agent(mcp_id: str | None, retry_first: bool, executions: list[str]) -> Agen
         'logfire:sre',
         name='sherlockberto',
         output_type=WorkflowOutput,
-        toolsets=[findings, posthog, MCPToolset[object](server, id=mcp_id)],
+        toolsets=[findings, posthog, MCPToolset[object](server, id='logfire_mcp')],
         capabilities=[
             ResolveModelId(lambda ctx, model_id: model if model_id == 'logfire:sre' else None),
             ProjectKnowledge(),
@@ -154,7 +152,7 @@ class TestPydanticAiAbsurdCheckpoints:
         self, case: str, absurd: AsyncAbsurd, async_conn: AsyncConnection[TupleRow], queue_name: str
     ) -> None:
         executions: list[str] = []
-        _register(absurd, _agent(*CASES[case], executions))
+        _register(absurd, _agent(CASES[case], executions))
         spawned = await absurd.spawn(
             'workflow', None, max_attempts=2, retry_strategy={'kind': 'fixed', 'base_seconds': 0}
         )
@@ -174,12 +172,12 @@ class TestPydanticAiAbsurdCheckpoints:
         assert result is not None and result.state == 'completed'
         assert result.result == EXPECTED_OUTPUT
         # Only the `ModelRetry` call re-runs: `pydantic-ai-absurd` never checkpointed it either.
-        assert executions == (['report_finding:retry'] if CASES[case][1] else [])
+        assert executions == (['report_finding:retry'] if CASES[case] else [])
 
     async def test_fresh_run_writes_the_same_checkpoints(
         self, case: str, absurd: AsyncAbsurd, async_conn: AsyncConnection[TupleRow], queue_name: str
     ) -> None:
-        _register(absurd, _agent(*CASES[case], []))
+        _register(absurd, _agent(CASES[case], []))
         await absurd.spawn('workflow', None)
         await absurd.work_batch(batch_size=1)
 

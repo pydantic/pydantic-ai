@@ -132,8 +132,8 @@
       ]
     }
   },
-  "id_less_mcp_with_retry": {
-    "sherlockberto__mcp_server.get_tools": {
+  "id_mcp_with_retry": {
+    "sherlockberto__mcp_server__logfire_mcp.get_tools": {
       "add": {
         "kind": "function",
         "name": "add",
@@ -253,7 +253,7 @@
         }
       ]
     },
-    "sherlockberto__mcp_server.call_tool": 5,
+    "sherlockberto__mcp_server__logfire_mcp.call_tool": 5,
     "sherlockberto__function_toolset__knowledge.call_tool:search_knowledge": {
       "hits": [
         "deploys-1",

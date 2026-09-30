@@ -15,13 +15,11 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Literal
 
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
-from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import WrapRunHandler
 from pydantic_ai.durable_exec import JSON_CODEC, BaseDurabilityCapability, DurabilityEngineSpec
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai.toolsets import AbstractToolset
 
 from ._context import ENGINE_NAME, current_async_task_context
 from ._operation_backend import AbsurdOperationBackend
@@ -97,7 +95,6 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         """
         super().__init__(models=models, event_stream_handler=event_stream_handler, name=name)
         self._parallel_execution_mode: ParallelExecutionMode = parallel_execution_mode
-        self._id_less_wrappers: dict[int, AbstractToolset[AgentDepsT]] = {}
 
     @property
     def in_durable_context(self) -> bool:
@@ -108,28 +105,6 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
             agent_name=self.name,
             default_model_id=self.default_model_id,
         )
-
-    def _bind_to_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
-        self._id_less_wrappers = {}
-        super()._bind_to_agent(agent)
-
-    def _wrap_and_register_leaf(self, ts: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-        # A toolset without an `id` is still checkpointed; its wrapper is keyed by instance.
-        if ts.id is not None:
-            return super()._wrap_and_register_leaf(ts)
-        if (existing := self._id_less_wrappers.get(id(ts))) is not None:
-            return existing
-        wrapped = self._wrap_leaf_toolset(ts)
-        if wrapped is None:
-            return ts
-        self._id_less_wrappers[id(ts)] = wrapped
-        return wrapped
-
-    def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
-        wrapped = super().get_wrapper_toolset(toolset)
-        if not self._id_less_wrappers:
-            return wrapped
-        return (wrapped or toolset).visit_and_replace(lambda ts: self._id_less_wrappers.get(id(ts), ts))
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Apply the configured parallel-execution mode to every run, inside a task or not."""

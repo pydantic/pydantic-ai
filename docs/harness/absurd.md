@@ -89,8 +89,7 @@ agent's `name` and each toolset's `id`:
 | `{name}__event_stream_handler` | one event delivered to an `event_stream_handler` |
 
 A model operation that does not use the agent's default model records its model id in the step name
-(for example, `{name}__model.request.{model_id}`). A toolset without an `id` drops the `__{id}`
-segment, for example `{name}__mcp_server.call_tool`. A tool listing served from an MCP toolset's
+(for example, `{name}__model.request.{model_id}`). A tool listing served from an MCP toolset's
 `cache_tools` cache takes no step.
 
 Replay means: after a crash, Absurd re-runs the task handler from the top. Plain Python in the
@@ -101,7 +100,7 @@ Some work is not checkpointed and runs again on replay:
 
 - a tool that raises `ModelRetry`, `ToolFailed`, `CallDeferred`, or `ApprovalRequired` stores no checkpoint, so the
   call is repeated;
-- a `DynamicToolset` (including one added with `@agent.toolset`) is not wrapped, so its listing and
+- a `DynamicToolset` is not wrapped, so its listing and
   tool calls run as plain code.
 
 Calling `agent.run()` more than once in a single task handler works: a step name that recurs (a
@@ -112,7 +111,8 @@ going at once in one task would claim each other's checkpoints.
 
 ## Constraints
 
-- The agent needs a `name` (or pass `name=` to `AbsurdDurability`). It and a toolset's `id` are part
+- The agent needs a `name` (or pass `name=` to `AbsurdDurability`), and every function, MCP, or
+  dynamic toolset needs a unique `id`; `Agent(...)` raises a `UserError` otherwise. Both are part
   of every step name, so don't change them once deployed: a rename orphans the checkpoints of
   in-flight tasks, which then re-run those steps.
 - A checkpointed tool's return value is stored in Postgres as JSON, so it must be JSON-serializable.
@@ -150,7 +150,8 @@ Replace `from pydantic_ai_absurd import AbsurdDurability` with
 `from pydantic_ai_harness.absurd import AbsurdDurability` (and the same for
 `AbsurdParallelExecutionMode`). Step names and checkpoint payloads match
 [`pydantic-ai-absurd`](https://github.com/Kludex/pydantic-ai-absurd) 0.8, so tasks in flight during
-the switch resume under the new package. The `AbsurdAgent` wrapper (deprecated in 0.8) and the
+the switch resume under the new package. A toolset 0.8 ran without an `id` now needs one, and adding
+it re-runs that toolset's steps in tasks in flight. The `AbsurdAgent` wrapper (deprecated in 0.8) and the
 `AbsurdModel`, `AbsurdFunctionToolset`, and `AbsurdMCPToolset` classes are not ported; move to the
 capability first.
 
