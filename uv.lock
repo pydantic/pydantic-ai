@@ -3828,25 +3828,78 @@ wheels = [
 
 [[package]]
 name = "logfire"
-version = "5.1.0"
+version = "6.0.0b1"
+source = { git = "https://github.com/pydantic/logfire.git?subdirectory=logfire&rev=ca08c9e15746e53a364fdf72d9156ce87492ad3a#ca08c9e15746e53a364fdf72d9156ce87492ad3a" }
+dependencies = [
+    { name = "logfire-cli" },
+    { name = "logfire-sdk" },
+]
+
+[package.optional-dependencies]
+asyncpg = [
+    { name = "logfire-sdk", extra = ["asyncpg"] },
+]
+fastapi = [
+    { name = "logfire-sdk", extra = ["fastapi"] },
+]
+httpx = [
+    { name = "logfire-sdk", extra = ["httpx"] },
+]
+sqlite3 = [
+    { name = "logfire-sdk", extra = ["sqlite3"] },
+]
+
+[[package]]
+name = "logfire-api"
+version = "4.37.0"
 source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/03/04/471b916249fe7e22056818ca734af46418cd3ff9b9b920c1829c3627b4d2/logfire_api-4.37.0.tar.gz", hash = "sha256:0f62debd6ed593d51307277bd6d5636b57bda07935b5604b96db10fe64441af4", size = 88906, upload-time = "2026-06-12T20:47:08.163Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/2f/23e5b8fa22f75f73965c72e5c29e6fb8715263457394601e254fe26fbe31/logfire_api-4.37.0-py3-none-any.whl", hash = "sha256:1d756f8ba23aa56d438e0ba2c0f529a00fcac975b8785c561b058267f9465088", size = 138710, upload-time = "2026-06-12T20:47:05.526Z" },
+]
+
+[[package]]
+name = "logfire-cli"
+version = "0.1.7"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0d/df/c3478c83c95d7121735a627fe8806cbadf616101153c5999bcc5a990aa99/logfire_cli-0.1.7-py3-none-linux_armv6l.whl", hash = "sha256:2584f33cbc1ce0895904f16fd0259152b2e8db7d020e0c206f1972ad354de1c1", size = 3296868, upload-time = "2026-09-19T04:16:06.36Z" },
+    { url = "https://files.pythonhosted.org/packages/bf/a9/2cc4dd94532f1e6588bcc3081638b6054bd7240d2b3b3bf6be21293057c0/logfire_cli-0.1.7-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:18f1422aec517a1e185d9bb93d67dd81f72b7fac96b1d9fa5a45b1a49d83eb78", size = 2946101, upload-time = "2026-09-19T04:16:07.824Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/ad/f259f98891c74870475b95ded7463bf7904b52053424f9ad9d758b539c0c/logfire_cli-0.1.7-py3-none-macosx_11_0_arm64.whl", hash = "sha256:bc0e44bc4c6a32fc82733be7f6e395d34b3522941ac9398112e46924d8a86bad", size = 2739159, upload-time = "2026-09-19T04:16:09.508Z" },
+    { url = "https://files.pythonhosted.org/packages/73/9b/e18989a1d9b941fd3569b2738871b7150545e4fd03ad76bcbe8698ac6eab/logfire_cli-0.1.7-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:59ed5ab66c9e207d261a8f718c5c21fe64782d595429cfa45876c60da27021b5", size = 3512103, upload-time = "2026-09-19T04:16:11.033Z" },
+    { url = "https://files.pythonhosted.org/packages/11/73/5c313959649d38957add20625c1f33197285cdb36e9daadcccb7e43f52ed/logfire_cli-0.1.7-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:68565c633b8e05435777156cbc6b9d6ed2d86a779ea05e3f7a30c7da896a9184", size = 3245798, upload-time = "2026-09-19T04:16:12.83Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/25/8b7ddfbc72d6d0755818748847edbac082ee5947c3a63dc60a5656fa91ca/logfire_cli-0.1.7-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:e6e5f6be753ae271825efd3b7eae4f5f95bba7221ba3baedb20c84134c6f5723", size = 3588737, upload-time = "2026-09-19T04:16:14.367Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/a6/f4efa714324f100b7bdeda145c64a9798a49b108d90f11dc1ac8548b074a/logfire_cli-0.1.7-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:54fa73ccdcb4fccc752f9b8154052cb11fc8c2c5d1fe2a8c19334133407aaca6", size = 3653979, upload-time = "2026-09-19T04:16:15.955Z" },
+    { url = "https://files.pythonhosted.org/packages/01/6f/a05537f026bd41996f548e86f806cf9d9230b16adf8e1fcd2881603a4d52/logfire_cli-0.1.7-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:22c24562917870514030cd5afceba5f2da0337bd41dca56583b101cc597e0ed2", size = 3394723, upload-time = "2026-09-19T04:16:17.341Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/7c/c9244dd8444421b4bfcb4994ac2877834dfe05698e7a971339e0fc9edf2f/logfire_cli-0.1.7-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:017c5811d58664696cb28130775a5ac92dd46b0daf022aa7a091814b992f6ab6", size = 3635445, upload-time = "2026-09-19T04:16:18.742Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/17/6cf24d623472424559e8b6a7c3fabf5509a6d58c975e8945d6b0fd399d43/logfire_cli-0.1.7-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:6c5fb7910496ffd0ff6f7caac06865531f9c4f2b413b3b1eb4b4c9d790a34cf8", size = 3384045, upload-time = "2026-09-19T04:16:20.123Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/97/5f31ea4cfa108ff9fd093d480964896c4dcd248a30214d72ad78954516cd/logfire_cli-0.1.7-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:9ebf5167e7e156314c02d8e6306c745f51f5a2903290567d546825a4e2a85822", size = 3541655, upload-time = "2026-09-19T04:16:21.564Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/86/a080dfe197ff9e1ad899c9169c593a850fb6a59f55a3fd6a406ad66123b7/logfire_cli-0.1.7-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:c9384c3c7bcb69d61f16eb7bf554bd55347de0f21455319c34764fb2d98d40fd", size = 3270955, upload-time = "2026-09-19T04:16:23.301Z" },
+    { url = "https://files.pythonhosted.org/packages/02/06/2a2355f8dbf48b81ca09d043d3d3c431025b3a0216db1b1eae47e490b682/logfire_cli-0.1.7-py3-none-musllinux_1_2_i686.whl", hash = "sha256:200a157bf348facb2c52248e515a932ac02b357a51aa274e9af42dd68fbce79f", size = 3425519, upload-time = "2026-09-19T04:16:24.726Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/e8/1af43555e9c720c02878847e992b09f462624bb0b487ca10835d0a413941/logfire_cli-0.1.7-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:4b2839e53c6d48caf680c2689d6b9aea8281d7505617ea5e959349e9f7b1ca8a", size = 3733806, upload-time = "2026-09-19T04:16:26.531Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/6f/c5a6c97e35468bdca9e05f9c936cdacb811bf75ed802f36a50182f4a30dd/logfire_cli-0.1.7-py3-none-win32.whl", hash = "sha256:820fa215dc5f5c5f3e2dd82f07393d2a1e00da0e87be2a88bba250e7edb48d42", size = 2660357, upload-time = "2026-09-19T04:16:28.085Z" },
+    { url = "https://files.pythonhosted.org/packages/26/24/0fb3e0394e60520aab8d9e5db5667f213f951db9f26a83c5baf6ce93703f/logfire_cli-0.1.7-py3-none-win_amd64.whl", hash = "sha256:4f97d7a89a6ff4a46d84878230e03226342bba3fbaeb7d2f031c544d96874b2f", size = 2892481, upload-time = "2026-09-19T04:16:29.946Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/a1/6a06706d62462e05f435edd6e9f1fcaaafbe99c5e56a1cd565180f3a2d8f/logfire_cli-0.1.7-py3-none-win_arm64.whl", hash = "sha256:2739f4e6c855c284b106c7e36a1f1fc08907227bd87927cd0d452811e9d63c88", size = 2720430, upload-time = "2026-09-19T04:16:31.651Z" },
+]
+
+[[package]]
+name = "logfire-sdk"
+version = "6.0.0b1"
+source = { git = "https://github.com/pydantic/logfire.git?subdirectory=logfire-sdk&rev=ca08c9e15746e53a364fdf72d9156ce87492ad3a#ca08c9e15746e53a364fdf72d9156ce87492ad3a" }
 dependencies = [
     { name = "executing" },
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-instrumentation" },
     { name = "opentelemetry-sdk" },
     { name = "protobuf" },
+    { name = "requests", version = "2.33.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
+    { name = "requests", version = "2.33.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "rich", version = "14.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "rich", version = "14.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "typing-extensions", version = "4.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "typing-extensions", version = "4.16.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.15' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/da/0c73a4447dffe01e1737580556f5f061ffda8f85e46fbf35ac36f5b64d27/logfire-5.1.0.tar.gz", hash = "sha256:edf6c7d33c00214e11c2cdc567eb53051be36289747091e8bb910527e5970bea", size = 1359738, upload-time = "2026-09-11T10:25:11.674Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/02/b32c3d5c298e4a9010694d261fb82c2c672747c0bf2b47bffda484aef349/logfire-5.1.0-py3-none-any.whl", hash = "sha256:c1d54eabf39f4c8f5e18e71f35da13375c8adb144c263f3076e650ba85929108", size = 474841, upload-time = "2026-09-11T10:25:08.131Z" },
-]
-
 [package.optional-dependencies]
 asyncpg = [
     { name = "opentelemetry-instrumentation-asyncpg" },
@@ -3859,15 +3912,6 @@ httpx = [
 ]
 sqlite3 = [
     { name = "opentelemetry-instrumentation-sqlite3" },
-]
-
-[[package]]
-name = "logfire-api"
-version = "5.1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/50/8a/3d108abf3ad67166fa22742b414ec386de042e5762de3e7b0c644cd6f359/logfire_api-5.1.0.tar.gz", hash = "sha256:16abf9d7d35e08cda2dab66fd0883cabaa4d4206f3dcea0f5967dbc823f01d6d", size = 96091, upload-time = "2026-09-11T10:25:13.116Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/51/123dab197fb08c0892e3bea1c2266bff159aa2ee82ad43bef93505859705/logfire_api-5.1.0-py3-none-any.whl", hash = "sha256:f3ad92eed63f7fce45580bf92ff85367c695c4a5bfee52241d71a8bacd3e3697", size = 146617, upload-time = "2026-09-11T10:25:10.054Z" },
 ]
 
 [[package]]
@@ -6538,7 +6582,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "idna", marker = "extra == 'playwright'", specifier = ">=3.4" },
     { name = "json-repair", specifier = ">=0.58.0" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=4.31.0" },
+    { name = "logfire", marker = "extra == 'logfire'", git = "https://github.com/pydantic/logfire.git?subdirectory=logfire&rev=ca08c9e15746e53a364fdf72d9156ce87492ad3a" },
     { name = "modal", marker = "extra == 'modal'", specifier = ">=1.5.2" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.61.0" },
     { name = "pydantic-ai-slim", editable = "pydantic_ai_slim" },
