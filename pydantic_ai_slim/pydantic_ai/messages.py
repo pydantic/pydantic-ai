@@ -331,14 +331,15 @@ class FileUrl(ABC):
                 raise
         # A URL with no usable extension and no given media type: `media_type` raises, and the computed field
         # reads it before any serializer of its own could step in. Dumping must not raise, or a history that
-        # ran can't be saved or sent to a frontend (issue #8388). So serialize a stand-in that has a media
-        # type and write the `None` this item holds in its place, which validates back into this item.
+        # ran can't be saved or sent to a frontend (https://github.com/pydantic/pydantic-ai/issues/8388).
+        # So serialize a stand-in that has a media type and write the `None` this item holds in its place,
+        # which validates back into this item. Only a dump that includes `media_type` reaches this point:
+        # one that leaves it out never reads the property.
         serialized: dict[str, object] = handler(replace(self, _media_type='application/octet-stream'))
-        if 'media_type' in serialized:  # absent under `round_trip`, `exclude_computed_fields` or an exclude
-            if info.exclude_none:
-                del serialized['media_type']
-            else:
-                serialized['media_type'] = None
+        if info.exclude_none:
+            del serialized['media_type']
+        else:
+            serialized['media_type'] = None
         return serialized
 
     @abstractmethod

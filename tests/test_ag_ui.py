@@ -7009,8 +7009,7 @@ def test_dump_messages_legacy_extensionless_url_loads_as_document() -> None:
 
     `BinaryInputContent` has nowhere to carry the original kind, and its `mime_type` — empty here — is
     what the kind is read back from, so the image returns as the catch-all `DocumentUrl`. It is still a
-    URL part that dumps, which before [issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)
-    it could not be: the dump raised before a client ever saw it.
+    URL part that dumps ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
     """
     messages: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/img')])])

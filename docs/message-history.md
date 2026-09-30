@@ -384,8 +384,8 @@ _(This example is complete, it can be run "as is")_
     reconstructed only when its mapping carries `media_type`, which a dump with the default arguments
     always writes; without it the item stays the plain mapping your tool returned. A URL whose media type
     Pydantic AI can't infer from the URL is serialized with `media_type: null`, which validates
-    back into the URL part's default (no media type) and dumps `null` again, so such a URL
-    round-trips instead of failing to dump, in a tool return as anywhere else. A
+    back into the URL part's default (no media type) and dumps `null` again, in a tool return as
+    anywhere else. A
     [`BinaryContent`][pydantic_ai.messages.BinaryContent] or
     [`UploadedFile`][pydantic_ai.messages.UploadedFile] item is recognized by the fields its own type
     requires. A mapping that merely reuses one of our `kind` values stays a plain mapping, and
