@@ -350,6 +350,21 @@ RESUMED_CONTENT_CASES = [
         ignore_streamed_leading_whitespace=True,
     ),
     ResumedContentCase(
+        id='trailing-whitespace-after-tool-is-dropped',
+        stream=lambda: [
+            text_chunk('Checking now.'),
+            struc_chunk('lookup', '{}'),
+            text_chunk('\n', finish_reason='tool_calls'),
+        ],
+        expected_parts=snapshot(
+            [
+                TextPart(content='Checking now.'),
+                ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
+            ]
+        ),
+        ignore_streamed_leading_whitespace=True,
+    ),
+    ResumedContentCase(
         id='leading-whitespace-before-tool-is-dropped',
         stream=lambda: [
             _reasoning_chunk('Think.'),
@@ -372,7 +387,7 @@ RESUMED_CONTENT_CASES = [
 async def test_resumed_content_starts_a_new_part(allow_model_requests: None, case: ResumedContentCase):
     """Content resumed after another part gets its own part, never a delta after its part ended.
 
-    `ignore_streamed_leading_whitespace` drops only the response's leading whitespace, so resumed text keeps its separator.
+    `ignore_streamed_leading_whitespace` still drops whitespace that no text follows, but resumed text keeps its separator.
     """
     model = OpenAIChatModel(
         'test',

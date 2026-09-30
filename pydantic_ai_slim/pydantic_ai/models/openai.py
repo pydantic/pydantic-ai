@@ -4044,6 +4044,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     # while it names a `TextPart`, so a `</think>` arriving after another part still closes its tag.
     _vendor_part_id: str = field(default='content', init=False)
     _thinking_vendor_part_suffix: str = field(default='', init=False)
+    _held_text_whitespace: str = field(default='', init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _has_finish_reason: bool = field(default=False, init=False)
@@ -4200,20 +4201,27 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Handle the text part of the response
         content = choice.delta.content
         if content:
+            emitted = False
             for event in self._parts_manager.handle_text_delta(
                 vendor_part_id=self._vendor_part_id,
                 content=content,
                 thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
-                # Only the response's leading text: text resumed after another part keeps its separator.
-                ignore_leading_whitespace=self._vendor_part_id == 'content'
-                and self._model_profile.get('ignore_streamed_leading_whitespace', False),
+                ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
             ):
+                emitted = True
                 if isinstance(event, PartStartEvent):
                     self._thinking_vendor_part_suffix = f'-{event.index}'
                     if isinstance(event.part, ThinkingPart):
                         event.part.id = 'content'
                         event.part.provider_name = self.provider_name
+                    elif isinstance(event.part, TextPart) and self._held_text_whitespace:
+                        event.part.content = self._held_text_whitespace + event.part.content
+                        self._held_text_whitespace = ''
                 yield event
+            if not emitted and content.isspace() and self._vendor_part_id != 'content':
+                # `ignore_streamed_leading_whitespace` dropped the whitespace-only start of text resumed after
+                # another part. Hold it as the separator for the text that follows; if none follows, it stays dropped.
+                self._held_text_whitespace += content
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
