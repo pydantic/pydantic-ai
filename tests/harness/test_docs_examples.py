@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 
 from pydantic_ai.workspaces import WorkspaceRef
+from tests.harness._temporal import skip_temporal_sandbox_on_314
 
 from ._docs_examples import documented_cleanup, python_blocks, run_block
-from tests.harness._temporal import skip_temporal_sandbox_on_314
 
 _PAGE = """
 ```python
