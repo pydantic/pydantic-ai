@@ -70,7 +70,7 @@ from pydantic_ai.toolsets.combined import CombinedToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning, ToolOutputLimits
-from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeToolset
+from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeReturnSchemaWarning, CodeModeToolset
 from pydantic_ai_harness.code_mode._capability import (
     _extract_discovered_names,  # pyright: ignore[reportPrivateUsage]
 )
@@ -2005,7 +2005,7 @@ class TestCodeMode:
         assert isinstance(wrapper, CodeModeToolset)
 
         ctx = build_run_context(None)
-        with pytest.warns(UserWarning, match=r"tool 'search' has no return schema"):
+        with pytest.warns(CodeModeReturnSchemaWarning, match=r"tool 'search' has no return schema"):
             tools = await wrapper.get_tools(ctx)
 
         # Tool is still callable despite the warning.
@@ -2035,8 +2035,25 @@ class TestCodeMode:
 
         assert [str(warning.message) for warning in caught] == [
             "CodeMode: 3 tools have no return schema ('list_tags', 'search_code', 'search_issues'); "
-            'their signatures will show `-> Any`, which may reduce code mode effectiveness.'
+            'their signatures will show `-> Any`, which may reduce code mode effectiveness. Add a return '
+            'annotation to a function tool, or an `outputSchema` to an MCP tool; to silence this, filter '
+            '`CodeModeReturnSchemaWarning`.'
         ]
+        assert caught[0].category is CodeModeReturnSchemaWarning
+
+    async def test_missing_return_schema_warning_can_be_filtered_alone(self) -> None:
+        """Ignoring `CodeModeReturnSchemaWarning` silences it without hiding other `UserWarning`s."""
+        td = ToolDefinition(name='search', parameters_json_schema={'type': 'object', 'properties': {}})
+        wrapper = CodeMode[object]().get_wrapper_toolset(_StaticToolset([td]))
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter('always')
+            _warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)
+            await wrapper.get_tools(build_run_context(None))
+            _warnings.warn('unrelated', UserWarning)
+
+        assert [str(warning.message) for warning in caught] == ['unrelated']
 
     async def test_escalated_missing_return_schema_warning_raises_again(self) -> None:
         """With the warning escalated to an error, a retry raises again instead of passing silently."""
@@ -2047,7 +2064,7 @@ class TestCodeMode:
         with _warnings.catch_warnings():
             _warnings.simplefilter('error', UserWarning)
             for _ in range(2):
-                with pytest.raises(UserWarning, match=r"tool 'search' has no return schema"):
+                with pytest.raises(CodeModeReturnSchemaWarning, match=r"tool 'search' has no return schema"):
                     await wrapper.get_tools(build_run_context(None))
 
     async def test_tool_with_return_schema_does_not_warn(self) -> None:
