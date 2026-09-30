@@ -721,6 +721,11 @@ class TestRunControls:
         assert _delegate_retries(result) == []
         assert _delegate_returns(result) == ["Sub-agent 'boomer' failed: kaboom\nuse existing evidence"]
 
+    def test_unknown_child_failure_is_rejected(self) -> None:
+        worker = Agent(TestModel(), name='worker')
+        with pytest.raises(ValueError, match="`child_failure` must be 'retry' or 'return', got 'retrry'"):
+            SubAgent(worker, child_failure='retrry')  # pyright: ignore[reportArgumentType]
+
     async def test_on_failure_overrides_default_steering(self) -> None:
         worker = Agent(TestModel(custom_output_text='W'), name='worker')
         parent: Agent[object, str] = Agent(

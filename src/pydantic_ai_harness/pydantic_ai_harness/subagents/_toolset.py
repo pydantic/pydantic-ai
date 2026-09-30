@@ -185,7 +185,9 @@ class SubAgent(Generic[AgentDepsT]):
     budgets are always soft, and crashes follow `contain_errors`."""
 
     def __post_init__(self) -> None:
-        """Warn once, at construction, when `on_failure` still implies `child_failure='return'`."""
+        """Reject an unknown `child_failure`, and warn once when `on_failure` still implies `'return'`."""
+        if self.child_failure not in (None, 'retry', 'return'):
+            raise ValueError(f"`child_failure` must be 'retry' or 'return', got {self.child_failure!r}.")
         if self.on_failure is not None and self.child_failure is None:
             warnings.warn(
                 'Setting `SubAgent.on_failure` without `child_failure` makes child failures return a soft '
