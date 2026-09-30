@@ -47,6 +47,8 @@ def test_host_records_a_provider_and_its_prefixed_names() -> None:
     assert plugin.model_providers == [provider]
     assert provider == ModelProvider(prefix='echo-test', resolve=echo, models=('fast', 'smart'))
     assert provider.names == ('echo-test:fast', 'echo-test:smart')
+    model = provider.resolve('fast')
+    assert isinstance(model, TestModel) and model.custom_output_text == 'fast'
 
 
 @pytest.mark.parametrize('prefix', ['', 'Echo', 'echo:x', '1echo', 'echo_test'])
