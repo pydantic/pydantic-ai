@@ -68,7 +68,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     """These AWS services are always rejected (denylist)."""
 
     default_timeout: float = 60.0
-    """Default timeout in seconds for AWS CLI commands and the health check."""
+    """Default timeout in seconds for AWS CLI commands and the health check. Must be positive and finite."""
 
     max_output_chars: int = 50_000
     """Maximum characters of output returned to the model. Must be positive."""

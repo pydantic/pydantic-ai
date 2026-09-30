@@ -105,6 +105,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             raise ValueError('Specify allowed_services or denied_services, not both.')
         if max_output_chars <= 0:
             raise ValueError('max_output_chars must be a positive integer.')
+        if not 0 < default_timeout < math.inf:
+            raise ValueError('default_timeout must be a positive number of seconds.')
 
         self._endpoint_url = endpoint_url
         self._region = region

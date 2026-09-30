@@ -112,6 +112,11 @@ class TestConstruction:
         with pytest.raises(ValueError, match=r'Specify allowed_services or denied_services, not both.'):
             _toolset(allowed_services=['s3'], denied_services=['dynamodb'])
 
+    @pytest.mark.parametrize('default_timeout', [0.0, -1.0, float('inf'), float('nan')])
+    def test_non_positive_or_non_finite_default_timeout_rejected(self, default_timeout: float) -> None:
+        with pytest.raises(ValueError, match=r'default_timeout must be a positive number of seconds.'):
+            _toolset(default_timeout=default_timeout)
+
     def test_non_positive_max_output_chars_rejected(self) -> None:
         with pytest.raises(ValueError, match=r'max_output_chars must be a positive integer.'):
             _toolset(max_output_chars=0)
