@@ -17,8 +17,9 @@ contract; this guide is shipped with the package for use without a checkout.
   init writes a starter). /spinner picks one; the choice persists as display.spinner.
 - React to prompts or session lifecycle: host.on with a typed handler.
 - Configure a plugin: host.settings with a Pydantic settings model.
-- Use a custom model/provider: supply a Pydantic AI Agent to chat from a Python
-  launcher. There is no host.register_provider or host.register_model API.
+- Use a custom model/provider: register your own `PREFIX:` with
+  host.model_provider(prefix, resolve, models=...), where resolve returns a
+  Pydantic AI Model, or supply a Pydantic AI Agent to chat from a Python launcher.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -464,8 +465,32 @@ way to pass deps, plugins, or builtin_plugins.
 chat preserves a supplied agent's model when no settings override selects another
 one. /model or /set model changes subsequent turns to the selected core model
 identifier, not an alias for your custom instance. Noninteractive Session exposes
-resolve_model for translating overrides; chat currently configures its own
-resolver for Codex authentication, not a plugin provider registry.
+resolve_model for translating overrides; chat configures its own resolver for
+Codex and CLAI's other connections, then for prefixes plugins register.
+
+To offer a Model you build from a plugin, keeping the stock agent, Coder, and
+every other plugin, register a prefix of your own:
+
+```python
+from pydantic_ai.models import Model
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost[None]) -> None:
+    def resolve(name: str) -> Model:
+        return MyModel(name, provider=MyProvider())  # your Model and Provider
+
+    host.model_provider('my-service', resolve, models=('fast', 'smart'))
+```
+
+`/add_model` then lists my-service:fast and my-service:smart, and any
+my-service:NAME works with /add_model or /set model. resolve receives NAME
+without the prefix and runs in a worker thread before every run with that
+model, so it may read the keyring; raise UserError with setup instructions
+when it cannot build the model. The prefix starts with a lowercase letter,
+followed by lowercase letters, digits, and hyphens. A prefix Pydantic AI or
+CLAI already runs, aliases like openai-chat included, is rejected with
+ValueError.
 
 For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose

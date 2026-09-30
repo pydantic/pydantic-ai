@@ -32,6 +32,8 @@ class CommandContext:
     apply_setting: Callable[[str, Settings], None]
     project: ProjectSettings = field(default_factory=ProjectSettings)
     """Read-only here: `/set` writes the user store, and the project file wins again at next start."""
+    plugin_models: Callable[[], Sequence[str]] = lambda: ()
+    """Models loaded plugins offer with `PluginHost.model_provider`, as `PREFIX:NAME`."""
 
     def __post_init__(self) -> None:
         """Keep the configured model selectable, including preferences saved before the model list existed."""

@@ -179,8 +179,8 @@ Other tools keep their existing validation.
 
 The [bundled guide](pydantic_clai2/customization.md) includes examples for
 commands, hooks, settings, renderers, custom Termflow menus, and custom model
-launchers. It also names current limits: PluginHost does not register providers,
-replace the prompt editor, or alter the built-in model catalog. Those need a
+launchers. It also names current limits: PluginHost does not replace the prompt
+editor or change the built-in model catalog's entries. Those need a
 custom agent launcher or a source change, as explained in the guide.
 
 Custom agents can opt in with `customization_guide()` from
@@ -1880,6 +1880,39 @@ spaced name, an empty frame list, or a control character in a frame raises
 `ValueError` during activation. A plugin spinner replaces a builtin of the same
 name; the user's `spinners.json` replaces both. Unloading the plugin removes it,
 and a selected spinner that is gone shows the default `working`.
+
+### Run models under your own prefix: `host.model_provider(prefix, resolve, *, models)`
+
+Makes `PREFIX:NAME` a model CLAI can run, for a Pydantic AI `Model` that no core
+provider builds, such as one authenticated with a subscription login:
+
+```python
+from pydantic_ai.models import Model
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost[None]) -> None:
+    def resolve(name: str) -> Model:
+        return MyModel(name, provider=MyProvider())
+
+    host.model_provider('my-service', resolve, models=('fast', 'smart'))
+```
+
+`models` are listed under the prefix in `/add_model` and completed by `/set model`
+and `/add_model`; any other `my-service:NAME` can still be typed. `resolve` gets
+`NAME` without the prefix. CLAI calls it in a worker thread before every run with
+one of these models, so reading the keyring there is fine, and a sign-in made
+since the last run applies. Raise `UserError` naming the setup step when it cannot
+build the model; the run fails with that message.
+
+The prefix starts with a lowercase letter, followed by lowercase letters, digits,
+and hyphens. It cannot be one Pydantic AI or CLAI already runs, aliases included
+(`anthropic`, `openai-chat`, `azure`, `openai-codex`, `vllm`, ...): that raises
+`ValueError` during activation. Only a name with a colon is looked up, so a bare
+`my-service` is never routed to the plugin. When two plugins register one prefix, the later one
+wins. Unloading the plugin removes the prefix; a saved model under it stays in
+`/model`, and runs with it fail as an unknown provider until the plugin is enabled
+again.
 
 ## Rules that keep plugins predictable
 

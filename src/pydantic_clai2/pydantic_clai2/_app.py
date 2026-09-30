@@ -3,7 +3,7 @@
 import asyncio
 import math
 import sys
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -43,7 +43,15 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.errors import error_message
-from pydantic_clai2.plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart, bare_screen
+from pydantic_clai2.plugins import (
+    ModelProvider,
+    Renderer,
+    SessionEndReason,
+    SessionStart,
+    TurnEnd,
+    TurnStart,
+    bare_screen,
+)
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.forks import Forks
@@ -239,6 +247,8 @@ class _ModelResolver:
     """Load provider integrations on demand, retaining Codex authentication per conversation."""
 
     console: Console
+    plugins: Callable[[], Mapping[str, ModelProvider]] = lambda: {}
+    """Model prefixes registered by loaded plugins, read per resolution so enabling one applies at once."""
     _auth: 'CodexAuth | None' = None
 
     def codex_auth(self) -> 'CodexAuth':
@@ -266,7 +276,11 @@ class _ModelResolver:
             from pydantic_clai2.models import github_copilot
 
             return await asyncio.to_thread(github_copilot.model, name)
-        return self.codex_auth().model(name) if name.startswith('openai-codex:') else name
+        if name.startswith('openai-codex:'):
+            return self.codex_auth().model(name)
+        prefix, separator, model_name = name.partition(':')
+        provider = self.plugins().get(prefix) if separator else None
+        return name if provider is None else await asyncio.to_thread(provider.resolve, model_name)
 
 
 def create_shell(
@@ -342,7 +356,7 @@ def create_shell(
             name='set',
             description='Change settings; no arguments opens the menu',
             handler=lambda args: set_command(context, args),
-            complete=set_completions,
+            complete=lambda args: set_completions(args, plugin_models=context.plugin_models()),
             during_turn=True,
         )
     )
@@ -369,7 +383,9 @@ def create_shell(
             name='add_model',
             description='Add and use a model, or browse providers and model settings',
             handler=add_model,
-            complete=lambda args: set_completions(['model', *args]) if len(args) <= 1 else (),
+            complete=lambda args: (
+                set_completions(['model', *args], plugin_models=context.plugin_models()) if len(args) <= 1 else ()
+            ),
             during_turn=True,
         )
     )
@@ -430,6 +446,8 @@ def create_shell(
         status=status,
         enabled=load_plugins,
     )
+    models.plugins = loader.model_providers
+    context.plugin_models = loader.model_names
     spinners = Spinners(selected=lambda: context.settings.spinner, registered=loader.spinners)
     commands.register(
         Command(

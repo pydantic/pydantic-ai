@@ -26,6 +26,7 @@ from pydantic_clai2.plugins import (
     DepsT,
     FullScreen,
     HostEvent,
+    ModelProvider,
     PluginHost,
     Renderer,
     SessionEnd,
@@ -276,6 +277,14 @@ class PluginLoader(Generic[DepsT]):
     def spinners(self) -> list[Spinner]:
         """Plugin spinners, in load order, so a later plugin wins a name collision."""
         return [spinner for host in self._loaded.values() for spinner in host.spinners]
+
+    def model_providers(self) -> dict[str, ModelProvider]:
+        """Plugin model prefixes; a later plugin wins a prefix collision, as with spinners."""
+        return {provider.prefix: provider for host in self._loaded.values() for provider in host.model_providers}
+
+    def model_names(self) -> list[str]:
+        """Every plugin-offered model, with its prefix, for menus and completions."""
+        return [name for provider in self.model_providers().values() for name in provider.names]
 
     async def load_all(self, *, fresh: bool = False) -> None:
         """Load enabled plugins, re-importing after a shell reload so host event types match.
