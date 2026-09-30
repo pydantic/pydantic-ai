@@ -6328,7 +6328,7 @@ dev = [
     { name = "fastmcp", specifier = ">=3.3.0,<5" },
     { name = "genai-prices", specifier = ">=0.1.0" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "hypothesis", specifier = ">=6.100" },
+    { name = "hypothesis", specifier = ">=6.153.2" },
     { name = "inline-snapshot", specifier = ">=0.32.5" },
     { name = "markdownify", specifier = ">=1.2" },
     { name = "mcp-types", specifier = ">=2.0.0" },
