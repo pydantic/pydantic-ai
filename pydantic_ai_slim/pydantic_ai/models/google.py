@@ -601,9 +601,9 @@ class GoogleModel(Model[Client]):
         # the profile (from the provider or a user `profile=`) wins.
         # https://ai.google.dev/gemini-api/docs/image-generation
         if (
-            not self._is_google_cloud
-            and self._model_name.startswith('gemini-3.1-flash-image')
+            self._model_name.startswith('gemini-3.1-flash-image')
             and 'google_thinking_levels' not in profile
+            and not self._is_google_cloud
         ):
             gemini_api_profile: GoogleModelProfile = {
                 **profile,
