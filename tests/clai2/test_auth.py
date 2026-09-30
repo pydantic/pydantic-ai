@@ -15,6 +15,7 @@ from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICod
 from pydantic_clai2.auth import CodexAuth, CodexCredentials, code_from_paste, login_command, read_line
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
+from pydantic_clai2.config.credential_store import load_codex_credentials
 
 CREDENTIALS = OpenAICodexCredentials(
     access_token='fake-access', refresh_token='fake-refresh', account_id='fake-account'
@@ -93,7 +94,7 @@ async def test_failed_login_does_not_save(monkeypatch: pytest.MonkeyPatch) -> No
     auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted)
     with pytest.raises(UserError, match='denied'):
         await auth.login([])
-    assert keyring.get_password('pydantic-clai2', 'openai-codex') is None
+    assert load_codex_credentials() is None
 
 
 @pytest.mark.parametrize('bare', [False, True])
@@ -158,7 +159,7 @@ async def test_lost_race_then_rejected_paste(monkeypatch: pytest.MonkeyPatch) ->
     _, auth = scripted(['', EOFError()])
     with pytest.raises(UserError, match='cancelled'):
         await auth.login([])
-    assert keyring.get_password('pydantic-clai2', 'openai-codex') is None
+    assert load_codex_credentials() is None
 
 
 @pytest.mark.parametrize(
@@ -177,7 +178,7 @@ async def test_rejected_paste(monkeypatch: pytest.MonkeyPatch, pasted: str | Bas
     _, auth = scripted([pasted])
     with pytest.raises(UserError, match=message):
         await auth.login([])
-    assert keyring.get_password('pydantic-clai2', 'openai-codex') is None
+    assert load_codex_credentials() is None
 
 
 def test_code_from_paste_state_binding() -> None:
@@ -194,10 +195,8 @@ async def test_default_read_line_uses_prompt_toolkit() -> None:
 
 
 async def test_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
-    keyring.set_password('pydantic-clai2', 'openai-codex', 'not json')
     source = CodexCredentials()
-    with pytest.raises(UserError, match='invalid'):
-        await source.load()
+    original_set = keyring.set_password
 
     def discard(service: str, account: str, value: str) -> None:
         pass
@@ -205,6 +204,10 @@ async def test_auth_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(keyring, 'set_password', discard)
     with pytest.raises(UserError, match='did not retain'):
         await source.save(OpenAICodexCredentials(access_token='test', refresh_token='test', account_id='test'))
+    monkeypatch.setattr(keyring, 'set_password', original_set)
+    keyring.set_password('pydantic-clai2', 'openai-codex', 'not json')
+    with pytest.raises(UserError, match='invalid'):
+        await source.load()
     auth = CodexAuth(Console(file=io.StringIO()), read_line=never_pasted, login_timeout=0)
     with pytest.raises(ValueError, match='Usage'):
         await auth.login(['invalid'])

@@ -24,7 +24,7 @@ try:
 finally:
     assert 'pydantic_ai' not in sys.modules
     assert 'pydantic_clai2._app' not in sys.modules
-    assert 'pydantic_clai2.headless' not in sys.modules
+    assert 'pydantic_clai2.cli.headless' not in sys.modules
 """
     result = subprocess.run(
         [sys.executable, '-c', script, *args],
@@ -58,14 +58,14 @@ async def read(self, *args, **kwargs):
     completions = self.completer.get_completions(Document('/login ', 7), CompleteEvent())
     assert {item.text for item in completions} == {'openai-codex', 'github-copilot'}
     warmed = ('openai', 'anthropic', *warm_imports.FIRST_USE_MODULES)
-    for name in (*warmed, 'pydantic_clai2.headless'):
+    for name in (*warmed, 'pydantic_clai2.cli.headless'):
         assert name not in sys.modules, name
     assert requested == [warm_imports.FIRST_USE_MODULES]
     print('PROMPT_READY')
     start().join()
     for name in warmed:
         assert name in sys.modules, name
-    assert 'pydantic_clai2.headless' not in sys.modules
+    assert 'pydantic_clai2.cli.headless' not in sys.modules
     print('WARMED')
     return '/exit'
 PromptSession.prompt_async = read
@@ -87,6 +87,6 @@ main()
 
 def test_warming_failure_is_logged_not_raised(caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.DEBUG, logger=warm_imports.__name__):
-        warm_imports.start(('pydantic_clai2._no_such_module', 'pydantic_clai2.vllm')).join()
-    assert 'pydantic_clai2.vllm' in sys.modules
+        warm_imports.start(('pydantic_clai2._no_such_module', 'pydantic_clai2.models.vllm')).join()
+    assert 'pydantic_clai2.models.vllm' in sys.modules
     assert [record.getMessage() for record in caplog.records] == ['Could not warm pydantic_clai2._no_such_module']

@@ -12,7 +12,7 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
 
 
 async def test_completion_control_bytes_are_not_executed_by_preview_or_echo(tmp_path: Path) -> None:

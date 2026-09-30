@@ -75,8 +75,9 @@ py-cli clai2 -w
 
 A Git worktree is another checkout of the same repository with its own branch
 and working files. Run these commands inside a repository with at least one
-commit. `--worktree NAME` creates a `clai/NAME` branch from the current `HEAD`
-and starts CLAI at `<repository-root>/.worktrees/NAME`.
+commit. `--worktree NAME` creates a `clai-NAME` branch from the current `HEAD`
+and starts CLAI at `<repository-root>/.worktrees/NAME`. If that worktree already
+exists, CLAI reopens it; if only the `clai-NAME` branch exists, CLAI checks it out.
 `-w` is the short form; omit the name to generate one. Names start with a letter
 or digit and contain only ASCII letters, digits, hyphens, and underscores.
 
@@ -87,8 +88,8 @@ Uncommitted changes, ignored files, and untracked files are not copied. Project 
 tools use the new worktree root. Your user settings and plugins stay available;
 a relative `--database` path still refers to the directory you launched from.
 
-CLAI prints the new path and branch. Existing branches and non-empty directories
-are rejected. If checkout fails, CLAI tries to remove only the branch it just
+CLAI prints the path and branch. A directory at that path that is not a Git
+worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
 names the retained branch or checkout for recovery. The worktree and branch
 remain after exit, including startup
@@ -101,7 +102,7 @@ original repository root. Without `--force`, Git refuses to remove a dirty workt
 
 ```bash
 git worktree remove .worktrees/my-task
-git branch -d clai/my-task
+git branch -d clai-my-task
 ```
 
 !!! warning "Worktrees are not sandboxes"
@@ -116,10 +117,15 @@ authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes. The browser
 must be able to reach that callback on the machine running CLAI.
 
-Tokens live in the configured Python `keyring` backend under service `pydantic-clai2`,
-not in SQLite or `~/.codex/auth.json`. Choose an OS-backed credential store: CLAI
+Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
+(`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
+that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
+backend (service `pydantic-clai2`, account `encryption-key`). CLAI reads that entry
+at most once per session, so macOS asks for keychain access at most once, instead of
+once per saved credential. Logins that older versions saved as keyring entries are
+moved into encrypted files the first time they are read. Choose an OS-backed credential store: CLAI
 uses the configured backend and does not enforce its encryption or storage policy.
-Installing or selecting a plaintext backend can store tokens in plaintext. Core owns
+Installing or selecting a plaintext backend can store the key in plaintext. Core owns
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 
@@ -217,8 +223,9 @@ running turn ends. With arguments, these commands queue like any other.
 `/model` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
-`gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, and `gpt-6-astra`; availability
-depends on your account. Unknown prices and context limits are not inferred.
+`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
+`gpt-5.6-terra`, and `gpt-5.6-sol`; availability depends on your account.
+Unknown prices and context limits are not inferred.
 
 The model catalog combines genai-prices' catalog
 filtered to providers Pydantic AI can run, plus core's own model list, plus
