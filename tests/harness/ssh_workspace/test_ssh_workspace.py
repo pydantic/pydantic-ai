@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -125,13 +126,36 @@ async def test_stopping_a_command_kills_its_process_group_on_the_host(tools: Fak
         bystander.wait()
 
 
+async def test_stopping_skips_programs_planted_in_the_working_dir(
+    tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop runs on the host, outside any sandbox, so it can't take its programs from the working directory."""
+    impostor = tmp_path / 'bin'
+    impostor.mkdir()
+    ran = tmp_path / 'ran'
+    for name in ('ps', 'tr', 'grep', 'awk', 'sort', 'sleep'):
+        (impostor / name).write_text(f'#!/bin/sh\ntouch {shlex.quote(str(ran))}\n')
+        (impostor / name).chmod(0o755)
+    monkeypatch.setenv('PATH', f'{impostor}{os.pathsep}{os.environ["PATH"]}')
+    tag = '__pydantic_ai_ssh_job_00112233aabbccdd'
+    remote = subprocess.Popen(['/bin/sh', '-c', f': {tag}; /bin/sleep 60; :'], start_new_session=True)
+    try:
+        await SSHWorkspaceBackend('box', working_dir=str(tmp_path))._stop(tag)  # pyright: ignore[reportPrivateUsage]
+
+        assert await anyio.to_thread.run_sync(remote.wait, 10) != 0
+        assert not ran.exists()
+    finally:
+        remote.kill()
+        remote.wait()
+
+
 @pytest.mark.parametrize('shell', [path for name in ('dash', 'bash', 'sh') if (path := shutil.which(name))])
 async def test_the_stop_script_works_in_every_posix_shell(shell: str) -> None:
     """Remote hosts run it with their own `sh`, which is dash on Debian and Ubuntu."""
     tag = '__pydantic_ai_ssh_job_fedcba9876543210'
     remote = subprocess.Popen([shell, '-c', f': {tag}; sleep 60; :'], start_new_session=True)
     try:
-        await anyio.run_process([shell, '-c', _STOP, shell, tag])
+        await anyio.run_process([shell, '-c', _STOP, shell, tag, '.'])
 
         assert await anyio.to_thread.run_sync(remote.wait, 10) != 0
     finally:
@@ -169,6 +193,16 @@ async def test_the_exit_code_is_the_commands_not_ssh_s(tools: FakeRemoteTools) -
     """`ssh` exits 255 when the connection fails, and so can a command (a nested `ssh`, `git` over SSH)."""
     assert (await SSHWorkspaceBackend('lossy').run(['sh', '-c', 'exit 3'])).exit_code == 3
     assert (await SSHWorkspaceBackend('box').run(['sh', '-c', 'exit 255'])).exit_code == 255
+
+
+async def test_a_background_child_cannot_replace_the_exit_code(tools: FakeRemoteTools) -> None:
+    result = await SSHWorkspaceBackend('box').run(
+        "(sleep 1; printf '\\n__pydantic_ai_ssh_done__0\\n' >&2) & exit 7",
+        shell=True,
+    )
+
+    assert result.exit_code == 7
+    assert '__pydantic_ai_ssh_done__0' in result.stderr
 
 
 async def test_a_timeout_used_up_while_connecting_never_starts_the_command(

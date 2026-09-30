@@ -11,6 +11,7 @@ import os
 import shutil
 import socket
 import tempfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import anyio
@@ -21,6 +22,7 @@ from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import (
+    CommandResult,
     LocalWorkspaceBackend,
     ReadOnlyWorkspace,
     Workspace,
@@ -85,6 +87,28 @@ async def test_commands_run_in_bwrap_on_the_wrapped_host(tools: FakeRemoteTools,
     ]
 
 
+class _FailedHome:
+    """A backend whose home probe fails, so the sandbox refuses to start."""
+
+    @property
+    def ref(self) -> None:
+        return None
+
+    async def working_dir(self) -> str:
+        return '/work'
+
+    async def run(
+        self,
+        command: str | Sequence[str],
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        del command, shell, env, timeout
+        return CommandResult(exit_code=1, stdout='', stderr='no home')
+
+
 async def test_the_call_env_reaches_only_the_sandboxed_command(tools: FakeRemoteTools, tmp_path: Path) -> None:
     """A model-controlled `PATH` must not pick which `bwrap` runs."""
     impostor = tmp_path / 'impostor'
@@ -98,6 +122,180 @@ async def test_the_call_env_reaches_only_the_sandboxed_command(tools: FakeRemote
     assert result.stdout.startswith(str(impostor))
     assert not (impostor / 'escaped').exists()
     assert len(tools.bwrap_calls) == 1
+
+
+async def test_an_inherited_path_entry_inside_the_working_dir_is_skipped(
+    tools: FakeRemoteTools, tmp_path: Path
+) -> None:
+    """The backend's own `PATH` is the host launcher's, so a directory inside the workspace cannot supply `bwrap`."""
+    impostor = tmp_path / 'bin'
+    impostor.mkdir()
+    ran = impostor / 'ran'
+    (impostor / 'bwrap').write_text(f'#!/bin/sh\ntouch {ran}\n')
+    (impostor / 'bwrap').chmod(0o755)
+    backend = LocalWorkspaceBackend(tmp_path, env={'PATH': f'{impostor}{os.pathsep}{os.environ["PATH"]}'})
+
+    result = await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+
+    assert result.exit_code == 0
+    assert not ran.exists()
+    assert len(tools.bwrap_calls) == 1
+
+
+async def test_a_symlinked_path_entry_inside_the_working_dir_is_skipped(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """A `PATH` entry outside the workspace can still be the workspace directory through a symlink."""
+    real_bin = tmp_path / 'bin'
+    real_bin.mkdir()
+    ran = real_bin / 'ran'
+    (real_bin / 'bwrap').write_text(f'#!/bin/sh\ntouch {ran}\n')
+    (real_bin / 'bwrap').chmod(0o755)
+    alias = tmp_path.parent / f'{tmp_path.name}-alias'
+    alias.mkdir()
+    (alias / 'bin').symlink_to(real_bin, target_is_directory=True)
+    backend = LocalWorkspaceBackend(tmp_path, env={'PATH': f'{alias / "bin"}{os.pathsep}{os.environ["PATH"]}'})
+
+    result = await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+
+    assert result.exit_code == 0
+    assert not ran.exists()
+    assert tools.bwrap_calls
+
+
+async def test_bwrap_inside_the_working_dir_is_not_executed(tmp_path: Path) -> None:
+    impostor = tmp_path / 'bin'
+    impostor.mkdir()
+    ran = impostor / 'ran'
+    (impostor / 'bwrap').write_text(f'#!/bin/sh\ntouch {ran}\n')
+    (impostor / 'bwrap').chmod(0o755)
+    backend = LocalWorkspaceBackend(tmp_path, env={'PATH': str(impostor)})
+
+    with pytest.raises(WorkspaceUnavailableError, match='could not start a sandbox'):
+        await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+    assert not ran.exists()
+
+
+async def test_ssh_directory_inside_the_working_dir_is_mounted_read_only(tools: FakeRemoteTools) -> None:
+    """By default, because OpenSSH runs `~/.ssh/rc` before the next connection. A missing one isn't created."""
+    workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tools.home)))
+
+    await workspace.run(['true'])
+    await workspace.run(['true'])
+
+    ssh_dir = tools.home.resolve() / '.ssh'
+    assert not ssh_dir.exists()
+    mount = f'--ro-bind-try {ssh_dir} {ssh_dir}'
+    assert tools.bwrap_calls[0].count(mount) == 1
+    assert tools.bwrap_calls[1].count(mount) == 1
+
+
+async def test_the_ssh_directory_itself_is_mounted_read_only(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """The writable directory can be `~/.ssh`, not merely a parent of it."""
+    home = tmp_path / 'home'
+    ssh_dir = home / '.ssh'
+    ssh_dir.mkdir(parents=True)
+    workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(ssh_dir, env={'HOME': str(home)})))
+
+    await workspace.run(['true'])
+
+    resolved = str(ssh_dir.resolve())
+    assert tools.bwrap_calls[0].count(f'--ro-bind-try {resolved} {resolved}') == 1
+
+
+async def test_the_filesystem_root_refuses_to_launch(tools: FakeRemoteTools) -> None:
+    """`/` contains `/bin/sh`, so the launcher must not start."""
+    workspace = BubblewrapWorkspace(Workspace(LocalWorkspaceBackend('/', env={'HOME': str(tools.home)})))
+
+    with pytest.raises(WorkspaceUnavailableError, match='could not start a sandbox'):
+        await workspace.run(['true'])
+
+    assert tools.bwrap_calls == []
+
+
+async def test_a_home_directory_probe_that_fails_is_unavailable() -> None:
+    backend = _FailedHome()
+    assert backend.ref is None
+    workspace = BubblewrapWorkspace(Workspace(backend))
+
+    with pytest.raises(WorkspaceUnavailableError, match='could not read the host account'):
+        await workspace.run(['true'])
+
+
+async def test_a_relative_home_directory_is_unavailable(tmp_path: Path) -> None:
+    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': 'relative'})
+
+    with pytest.raises(WorkspaceUnavailableError, match='could not read the host account'):
+        await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+
+
+async def test_ssh_home_resolution_does_not_run_planted_helpers(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """Resolving `$HOME` over SSH stays inside `/bin/sh`. It does not run `readlink`, `wc`, or `base64`."""
+    impostor = tmp_path / 'bin'
+    impostor.mkdir()
+    ran = impostor / 'ran'
+    for name in ('readlink', 'wc', 'base64'):
+        planted = impostor / name
+        planted.write_text(f'#!/bin/sh\ntouch {ran}\n')
+        planted.chmod(0o755)
+    backend = SSHWorkspaceBackend(
+        'box',
+        working_dir=str(tmp_path),
+        env={'HOME': str(tools.home), 'PATH': f'{impostor}{os.pathsep}{os.environ["PATH"]}'},
+    )
+
+    result = await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+
+    assert result.exit_code == 0
+    assert not ran.exists()
+
+
+def test_durable_policy_is_every_setting(tmp_path: Path) -> None:
+    workspace = BubblewrapWorkspace(
+        Workspace(LocalWorkspaceBackend(tmp_path)),
+        network=True,
+        bwrap_args=['--bind', '/srv', '/srv'],
+        read_only_paths=['.git/hooks'],
+    )
+
+    assert workspace.durable_policy() == (True, ('--bind', '/srv', '/srv'), ('.git/hooks',))
+
+
+async def test_read_only_paths_inside_the_working_dir_are_mounted(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """Relative to the working directory, or the home with `~/`; one outside the working directory is read-only anyway."""
+    home = tmp_path / 'home'
+    wd = home / 'project'
+    wd.mkdir(parents=True)
+    workspace = BubblewrapWorkspace(
+        Workspace(LocalWorkspaceBackend(wd, env={'HOME': str(home)})),
+        read_only_paths=['.git/hooks', '~/project/.agents', '~/.bashrc', '/etc', 'sub/../.env'],
+    )
+
+    await workspace.run(['true'])
+
+    root = wd.resolve()
+    mounts = [f'--ro-bind-try {path} {path}' for path in (root / '.git/hooks', root / '.agents', root / '.env')]
+    assert all(mount in tools.bwrap_calls[0] for mount in mounts)
+    assert tools.bwrap_calls[0].count('--ro-bind-try') == len(mounts)
+
+
+async def test_without_read_only_paths_the_home_is_not_read(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """Nothing to resolve `~` for, so an unreadable home doesn't stop the sandbox."""
+    backend = LocalWorkspaceBackend(tmp_path, env={'HOME': 'relative'})
+
+    result = await BubblewrapWorkspace(Workspace(backend), read_only_paths=()).run(['true'])
+
+    assert result.exit_code == 0
+    assert '--ro-bind-try' not in tools.bwrap_calls[0]
+
+
+@pytest.mark.parametrize('paths', [['~other/.ssh'], ['']])
+def test_read_only_paths_must_be_paths(tmp_path: Path, paths: list[str]) -> None:
+    with pytest.raises(ValueError, match='read_only_paths must be non-empty paths'):
+        BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), read_only_paths=paths)
+
+
+def test_read_only_paths_must_not_be_a_string(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match='read_only_paths must be a sequence'):
+        BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), read_only_paths='~/.ssh')
 
 
 async def test_network_is_shared_only_when_asked(tools: FakeRemoteTools, tmp_path: Path) -> None:
@@ -209,7 +407,11 @@ async def test_bubblewrap_around_ssh_sandboxes_commands_on_the_remote_host(
 async def test_capability_wraps_the_ssh_workspace(tools: FakeRemoteTools, tmp_path: Path) -> None:
     agent = Agent(
         TestModel(call_tools=['probe']),
-        capabilities=[BubblewrapSandbox(SSHWorkspace('box', working_dir=str(tmp_path)), network=True)],
+        capabilities=[
+            BubblewrapSandbox(
+                SSHWorkspace('box', working_dir=str(tmp_path)), network=True, read_only_paths=['.git/hooks']
+            )
+        ],
     )
 
     @agent.tool
@@ -221,6 +423,8 @@ async def test_capability_wraps_the_ssh_workspace(tools: FakeRemoteTools, tmp_pa
     assert result.output == '{"probe":"sandboxed"}'
     assert workspace_layers(result.workspace) == [BubblewrapWorkspace, SSHWorkspaceBackend]
     assert '--unshare-net' not in tools.bwrap_calls[0]
+    hooks = tmp_path.resolve() / '.git/hooks'
+    assert f'--ro-bind-try {hooks} {hooks}' in tools.bwrap_calls[0]
     continued = await agent.run('again', message_history=result.all_messages())
     assert workspace_layers(continued.workspace) == [BubblewrapWorkspace, SSHWorkspaceBackend]
 
