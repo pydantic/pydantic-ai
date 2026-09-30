@@ -1840,7 +1840,9 @@ row itself is CLAI's; a plugin adds to it with the next registration.
 ### Add to the status row: `host.status_segment(fn)`
 
 `fn` takes no arguments and returns a short string. It is appended after the
-built-in figures, painted muted, and dropped when the plugin unloads.
+built-in figures, painted muted, and dropped when the plugin unloads. The built-in
+row accents output-token counts and tool names using the selected theme; plugin
+fragments stay muted.
 
 ```python
 import os

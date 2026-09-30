@@ -1364,6 +1364,10 @@ is kept separately and flushed in order, spilling to a private temporary file
 for large bursts. Full-screen menus release scrolling margins and detach the keyboard reader before taking over.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
+The status row follows Code Puppy's styling: muted surrounding text, an accented
+output-token count, and purple tool names. Colours follow the selected `/theme`;
+context warnings keep the warning colour. The same styling applies while idle
+and working.
 
 A plugin can append its own fragment to the row with `host.status_segment`, such
 as the working directory or a branch name; fragments are muted and dropped when
