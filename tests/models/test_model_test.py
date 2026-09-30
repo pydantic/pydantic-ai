@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal
 import pytest
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from anyio import Event
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
 
 from pydantic_ai import (
     Agent,
@@ -767,7 +767,7 @@ def test_function_tool_oneof_discriminated_union_arg():
 
 class DefaultedCat(BaseModel):
     kind: Literal['cat'] = 'cat'
-    color: Literal['black'] = 'black'
+    color: Literal['black']
 
 
 class DefaultedDog(BaseModel):
@@ -784,31 +784,50 @@ def test_tool_output_oneof_discriminated_union_defaulted_tag():
 
     result = agent.run_sync('hello')
 
-    assert result.output == snapshot(DefaultedCat())
+    assert result.output == snapshot(DefaultedCat(color='black'))
 
 
 class WhiteCat(BaseModel):
     kind: Literal['cat'] = 'cat'
-    color: Literal['white'] = 'white'
+    color: Literal['white']
 
 
-DefaultedCats = Annotated[DefaultedCat | WhiteCat, Field(discriminator='color')]
+def cat_color(cat: DefaultedCat | WhiteCat | dict[str, str]) -> str:
+    return cat['color'] if isinstance(cat, dict) else cat.color
 
 
-def test_tool_output_oneof_nested_discriminated_union_defaulted_tags():
+CatsByColor = Annotated[DefaultedCat | WhiteCat, Field(discriminator='color')]
+CatsByCallable = Annotated[
+    Annotated[DefaultedCat, Tag('black')] | Annotated[WhiteCat, Tag('white')], Discriminator(cat_color)
+]
+
+
+def test_tool_output_oneof_nested_discriminated_union_defaulted_tag():
     """The outer tag must reach the member the inner union picks."""
     agent = Agent(
         model=TestModel(),
-        output_type=ToolOutput(Annotated[DefaultedCats | DefaultedDog, Field(discriminator='kind')]),
+        output_type=ToolOutput(Annotated[CatsByColor | DefaultedDog, Field(discriminator='kind')]),
     )
 
     result = agent.run_sync('hello')
 
-    assert result.output == snapshot(DefaultedCat())
+    assert result.output == snapshot(DefaultedCat(color='black'))
+
+
+def test_tool_output_oneof_nested_callable_discriminator_defaulted_tag():
+    """A callable `Discriminator` emits `oneOf` with no `discriminator` keyword, but still passes the outer tag on."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=ToolOutput(Annotated[CatsByCallable | DefaultedDog, Field(discriminator='kind')]),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot(DefaultedCat(color='black'))
 
 
 def test_structured_dict_oneof_without_discriminator():
-    """A `oneOf` without a `discriminator` keyword, which a callable `Discriminator` also emits, picks like `anyOf`."""
+    """A `oneOf` without a `discriminator` keyword picks a member like `anyOf`."""
     agent = Agent(
         model=TestModel(),
         output_type=StructuredDict(
@@ -823,3 +842,22 @@ def test_structured_dict_oneof_without_discriminator():
     result = agent.run_sync('hello')
 
     assert result.output == snapshot({'value': 0})
+
+
+def test_structured_dict_oneof_beside_type():
+    """A `oneOf` beside a `type` only narrows it, so the `type` drives generation."""
+    agent = Agent(
+        model=TestModel(),
+        output_type=StructuredDict(
+            {
+                'type': 'object',
+                'properties': {'a': {'type': 'integer'}, 'b': {'type': 'string'}, 'c': {'type': 'string'}},
+                'required': ['a'],
+                'oneOf': [{'required': ['b']}, {'required': ['c']}],
+            }
+        ),
+    )
+
+    result = agent.run_sync('hello')
+
+    assert result.output == snapshot({'a': 0})

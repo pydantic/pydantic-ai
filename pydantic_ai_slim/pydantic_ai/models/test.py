@@ -1,6 +1,5 @@
 from __future__ import annotations as _annotations
 
-import re
 import string
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -467,12 +466,11 @@ class _JsonSchemaTestData:
         elif examples := schema.get('examples'):
             return examples[self.seed % len(examples)]
         elif ref := schema.get('$ref'):
-            key = re.sub(r'^#/\$defs/', '', ref)
-            js_def = self.defs[key]
-            return self._gen_any(js_def)
+            return self._gen_any(self._resolve_ref(ref))
         elif any_of := schema.get('anyOf'):
             return self._gen_any(any_of[self.seed % len(any_of)])
-        elif schema.get('oneOf'):
+        elif schema.get('oneOf') and 'type' not in schema:
+            # a `oneOf` beside a `type` narrows that type, so the `type` drives generation
             return self._one_of_gen(schema)
 
         type_ = schema.get('type')
@@ -496,16 +494,23 @@ class _JsonSchemaTestData:
         else:
             raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
 
+    def _resolve_ref(self, ref: str) -> dict[str, Any]:
+        """Look up a JSON Schema `$ref` in the schema's `$defs`."""
+        return self.defs[ref.removeprefix('#/$defs/')]
+
     def _one_of_gen(self, schema: dict[str, Any]) -> Any:
         """Generate data for a JSON Schema `oneOf`."""
         one_of = schema['oneOf']
         member = one_of[self.seed % len(one_of)]
+        # Pydantic leaves a defaulted discriminator tag out of `required`, but validation needs it to pick the
+        # member. A nested union passes on the `required` its parent union added.
+        required = schema.get('required', [])
         if tag := schema.get('discriminator', {}).get('propertyName'):
-            # Pydantic leaves a defaulted tag out of `required`, but validation needs it to pick the member.
-            # A nested union also passes on the `required` its parent union added.
+            required = [*required, tag]
+        if required:
             if ref := member.get('$ref'):
-                member = self.defs[re.sub(r'^#/\$defs/', '', ref)]
-            member = {**member, 'required': [*member.get('required', []), *schema.get('required', []), tag]}
+                member = self._resolve_ref(ref)
+            member = {**member, 'required': [*member.get('required', []), *required]}
         return self._gen_any(member)
 
     def _object_gen(self, schema: dict[str, Any]) -> dict[str, Any]:
