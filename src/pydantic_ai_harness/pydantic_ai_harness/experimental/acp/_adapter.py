@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ThinkingPartDelta,
     ToolCallPart,
+    ToolReturnPart,
     UserContent,
 )
 from pydantic_ai.models import KnownModelName, Model, known_model_names
@@ -110,18 +111,40 @@ def _usage_limit_stop_reason(exc: UsageLimitExceeded) -> schema.StopReason:
     return 'max_tokens' if 'tokens_limit' in str(exc) else 'max_turn_requests'
 
 
-def _committable_history(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """The history a turn ended by a usage limit commits.
+def _committable_history(messages: list[ModelMessage], ran_calls: set[str]) -> list[ModelMessage]:
+    """The history a turn ended by a usage limit commits: everything up to what actually happened.
 
-    A token limit trips after a response arrives and before its tool calls run. Those calls never
-    ran, and a history ending in them is rejected by the next prompt ("unprocessed tool calls"),
-    so that response is left out. An interrupted tail (a limit hit during tool execution) is kept:
-    the next run closes out its calls.
+    Trailing messages are dropped, from the end, while they record nothing that took effect:
+
+    - a response whose tool calls never started (`tool_calls_limit` stops a batch before it runs);
+      committing it would also make the next prompt fail with "unprocessed tool calls";
+    - a request with no tool results, which the model never saw: a prompt refused before it was
+      sent (for example by `input_tokens_limit`), or the empty request a stopped batch leaves.
+      Resending it on the next turn would hit the same limit again.
+
+    A request interrupted while its calls were running is kept, so the next run marks those
+    calls as interrupted rather than pretending they never ran. `ran_calls` holds the ids of the
+    calls this turn started.
     """
-    last = messages[-1] if messages else None
-    if isinstance(last, ModelResponse) and last.tool_calls and last.state != 'interrupted':
-        return messages[:-1]
-    return list(messages)
+    committed = list(messages)
+    while committed:
+        last = committed[-1]
+        if isinstance(last, ModelResponse):
+            if last.tool_calls and not any(call.tool_call_id in ran_calls for call in last.tool_calls):
+                committed.pop()
+                continue
+            break
+        if any(isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_name for part in last.parts):
+            break
+        previous = committed[-2] if len(committed) > 1 else None
+        if (
+            last.state == 'interrupted'
+            and isinstance(previous, ModelResponse)
+            and any(call.tool_call_id in ran_calls for call in previous.tool_calls)
+        ):
+            break
+        committed.pop()
+    return committed
 
 
 def _to_acp_usage(usage: RunUsage) -> schema.Usage:
@@ -699,7 +722,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             # of those changes. The interrupted pass reported no usage, so none is claimed.
             await self._fail_outstanding_tool_calls(turn, record=True)
             if captured:
-                history = _committable_history(captured)
+                history = _committable_history(captured, turn.started)
             stop_reason = _usage_limit_stop_reason(exc)
             limited = True
         except Exception:
