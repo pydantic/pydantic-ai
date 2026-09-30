@@ -23,6 +23,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai_harness._host_path import TRUSTED_PATH_FUNCTIONS
 from pydantic_ai_harness._workspace_provider import check_timeout
 
 __all__ = ('SSHWorkspaceBackend',)
@@ -35,12 +36,18 @@ _GONE = '\n__pydantic_ai_ssh_gone__\n'
 _JOB_TAG = '__pydantic_ai_ssh_job_'
 """Starts every remote script, followed by a random suffix, so a later connection can find the command's processes."""
 
-_STOP = r"""me=$(ps -o pgid= -p $$ | tr -d ' ')
+_STOP = (
+    TRUSTED_PATH_FUNCTIONS
+    + r"""# `$2` is the working directory: a sandboxed command may have planted `ps` or `grep` there.
+wd=$(cd "$2" 2>/dev/null && pwd -P) || wd=
+PATH=$(__pai_trusted_path "$wd")
+me=$(ps -o pgid= -p $$ | tr -d ' ')
 groups=$(ps -A -o pgid=,args= | grep -F -e "$1" | awk -v me="$me" '$1 != me { print $1 }' | sort -u)
 [ -n "$groups" ] || exit 0
 for group in $groups; do kill -s TERM -- "-$group" 2> /dev/null; done
 (sleep 1; for group in $groups; do kill -s KILL -- "-$group" 2> /dev/null; done) < /dev/null > /dev/null 2>&1 &
 exit 0"""
+)
 """Stop the process groups whose command line holds the tag `$1`, leaving out this script's own group.
 
 `sshd` starts each command in a session of its own, so its group is the command's; a detached command
@@ -48,6 +55,9 @@ that started a session of its own (the harness `Shell`'s jobs) is in another gro
 `kill -s SIG --` is the form every POSIX shell's `kill` accepts; dash rejects `kill -TERM -- -<group>`.
 The `SIGKILL` for groups that outlast `SIGTERM` comes a second later in the background, with its output
 closed so `sshd` doesn't wait for it, so a stop costs one round trip.
+
+It runs outside any sandbox that wraps this backend, so its programs come from `PATH` without the
+entries inside the working directory `$2`, like the bubblewrap launcher's `bwrap`.
 """
 
 _STOP_TIMEOUT = 2.0
@@ -135,11 +145,15 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
 
     async def _resolve_working_dir(self, *, timeout: float | None) -> str:
         if self._resolved_working_dir is None:
-            # A relative directory starts in the login directory; `./` keeps a leading `-` from reading as an option.
-            directory = '.' if self._working_dir is None else posixpath.join('.', self._working_dir)
-            result = await self._remote(directory, 'pwd -P', env={}, timeout=timeout)
+            result = await self._remote(self._configured_dir, 'pwd -P', env={}, timeout=timeout)
             self._resolved_working_dir = result.stdout.removesuffix('\n')
         return self._resolved_working_dir
+
+    @property
+    def _configured_dir(self) -> str:
+        """The working directory as the login shell reaches it, before it is resolved."""
+        # A relative directory starts in the login directory; `./` keeps a leading `-` from reading as an option.
+        return '.' if self._working_dir is None else posixpath.join('.', self._working_dir)
 
     async def run(
         self,
@@ -238,10 +252,12 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     async def _stop(self, tag: str) -> None:
         # Killing the local `ssh` leaves the remote command running, so a second connection stops it.
         # Best effort: a host that stalls or can't be reached now has nothing to report.
+        directory = self._resolved_working_dir or self._configured_dir
         with anyio.CancelScope(shield=True):
             try:
                 await self._runner.run(
-                    [*self._ssh, f'/bin/sh -c {shlex.quote(_STOP)} /bin/sh {tag}'], timeout=_STOP_TIMEOUT
+                    [*self._ssh, f'/bin/sh -c {shlex.quote(_STOP)} /bin/sh {tag} {shlex.quote(directory)}'],
+                    timeout=_STOP_TIMEOUT,
                 )
             except WorkspaceError:
                 pass

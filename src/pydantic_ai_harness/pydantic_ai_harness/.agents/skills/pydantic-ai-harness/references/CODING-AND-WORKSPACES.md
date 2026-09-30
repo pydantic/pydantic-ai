@@ -323,7 +323,8 @@ so keys, ports and jump hosts come from `~/.ssh/config` and `ssh-agent`. No extr
 
 ### BubblewrapSandbox
 
-`BubblewrapSandbox(wrapped_capability, *, network=False, bwrap_args=())` runs the wrapped workspace
+`BubblewrapSandbox(wrapped_capability, *, network=False, bwrap_args=(), read_only_paths=('~/.ssh',))` runs the
+wrapped workspace
 capability's commands in a Linux `bwrap` sandbox on that workspace's host:
 `BubblewrapSandbox(SSHWorkspace('dev@box', working_dir='/srv/app'))` or
 `BubblewrapSandbox(LocalWorkspace('.'))`. The host needs `bwrap` and user namespaces.
@@ -334,6 +335,8 @@ capability's commands in a Linux `bwrap` sandbox on that workspace's host:
   (host Unix sockets and the sandbox's own loopback included), no Unix datagram sockets, no
   `ptrace`/`io_uring`. Tests that start a local server, and Python 3.14's default `forkserver`
   multiprocessing (use `get_context('spawn')`), need `network=True`: host network and ports, no filter.
+- `read_only_paths`: existing paths inside the working dir mounted read-only (`~/` = host home, relative =
+  working dir), e.g. `['~/.ssh', '.git/hooks']`; `()` protects nothing. Missing paths aren't protected.
 - File methods (and the `FileSystem`/`Coder` file tools) run in the sandbox as shell commands, so a
   swapped-in symlink can't lead a write outside the working dir.
 - The host PID namespace is shared, so `Shell` background jobs survive the call (and the run), and

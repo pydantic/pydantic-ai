@@ -34,9 +34,14 @@ class BubblewrapSandbox(WrapperCapability[AgentDepsT]):
     bwrap_args: Sequence[str] = ()
     """Extra `bwrap` arguments, placed after the defaults so they can override them."""
 
+    read_only_paths: Sequence[str] = ('~/.ssh',)
+    """Paths kept read-only when they exist inside the writable working directory (`~/` for the host account's home)."""
+
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         backend = super().get_workspace(ctx, ref=ref)
         if backend is None:
             return None
         workspace = backend if isinstance(backend, Workspace) else Workspace(backend)
-        return BubblewrapWorkspace(workspace, network=self.network, bwrap_args=self.bwrap_args)
+        return BubblewrapWorkspace(
+            workspace, network=self.network, bwrap_args=self.bwrap_args, read_only_paths=self.read_only_paths
+        )
