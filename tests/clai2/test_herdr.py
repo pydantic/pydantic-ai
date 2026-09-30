@@ -19,9 +19,9 @@ from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.compaction import ReportContextUsage
-from pydantic_ai_harness.step_persistence.conversations import SavedConversation, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2._app import DEFAULT_PLUGINS, create_shell
-from pydantic_clai2.builtin_plugins import herdr
+from pydantic_clai2.builtin_plugins import _herdr_client, herdr
 from pydantic_clai2.builtin_plugins._herdr_client import HerdrClient
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
@@ -156,16 +156,16 @@ async def test_title_read_failure_or_session_switch(
     await session.prompt('hello')
     host = PluginHost(name='herdr', console=Console(file=io.StringIO()), settings={}, conversation=session)
     herdr.activate(host)
-    original_get = store.get
+    original_listing = store.listing
 
-    async def get(*, conversation_id: str) -> SavedConversation:
+    async def listing(*, query: str = '', limit: int = 200, offset: int = 0) -> list[ConversationSummary]:
         if failure:
             raise OSError('unavailable')
-        saved = await original_get(conversation_id=conversation_id)
+        summaries = await original_listing(query=query, limit=limit, offset=offset)
         session.clear()
-        return saved
+        return summaries
 
-    monkeypatch.setattr(store, 'get', get)
+    monkeypatch.setattr(store, 'listing', listing)
     for handler in host.handlers:
         await handler(TurnEnd(text='', outcome='completed'))
     metadata = [params for method, params in recorded.reports if method == 'pane.report_metadata'][-1]
@@ -250,13 +250,21 @@ def test_default_is_opt_in() -> None:
     assert not entry.enabled
 
 
-async def test_background_title_watcher(recorded: RecordingClient, tmp_path: Path) -> None:
+async def test_background_title_watcher(
+    recorded: RecordingClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     agent = Agent(TestModel())
     session = Session(agent, deps=None, conversations=store)
     await session.prompt('hello')
     host = PluginHost(name='herdr', console=Console(file=io.StringIO()), settings={}, conversation=session)
     herdr.activate(host)
+
+    def no_transcript(*args: object, **kwargs: object) -> None:
+        raise AssertionError('Title polling must not load transcripts or media')
+
+    monkeypatch.setattr(store, 'get', no_transcript)
+    monkeypatch.setattr(store.media, 'get', no_transcript)
     for handler in host.handlers:
         await handler(SessionStart(agent=agent, settings=Settings()))
     try:
@@ -365,6 +373,47 @@ def test_socket_delivery_and_release(server: Server) -> None:
 def test_missing_socket_is_nonfatal(tmp_path: Path) -> None:
     client = HerdrClient(socket_path=str(tmp_path / 'missing.sock'), pane_id='w1:p1')
     client.close()
+
+
+def test_incremental_reply_has_total_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    elapsed = 0.0
+    chunks = 0
+
+    def clock() -> float:
+        nonlocal elapsed
+        elapsed += 0.1
+        return elapsed
+
+    class DripSocket:
+        def __enter__(self) -> 'DripSocket':
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def settimeout(self, timeout: float) -> None:
+            assert timeout > 0
+
+        def connect(self, path: str) -> None:
+            pass
+
+        def sendall(self, payload: bytes) -> None:
+            pass
+
+        def recv(self, size: int) -> bytes:
+            nonlocal chunks
+            chunks += 1
+            return b' '
+
+    def connect(*args: object) -> DripSocket:
+        return DripSocket()
+
+    monkeypatch.setattr(_herdr_client, 'monotonic', clock)
+    monkeypatch.setattr(_herdr_client.socket, 'socket', connect)
+    client = HerdrClient(socket_path='/unused', pane_id='w1:p1', tab_id='w1:t1')
+    # An unbounded read loop would hang here, even though each recv succeeds.
+    client.close()
+    assert 0 < chunks < 10
 
 
 @pytest.mark.parametrize('manual', [False, True])

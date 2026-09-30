@@ -5,6 +5,7 @@ import logging
 import socket
 import threading
 import time
+from time import monotonic
 from typing import Literal
 
 from pydantic import JsonValue, TypeAdapter
@@ -50,7 +51,9 @@ class HerdrClient:
                 self._pending['title'] = ('tab.rename', {'label': None})
                 self._pending['release'] = ('pane.release_agent', {})
                 self._condition.notify()
-        self._worker.join(timeout=4)
+        # Each request has one total IO deadline, including retries and reads.
+        # At most one in-flight request and three cleanup requests remain.
+        self._worker.join()
 
     def _run(self) -> None:
         while True:
@@ -72,14 +75,24 @@ class HerdrClient:
         if method.startswith('pane.'):
             params = {'pane_id': self.pane_id, 'source': _SOURCE, 'agent': 'clai2', 'seq': self._seq, **params}
         payload = (json.dumps({'id': f'{_SOURCE}:{self._seq}', 'method': method, 'params': params}) + '\n').encode()
+        deadline = monotonic() + 0.5
+
+        def remaining() -> float:
+            timeout = deadline - monotonic()
+            if timeout <= 0:
+                raise TimeoutError('herdr request deadline exceeded')
+            return timeout
+
         for _ in range(3):
             try:
                 with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-                    connection.settimeout(0.5)
+                    connection.settimeout(remaining())
                     connection.connect(self.socket_path)
+                    connection.settimeout(remaining())
                     connection.sendall(payload)
                     response = bytearray()
                     while len(response) < 65536 and not response.endswith(b'\n'):
+                        connection.settimeout(remaining())
                         chunk = connection.recv(4096)
                         if not chunk:
                             break

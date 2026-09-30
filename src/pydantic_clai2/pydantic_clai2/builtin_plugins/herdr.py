@@ -61,10 +61,11 @@ class _Reporter:
         if not conversation.summary.revision:
             return None
         try:
-            saved = await conversation.conversations.get(conversation_id=reference[0])
+            summaries = await conversation.conversations.listing(query=reference[0])
+            saved = next((summary for summary in summaries if summary.id == reference[0]), None)
             # A resume/clear may happen while the database read is in flight.
-            if conversation.summary.id == reference[0]:
-                return saved.summary.title
+            if saved is not None and conversation.summary.id == reference[0]:
+                return saved.title
         except (OSError, sqlite3.Error, ValueError):
             _LOGGER.debug('herdr session metadata unavailable', exc_info=True)
         return None
