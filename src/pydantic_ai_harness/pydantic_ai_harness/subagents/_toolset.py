@@ -455,16 +455,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             run_model = option.model
             settings = option.settings
         else:
-            # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a
-            # sub-agent run. When the parent run uses something else (a realtime model), fall
-            # back to `None` so the sub-agent uses its own default rather than being handed a
-            # model it cannot run with.
-            ctx_model = ctx.model
-            run_model = (
-                ctx_model
-                if (is_self or sub_agent.agent.model is None) and _is_request_response_model(ctx_model)
-                else None
-            )
+            run_model = None
+            if is_self or sub_agent.agent.model is None:
+                # 仅需要继承父级模型时才读取 `ctx.model`；Temporal activity 不携带该运行时对象。
+                # 父级使用 realtime 等非 request-response 模型时，子代理改用自身默认模型。
+                ctx_model = ctx.model
+                if _is_request_response_model(ctx_model):
+                    run_model = ctx_model
             settings = None
         run = sub_agent.agent.run(
             task,

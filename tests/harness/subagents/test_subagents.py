@@ -57,7 +57,8 @@ class _RecordingCapability(AbstractCapability[AgentDepsT]):
         return _instructions
 
 
-async def test_workspace_free_temporal_delegate() -> None:
+@pytest.mark.parametrize('model', [None, 'test'], ids=['named-agent-model', 'menu-model'])
+async def test_workspace_free_temporal_delegate(model: str | None) -> None:
     pytest.importorskip('temporalio')
     from pydantic_ai.durable_exec.temporal import TemporalRunContext
 
@@ -71,10 +72,10 @@ async def test_workspace_free_temporal_delegate() -> None:
         tool_retries=None,
         contain_errors=False,
         call_counts={},
-        models={'test': ModelOption(TestModel(custom_output_text='worker'))},
+        models={} if model is None else {'test': ModelOption(TestModel(custom_output_text='worker'))},
     )
     result = await toolset.delegate_task(
-        TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello', model='test'
+        TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello', model=model
     )
     assert result == 'worker'
 
