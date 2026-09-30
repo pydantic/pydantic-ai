@@ -313,11 +313,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
         provider's requested delay is waited out first, and a failure to open it cancels the
         server-side job, as it would once iteration had started.
 
-        Must be awaited in the task that consumes the stream: the segment's `model.request_stream(...)`
-        context is exited by the task that iterates it. A no-op once iteration has started.
+        Must be awaited once, before iteration, in the task that consumes the stream: the segment's
+        `model.request_stream(...)` context is exited by the task that iterates it.
         """
-        if self._event_iterator is not None or self._primed_segment is not None:
-            return
         messages = self.base_messages
         if (seed := self.initial_suspended_response) is not None:
             if delay := self.model.continuation_delay(seed):
