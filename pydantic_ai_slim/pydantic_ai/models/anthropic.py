@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from typing import Any, Literal, TypeAlias, TypeGuard, cast, overload
 
+import httpx2
 import pydantic_core
 from opentelemetry.trace import get_current_span
 from pydantic import TypeAdapter
@@ -69,6 +70,7 @@ from ..native_tools._tool_search import (
     ToolSearchMatch,
     ToolSearchTool,
 )
+from ..output import StructuredOutputMode
 from ..profiles import DEFAULT_THINKING_TAGS, ModelProfile, ModelProfileSpec, merge_profile
 from ..profiles.anthropic import (
     ANTHROPIC_SAMPLING_PARAMS,
@@ -97,7 +99,7 @@ from . import (
     get_user_agent,
 )
 from ._anthropic_containers import is_tool_result_only as _is_tool_result_only
-from ._tool_choice import ResolvedToolChoice, resolve_tool_choice
+from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 _FINISH_REASON_MAP: dict[BetaStopReason, FinishReason | None] = {
     'compaction': 'stop',
@@ -142,6 +144,7 @@ def _append_revealed_tool_params(tools: list[BetaToolUnionParam], revealed_tool_
 
 try:
     from anthropic import (
+        DEFAULT_TIMEOUT,
         NOT_GIVEN,
         APIConnectionError,
         APIStatusError,
@@ -338,12 +341,59 @@ _ANTHROPIC_FILES_API_BETA = 'files-api-2025-04-14'
 _ANTHROPIC_COMPACT_EDIT_TYPE = 'compact_20260112'
 
 
+# https://platform.claude.com/docs/en/api/errors#http-errors
+_ERROR_TYPE_STATUS_CODES = {
+    'invalid_request_error': 400,
+    'authentication_error': 401,
+    'billing_error': 402,
+    'permission_error': 403,
+    'not_found_error': 404,
+    'request_too_large': 413,
+    'rate_limit_error': 429,
+    'api_error': 500,
+    'timeout_error': 504,
+    'overloaded_error': 529,
+}
+
+
+def _error_status_code(error: APIStatusError) -> int:
+    """The HTTP status of an Anthropic error, including one reported in a stream after a 200 response.
+
+    An error event in a stream arrives after the response status was already 200, so the SDK raises it with that
+    status; the error `type` identifies the status the same error has on a non-streaming request.
+    """
+    if error.status_code >= 400:
+        return error.status_code
+    body = error.body
+    if _utils.is_str_dict(body) and _utils.is_str_dict(error_body := body.get('error')):
+        if isinstance(error_type := error_body.get('type'), str) and error_type in _ERROR_TYPE_STATUS_CODES:
+            return _ERROR_TYPE_STATUS_CODES[error_type]
+    return error.status_code
+
+
+def _is_expired_container_error(error: APIStatusError) -> bool:
+    """Whether Anthropic rejected a request because the container it reuses has expired.
+
+    Anthropic answers an expired container with a 404 `not_found_error`, and earlier with a 500.
+    """
+    status_code = _error_status_code(error)
+    if status_code == 500:
+        return True
+    body = error.body
+    return (
+        status_code == 404
+        and _utils.is_str_dict(body)
+        and _utils.is_str_dict(error_body := body.get('error'))
+        and str(error_body.get('message', '')).startswith('Container not found')
+    )
+
+
 @contextmanager
 def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> Generator[None]:
     try:
         yield
     except APIStatusError as e:
-        if (status_code := e.status_code) >= 400:
+        if (status_code := _error_status_code(e)) >= 400:
             body: object | None = e.body
             suggested_model_id = None
             if _utils.is_str_dict(body) and _utils.is_str_dict(error := body.get('error')):
@@ -411,8 +461,8 @@ AnthropicTaskBudget: TypeAlias = BetaTokenTaskBudgetParam
 class AnthropicStaleThinkingBlockWarning(Warning):
     """Warning raised when Anthropic rejected a replayed thinking block and Pydantic AI retried without it.
 
-    Claude Fable 5.1 and Claude Opus 5.5 bind each thinking block to the conversation prefix that
-    produced it and reject a replay once that prefix changes — which a dynamic
+    Claude Fable 5.1, Claude Opus 5.5, and Claude Sonnet 5.5 bind each thinking block to the
+    conversation prefix that produced it and reject a replay once that prefix changes — which a dynamic
     [instructions][pydantic_ai.Agent.instructions] function and a
     [filtered toolset](../toolsets.md#filtering-tools) both do by design. Anthropic enforces the
     check for accounts created on or after 2026-08-31; for older accounts it records the mismatch
@@ -645,6 +695,60 @@ def _effective_thinking(
     return OMIT if isinstance(thinking, Omit) else dict(thinking)
 
 
+_DEFAULT_MAX_TOKENS = 16384
+"""The `max_tokens` sent when the request doesn't set one and the model's maximum output is unknown.
+
+It stays under the SDK's non-streaming limit (`_MAX_NON_STREAMING_TOKENS`).
+"""
+
+_MAX_NON_STREAMING_TOKENS = 21_333
+"""The largest `max_tokens` the Anthropic SDK sends without streaming with its default timeout.
+
+The SDK expects a response to take up to an hour per 128,000 tokens, and requires streaming past 10 minutes.
+"""
+
+_LEGACY_DEFAULT_MAX_TOKENS = 4096
+"""The default `max_tokens` for models that reject input plus `max_tokens` beyond the context window."""
+
+_MIN_TOKENS_AFTER_THINKING_BUDGET = 4096
+"""The room the default `max_tokens` leaves beyond an extended thinking `budget_tokens`."""
+
+_AnthropicEventStream: TypeAlias = _utils.PeekableAsyncStream[
+    BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
+]
+"""A streamed response whose first event has been read, so an error that stops it is raised before it's processed."""
+
+
+def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
+    """The `max_tokens` to send when the request doesn't set one.
+
+    That's the model's maximum output, so responses are only cut off at the model's limit. Above about 21,000 tokens
+    the request is streamed behind the scenes (see `_messages_create`). Models that reject input
+    plus `max_tokens` beyond the context window keep a lower default, so conversations close to the window still fit.
+    Extended thinking's `budget_tokens` counts toward `max_tokens`, and Anthropic rejects a request whose `max_tokens`
+    isn't greater than the budget, so a large budget raises a lower default to leave room for the answer.
+    """
+    if profile.get('anthropic_rejects_max_tokens_beyond_context_window', False):
+        default = _LEGACY_DEFAULT_MAX_TOKENS
+    else:
+        default = profile.get('anthropic_max_output_tokens') or _DEFAULT_MAX_TOKENS
+    wire_thinking: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
+    budget = wire_thinking.get('budget_tokens') if wire_thinking.get('type') == 'enabled' else None
+    return max(default, (budget if isinstance(budget, int) else 0) + _MIN_TOKENS_AFTER_THINKING_BUDGET)
+
+
+def _can_add_drop_block(thinking: dict[str, object] | Omit) -> bool:
+    """Whether a request may add `drop_block` to its wire `thinking` object.
+
+    Not when the caller set a `block_binding` of their own, and not for a thinking type other than
+    `adaptive`, since Anthropic accepts `block_binding` only alongside adaptive thinking. A missing
+    type counts as adaptive, which is what `_drop_stale_thinking_blocks` fills in.
+    """
+    return isinstance(thinking, Omit) or (
+        'block_binding' not in thinking and thinking.get('type', 'adaptive') == 'adaptive'
+    )
+
+
 def _is_stale_thinking_block_error(
     profile: ModelProfile,
     thinking: dict[str, object] | Omit,
@@ -654,11 +758,12 @@ def _is_stale_thinking_block_error(
 
     Scoped to models that bind and to requests that set no `block_binding` of their own, through the
     typed `thinking` config or through `extra_body`: an explicit `'error'` is a caller asking to
-    fail, and an explicit `'drop_block'` cannot produce this error.
+    fail, and an explicit `'drop_block'` cannot produce this error. A thinking type other than
+    `adaptive` is out too; see `_can_add_drop_block`.
     """
     if error.status_code != 400 or not profile.get('anthropic_binds_thinking_blocks', False):
         return False
-    if not isinstance(thinking, Omit) and 'block_binding' in thinking:
+    if not _can_add_drop_block(thinking):
         return False
     body: object | None = error.body
     return (
@@ -673,13 +778,14 @@ def _drop_stale_thinking_blocks(thinking: dict[str, object] | Omit) -> dict[str,
     """The `thinking` object for the retried request, carrying the caller's own config plus the drop.
 
     A binding model emits thinking blocks whether or not the request configured thinking, so the
-    retry usually has no `thinking` object for the binding to ride in — and the API accepts one
-    holding `block_binding` alone, which the SDK's discriminated union cannot express. Rather than
-    split the two cases, the retry always sends the whole object through `extra_body`, which reaches
-    the same JSON key without needing a `type` the caller never asked for.
+    retry usually has no `thinking` object for the binding to ride in, and an `extra_body` one may
+    carry no `type`. Claude Sonnet 5.5 rejects a `thinking` object without a `type`, and every binding
+    model thinks adaptively when none is given, so `'adaptive'` fills the gap without changing what
+    the caller asked for. The retry sends the whole object through `extra_body`, since the SDK's
+    discriminated union has no typed home for `block_binding` on every config shape.
     """
     configured: dict[str, object] = {} if isinstance(thinking, Omit) else thinking
-    return {**configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
+    return {'type': 'adaptive', **configured, 'block_binding': _ANTHROPIC_DROP_STALE_THINKING_BLOCKS}
 
 
 def _history_dropped_stale_thinking_blocks(
@@ -736,7 +842,7 @@ def _thinking_with_stale_block_history(
     """Resolve request parameters that keep a prior request-local drop active for this history."""
     keep_dropping = (
         profile.get('anthropic_binds_thinking_blocks', False)
-        and (isinstance(effective_thinking, Omit) or 'block_binding' not in effective_thinking)
+        and _can_add_drop_block(effective_thinking)
         and _history_dropped_stale_thinking_blocks(
             messages,
             compaction_boundary=compaction_boundary,
@@ -877,10 +983,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """The model name."""
         return self._model_name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest retention requested by active Anthropic cache settings."""
         settings = merge_model_settings(self.settings, model_settings) or {}
-        return self._max_prompt_cache_retention(
+        return self._max_cache_retention(
             settings.get('anthropic_cache'),
             settings.get('anthropic_cache_instructions'),
             settings.get('anthropic_cache_tool_definitions'),
@@ -960,22 +1066,21 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             model_request_parameters,
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
+        # A non-streaming request's transport errors reach us as the SDK's `APIConnectionError`, but a stream's don't.
         try:
             response = await self._messages_create(messages, False, model_settings, model_request_parameters)
-            return self._process_response(response, model_request_parameters, model_settings)
-        except ValueError as e:
-            if 'Streaming is required' in str(e):
-                # Anthropic SDK requires streaming for high max_tokens; fall back transparently
-                # https://github.com/anthropics/anthropic-sdk-python/blob/49d639a671cb0ac30c767e8e1e68fdd5925205d5/src/anthropic/_base_client.py#L726
-                stream = await self._messages_create(messages, True, model_settings, model_request_parameters)
-                async with stream:
-                    streamed_response = await self._process_streamed_response(
-                        stream, model_request_parameters, model_settings
-                    )
-                    async for _ in streamed_response:
-                        pass
-                    return streamed_response.get()
-            raise  # pragma: no cover
+            if isinstance(response, BetaMessage):
+                return self._process_response(response, model_request_parameters, model_settings)
+            # The request was streamed behind the scenes, see `_messages_create`.
+            async with response.source:
+                streamed_response = await self._process_streamed_response(
+                    response, model_request_parameters, model_settings
+                )
+                async for _ in streamed_response:
+                    pass
+        except httpx2.TransportError as e:
+            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+        return streamed_response.get()
 
     async def count_tokens(
         self,
@@ -1010,8 +1115,24 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         )
         model_settings = cast(AnthropicModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, model_settings, model_request_parameters)
-        async with response:
+        async with response.source:
             yield await self._process_streamed_response(response, model_request_parameters, model_settings)
+
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        return _request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
+
+    def _default_structured_output_mode(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> StructuredOutputMode:
+        # Extended thinking rejects the forced tool choice Tool Output relies on.
+        if (
+            model_request_parameters.output_tools
+            and _request_thinking_type(self.profile, model_settings, model_request_parameters) == 'enabled'
+        ):
+            return 'native' if self.profile.get('supports_json_schema_output', False) else 'prompted'
+        return super()._default_structured_output_mode(model_settings, model_request_parameters)
 
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1030,49 +1151,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 "Use `anthropic_thinking={'type': 'adaptive'}` and `anthropic_effort=...` instead."
             )
 
-        supports_adaptive_thinking = profile.get('anthropic_supports_adaptive_thinking', False)
-        supports_forced_tool_choice = profile.get('anthropic_supports_forced_tool_choice', True)
-        thinking_type = _effective_thinking_type(
-            merged.get('anthropic_thinking'),
-            merged.get('thinking'),
-            supports_adaptive_thinking=supports_adaptive_thinking,
-        )
-        # Tool Output resolves to a forced `tool_choice`, which Anthropic rejects alongside extended
-        # thinking. Adaptive thinking is accepted — but only on models that accept forcing at all;
-        # on the rest, Tool Output could only degrade to a soft `tool_choice='auto'` the model may
-        # ignore, so they keep switching away from it whenever a thinking setting is configured.
-        thinking_blocks_output_tools = thinking_type == 'enabled' or (
-            thinking_type == 'adaptive' and not supports_forced_tool_choice
-        )
-
-        if model_request_parameters.output_tools and thinking_blocks_output_tools:
-            supports_json_schema_output = profile.get('supports_json_schema_output', False)
-            model_request_parameters = model_request_parameters.with_default_output_mode(
-                'native' if supports_json_schema_output else 'prompted'
-            )
-            if (
-                model_request_parameters.output_mode == 'tool' and not model_request_parameters.allow_text_output
-            ):  # pragma: no branch
-                # This would result in `tool_choice=required`, which isn't available here.
-                suggested_output_type = 'NativeOutput' if supports_json_schema_output else 'PromptedOutput'
-                remedy = f'Use `output_type={suggested_output_type}(...)` instead.'
-                if thinking_type == 'adaptive':
-                    raise UserError(
-                        f'{self.model_name!r} does not support output tools when a thinking setting is '
-                        f'configured, because it rejects the forced tool choice they require. {remedy}'
-                    )
-                if supports_adaptive_thinking:
-                    remedy += " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports output tools."
-                raise UserError(
-                    f'Anthropic does not support extended thinking and output tools at the same time. {remedy}'
-                )
-
-        # Resolve 'auto' to the profile default here (a no-op if already resolved above) so the
-        # strict-forcing check below also applies when native mode is reached via the profile default
-        # rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would otherwise only
-        # resolve it after `customize_request_parameters()` has already transformed the schema.
+        # Resolve 'auto' here so the strict-forcing check below also applies when native mode is reached
+        # via the default rather than an explicit `NativeOutput(...)`; `super().prepare_request()` would
+        # otherwise only resolve it after `customize_request_parameters()` has already transformed the schema.
         model_request_parameters = model_request_parameters.with_default_output_mode(
-            self.profile.get('default_structured_output_mode', 'tool')
+            self._default_structured_output_mode(merged, model_request_parameters)
         )
 
         if model_request_parameters.output_mode == 'native':
@@ -1121,6 +1204,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
+        if thinking is False and self.profile.get('thinking_enabled_by_default', False):
+            # Omitting `thinking` leaves it on for these models. `Model.prepare_request` has already dropped
+            # `False` for models that can't turn thinking off.
+            return {'type': 'disabled'}
         if thinking is None or thinking is False:
             return OMIT  # type: ignore[return-value]
         if self.profile.get('anthropic_supports_adaptive_thinking', False):
@@ -1134,7 +1221,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: Literal[True],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> AsyncStream[BetaRawMessageStreamEvent]:
+    ) -> _AnthropicEventStream:
         pass
 
     @overload
@@ -1144,7 +1231,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: Literal[False],
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> BetaMessage:
+    ) -> BetaMessage | _AnthropicEventStream:
         pass
 
     async def _messages_create(
@@ -1153,11 +1240,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         stream: bool,
         model_settings: AnthropicModelSettings,
         model_request_parameters: ModelRequestParameters,
-    ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
+    ) -> BetaMessage | _AnthropicEventStream:
         """Calls the Anthropic API to create a message.
 
         This is the last step before sending the request to the API.
         Most preprocessing has happened in `prepare_request()`.
+
+        A non-streaming request is streamed anyway when the SDK requires it for its `max_tokens`, so its response
+        can be a stream too.
         """
         # Native search remains in the stable segment when a reveal lands. Revealed non-corpus deferred
         # entries are then appended in history order; Anthropic excludes them from its cache key.
@@ -1206,30 +1296,63 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             thinking: BetaThinkingConfigParam | Omit,
             betas: set[str],
             thinking_override: dict[str, object] | None,
-        ) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
-            return await self.client.beta.messages.create(
-                max_tokens=model_settings.get('max_tokens', 4096),
-                system=system_prompt or OMIT,
-                messages=anthropic_messages,
-                model=self._model_name,
-                tools=tools or OMIT,
-                tool_choice=tool_choice or OMIT,
-                mcp_servers=mcp_servers or OMIT,
-                output_config=output_config or OMIT,
-                betas=sorted(betas) or OMIT,
-                stream=stream,
-                cache_control=auto_cache_control or OMIT,
-                thinking=thinking,
-                stop_sequences=model_settings.get('stop_sequences', OMIT),
-                timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
-                metadata=model_settings.get('anthropic_metadata', OMIT),
-                context_management=context_management or OMIT,
-                container=container_param or OMIT,
-                service_tier=_resolve_anthropic_service_tier(model_settings),
-                speed=self._effective_speed(model_settings, anthropic_profile),
-                extra_headers=extra_headers,
-                extra_body=_build_extra_body(model_settings, thinking_override),
-            )
+        ) -> BetaMessage | _AnthropicEventStream:
+            max_tokens = model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile))
+
+            async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
+                return await self.client.beta.messages.create(
+                    max_tokens=max_tokens,
+                    system=system_prompt or OMIT,
+                    messages=anthropic_messages,
+                    model=self._model_name,
+                    tools=tools or OMIT,
+                    tool_choice=tool_choice or OMIT,
+                    mcp_servers=mcp_servers or OMIT,
+                    output_config=output_config or OMIT,
+                    betas=sorted(betas) or OMIT,
+                    stream=stream,
+                    cache_control=auto_cache_control or OMIT,
+                    thinking=thinking,
+                    stop_sequences=model_settings.get('stop_sequences', OMIT),
+                    timeout=to_httpx2_timeout(model_settings.get('timeout', NOT_GIVEN)),
+                    metadata=model_settings.get('anthropic_metadata', OMIT),
+                    context_management=context_management or OMIT,
+                    container=container_param or OMIT,
+                    service_tier=_resolve_anthropic_service_tier(model_settings),
+                    speed=self._effective_speed(model_settings, anthropic_profile),
+                    extra_headers=extra_headers,
+                    extra_body=_build_extra_body(model_settings, thinking_override),
+                )
+
+            async def open_stream() -> _AnthropicEventStream:
+                raw_stream = cast(AsyncStream[BetaRawMessageStreamEvent], await send(True))
+                event_stream: _AnthropicEventStream = _utils.PeekableAsyncStream(raw_stream)
+                try:
+                    # An error that stops the response, like an expired container, arrives as the first event,
+                    # so peek it here to reach the retries below.
+                    await event_stream.peek()
+                except BaseException:
+                    await raw_stream.close()
+                    raise
+                return event_stream
+
+            if stream:
+                return await open_stream()
+            # The SDK refuses a non-streaming request it expects to take over 10 minutes, but only with its default
+            # timeout. A default `max_tokens` above that limit is the model's maximum output, so stream it when a
+            # custom timeout is set too, rather than hold one connection open for the whole response.
+            if (
+                'max_tokens' not in model_settings
+                and max_tokens > _MAX_NON_STREAMING_TOKENS
+                and ('timeout' in model_settings or self.client.timeout != DEFAULT_TIMEOUT)
+            ):
+                return await open_stream()
+            try:
+                return cast(BetaMessage, await send(False))
+            except ValueError as e:
+                if 'Streaming is required' not in str(e):  # pragma: no cover
+                    raise
+                return await open_stream()
 
         retry_container = container
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
@@ -1237,7 +1360,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return await create(container, initial_thinking, initial_betas, initial_thinking_override)
             except APIStatusError as error:
                 if (
-                    error.status_code == 500
+                    _is_expired_container_error(error)
                     and container_from_history
                     and any(
                         is_str_dict(block) and block['type'] == 'container_upload'
@@ -1544,7 +1667,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     self._model_name,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
-                    max_tokens=model_settings.get('max_tokens', 4096),
+                    max_tokens=model_settings.get(
+                        'max_tokens', _default_max_tokens(effective_thinking, anthropic_profile)
+                    ),
                     tools=tools or OMIT,
                     tool_choice=tool_choice or OMIT,
                     mcp_servers=mcp_servers or OMIT,
@@ -1728,17 +1853,13 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
 
     async def _process_streamed_response(
         self,
-        response: AsyncStream[BetaRawMessageStreamEvent],
+        response: _AnthropicEventStream,
         model_request_parameters: ModelRequestParameters,
         model_settings: AnthropicModelSettings,
-    ) -> StreamedResponse:
-        peekable_response: _utils.PeekableAsyncStream[
-            BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]
-        ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
-            first_chunk = await peekable_response.peek()
+    ) -> AnthropicStreamedResponse:
+        first_chunk = await response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')  # pragma: no cover
+            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
 
         assert isinstance(first_chunk, BetaRawMessageStartEvent)
 
@@ -1752,7 +1873,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return AnthropicStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
-            _response=peekable_response,
+            _response=response,
             _provider_name=self._provider.name,
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
@@ -1934,8 +2055,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         """
         tool_defs = model_request_parameters.declared_tool_defs
         resolved_tool_choice = resolve_tool_choice(model_settings, model_request_parameters)
-        supports_forced_tool_choice = self.profile.get('anthropic_supports_forced_tool_choice', True)
-        supports_adaptive_thinking = self.profile.get('anthropic_supports_adaptive_thinking', False)
 
         tool_choice: BetaToolChoiceParam
 
@@ -1943,24 +2062,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             # tool_choice = {'type': resolved_tool_choice}`: pyright can't narrow this properly
             tool_choice = {'type': 'auto'} if resolved_tool_choice == 'auto' else {'type': 'none'}
         elif resolved_tool_choice == 'required':
-            supports = _support_tool_forcing(
-                model_settings,
-                model_request_parameters,
-                resolved_tool_choice,
-                "tool_choice='required'",
-                supports_forced_tool_choice=supports_forced_tool_choice,
-                supports_adaptive_thinking=supports_adaptive_thinking,
-            )
+            supports = _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
             tool_choice = {'type': 'any'} if supports else {'type': 'auto'}
         elif isinstance(resolved_tool_choice, tuple):
             tool_choice_mode, tool_names = resolved_tool_choice
-            supports = _support_tool_forcing(
-                model_settings,
-                model_request_parameters,
-                resolved_tool_choice,
-                supports_forced_tool_choice=supports_forced_tool_choice,
-                supports_adaptive_thinking=supports_adaptive_thinking,
-            )
+            supports = _support_tool_forcing(self.model_name, self.profile, model_settings, model_request_parameters)
             if tool_choice_mode == 'required' and len(tool_names) == 1:
                 if supports:
                     tool_choice = {'type': 'tool', 'name': next(iter(tool_names))}
@@ -2951,7 +3057,11 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
 
         if effort is not None:
-            self._validate_effort_vs_disabled_thinking(effort, model_settings)
+            # Validate what reaches the wire, where a caller's `extra_body` thinking wins.
+            self._validate_effort_vs_disabled_thinking(
+                effort,
+                _effective_thinking(model_settings, self._translate_thinking(model_settings, model_request_parameters)),
+            )
 
         task_budget = self._get_task_budget(model_settings)
 
@@ -2968,7 +3078,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         return config
 
     def _validate_effort_vs_disabled_thinking(
-        self, effort: AnthropicEffort, model_settings: AnthropicModelSettings
+        self, effort: AnthropicEffort, thinking: dict[str, object] | Omit
     ) -> None:
         """Reject `xhigh`/`max` effort combined with explicitly disabled thinking.
 
@@ -2980,12 +3090,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             return
         if not self.profile.get('anthropic_disallows_top_effort_when_thinking_disabled', False):
             return
-        thinking = model_settings.get('anthropic_thinking')
-        if thinking is None or thinking.get('type') != 'disabled':
+        if isinstance(thinking, Omit) or thinking.get('type') != 'disabled':
             return
         raise UserError(
-            f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while '
-            "`anthropic_thinking={'type': 'disabled'}`. Use an effort of 'high' or below, or enable thinking."
+            f'Model {self.model_name!r} does not support `anthropic_effort={effort!r}` while thinking is '
+            "disabled (`thinking=False` or `anthropic_thinking={'type': 'disabled'}`). "
+            "Use an effort of 'high' or below, or enable thinking."
         )
 
     def _get_task_budget(self, model_settings: AnthropicModelSettings) -> AnthropicTaskBudget | None:
@@ -3198,6 +3308,17 @@ def _map_usage(
     # In streaming, usage appears in different events.
     # The values are cumulative, meaning new values should replace existing ones entirely.
     details = (existing_usage.details if existing_usage else {}) | _extract_usage_details(response_usage)
+    # The one-hour count is capped at the total it's part of: after a compaction iteration's cache write, the final
+    # event resets `cache_creation_input_tokens` without resending the split, so the start event's one-hour count
+    # would otherwise survive, both in streamed usage and in a message accumulated from a stream. This assumes a
+    # stale split can only overshoot the total.
+    if 'ephemeral_1h_input_tokens' in details:
+        if ephemeral_1h_input_tokens := min(
+            details['ephemeral_1h_input_tokens'], details.get('cache_creation_input_tokens', 0)
+        ):
+            details['ephemeral_1h_input_tokens'] = ephemeral_1h_input_tokens
+        else:
+            del details['ephemeral_1h_input_tokens']
 
     # Anthropic reports top-level tokens excluding compaction iteration usage; add the
     # compaction totals back in so the extracted `RequestUsage` reflects the real request cost.
@@ -3238,7 +3359,7 @@ class AnthropicStreamedResponse(StreamedResponse):
     """Implementation of `StreamedResponse` for Anthropic models."""
 
     _model_name: AnthropicModelName
-    _response: _utils.PeekableAsyncStream[BetaRawMessageStreamEvent, AsyncStream[BetaRawMessageStreamEvent]]
+    _response: _AnthropicEventStream
     _provider_name: str
     _model_id_namespace: str
     _provider_url: str
@@ -3314,14 +3435,15 @@ class AnthropicStreamedResponse(StreamedResponse):
                             continue
                         call_part = _map_server_tool_use_block(current_block, self.provider_name)
                         builtin_tool_calls[call_part.tool_call_id] = call_part
-                        # In streaming, the block's `input` is empty at start and arrives via
+                        # In streaming, the block's `input` is usually empty at start and arrives via
                         # subsequent `BetaInputJSONDelta` events. Emit with `args=None` so the
                         # accumulating JSON deltas can attach as a string; the
-                        # `BetaRawContentBlockStopEvent` handler below normalizes the final
-                        # value back to the canonical part shape (matching non-streaming).
+                        # `BetaRawContentBlockStopEvent` handler below normalizes a tool search's final
+                        # value back to the canonical part shape (matching non-streaming). A server tool
+                        # call made from code execution carries its whole input here, without deltas.
                         yield self._parts_manager.handle_part(
                             vendor_part_id=event.index,
-                            part=replace(call_part, args=None),
+                            part=call_part if current_block.input else replace(call_part, args=None),
                         )
                     elif isinstance(current_block, BetaWebSearchToolResultBlock):
                         yield self._parts_manager.handle_part(
@@ -3333,7 +3455,7 @@ class AnthropicStreamedResponse(StreamedResponse):
                             vendor_part_id=event.index,
                             part=_map_tool_search_tool_result_block(current_block, self.provider_name),
                         )
-                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):  # pragma: no cover
+                    elif isinstance(current_block, BetaCodeExecutionToolResultBlock):
                         # Legacy code execution responses used this bare `code_execution_tool_result` shape.
                         # Current code execution tool versions emit the named bash/text-editor blocks below.
                         yield self._parts_manager.handle_part(
@@ -4138,67 +4260,70 @@ def _map_mcp_server_result_block(
 def _effective_thinking_type(
     anthropic_thinking: BetaThinkingConfigParam | None,
     unified_thinking: ThinkingLevel | None,
-    *,
-    supports_adaptive_thinking: bool,
+    profile: AnthropicModelProfile,
 ) -> Literal['enabled', 'adaptive'] | None:
-    """Resolve the effective Anthropic thinking type for the output-tool and tool-forcing guards.
+    """Resolve whether a request will think, and how, for the output-mode and tool-forcing decisions.
 
-    Extended thinking (`{'type': 'enabled'}`) is incompatible with forced tool use and Tool Output;
-    adaptive thinking is compatible with both. Unified thinking maps to `adaptive` when the profile
-    advertises it and to `enabled` otherwise — the same mapping `_translate_thinking` uses to build
-    the wire payload. Returns `'enabled'`, `'adaptive'`, or `None` when thinking is off.
+    Extended thinking (`{'type': 'enabled'}`) rejects a forced `tool_choice`; adaptive thinking accepts it, but
+    the model then answers without thinking. Unified thinking maps to `adaptive` when the profile advertises it
+    and to `enabled` otherwise, the same mapping `_translate_thinking` uses to build the wire payload. With no
+    thinking setting, models that think by default resolve to `adaptive`, as does `thinking=False` on a model
+    that can't turn thinking off. Returns `None` when the request won't think.
     """
     if anthropic_thinking:
         thinking_type = anthropic_thinking.get('type')
         return thinking_type if thinking_type in ('enabled', 'adaptive') else None
     if unified_thinking:
-        return 'adaptive' if supports_adaptive_thinking else 'enabled'
-    return None
+        return 'adaptive' if profile.get('anthropic_supports_adaptive_thinking', False) else 'enabled'
+    if unified_thinking is False and not profile.get('thinking_always_enabled', False):
+        return None
+    return 'adaptive' if profile.get('thinking_enabled_by_default', False) else None
+
+
+def _request_thinking_type(
+    profile: AnthropicModelProfile,
+    model_settings: ModelSettings | None,
+    model_request_parameters: ModelRequestParameters,
+) -> Literal['enabled', 'adaptive'] | None:
+    """`_effective_thinking_type` for a request, before or after `Model.prepare_request` runs.
+
+    `params.thinking` is checked first since `Model.prepare_request` moves unified `thinking` from `model_settings`
+    into it, but `AnthropicModel.prepare_request` also asks before that happens.
+    """
+    anthropic_settings = cast(AnthropicModelSettings, model_settings or {})
+    unified_thinking = model_request_parameters.thinking
+    if unified_thinking is None:
+        unified_thinking = anthropic_settings.get('thinking')
+    return _effective_thinking_type(anthropic_settings.get('anthropic_thinking'), unified_thinking, profile)
 
 
 def _support_tool_forcing(
+    model_name: str,
+    profile: AnthropicModelProfile,
     model_settings: AnthropicModelSettings,
     model_request_parameters: ModelRequestParameters,
-    resolved_tool_choice: ResolvedToolChoice,
-    context: str = 'forcing specific tools',
-    *,
-    supports_forced_tool_choice: bool = True,
-    supports_adaptive_thinking: bool = False,
 ) -> bool:
-    """A forced `tool_choice` ('required'/specific tool) isn't always compatible with Anthropic.
+    """Whether to send a forced `tool_choice` ('any'/specific tool), raising if explicitly requested but unavailable.
 
-    Extended thinking rejects forcing (adaptive thinking does not), and some models
-    (Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5) reject it unconditionally.
-    We only raise an error if the user explicitly set a forcing value; a forcing value that came
-    from the `tool_choice` resolution logic falls back softly to 'auto'.
+    On top of the profile's forcing flags, extended thinking rejects forcing, and adaptive thinking accepts it
+    but answers without thinking, so only an explicit forcing `tool_choice` is sent then.
     Ref: https://platform.claude.com/docs/en/agents-and-tools/tool-use/implement-tool-use#forcing-tool-use
     """
-    # `params.thinking` is checked too since Model.prepare_request strips unified `thinking` from
-    # model_settings into params.thinking before the tool-choice helpers run.
-    thinking_type = _effective_thinking_type(
-        model_settings.get('anthropic_thinking'),
-        model_request_parameters.thinking or model_settings.get('thinking'),
-        supports_adaptive_thinking=supports_adaptive_thinking,
+    thinking_type = _request_thinking_type(profile, model_settings, model_request_parameters)
+    unavailable_reason = tool_forcing_unavailable_reason(
+        profile,
+        thinking=thinking_type is not None,
+        thinking_remedy="Disable thinking with `thinking=False` or `anthropic_thinking={'type': 'disabled'}`",
     )
-
-    if supports_forced_tool_choice and thinking_type != 'enabled':
-        return True
-
-    explicit_choice = model_settings.get('tool_choice')
-    if explicit_choice == 'required' or isinstance(explicit_choice, list):
-        if not supports_forced_tool_choice:
-            raise UserError(f"Anthropic does not support {context} for this model. Use `tool_choice='auto'`.")
-        adaptive_hint = (
-            " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports forcing."
-            if supports_adaptive_thinking
-            else ''
+    if unavailable_reason is None and thinking_type == 'enabled':
+        unavailable_reason = (
+            "Extended thinking doesn't support forcing tool use. Disable thinking or use `tool_choice='auto'`."
         )
-        raise UserError(
-            f'Anthropic does not support {context} with extended thinking. '
-            f"Disable thinking or use `tool_choice='auto'`.{adaptive_hint}"
-        )
-
-    if resolved_tool_choice == 'required' or isinstance(resolved_tool_choice, tuple):
-        return False
-
-    return True
+        if profile.get('anthropic_supports_adaptive_thinking', False):
+            unavailable_reason += " Alternatively, `anthropic_thinking={'type': 'adaptive'}` supports forcing."
+    return support_tool_forcing(
+        model_name,
+        model_settings,
+        unavailable_reason,
+        disables_thinking=thinking_type == 'adaptive' and profile.get('forced_tool_choice_disables_thinking', False),
+    )

@@ -8,7 +8,7 @@
 > from pydantic_ai_harness.media import S3MediaStore
 > ```
 >
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 `StepPersistence` records what an agent did at each boundary, separate from
 whether the run can be safely resumed. It is the persistence substrate for
@@ -83,6 +83,12 @@ primitive for it (see [Three-level identity](#three-level-identity)).
   stores.
 - **Neither set** uses `ctx.run_id` unchanged. A missing context run id raises
   `RuntimeError` because inventing one would disconnect replayed writes.
+
+The run record, events, and snapshots carry `agent_name`. When it is unset, they
+record the running agent's `name` instead (which Pydantic AI infers from the
+variable name when `Agent(name=...)` is not passed). That fallback does not feed
+the `run_id` derivation above, so the store key stays `ctx.run_id` and runs can
+still be looked up by the id passed to or returned from `Agent.run`.
 
 ## Durable execution
 

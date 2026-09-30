@@ -3,7 +3,7 @@
 Track what an agent costs, and stop it when a budget is gone.
 
 > [!NOTE]
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://github.com/pydantic/pydantic-ai-harness#version-policy).
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/spend/)
 
@@ -156,7 +156,7 @@ agent = Agent('openai:gpt-5.4', deps_type=type(None), capabilities=[limits, Appr
 
 The gate reads numbers `SpendLimits` has already accrued, because the previous response was counted inside `wrap_model_request` before this request was prepared. It gates the first request of a run too, which is what carries a threshold crossed by an earlier run into the next one. A capability listed after it can still skip the request with `SkipModelRequest`, so an approval taken here is not proof that a request followed.
 
-That pause holds a coroutine, so it lasts as long as the process does and no longer. A *serializable* pause at a model-request boundary is not available: Pydantic AI's deferral path is tool-boundary only. `CallDeferred` and `ApprovalRequired` are honored where a tool call is validated or executed; raised from a model-request hook, nothing catches them and the run ends on the bare exception, which carries no message of its own. [#151](https://github.com/pydantic/pydantic-ai-harness/issues/151) tracks a general interrupt with a serializable continuation.
+That pause holds a coroutine, so it lasts as long as the process does and no longer. To pause across processes, gate the spending at a tool call instead: [deferred tool calls](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) end the run with a serializable request for approval, and a later run resumes it with the deferred tool results. Or stop the run and resume it later from its message history, as described below.
 
 For a ceiling that expands rather than stops, `budgets` is read fresh on every request, so replacing it after a refusal lets the work continue against the larger ceiling. The counter is keyed on `name`, `window`, `scope` and the period the window is currently in, never on the ceiling, so what is already spent carries over.
 

@@ -89,7 +89,9 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   anywhere else; the agent from `create_agent()` has no coding tools of its
   own. `coder` is declared with `repo_context: false` because `repo_context`
   binds harness `RepoContext` itself; keep it that way or `AGENTS.md` reaches
-  the model twice.
+  the model twice. When a built-in takes the id of a row the former harness
+  catalog offered, add that old row to `_RETIRED_BUILTINS` in `plugin_loader.py`, so a
+  user's saved toggle of it maps to the built-in instead of outranking it.
 - **Project declarations rank just above built-ins and start off.**
   `.clai/settings.json` (`project_settings.py`) may declare plugins; the loader
   takes them as `project=`, every one `enabled=False`, because a repository
@@ -130,7 +132,13 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
   tests drive it headless, no terminal), and a thin async runner that owns the
   screen and calls `menu.run` in a thread.
 - Every key mutates immediately and `replace_items` redraws. No pending-changes
-  state, no save/cancel pair.
+  state, no save/cancel pair. Settings menus still end with a **Save & close**
+  row (`save_and_close_item()`, recognized by `picked(result)`) that only
+  leaves; `FieldMenu`, `/keys`, and `/plugins` add it for you.
+- Turning a plugin on opens its `@host.configure` menu. A widget cannot open
+  from inside another menu's key handler, so `PluginMenu` closes with a
+  `Configure` result and `open_plugins_menu` runs the settings menu, then
+  reopens the list.
 - Nothing prints to the console while the menu is open; the alternate screen
   would hide it. Show empty states and errors inside the menu as disabled rows.
 - Esc and Ctrl-C close cleanly. They are not errors.
@@ -185,6 +193,7 @@ bundled palettes use Termflow defaults.
 | File | Holds |
 |---|---|
 | `_cli.py` | argument parsing, startup, `--agent` |
+| `agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `_app.py` | the prompt loop and built-in `/commands` |
 | `_session.py` | conversation state, revision-checked saves, restore-only resume, per-run plugins |
 | `sessions.py` | resume command and background namer ownership; built-in step capture |
@@ -218,6 +227,10 @@ bundled palettes use Termflow defaults.
 | `settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
 | `project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
 | `repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
+| `slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
+| `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
+| `plugin_keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
+| `pkce.py` | `PKCESignIn`: browser sign-in for a registered public OAuth client (PKCE, no secret), with tokens in the credential store and locked refresh; built on core's `OAuthFlow` |
 | `speculation.py` | the `run.speculative_code_mode` switch, `Ctrl+X Ctrl+S` toggle, session counters and pinned row |
 | `speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
 | `eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |

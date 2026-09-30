@@ -217,8 +217,9 @@ running turn ends. With arguments, these commands queue like any other.
 `/model` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
-`gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, and `gpt-6-astra`; availability
-depends on your account. Unknown prices and context limits are not inferred.
+`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
+`gpt-5.6-terra`, and `gpt-5.6-sol`; availability depends on your account.
+Unknown prices and context limits are not inferred.
 
 The model catalog combines genai-prices' catalog
 filtered to providers Pydantic AI can run, plus core's own model list, plus
@@ -230,6 +231,20 @@ makes it the model for the next prompt. `Ctrl+S` opens that model's settings:
 penalties, `parallel_tool_calls`, `thinking`, and `service_tier`. They are
 saved per model and passed to every run with that model. Unsupported settings
 may be ignored or rejected by the provider; select only settings your provider supports. `/model NAME` sets the model without the menu.
+
+CLAI installs the SDKs for OpenAI and Anthropic. Selecting a model whose provider SDK is
+missing from the Python CLAI runs on fails right away, naming the install command, instead
+of on the next prompt. TypeSafe's Jev needs the `typesafe` extra:
+
+```bash
+pip/uv-add "pydantic-clai2[typesafe]"
+```
+
+From a pydantic-ai checkout, run CLAI with the extra instead:
+
+```bash
+uv run --package pydantic-clai2 --extra typesafe clai2
+```
 
 Tab completes setting names, boolean values, and model names from Pydantic AI's
 built-in catalog without network access. Provider prefixes include `openai-codex:`,
@@ -371,8 +386,10 @@ repeated CLAI heading. Intermediate text is flushed when a tool-call part begins
 before the tool's arguments finish streaming. Incomplete lines within a text part
 still wait for a newline or part boundary, as in Code Puppy's Markdown path.
 
-Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Long names
-are truncated to one terminal row. Completion activity remains in the footer
+Tool calls print once with a filled-circle marker and the tool name, followed by one blank line. Tools
+without a specialized summary list their arguments after the name as `name=value` pairs, with pink names and
+muted compact-JSON values. Each value shows at most 40 characters by default; `/set display.tool_arg_chars 80`
+changes the next turn's limit (0 to 1000; zero hides arguments). The whole line is truncated to one terminal row. Completion activity remains in the footer
 rather than adding a separate `Finished:` line to the transcript.
 
 ## Grep previews

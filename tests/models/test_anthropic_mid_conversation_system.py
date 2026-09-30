@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from cassetter import Cassette
 
 with try_import() as imports_successful:
-    from anthropic import AsyncAnthropicBedrock, AsyncAnthropicFoundry
+    from anthropic import DEFAULT_TIMEOUT, AsyncAnthropicBedrock, AsyncAnthropicFoundry
     from anthropic.types.beta import BetaTextBlock, BetaToolUseBlock, BetaUsage
 
     from pydantic_ai.models import ModelRequestParameters
@@ -686,6 +686,7 @@ async def test_mid_conversation_system_prompt_on_foundry(allow_model_requests: N
     # below is then the shared one from `Model.prepare_messages` that every model without support
     # gets — the adapter has no `<system>` rendering of its own.
     foundry_client = MagicMock(spec=AsyncAnthropicFoundry)
+    foundry_client.timeout = DEFAULT_TIMEOUT
     foundry_client.base_url = 'https://example.services.ai.azure.com/anthropic'
     foundry_client.beta.messages.create = AsyncMock(return_value=completion)
 
@@ -763,7 +764,10 @@ async def test_mid_conversation_system_prompt_on_bedrock(
     )
 
 
-async def test_native_tool_availability_delta(allow_model_requests: None, anthropic_api_key: str, vcr: Cassette):
+@pytest.mark.parametrize('model_name', ['claude-opus-4-8', 'claude-sonnet-5-5'])
+async def test_native_tool_availability_delta(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette, model_name: str
+):
     """A framework tool reveal reaches the model, which then calls the tool it just learned about.
 
     A delta arriving on its own has the same problem a lone system prompt does — nothing legal to
@@ -777,7 +781,7 @@ async def test_native_tool_availability_delta(allow_model_requests: None, anthro
     `lookup_refund_policy` or its `order_id` parameter, so a call to it can only have come from the
     reveal.
     """
-    model = AnthropicModel('claude-opus-4-8', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel(model_name, provider=AnthropicProvider(api_key=anthropic_api_key))
     tool = ToolDefinition(
         name='lookup_refund_policy',
         description='Look up the refund policy for an order.',

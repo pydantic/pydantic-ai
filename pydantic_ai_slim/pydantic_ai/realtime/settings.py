@@ -68,13 +68,30 @@ class RealtimeModelSettings(TypedDict, total=False):
     max_tokens: int
     """The maximum number of tokens to generate per response before stopping.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    Supported by: OpenAI, Azure OpenAI, and Gemini. xAI accepts it but ignores it.
     """
 
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 
-    Supported by: OpenAI, Azure OpenAI, and xAI.
+    Supported by: OpenAI, Azure OpenAI, and OpenAI GPT-Live, where it applies to the delegated backend
+    unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it but ignores it.
+    """
+
+    async_tool_calls: bool | None
+    """Whether the model keeps the conversation going while a tool call runs. `None` (the default) leaves it to the model.
+
+    With async tool calls, the model can keep speaking (typically saying what it's doing) and answer the
+    user while a tool runs, and the result reaches it when it's ready. Without them, the model goes quiet
+    until the result is back. This pays off for tools that take a noticeable moment; see
+    [Concurrent tool execution](../realtime/tools.md#concurrent-tool-execution) for the tradeoffs.
+
+    Only models whose profile's
+    [`async_tool_call_mode`][pydantic_ai.realtime.RealtimeModelProfile.async_tool_call_mode] is
+    `'optional'` offer a choice, and every one of them defaults to off. The others ignore this setting,
+    since they either always or never run tool calls asynchronously.
+
+    Supported by: the Gemini native-audio models and `gemini-3.8-live`.
     """
 
     tool_choice: ToolChoice
@@ -132,15 +149,18 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`thinking`][pydantic_ai.settings.ModelSettings.thinking] setting on the request-response models.
 
     `True` enables it at the provider default, and `'minimal'`/`'low'`/`'medium'`/`'high'`/`'xhigh'`
-    selects an effort level. `False` disables thinking (sent as `reasoning.effort: 'none'` on OpenAI,
-    Azure OpenAI, and xAI).
+    selects an effort level. `False` disables thinking (sent as effort `'none'` on OpenAI, Azure OpenAI,
+    Azure AI Voice Live, and xAI).
     OpenAI and Gemini apply it only to models whose profile reports
     [`supports_thinking`][pydantic_ai.realtime.RealtimeModelProfile.supports_thinking]. Other models
     silently ignore it. Providers with a richer native config expose it separately
     (e.g. Gemini's `google_thinking_config`), which takes precedence.
 
-    Supported by: OpenAI `gpt-realtime-2*` models, Gemini native-audio models, and xAI's reasoning
-    Grok Voice models (`grok-voice-latest` and the `grok-voice-think-*` family).
+    Supported by: OpenAI `gpt-realtime-2*` models (also on Azure), reasoning chat models like `gpt-5`
+    on Azure AI Voice Live, Gemini native-audio models, xAI's reasoning Grok Voice models
+    (`grok-voice-latest` and the `grok-voice-think-*` family), and OpenAI GPT-Live, where it sets the
+    reasoning effort of the delegated backend model if that model reasons, unless
+    `openai_live_delegation` sets its own `reasoning_effort`.
     """
 
     turn_detection: bool | TurnDetection
@@ -159,9 +179,12 @@ class RealtimeModelSettings(TypedDict, total=False):
     """
 
     handshake_timeout: float
-    """Seconds to wait for a realtime protocol handshake event. Defaults to `30.0`.
+    """Seconds to wait for the realtime protocol handshake to complete. Defaults to `30.0`.
 
-    Supported by: OpenAI, Azure OpenAI, and xAI.
+    On OpenAI, Azure OpenAI, and xAI this bounds the wait for each handshake event; on Gemini it bounds
+    opening the socket and waiting for the session setup to complete.
+
+    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
     """
 
     reconnect: ReconnectPolicy
