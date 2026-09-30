@@ -11340,13 +11340,14 @@ class _EndingConnection(BlockingRealtimeConnection):
         self._hangs = hangs
         self.ended = 0
 
-    async def end_session(self) -> list[SessionUsage]:
+    async def end_session(self) -> AsyncIterator[SessionUsage]:
         self.ended += 1
+        for report in self._reports:
+            yield report
         if self._fails:
             raise ConnectionError('the link went away')
         if self._hangs:
             await asyncio.Event().wait()
-        return self._reports
 
 
 async def test_closing_records_the_usage_the_provider_reports_as_its_session_ends() -> None:
@@ -11400,16 +11401,31 @@ async def test_a_session_stopped_by_a_usage_limit_still_ends_the_provider_sessio
 
 
 @pytest.mark.parametrize('failure', ['fails', 'hangs'])
-async def test_a_provider_that_does_not_end_its_session_cleanly_leaves_usage_as_it_was(
+async def test_a_provider_that_does_not_end_its_session_cleanly_keeps_what_it_reported(
     failure: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Closing still finishes, promptly, with the usage reported before the link failed or the provider went quiet."""
     monkeypatch.setattr(realtime_session_module, '_END_SESSION_TIMEOUT', 0.01)
-    conn = _EndingConnection(fails=failure == 'fails', hangs=failure == 'hangs')
-    async with RealtimeSession(conn, _noop_runner) as session:
-        pass
+    conn = _EndingConnection(
+        [SessionUsage(RequestUsage(audio_seconds=2), response_scoped=False)],
+        fails=failure == 'fails',
+        hangs=failure == 'hangs',
+    )
+    with anyio.fail_after(_LIVENESS_TIMEOUT):
+        async with RealtimeSession(conn, _noop_runner) as session:
+            pass
 
     assert conn.ended == 1
-    assert session.usage == RunUsage()
+    assert session.usage.audio_seconds == 2
+
+
+async def test_a_cancelled_session_does_not_wait_to_end_the_provider_session() -> None:
+    conn = _EndingConnection(hangs=True)
+    with anyio.move_on_after(0.01):
+        async with RealtimeSession(conn, _noop_runner):
+            await asyncio.Event().wait()
+
+    assert conn.ended == 0
 
 
 async def test_usage_reported_as_the_session_ends_counts_against_the_limits() -> None:

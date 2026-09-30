@@ -433,6 +433,18 @@ def _prompt_text(part: UserPromptPart, *, provider_name: str) -> str:
 
 
 @dataclass
+class _SessionEnd:
+    """How far Live's session has ended, kept in one place so a replacement session starts from a fresh one."""
+
+    ended: bool = False
+    """Whether `session.closed` arrived, or the socket closed cleanly: there is nothing left to ask Live for."""
+
+    unclaimed: list[SessionUsage] = field(default_factory=list[SessionUsage])
+    """The final usage `session.closed` reported, until it has been yielded, so a session that stops reading in
+    between still gets it from `end_session()`."""
+
+
+@dataclass
 class _Delegation:
     """A unit of work the Live model handed to the Responses backend."""
 
@@ -509,10 +521,7 @@ class OpenAILiveConnection(RealtimeConnection):
         # continuations go out from the receive loop, which is where that terminal is seen.
         self._continuations_due: list[_Delegation] = []
         self._reported_seconds = 0.0
-        # Set once `session.closed` arrives: the last frame Live sends, carrying its final usage. That usage
-        # is held here until it has been yielded, so a session that stops reading in between still gets it.
-        self._session_ended = False
-        self._final_usage: list[SessionUsage] = []
+        self._session_end = _SessionEnd()
 
     @property
     def model_name(self) -> str | None:
@@ -624,33 +633,38 @@ class OpenAILiveConnection(RealtimeConnection):
     async def _send_event(self, event: dict[str, Any]) -> None:
         await self._ws.send(to_json(event).decode())
 
-    async def end_session(self) -> list[SessionUsage]:
+    async def end_session(self) -> AsyncIterator[SessionUsage]:
         """Send `session.close`, and read on until `session.closed` reports the session's final usage.
 
         Live reports its billed seconds only periodically while a session runs, so without this the seconds
         since the last report, all of them on a short call, would never be recorded. Called once the session
         has stopped iterating: the read left in flight then is picked up here, so no frame is lost.
+
+        A backend response still finishing meanwhile has no reply left to land on, so its tokens are yielded
+        as session usage: counted in the session's total, attributed to no response.
         """
         if self._closed:
-            return []
-        if self._session_ended:
-            # Live already ended the session; its final usage is returned unless it was already yielded.
-            usage, self._final_usage = self._final_usage, []
-            return usage
+            return
+        if self._session_end.ended:
+            # Live already ended the session; its final usage is yielded unless the session already took it.
+            unclaimed, self._session_end.unclaimed = self._session_end.unclaimed, []
+            for report in unclaimed:
+                yield report
+            return
         await self._send_event({'type': 'session.close'})
-        usage: list[SessionUsage] = []
-        while not self._session_ended:
+        while not self._session_end.ended:
             read = self._recv_task if self._recv_task is not None else self._start_read()
             self._recv_task = None
             try:
                 raw = await read
             except websockets.ConnectionClosedOK:
+                self._session_end.ended = True
                 break
-            usage.extend(
-                event for event in self._map_frame(raw) if isinstance(event, SessionUsage) and not event.response_scoped
-            )
-        self._final_usage = []
-        return usage
+            for event in self._map_frame(raw):
+                if isinstance(event, SessionUsage):
+                    yield event if not event.response_scoped else SessionUsage(event.usage, response_scoped=False)
+            # Any final usage `session.closed` held back was just yielded.
+            self._session_end.unclaimed = []
 
     async def aclose(self) -> None:
         """Cancel the read in flight so closing the socket doesn't strand its exception."""
@@ -684,7 +698,7 @@ class OpenAILiveConnection(RealtimeConnection):
                     # The read started above can no longer complete, and nothing will await it.
                     self._cancel_read()
                     # The session is over, so there is nothing left for `end_session()` to ask Live for.
-                    self._session_ended = True
+                    self._session_end.ended = True
                     # A graceful close ends whatever was in flight. Live never says a turn is over,
                     # so without this the last reply would be settled as interrupted even though the
                     # model had finished speaking and the session closed normally.
@@ -692,9 +706,9 @@ class OpenAILiveConnection(RealtimeConnection):
                         yield event
                     return
                 for event in self._map_frame(raw):
-                    if isinstance(event, SessionUsage) and self._final_usage:
+                    if isinstance(event, SessionUsage) and (unclaimed := self._session_end.unclaimed):
                         # Handed over now: a session that takes it records it before it can stop reading.
-                        self._final_usage = [usage for usage in self._final_usage if usage is not event]
+                        self._session_end.unclaimed = [report for report in unclaimed if report is not event]
                     yield event
                 await self._send_due_continuations()
             # Checked after every frame, not just when the socket goes quiet: the idle audio track
@@ -877,9 +891,10 @@ class OpenAILiveConnection(RealtimeConnection):
         The WebSocket close that follows is clean either way, so without this a reply cut off by the
         safety filter or the duration limit would be settled as though the model had finished it.
         """
-        self._session_ended = True
         events = self._map_usage(event.usage.seconds)
-        self._final_usage = [usage for usage in events if isinstance(usage, SessionUsage)]
+        self._session_end = _SessionEnd(
+            ended=True, unclaimed=[report for report in events if isinstance(report, SessionUsage)]
+        )
         if event.reason not in _ABNORMAL_CLOSE_REASONS:
             return events
         events.extend(self._settle_open_turns(interrupted=True))

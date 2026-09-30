@@ -2296,8 +2296,8 @@ async def test_final_usage_live_reported_before_the_session_stopped_reading_is_k
     connection = _LiveSink(ws)
     connection._map_frame(json.dumps(_session_closed('expired', seconds=7)))  # pyright: ignore[reportPrivateUsage]
 
-    assert [report.usage.audio_seconds for report in await connection.end_session()] == [7]
-    assert await connection.end_session() == []
+    assert [report.usage.audio_seconds for report in await _ended(connection)] == [7]
+    assert await _ended(connection) == []
     # Live already ended the session, so there is nothing to ask it.
     assert ws.sent == []
 
@@ -2308,8 +2308,12 @@ async def test_final_usage_already_taken_is_not_returned_again() -> None:
     events = aiter(connection)
     assert isinstance(await anext(events), SessionUsage)
 
-    assert await connection.end_session() == []
+    assert await _ended(connection) == []
     assert ws.sent == []
+
+
+async def _ended(connection: OpenAILiveConnection) -> list[SessionUsage]:
+    return [report async for report in connection.end_session()]
 
 
 class _LiveSink(OpenAILiveConnection):
@@ -2323,11 +2327,11 @@ async def test_ending_the_session_reads_every_frame_until_session_closed() -> No
     ws = _FakeWebSocket([usage_frame], closed_seconds=4)
     connection = _LiveSink(ws)
 
-    reports = await connection.end_session()
+    reports = await _ended(connection)
 
     assert [report.usage.audio_seconds for report in reports] == [3, 1]
     # Only once: the provider session is over.
-    assert await connection.end_session() == []
+    assert await _ended(connection) == []
     assert len(ws.sent) == 1
 
 
@@ -2336,7 +2340,7 @@ async def test_ending_a_closed_connection_sends_nothing() -> None:
     connection = _LiveSink(ws)
     await connection.aclose()
 
-    assert await connection.end_session() == []
+    assert await _ended(connection) == []
     assert ws.sent == []
 
 
@@ -2349,7 +2353,7 @@ async def test_ending_the_session_stops_when_the_socket_closes() -> None:
 
     connection = _LiveSink(_ClosingSocket([]))
 
-    assert await connection.end_session() == []
+    assert await _ended(connection) == []
 
 
 async def test_a_session_whose_socket_closed_is_not_asked_to_end_again() -> None:
@@ -2362,5 +2366,64 @@ async def test_a_session_whose_socket_closed_is_not_asked_to_end_again() -> None
     async for _ in connection:
         pass  # pragma: no cover
 
-    assert await connection.end_session() == []
+    assert await _ended(connection) == []
     assert ws.sent == []
+
+
+async def test_backend_tokens_arriving_as_the_session_ends_count_as_session_usage() -> None:
+    """A backend response finishing during the drain has no reply left to land on, but its tokens are still billed."""
+    completed = {
+        'type': 'response.event',
+        'event_id': 'e1',
+        'delegation_id': 'd1',
+        'event': _backend_terminal(
+            usage={
+                'input_tokens': 10,
+                'input_tokens_details': {'cache_write_tokens': 0, 'cached_tokens': 0},
+                'output_tokens': 2,
+                'output_tokens_details': {'reasoning_tokens': 0},
+                'total_tokens': 12,
+            }
+        ),
+    }
+    ws = _FakeWebSocket([json.dumps(completed)], closed_seconds=4)
+
+    reports = await _ended(_LiveSink(ws))
+
+    assert [(report.usage.input_tokens, report.usage.audio_seconds, report.response_scoped) for report in reports] == [
+        (10, 0, False),
+        (0, 4, False),
+    ]
+
+
+async def test_closing_a_session_whose_socket_drops_finishes_promptly(model: OpenAILiveModel) -> None:
+    """A link that fails while Live is asked to end the session leaves nothing to wait for."""
+
+    class _DroppingSocket(_FakeWebSocket):
+        async def send(self, data: str) -> None:
+            self.sent.append(data)
+            if json.loads(data)['type'] == 'session.close':
+                self._frames.append('drop')
+                self._arrived.set()
+
+        async def recv(self) -> str:
+            if (raw := await super().recv()) == 'drop':
+                raise websockets.ConnectionClosedError(Close(1006, ''), None)
+            return raw
+
+    started = json.dumps({'type': 'session.started', 'event_id': 'e', 'session': {'id': 's', 'model': 'gpt-live-1'}})
+    ws = _DroppingSocket([started])
+    with _patched_connect(ws), anyio.fail_after(1):
+        async with Agent().realtime(model).session() as session:
+            reading = asyncio.ensure_future(anext(aiter(session)))
+            await asyncio.sleep(0.01)
+    reading.cancel()
+
+    assert [json.loads(frame)['type'] for frame in ws.sent[1:]] == ['session.close']
+    assert session.usage.audio_seconds == 0
+
+
+async def test_a_session_that_expires_as_it_is_asked_to_end_still_reports_its_usage() -> None:
+    ws = _FakeWebSocket([json.dumps(_session_closed('expired', seconds=3))])
+
+    assert [report.usage.audio_seconds for report in await _ended(_LiveSink(ws))] == [3]

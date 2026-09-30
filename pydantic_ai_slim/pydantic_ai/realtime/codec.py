@@ -498,21 +498,24 @@ class RealtimeConnection(ABC):
         """
         return aiter(self)
 
-    async def end_session(self) -> Sequence[SessionUsage]:
-        """End the provider session, and return the usage the provider reports only as it ends.
+    async def end_session(self) -> AsyncIterator[SessionUsage]:
+        """End the provider session, yielding the usage the provider reports only as it ends.
 
-        A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] calls this once while closing, after it
-        has stopped reading the connection and before it reports the session's usage, whenever the session
-        owns the provider session (not on a WebRTC sideband, where ending it would end the browser's call).
-        A provider that already ended the session, or went away, has nothing more to report: return what
+        A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] iterates this once while closing, after
+        it has stopped reading the connection and before it reports the session's usage, whenever the
+        session owns the provider session (not on a WebRTC sideband, where ending it would end the browser's
+        call). A provider that already ended the session, or went away, has nothing more to ask: yield what
         it reported that the session hasn't taken yet, if anything. Only session-scoped usage belongs here:
-        there is no response left to attribute anything else to. The session bounds how long it waits, and
-        a transport error is treated as nothing to report.
+        there is no response left to attribute anything else to.
 
-        The default does nothing, for providers that report all usage as it happens or that end the
+        The session bounds how long it iterates, and stops at a transport error; everything yielded until
+        then is recorded. It skips this when the session is closing because it was cancelled.
+
+        The default yields nothing, for providers that report all usage as it happens or that end the
         session by closing the transport.
         """
-        return []
+        return
+        yield  # pragma: no cover
 
     @property
     def model_name(self) -> str | None:

@@ -268,6 +268,7 @@ _MAX_TRUNCATABLE_AUDIO_ITEMS = 32
 # staying out of `all_messages()` for as long as a provider keeps talking.
 _BARGE_IN_TURN_HOLD_SECONDS = 5.0
 #: How long closing waits for the provider to end its session and report the usage it only reports then.
+#: Not waited for at all when the session is closing because it was cancelled.
 _END_SESSION_TIMEOUT = 2.0
 # The byte budget alone would let a stream of tiny deltas queue millions of objects, so the window is
 # also capped in chunks: five minutes at 10 ms apiece, well below any provider's real chunk size.
@@ -1102,7 +1103,8 @@ class RealtimeSession:
         await cancel_and_drain(*self._background_tasks, *pump_tasks, msg='Realtime session exited')
         # A WebRTC sideband doesn't own the provider session: ending it would end the browser's call. A
         # provider that already went away is the connection's to recognize, which it can do for certain.
-        if self._owns_media:
+        # A cancelled session closes promptly instead of waiting on the provider.
+        if self._owns_media and not isinstance(self._closing_error, asyncio.CancelledError):
             await self._record_final_usage()
 
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
@@ -1142,19 +1144,24 @@ class RealtimeSession:
 
         Runs once nothing reads the connection any more and before the session span reports its usage, so
         what a provider bills at the very end (GPT-Live's last seconds of audio) is counted. Bounded, and
-        best-effort: a provider that doesn't answer in time, or a link that fails now, leaves the usage as
-        it was, as it would have been without this.
+        best-effort: what the provider reported before it stopped answering in time, or before the link
+        failed, is recorded, and nothing more.
         """
+        recorded = False
         try:
-            reports = await asyncio.wait_for(self._connection.end_session(), _END_SESSION_TIMEOUT)
-        except (asyncio.TimeoutError, *self._connection.transport_errors):
-            return
-        for report in reports:
-            if report.context_window_used is not None:
-                self._reported_context_window_used = report.context_window_used
-            self.usage.incr(report.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
-        # The session is closed, so an exceeded limit is parked for `close()` to raise.
-        self._check_response_boundary_limits()
+            with anyio.move_on_after(_END_SESSION_TIMEOUT):
+                async for report in self._connection.end_session():
+                    if report.context_window_used is not None:
+                        self._reported_context_window_used = report.context_window_used
+                    self.usage.incr(
+                        report.usage
+                    )  # usage-attribution: the session owns its spans; `wrap_run` opens none
+                    recorded = True
+        except self._connection.transport_errors:
+            pass
+        if recorded:
+            # The session is closed, so an exceeded limit is parked for `close()` to raise.
+            self._check_response_boundary_limits()
 
     def _queue_put(self, item: RealtimeEvent | object) -> None:
         """Append an item, bounding the queue while no session iterator is active."""
