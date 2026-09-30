@@ -238,8 +238,8 @@ only where the provider offers nothing else. Every `ModelAPIError` also exposes 
 [`body`][pydantic_ai.exceptions.ModelAPIError.body], when available.
 
 A category means the same thing whether the provider reported the error with an HTTP status or inside an
-already successful response, such as an error event in a stream. For example, both an HTTP 529 from Anthropic
-and an `overloaded_error` event in an Anthropic stream raise `ModelOverloadedError`, but only the first is also
+already successful response, such as an error event in a stream. For example, both an HTTP 529 from Bedrock
+and a `serviceUnavailableException` in a Bedrock stream raise `ModelOverloadedError`, but only the first is also
 a `ModelHTTPError`, because only it has a status code.
 
 This lets you decide what to do about a failure without knowing which provider it came from:
