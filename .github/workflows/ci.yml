@@ -423,12 +423,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # `latest-versions-canary.yml` runs the endpoints of this list; update it alongside.
+        # `latest-versions-canary.yml` runs the stable endpoints of this list; update it
+        # when Python 3.15 becomes a required test version.
         # Growing this or any other test matrix grows the tracked-job count that
         # `REPORT_ROW_LIMIT` in `.github/scripts/ci_duration.py` must stay above, or the duration
         # report truncates. That constant's comment enumerates all four.
         # `all-extras` is the slowest install shape -- it runs sharded in `test-all-extras` instead.
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
         install:
           - name: pydantic-ai-slim
             command: "--package pydantic-ai-slim"
@@ -467,6 +468,9 @@ jobs:
       COLLECT_COVERAGE: ${{ matrix.python-version == '3.14' || matrix.clai2_only == 'true' && matrix.python-version == '3.10' }}
       BLOCKBUSTER_ENABLED: ${{ matrix.python-version == '3.13' }}
       CLAI2_EXTRA: ${{ matrix.clai2_only == 'true' && 'typesafe' || '' }}
+    # Python 3.15 is under evaluation. Keep the results visible while its
+    # dependencies and test suite catch up, then make this entry required.
+    continue-on-error: ${{ matrix.python-version == '3.15' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -559,7 +563,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
         shard: [1, 2]
     env:
       CI: true
@@ -574,6 +578,7 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
       TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
+    continue-on-error: ${{ matrix.python-version == '3.15' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -603,7 +608,7 @@ jobs:
       # this model, permanently turning an exact cache hit into a cold model cache.
       - name: restore sentence-transformers test model
         id: sentence-transformers-cache
-        if: matrix.python-version != '3.14'
+        if: matrix.python-version != '3.14' && matrix.python-version != '3.15'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/huggingface/hub/models--sentence-transformers-testing--stsb-bert-tiny-safetensors
@@ -622,7 +627,7 @@ jobs:
       - name: pre-download sentence-transformers test model
         id: sentence-transformers-download
         if: >-
-          matrix.python-version != '3.14'
+          matrix.python-version != '3.14' && matrix.python-version != '3.15'
           && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: |
@@ -639,7 +644,7 @@ jobs:
       # A failed non-fatal download must not become an immutable exact cache hit.
       - name: save sentence-transformers test model
         if: >-
-          matrix.python-version != '3.14'
+          matrix.python-version != '3.14' && matrix.python-version != '3.15'
           && steps.sentence-transformers-cache.outputs.cache-hit != 'true'
           && steps.sentence-transformers-download.outcome == 'success'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
