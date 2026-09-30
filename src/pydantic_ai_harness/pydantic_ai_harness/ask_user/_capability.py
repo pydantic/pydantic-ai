@@ -57,10 +57,12 @@ class AskUser(AbstractCapability[AgentDepsT]):
     timeout: float | None = None
     """Seconds to wait for the answerer before cancelling it and telling the model the user did not answer.
 
-    `None` waits indefinitely. Needs an answerer: a deferred call has nothing to wait on.
+    Must be positive; `None` waits indefinitely. Needs an answerer: a deferred call has nothing to wait on.
     """
 
     def __post_init__(self) -> None:
+        if self.timeout is not None and self.timeout <= 0:
+            raise UserError('`AskUser.timeout` must be positive, or `None` to wait indefinitely.')
         if self.answerer is None and self.timeout is not None:
             raise UserError('`AskUser.timeout` bounds the answerer, so it cannot be combined with `answerer=None`.')
 

@@ -280,6 +280,11 @@ class TestDeferred:
         with pytest.raises(UserError, match='cannot be combined with `answerer=None`'):
             AskUser(answerer=None, timeout=5)
 
+    @pytest.mark.parametrize('timeout', [0, -1])
+    def test_a_timeout_must_be_positive(self, timeout: float) -> None:
+        with pytest.raises(UserError, match='must be positive'):
+            AskUser(answerer=ScriptedAnswerer(), timeout=timeout)
+
 
 class TestTimeout:
     async def test_a_slow_answerer_is_cancelled_and_the_model_told(self) -> None:
