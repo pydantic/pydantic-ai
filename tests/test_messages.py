@@ -1647,6 +1647,21 @@ def test_tool_return_content_nested_multimodal():
             id='null-media-type',
         ),
         pytest.param(
+            {'kind': 'image-url', 'url': 'https://example.com/report.png', 'media_type': None},
+            snapshot(ImageUrl(url='https://example.com/report.png')),
+            snapshot(
+                {
+                    'url': 'https://example.com/report.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': '768606',
+                }
+            ),
+            id='null-media-type-inferable-url',
+        ),
+        pytest.param(
             {'kind': 'uploaded-file', 'file_id': 'file-1', 'provider_name': 'openai'},
             snapshot(UploadedFile(file_id='file-1', provider_name='openai')),
             snapshot(
@@ -1710,8 +1725,8 @@ def test_extensionless_url_media_type_serializes_null_and_round_trips(
 ) -> None:
     """A URL whose media type can't be inferred serializes `media_type: null` and round-trips.
 
-    The run itself never needs the media type — providers that take the URL as it is never read one —
-    so a history that ran has to dump, and dump to something that loads back into the same part, in a
+    A provider that forwards the URL as it is, as OpenAI Chat and Responses do, never reads the media
+    type, so a history that ran there has to dump, and dump to something that loads back into the same part, in a
     user prompt as in a tool return ([issue #8388](https://github.com/pydantic/pydantic-ai/issues/8388)).
     """
     item = url_type(url='https://example.com/file')

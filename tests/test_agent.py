@@ -8344,15 +8344,26 @@ def test_custom_output_type_invalid() -> None:
 
 
 def test_history_with_extensionless_image_url_dumps_after_run() -> None:
-    """An extensionless `ImageUrl` in history runs fine and the resulting history serializes."""
-    agent = Agent(FunctionModel(lambda messages, agent_info: ModelResponse(parts=[TextPart('ok')])))
+    """A run with an extensionless `ImageUrl` in its history and in a tool return completes, and its history serializes."""
+
+    def model(messages: list[ModelMessage], agent_info: AgentInfo) -> ModelResponse:
+        if any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
+            return ModelResponse(parts=[TextPart('ok')])
+        return ModelResponse(parts=[ToolCallPart('get_file', {})])
+
+    agent = Agent(FunctionModel(model))
+
+    @agent.tool_plain
+    def get_file() -> dict[str, ImageUrl]:
+        return {'file': ImageUrl(url='https://example.com/image')}
+
     result = agent.run_sync(
         'hello',
         message_history=[ModelRequest(parts=[UserPromptPart(content=[ImageUrl(url='https://example.com/image')])])],
     )
     dumped = json.loads(result.all_messages_json())
-    content = dumped[0]['parts'][0]['content'][0]
-    assert content['media_type'] is None
+    assert dumped[0]['parts'][0]['content'][0]['media_type'] is None
+    assert dumped[3]['parts'][0]['content']['file']['media_type'] is None
     # The dumped history validates back into URL parts and can be run again.
     agent.run_sync('again', message_history=ModelMessagesTypeAdapter.validate_python(dumped))
 
