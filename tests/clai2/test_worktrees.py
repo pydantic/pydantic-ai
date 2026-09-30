@@ -302,8 +302,11 @@ def test_existing_branch_checked_out_elsewhere_is_kept(repository: Path, monkeyp
     assert not (repository / '.worktrees/feature').exists()
 
 
-def test_detached_worktree_is_reopened(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_git_made_worktree_is_reopened_and_excluded(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A detached checkout from plain `git worktree add` is reused, and stops showing in `git status`."""
     path = repository / '.worktrees/loose'
     git(repository, 'worktree', 'add', '--detach', str(path))
+    assert '.worktrees' in git(repository, 'status', '--porcelain')
     monkeypatch.chdir(repository)
     assert open_worktree(name='loose') == Worktree(path=path, branch='detached HEAD', created=False)
+    assert '.worktrees' not in git(repository, 'status', '--porcelain')

@@ -29,27 +29,13 @@ def open_worktree(*, name: str) -> Worktree:
         contents = exclude.read_bytes() if exclude.exists() else b''
         path = root / '.worktrees' / name
         if path.resolve() in _registered_worktrees():
-            branch = _git('-C', str(path), 'branch', '--show-current')
-            return Worktree(path=path, branch=branch or 'detached HEAD', created=False)
-        if path.exists():
+            branch = _git('-C', str(path), 'branch', '--show-current') or 'detached HEAD'
+            worktree = Worktree(path=path, branch=branch, created=False)
+        elif path.exists():
             raise ValueError(f'Cannot create worktree: {path} exists but is not a Git worktree. Pick another name.')
-        # Flat on purpose: Git refs are paths, so a nested `clai/NAME` cannot coexist with a user's `clai` branch.
-        branch = f'clai-{name}'
-        new_branch = not _git('branch', '--list', branch)
-        if new_branch:
-            _git('branch', branch, 'HEAD')
-        try:
-            _git('worktree', 'add', '--', str(path), branch)
-        except (OSError, subprocess.CalledProcessError) as exc:
-            if not new_branch:
-                raise
-            try:
-                _git('branch', '-d', '--', branch)
-            except (OSError, subprocess.CalledProcessError) as cleanup:
-                raise ValueError(
-                    f'Cannot create worktree at {path}: {exc}. Branch {branch} could not be removed: {cleanup}'
-                ) from cleanup
-            raise
+        else:
+            worktree = Worktree(path=path, branch=_check_out(path=path, name=name), created=True)
+        # Also when reopening: a worktree made with plain `git worktree add` has no exclude entry yet.
         if b'/.worktrees/' not in contents.splitlines():
             try:
                 exclude.parent.mkdir(parents=True, exist_ok=True)
@@ -61,7 +47,29 @@ def open_worktree(*, name: str) -> Worktree:
         raise ValueError(f'Cannot create worktree: {exc.stderr.strip()}') from exc
     except OSError as exc:
         raise ValueError(f'Cannot create worktree: {exc}') from exc
-    return Worktree(path=path, branch=branch, created=True)
+    return worktree
+
+
+def _check_out(*, path: Path, name: str) -> str:
+    """Add the checkout on `clai-NAME`, creating that branch from `HEAD` only if it is missing."""
+    # Flat on purpose: Git refs are paths, so a nested `clai/NAME` cannot coexist with a user's `clai` branch.
+    branch = f'clai-{name}'
+    new_branch = not _git('branch', '--list', branch)
+    if new_branch:
+        _git('branch', branch, 'HEAD')
+    try:
+        _git('worktree', 'add', '--', str(path), branch)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        if not new_branch:
+            raise
+        try:
+            _git('branch', '-d', '--', branch)
+        except (OSError, subprocess.CalledProcessError) as cleanup:
+            raise ValueError(
+                f'Cannot create worktree at {path}: {exc}. Branch {branch} could not be removed: {cleanup}'
+            ) from cleanup
+        raise
+    return branch
 
 
 def _registered_worktrees() -> set[Path]:
