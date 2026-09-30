@@ -20,7 +20,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.durable_exec._workspace import WorkspaceCall
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError, WorkspaceUnavailableError
 
 from ..workspace_fakes import InMemoryProvider
 from .workspace_scenarios import SCENARIOS, Check, ScenarioFailed, cases, scenario_agents, tool_runs
@@ -251,3 +251,30 @@ async def test_prefect_custom_workspace_error_subclass_uses_configured_retries()
     with pytest.raises(CustomWorkspaceError, match='temporary workspace failure'):
         await run_agent()
     assert starts == 3
+
+
+async def test_prefect_builtin_workspace_error_subclass_is_not_retried() -> None:
+    class CustomWorkspaceUnavailableError(WorkspaceUnavailableError):
+        pass
+
+    starts = 0
+
+    def fail_workspace() -> str:
+        nonlocal starts
+        starts += 1
+        raise CustomWorkspaceUnavailableError('workspace unavailable')
+
+    agent = Agent(
+        TestModel(call_tools=['fail_workspace']),
+        name='prefect_workspace_unavailable_subclass',
+        tools=[fail_workspace],
+        capabilities=[PrefectDurability(tool_task_config=TaskConfig(retries=2, retry_delay_seconds=0))],
+    )
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    with pytest.raises(CustomWorkspaceUnavailableError, match='workspace unavailable'):
+        await run_agent()
+    assert starts == 1

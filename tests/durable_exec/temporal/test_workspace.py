@@ -147,6 +147,47 @@ def test_workspace_failures_do_not_retry_temporal_activities() -> None:
     } <= set(policy.non_retryable_error_types or [])
 
 
+class CustomWorkspaceUnavailableError(WorkspaceUnavailableError):
+    pass
+
+
+@activity.defn
+async def fail_once_with_custom_workspace_error() -> int:
+    attempt = activity.info().attempt
+    if attempt == 1:
+        raise CustomWorkspaceUnavailableError('temporary workspace failure')
+    return attempt
+
+
+@workflow.defn
+class CustomWorkspaceErrorRetryWorkflow:
+    @workflow.run
+    async def run(self) -> int:
+        return await workflow.execute_activity(
+            fail_once_with_custom_workspace_error,
+            start_to_close_timeout=timedelta(seconds=10),
+            retry_policy=with_non_retryable_errors(
+                RetryPolicy(maximum_attempts=2, initial_interval=timedelta(milliseconds=1))
+            ),
+        )
+
+
+async def test_temporal_builtin_workspace_error_subclass_uses_configured_retries(client: Client) -> None:
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CustomWorkspaceErrorRetryWorkflow],
+        activities=[fail_once_with_custom_workspace_error],
+    ):
+        attempt = await client.execute_workflow(
+            CustomWorkspaceErrorRetryWorkflow.run,
+            id=f'custom-workspace-error-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert attempt == 2
+
+
 # --- The shared scenarios, in a workflow ---------------------------------------------------------
 
 provider = InMemoryProvider(in_unit=activity.in_activity)
