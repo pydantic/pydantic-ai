@@ -28,7 +28,8 @@ MIN_BASELINE_SAMPLES = 10
 # Must stay above the number of tracked jobs so a full run renders every row: `no_baseline` sorts
 # into the truncated tail with `normal`, and every newly-minted signature starts there. Today's
 # `ci.yml` matrices give 5 stable pythons x (5 installs + 2 all-extras shards + 2
-# lowest-versions shards) + 5 x 2 durable-exec + 7 preview jobs = 62.
+# lowest-versions shards) + 5 x 2 durable-exec + 3.10's third all-extras shard
+# + 7 preview jobs = 63.
 REPORT_ROW_LIMIT = 70
 WARNING_MIN_SECONDS = 60
 SLOW_THRESHOLD_MULTIPLIER = 1.25
