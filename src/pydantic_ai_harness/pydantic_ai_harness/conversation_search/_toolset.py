@@ -296,7 +296,11 @@ def _accepts_conversation_filter(source: HistorySource) -> bool:
     keeps working (the toolset filters the full list itself) but is told to update.
     """
     parameters = inspect.signature(source.list_runs).parameters.values()
-    if any(p.name == 'conversation_id' or p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters):
+    keyword_kinds = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    if any(
+        (p.name == 'conversation_id' and p.kind in keyword_kinds) or p.kind is inspect.Parameter.VAR_KEYWORD
+        for p in parameters
+    ):
         return True
     warnings.warn(
         f'`{type(source).__name__}.list_runs()` does not accept `conversation_id=`. '

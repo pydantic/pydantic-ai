@@ -66,9 +66,9 @@ class _RecordingStore:
         self.snapshot_loads.append(run_id)
         return await self.inner.list_snapshots(run_id=run_id)
 
-    async def latest_snapshot(self, *, run_id: str) -> ContinuableSnapshot | None:
+    async def latest_snapshot(self, *, run_id: str, include_interrupted: bool = False) -> ContinuableSnapshot | None:
         self.latest_loads.append(run_id)
-        return await self.inner.latest_snapshot(run_id=run_id)
+        return await self.inner.latest_snapshot(run_id=run_id, include_interrupted=include_interrupted)
 
 
 STORE_FACTORIES: dict[str, Callable[[Path], _Store]] = {
@@ -81,6 +81,20 @@ STORE_FACTORIES: dict[str, Callable[[Path], _Store]] = {
 @pytest.fixture(params=list(STORE_FACTORIES))
 def store(request: pytest.FixtureRequest, tmp_path: Path) -> _Store:
     return STORE_FACTORIES[request.param](tmp_path)
+
+
+@pytest.fixture
+def hashed(monkeypatch: pytest.MonkeyPatch) -> list[ModelMessage]:
+    """Every message `SnapshotHistorySource` hashes, in order."""
+    calls: list[ModelMessage] = []
+    real_hash = source_module.message_hash
+
+    def counting_hash(message: ModelMessage) -> str:
+        calls.append(message)
+        return real_hash(message)
+
+    monkeypatch.setattr(source_module, 'message_hash', counting_hash)
+    return calls
 
 
 async def _save(store: _Store, run_id: str, step_index: int, messages: list[ModelMessage]) -> None:
@@ -166,6 +180,18 @@ class TestConversationFilter:
         assert 'ZEBRA mine' in rendered
         assert 'theirs' not in rendered
 
+    async def test_positional_only_conversation_id_counts_as_legacy(self) -> None:
+        class _PositionalSource:
+            async def list_runs(self, conversation_id: str | None = None, /) -> list[RunRecord]:
+                return [RunRecord(run_id='mine', conversation_id='c1')]
+
+            async def run_history(self, *, run_id: str) -> list[ModelMessage]:
+                return [_user(f'ZEBRA {run_id}')]
+
+        with pytest.warns(HarnessDeprecationWarning, match='does not accept `conversation_id=`'):
+            rendered = await _search(_PositionalSource(), 'ZEBRA', scope='conversation', conversation_id='c1')  # pyright: ignore[reportArgumentType]
+        assert 'ZEBRA mine' in rendered
+
 
 class TestReconstructionCache:
     async def test_unchanged_run_is_not_reloaded(self, store: _Store) -> None:
@@ -181,12 +207,12 @@ class TestReconstructionCache:
 
         assert second == first
         assert _texts(second) == ['ZEBRA question', 'ZEBRA answer']
-        # The second call confirms the latest snapshot is unchanged instead of reloading all of them.
+        # The second call confirms the newest snapshot is unchanged instead of reloading all of them.
         assert recording.snapshot_loads == ['r1']
-        assert recording.latest_loads == ['r1']
+        assert recording.latest_loads == ['r1', 'r1']
 
     async def test_appended_snapshots_are_folded_in_incrementally(
-        self, store: _Store, monkeypatch: pytest.MonkeyPatch
+        self, store: _Store, hashed: list[ModelMessage]
     ) -> None:
         await store.register_run(RunRecord(run_id='r1'))
         turn_one: list[ModelMessage] = [_user('first'), _reply('one')]
@@ -194,17 +220,10 @@ class TestReconstructionCache:
         source = SnapshotHistorySource(store)
         await source.run_history(run_id='r1')
 
-        hashed: list[ModelMessage] = []
-        real_hash = source_module.message_hash
-
-        def counting_hash(message: ModelMessage) -> str:
-            hashed.append(message)
-            return real_hash(message)
-
-        monkeypatch.setattr(source_module, 'message_hash', counting_hash)
         turn_two: list[ModelMessage] = [*turn_one, _user('second'), _reply('two')]
         await _save(store, 'r1', 1, turn_two)
 
+        hashed.clear()
         history = await source.run_history(run_id='r1')
 
         # Only the appended snapshot is hashed; the first one is not reprocessed.
@@ -227,13 +246,30 @@ class TestReconstructionCache:
         assert history == await SnapshotHistorySource(store, max_cached_runs=0).run_history(run_id='r1')
         assert _texts(history) == ['replacement']
 
+    async def test_interrupted_save_that_prunes_complete_snapshots_rebuilds(self) -> None:
+        store = InMemoryStepStore(max_snapshots_per_run=2)
+        await store.register_run(RunRecord(run_id='r1'))
+        await _save(store, 'r1', 0, [_user('ZEBRA original')])
+        await _save(store, 'r1', 1, [_user('replacement')])
+        source = SnapshotHistorySource(store)
+        assert _texts(await source.run_history(run_id='r1')) == ['ZEBRA original', 'replacement']
+
+        # The newest `complete` snapshot is unchanged, but this `interrupted` save makes
+        # retention prune the first one, so the cached record must not be served.
+        await store.save_snapshot(
+            ContinuableSnapshot(run_id='r1', step_index=2, messages=[_user('unsettled')], state='interrupted')
+        )
+
+        history = await source.run_history(run_id='r1')
+        assert _texts(history) == ['replacement']
+        assert history == await SnapshotHistorySource(store, max_cached_runs=0).run_history(run_id='r1')
+
     async def test_run_without_snapshots_is_not_cached(self) -> None:
         store = _RecordingStore(InMemoryStepStore())
         source = SnapshotHistorySource(store)
         assert await source.run_history(run_id='missing') == []
         assert await source.run_history(run_id='missing') == []
         assert store.snapshot_loads == ['missing', 'missing']
-        assert store.latest_loads == []
 
     async def test_vanished_snapshots_drop_the_cached_run(self) -> None:
         inner = InMemoryStepStore()
@@ -275,7 +311,7 @@ class TestReconstructionCache:
         assert store.latest_loads == []
 
     async def test_store_without_latest_snapshot_still_folds_in_only_new_snapshots(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, hashed: list[ModelMessage]
     ) -> None:
         class _NoLatestStore:
             """A `SnapshotStore` without `latest_snapshot`, so every call relists snapshots."""
@@ -284,7 +320,7 @@ class TestReconstructionCache:
                 self.inner = inner
                 self.snapshot_loads = 0
 
-            async def list_runs(  # pragma: no cover - `run_history` never lists runs
+            async def list_runs(
                 self,
                 *,
                 parent_run_id: str | None = None,
@@ -303,18 +339,12 @@ class TestReconstructionCache:
         store = _NoLatestStore(inner)
         source = SnapshotHistorySource(store)
         await source.run_history(run_id='r1')
+        assert hashed == [question]
 
-        hashed: list[ModelMessage] = []
-        real_hash = source_module.message_hash
-
-        def counting_hash(message: ModelMessage) -> str:
-            hashed.append(message)
-            return real_hash(message)
-
-        monkeypatch.setattr(source_module, 'message_hash', counting_hash)
         assert _texts(await source.run_history(run_id='r1')) == ['ZEBRA']
-        assert hashed == []
+        assert hashed == [question]
         assert store.snapshot_loads == 2
+        assert [run.run_id for run in await source.list_runs()] == ['r1']
 
     def test_rejects_negative_bound(self) -> None:
         with pytest.raises(ValueError, match='max_cached_runs must be non-negative'):

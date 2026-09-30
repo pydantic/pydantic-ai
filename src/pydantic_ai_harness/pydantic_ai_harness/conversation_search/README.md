@@ -49,7 +49,7 @@ Overlap matching keys off a content hash of each serialized message, not object 
 
 `HistorySource` is deliberately substrate-neutral ("enumerate runs, yield each run's durable message record"): a persistence substrate that keeps an append-only entry log can implement it directly by replay, replacing the snapshot-union adapter without touching the search layer.
 
-`SnapshotHistorySource` caches each run's reconstructed record, so repeated searches do not reload and rehash every snapshot. Snapshots are write-once, so a cached run is checked against its latest snapshot: an unchanged run is served from the cache, a run that has gained snapshots (an active run, or one another process resumed) folds in only the new ones, and a run whose snapshots were pruned or replaced is rebuilt. The cache keeps the `max_cached_runs` most recently searched runs (default `128`); pass `SnapshotHistorySource(store, max_cached_runs=0)` to disable it.
+`SnapshotHistorySource` caches each run's reconstructed record, so repeated searches do not reload and rehash every snapshot. Snapshots are write-once, so a cached run is checked against its newest snapshot (of any state): an unchanged run is served from the cache, a run that has gained snapshots (an active run, or one another process resumed) folds in only the new ones, and a run whose snapshots were pruned or replaced is rebuilt. The cache keeps the `max_cached_runs` most recently searched runs (default `128`); pass `SnapshotHistorySource(store, max_cached_runs=0)` to disable it.
 
 ## Scope
 

@@ -108,19 +108,22 @@ class _LatestSnapshotStore(SnapshotStore, Protocol):
     of its snapshots; a store without it still gets incremental reconstruction.
     """
 
-    async def latest_snapshot(self, *, run_id: str) -> ContinuableSnapshot | None: ...  # pragma: no cover
+    async def latest_snapshot(
+        self, *, run_id: str, include_interrupted: bool = False
+    ) -> ContinuableSnapshot | None: ...  # pragma: no cover
 
 
-_SnapshotKey = tuple[int, datetime, str | None]
-"""Identity of a persisted snapshot: `(step_index, timestamp, idempotency_key)`.
+_SnapshotKey = tuple[int, datetime, str | None, int]
+"""Identity of a persisted snapshot: `(step_index, timestamp, idempotency_key, message count)`.
 
 `step_index` alone is not unique, since it restarts when a `run_id` is reused across
-`Agent.run` calls; the save timestamp tells those snapshots apart.
+`Agent.run` calls. `StepPersistence` gives every snapshot a distinct idempotency key; for
+snapshots saved without one, the save timestamp and message count tell them apart.
 """
 
 
 def _snapshot_key(snapshot: ContinuableSnapshot) -> _SnapshotKey:
-    return (snapshot.step_index, snapshot.timestamp, snapshot.idempotency_key)
+    return (snapshot.step_index, snapshot.timestamp, snapshot.idempotency_key, len(snapshot.messages))
 
 
 @dataclass(frozen=True)
@@ -128,6 +131,10 @@ class _ReconstructedRun:
     """A run's durable record, and the snapshots it was reconstructed from."""
 
     snapshot_keys: tuple[_SnapshotKey, ...]
+    newest_key: _SnapshotKey | None
+    """Key of the run's newest snapshot of any state when the record was built, or `None`
+    when the store cannot report it. Any save appends a snapshot and changes this, including
+    an `interrupted` one that retention answers by pruning older `complete` snapshots."""
     history: tuple[ModelMessage, ...]
     hashes: tuple[str, ...]
 
@@ -197,10 +204,10 @@ class SnapshotHistorySource:
     Reconstruction is cached per run, because every search would otherwise reload
     and rehash every snapshot of every run in scope. Snapshots are write-once and a
     run's snapshot list only changes when a save appends one (bounded retention
-    prunes on that same save), so the cache is checked against the run's latest
-    snapshot: unchanged, the cached record is returned without reloading; changed,
-    only snapshots appended since are folded in, and anything else (a pruned or
-    replaced snapshot) rebuilds the record from scratch. A store without
+    prunes on that same save), so the cache is checked against the run's newest
+    snapshot of any state: unchanged, the cached record is returned without
+    reloading; changed, only snapshots appended since are folded in, and anything
+    else (a pruned or replaced snapshot) rebuilds the record from scratch. A store without
     `latest_snapshot` skips the unchanged check and reloads the snapshot list, but
     still only folds in the new ones. `max_cached_runs` bounds
     how many runs are kept, least recently searched first out; `0` disables the cache.
@@ -221,7 +228,8 @@ class SnapshotHistorySource:
         if max_cached_runs < 0:
             raise ValueError(f'max_cached_runs must be non-negative, got {max_cached_runs!r}.')
         self._store = store
-        self._latest_store = store if isinstance(store, _LatestSnapshotStore) else None
+        # With the cache disabled there is nothing to validate, so skip the extra read.
+        self._latest_store = store if max_cached_runs and isinstance(store, _LatestSnapshotStore) else None
         self._max_cached_runs = max_cached_runs
         self._cache: OrderedDict[str, _ReconstructedRun] = OrderedDict()
 
@@ -230,11 +238,19 @@ class SnapshotHistorySource:
         return await self._store.list_runs(conversation_id=conversation_id)
 
     async def run_history(self, *, run_id: str) -> list[ModelMessage]:
-        """Union one run's snapshots into its durable message record."""
+        """Union one run's snapshots into its durable message record.
+
+        The list is new on every call, but its messages are shared with the cache (as
+        `InMemoryStepStore` shares its stored ones), so treat them as read-only.
+        """
         cached = self._cache.get(run_id)
-        if cached is not None and self._latest_store is not None:
-            latest = await self._latest_store.latest_snapshot(run_id=run_id)
-            if latest is not None and _snapshot_key(latest) == cached.snapshot_keys[-1]:
+        newest_key: _SnapshotKey | None = None
+        if self._latest_store is not None:
+            # Read before `list_snapshots`: a save landing in between leaves this key stale,
+            # which only forces a reload next time rather than hiding the new snapshot.
+            newest = await self._latest_store.latest_snapshot(run_id=run_id, include_interrupted=True)
+            newest_key = None if newest is None else _snapshot_key(newest)
+            if cached is not None and newest_key is not None and newest_key == cached.newest_key:
                 self._remember(run_id, cached)
                 return list(cached.history)
 
@@ -255,7 +271,7 @@ class SnapshotHistorySource:
             history_hashes.extend(snapshot_hashes[overlap:])
 
         if keys:
-            self._remember(run_id, _ReconstructedRun(keys, tuple(history), tuple(history_hashes)))
+            self._remember(run_id, _ReconstructedRun(keys, newest_key, tuple(history), tuple(history_hashes)))
         else:
             self._cache.pop(run_id, None)
         return history
