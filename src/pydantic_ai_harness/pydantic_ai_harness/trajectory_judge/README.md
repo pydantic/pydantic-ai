@@ -129,6 +129,8 @@ TrajectoryJudge(
 )
 ```
 
+Beyond `on_verdict`, `TrajectoryJudge` emits no spans or events of its own. Each evaluation is a separate run of the judge agent. The built-in judge (from `model=`) appears as an `invoke_agent` span only when `Agent.instrument_all()` is enabled, for example by `logfire.instrument_pydantic_ai()`. An `Instrumentation` capability on the parent agent does not carry over to it. A judge passed as `agent=` follows its own instrumentation settings. Steering is enqueued into the run and appears in a later model request span's input messages when `trace_include_content` is enabled.
+
 ## Not spec-serializable
 
 `TrajectoryJudge.get_serialization_name()` returns `None`: the capability may hold a live `Agent` instance and a callback, which cannot be serialized to an agent spec.

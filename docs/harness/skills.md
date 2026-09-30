@@ -283,6 +283,12 @@ package. Malformed frontmatter, invalid UTF-8, and invalid or mismatched names w
 
 Two `Skills` on one agent combine into one catalog.
 
+## Telemetry
+
+`Skills` emits no spans or events of its own. Skill libraries are read from the workspace at the start of each run, before the first model request. Loading a skill is the model's `load_capability` tool call, which core's `execute_tool` span covers.
+
+Descriptions over the length limit and ignored behavioral frontmatter fields raise a `UserWarning` on every run. A malformed skill raises a `UserWarning` and is skipped. A duplicate skill name raises `ValueError`, which fails the run at its start.
+
 ## Further reading
 
 - [Agent Skills specification](https://agentskills.io/specification)

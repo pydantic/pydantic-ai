@@ -140,6 +140,10 @@ Run events come from planning tool paths, including `write_plan`. Direct applica
 `PlanStore` have no run context and do not produce run events. `PlanEventEmitter`, `EventCallback`,
 and store `event_emitter` parameters remain supported but are deprecated.
 
+## Telemetry
+
+`Planning` emits no spans of its own. Every plan change is a tool call, so core's `execute_tool` span covers it, with the tool's arguments and result recorded when `trace_include_content` is enabled. The plan events above are for application code: core does not record them in traces.
+
 ## Why whole-plan replacement
 
 Addressing steps by mutable integer index (insert/remove/reorder) is error-prone for both the code and the model. `write_plan` restates the whole plan each call, so there are no indices to track. Granular edits (`add_task`, `update_task_status`, `remove_task`) instead reference the stable `id` shown by `read_plan`.

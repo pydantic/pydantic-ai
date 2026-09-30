@@ -66,3 +66,7 @@ directory. With neither path set, every call goes straight to the remote source.
 
 Caching is isolated per run so content read from one workspace is not reused in another. Set
 `cache=False` to re-read or re-fetch on every call within a run.
+
+## Telemetry
+
+`PydanticAIDocs` emits no spans or events of its own. Each lookup is a `read_pyai_docs` tool call, so core's `execute_tool read_pyai_docs` span covers it, including a remote fetch and its failure. The fetch is a plain `httpx` request to `raw.githubusercontent.com`, which gets its own HTTP span only when `httpx` is instrumented, for example with `logfire.instrument_httpx()`. Cache hits and local-checkout reads make no request.

@@ -86,4 +86,12 @@ agent = Agent(
 )
 ```
 
+## Telemetry
+
+`Researcher` emits no spans or events of its own. Its parts do:
+
+- `WebSearch` and `WebFetch` run locally, so each search and fetch is a tool call with core's `execute_tool` span.
+- `SubAgents` delegates to the `researcher` sub-agent, whose run is a separate agent run. The `SubAgents` docs describe its spans and delegation events.
+- `ToolOutputLimits` reduces oversized results after the tool call. With the default bands it spills or truncates and makes no model call. Its docs describe what the tool span records.
+
 See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/researcher/). While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade; see the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).

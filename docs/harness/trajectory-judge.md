@@ -126,6 +126,8 @@ TrajectoryJudge(
 )
 ```
 
+Beyond `on_verdict`, `TrajectoryJudge` emits no spans or events of its own. Each evaluation is a separate run of the judge agent. The built-in judge (from `model=`) appears as an `invoke_agent` span only when `Agent.instrument_all()` is enabled, for example by `logfire.instrument_pydantic_ai()`. An `Instrumentation` capability on the parent agent does not carry over to it. A judge passed as `agent=` follows its own instrumentation settings. Steering is enqueued into the run and appears in a later model request span's input messages when `trace_include_content` is enabled.
+
 ## Composition
 
 - [System Reminders](system-reminders.md) is the rule-based sibling: cadence or condition-triggered reminders with no extra model call. Reach for it first; a trajectory judge earns its cost when the condition requires actually understanding the trajectory.
