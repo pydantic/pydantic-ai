@@ -70,8 +70,8 @@ that only exist once the run's toolset and capability chain are assembled at run
 The orchestrator drives the loop, so it owns the one-line contract: thread the store's
 active capabilities into each run. With `agent.run(..., capabilities=...)`, the authored
 capability is live on the very next loop iteration -- no process restart.
-The successful `author_capability` result reminds the model about this contract; writing
-and validating a capability does not schedule or inject it automatically.
+The successful `author_capability` result tells the model the capability does not take effect
+in the current run; writing and validating a capability does not schedule or inject it automatically.
 
 ```python
 from pathlib import Path
