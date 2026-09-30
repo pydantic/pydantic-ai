@@ -160,6 +160,7 @@ _KEY_CONSUMERS = {
     'notion': '/plugins configure notion',
     'slack': '/plugins configure slack',
     'posthog': '/plugins configure posthog',
+    'grain': '/grain key',
 }
 """Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
 

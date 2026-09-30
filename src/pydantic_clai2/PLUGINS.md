@@ -565,8 +565,9 @@ order plugin instructions, renderers, and status segments are consulted in.
 | `compaction` | `pydantic_clai2.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `slack` (off until enabled) | `pydantic_clai2.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
-[`day_ai`](#day_ai-day-ai-crm-tools) is built in too, but starts disabled because
-it needs your Day AI account.
+[`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
+are built in too, but start disabled because they need your Day AI or Grain
+account.
 
 ### Other harness capabilities
 
@@ -577,6 +578,7 @@ credentials, extras, or settings that a checkbox cannot supply, so they belong i
 CLAI plugins written for them, such as the disabled built-ins
 [`day_ai`](#day_ai-day-ai-crm-tools),
 [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
+[`grain`](#grain-meetings-with-a-saved-sign-in),
 [`logfire_mcp`](#logfire-mcp-query-your-telemetry),
 [`notion`](#notion-workspace-tools),
 [`ordinal`](#ordinal-social-posts-in-ordinal),
@@ -1155,6 +1157,76 @@ sign-in. The plugin always builds its own connection instead of passing `auth` t
 with a 5-second connect timeout. The plugin emits no telemetry of its own; tool
 calls appear in core's spans.
 
+### `grain`: meetings, with a saved sign-in
+
+`grain` (`pydantic_clai2.grain`) gives the agent harness's
+[`Grain`](../pydantic_ai_harness/pydantic_ai_harness/grain/README.md) capability: search and read
+the Grain meetings, transcripts, and notes you can see. It starts disabled;
+turning it on (Space in `/plugins`, or `/plugins enable grain`) opens its
+settings menu. Until you have opened the menu once or picked a key, loading it
+prints a line pointing there.
+
+`/grain`, `C` in `/plugins`, or `/plugins configure grain` opens the settings
+menu. Enter edits a row, `r` resets it to its default, and Esc or **Save &
+close** leaves the menu. Each change is saved to the plugin's settings at once
+and applies to the next prompt. Reopen it any time to change a setting or pick a
+different key:
+
+```text
+ Grain
+> Token                    browser sign-in
+  Tools                    read-only
+  Server instructions      included
+  Save & close
+```
+
+| Row | Setting | Default | Does |
+|---|---|---|---|
+| Token | none (see below) | browser sign-in | where the Grain token comes from |
+| Tools | `read_only` | `true` | read-only offers only the tools Grain marks read-only; all tools also lets the agent create clips and tag meetings |
+| Server instructions | `include_instructions` | `true` | pass Grain's own instructions for its tools to the agent |
+
+Grain's MCP endpoint is fixed, and the capability has no workspace, base URL, or
+project option, so the menu has none either.
+
+No token goes in plugin settings, which are plaintext SQLite. The plugin takes
+the first of these that applies:
+
+1. The `GRAIN_ACCESS_TOKEN` environment variable. The Token row shows it and says
+   it overrides the choice there while it is set.
+2. A [saved API key](#saved-api-keys) picked on the Token row, or with
+   `/grain key`. The searchable picker lists your `/keys` entries by name; you can
+   also type a token (masked), which is saved in `/keys` as `GRAIN_ACCESS_TOKEN`,
+   the name harness's `Grain` documents. CLAI keeps only the key's name and looks
+   the key up on every run, so replacing it in `/keys` takes effect on the next
+   prompt, deleting it makes Grain fail rather than connect without it, and
+   `/keys` refuses to rename it while Grain uses it. Several plugins can share one
+   named key, the way `vllm` and `openrouter` connections can. Choose "No API
+   key" to go back to the browser sign-in.
+3. A browser sign-in. The first prompt that connects opens your browser and
+   prints the sign-in URL, in case the browser does not open (over SSH, for
+   example). The tokens go to the OS keyring (or CLAI's private credential file
+   when there is no keyring), the way `/mcp` OAuth servers keep theirs, so later
+   sessions refresh them instead of signing in again. A headless run
+   (`clai2 -p`) cannot sign in: with no saved sign-in, its Grain connection fails
+   and says so.
+
+`/grain status` says which of the three this session uses. `/grain logout`
+forgets the browser sign-in and the tokens the session holds, so the next prompt
+that uses Grain signs in again. It cannot revoke `GRAIN_ACCESS_TOKEN` (unset it,
+then `/plugins reload grain`) or a `/keys` entry (pick "No API key").
+
+If you enabled `grain` from the old `/plugins` catalog, which saved
+`pydantic_ai_harness.grain:Grain` under that id, CLAI loads this plugin in its
+place and keeps it enabled or disabled. A declaration you gave
+settings with `/plugins add` stays as you wrote it.
+
+The settings can also be given up front:
+
+```text
+/plugins add grain pydantic_clai2.grain '{"read_only": false, "include_instructions": true}'
+```
+
 ## Managing plugins
 
 `/plugins` on its own opens a full-screen menu, the same kind Code Puppy uses
@@ -1629,7 +1701,7 @@ async def configure() -> str:
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
 
-The built-in `github`, `notion`, and [`pylon`](#configuring-pylon) plugins are complete
+The built-in `github`, `grain`, `notion`, and [`pylon`](#configuring-pylon) plugins are complete
 examples; `pylon` also steps out of the menu worker to run the async key picker.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
@@ -1802,7 +1874,7 @@ the secret on the command line.
 
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
 and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
-[`logfire_mcp`](#logfire-mcp-query-your-telemetry), [`notion`](#notion-workspace-tools),
+[`grain`](#grain-meetings-with-a-saved-sign-in), [`logfire_mcp`](#logfire-mcp-query-your-telemetry), [`notion`](#notion-workspace-tools),
 [`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
 [`slack`](#slack-your-slack-workspace-as-you) show a
 searchable list of names. Choose one, enter a different key privately, or
