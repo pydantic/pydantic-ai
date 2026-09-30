@@ -59,6 +59,29 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
         assert connection.execute('PRAGMA user_version').fetchone() == (1,)
 
 
+@pytest.mark.parametrize(('value_json', 'enabled'), [(None, False), ('true', True), ('false', False)])
+def test_legacy_session_naming_preferences_survive_reopen(
+    tmp_path: Path, value_json: str | None, enabled: bool
+) -> None:
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        if value_json is not None:
+            connection.execute('INSERT INTO settings VALUES (?, ?)', ('sessions.naming', value_json))
+
+    store = SettingsStore(path)
+    assert store.load().session_namer is enabled
+    assert SettingsStore(path).load().session_namer is enabled
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute('SELECT key, value_json FROM settings').fetchall() == (
+            [] if value_json is None else [('sessions.naming', value_json)]
+        )
+
+    store.reset('sessions.naming')
+    assert SettingsStore(path).load().session_namer is False
+
+
 @pytest.mark.parametrize(
     ('key', 'value_json'),
     [('future.setting', '{"enabled":true}'), ('future.setting', 'unrecognized encoding')],
