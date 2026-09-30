@@ -1,0 +1,1 @@
+https://github.com/pydantic/pydantic-ai/pull/9467

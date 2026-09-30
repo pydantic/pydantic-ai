@@ -94,6 +94,10 @@ class Commands(Completer):
         for name in names:
             self._commands.pop(name, None)
 
+    def __contains__(self, name: object) -> bool:
+        """Whether a command called `name` (without its slash) is registered."""
+        return name in self._commands
+
     def __iter__(self) -> Iterator[Command]:
         """Iterate a snapshot, so callers may register or unregister while looping."""
         return iter(list(self._commands.values()))
@@ -122,10 +126,12 @@ class Commands(Completer):
     async def execute_async(self, text: str) -> str:
         """Await asynchronous plugin commands without blocking the event loop.
 
-        The UI telemetry span names the command and counts its arguments; the arguments stay out.
+        The UI telemetry span names a registered command and counts its arguments; the arguments, and any
+        unregistered name, which is just typed text, stay out.
         """
         name, *arguments = text.removeprefix('/').split() or ['help']
-        with telemetry.span('command /{command}', command=name, arguments=len(arguments)):
+        command = name if name in self else 'unknown'
+        with telemetry.span('command /{command}', command=command, arguments=len(arguments)):
             result = self.execute(text)
             return result if isinstance(result, str) else await result
 

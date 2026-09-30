@@ -450,6 +450,7 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Reco
             for handler in host.handlers:
                 await handler(event)
         telemetry.record('setting {setting} changed', setting='sessions.naming', value='password123')
+        recorder.instances[0].info('not a UI event', setting='password123')
     finally:
         await close_host(host)
     telemetry.record('after the plugin unloaded')
@@ -458,8 +459,11 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Reco
         'session started',
         'turn cancelled',
         'setting sessions.naming changed',
+        'not a UI event',
     ]
-    started, default, _, changed = recorder.spans()
+    started, default, _, changed, other = recorder.spans()
+    # The exemption covers only UI records: another span's `setting` is scrubbed as usual.
+    assert (other.attributes or {})['setting'] == "[Scrubbed due to 'password']"
     assert (started.attributes or {})['model'] == Settings().model
     assert (default.attributes or {})['model'] == 'agent default'
     # Names are exempt from scrubbing; any other attribute that looks like a secret is still scrubbed.

@@ -395,22 +395,22 @@ class PluginLoader(Generic[DepsT]):
 
     async def enable(self, name: str) -> None:
         """Remember the plugin as enabled and load it now."""
-        _requested('enable', name)
         entry = self._entry(name)
+        _requested('enable', name)
         self._store.save_plugin(entry.declaration.model_copy(update={'enabled': True}))
         await self.load(name)
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now and remember it as disabled."""
-        _requested('disable', name)
         entry = self._entry(name)
+        _requested('disable', name)
         await self.unload(name)
         self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}))
 
     async def remove(self, name: str) -> str:
         """Unload the plugin and forget its saved declaration; a shipped declaration comes back as declared."""
-        _requested('remove', name)
         entry = self._entry(name)
+        _requested('remove', name)
         await self.unload(name)
         if entry.path is not None and not entry.shipped:
             self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}))
@@ -426,16 +426,16 @@ class PluginLoader(Generic[DepsT]):
 
     async def reload(self, name: str) -> None:
         """Unload, re-import the module, and load again."""
-        _requested('reload', name)
         if not self._entry(name).declaration.enabled:
             raise ValueError(f'Plugin {name} is disabled; enable it before reloading.')
+        _requested('reload', name)
         await self.unload(name)
         await self.load(name, fresh=True)
 
     async def configure(self, name: str) -> str:
         """Open the plugin's settings menu, then load it again if its saved settings changed."""
-        _requested('configure', name)
         host = self._entry(name).host
+        _requested('configure', name)
         if host is None:
             raise ValueError(f'Plugin {name} is not loaded; enable it before configuring.')
         if host.configurer is None:
@@ -472,7 +472,6 @@ class PluginLoader(Generic[DepsT]):
             if existing is not None and not existing.shipped:
                 raise ValueError(f'Plugin {rest[0]} already exists; remove its declaration before replacing it.')
             declaration = added_plugin(args)
-            _requested('add', declaration.id)
             loaded = existing is not None and existing.host is not None
             if existing is not None:
                 await self.unload(rest[0])
@@ -490,6 +489,7 @@ class PluginLoader(Generic[DepsT]):
                 self._store.save_plugin(self._staged.pop(rest[0]))
                 raise
             self._store.save_plugin(self._staged.pop(rest[0]))
+            _requested('add', rest[0])
             if existing is None:
                 return await self._configure_new(rest[0], f'Added and loaded {rest[0]}.')
             kind = 'project' if existing.project else 'built-in'
@@ -527,7 +527,7 @@ class PluginLoader(Generic[DepsT]):
 
 
 def _requested(action: str, name: str) -> None:
-    """UI telemetry for a plugin action, recorded before it runs: disabling `logfire` stops the recording."""
+    """UI telemetry for an action on a plugin known to exist (never a mistyped name), before disabling `logfire`."""
     telemetry.record('plugin {plugin} {action}', plugin=name, action=action)
 
 

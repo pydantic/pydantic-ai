@@ -275,7 +275,7 @@ class LivePrompt:
         else:
             route = 'queued' if self.interrupts.active else 'submitted'
             self._enqueue(_Queued(command, recorded=text))
-        telemetry.record('prompt submitted', route=route, recalled=recalled, **_submission(command))
+        telemetry.record('prompt submitted', route=route, recalled=recalled, **_submission(command, self.commands))
 
     def recall(self, *, backwards: bool) -> None:
         """Walk queued prompts, newest first, before command history.
@@ -545,8 +545,9 @@ def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:
     return [*shown, more.format(len(rows) - len(shown))]
 
 
-def _submission(text: str) -> dict[str, telemetry.Attribute]:
-    """What kind of input was submitted, and its length; a command's name, never the prompt's words."""
+def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]:
+    """What kind of input was submitted, and its length; a registered command's name, never the prompt's words."""
     if is_command_input(text):
-        return {'kind': 'command', 'command': text.split(maxsplit=1)[0].removeprefix('/'), 'chars': len(text)}
+        name = text.split(maxsplit=1)[0].removeprefix('/')
+        return {'kind': 'command', 'command': name if name in commands else 'unknown', 'chars': len(text)}
     return {'kind': 'shell' if shell_command(text) is not None else 'prompt', 'chars': len(text)}

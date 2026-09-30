@@ -160,11 +160,19 @@ async def test_reset_bare_commands_and_menu_results(exporter: InMemorySpanExport
     commands = Commands()
     commands.register(Command(name='help', description='Help', handler=lambda args: 'help'))
     assert await commands.execute_async('/') == '/help: Help'
+    with pytest.raises(ValueError):
+        await commands.execute_async('/sk-secret-looking')
+    with pytest.raises(ValueError, match='rejected'), telemetry.span('failing'):
+        raise ValueError('rejected sk-secret-value')
     assert (await run_worker(lambda: MenuResult(cancelled=True))).cancelled
     assert await run_worker(partial(TextInputResult, value='typed secret')) == TextInputResult(value='typed secret')
+    assert 'sk-secret' not in json.dumps([attributes(span) for span in exporter.get_finished_spans()], default=str)
+    assert all(not span.events for span in exporter.get_finished_spans())
     assert recorded(exporter) == [
         ('Paint field color reset', {'menu': 'Paint', 'field': 'color'}),
         ('command /help', {'command': 'help', 'arguments': 0}),
+        ('command /unknown', {'command': 'unknown', 'arguments': 0, 'error': 'ValueError'}),
+        ('failing', {'error': 'ValueError'}),
         (
             'menu tests.clai2.test_ui_telemetry:test_reset_bare_commands_and_menu_results',
             {'menu': 'tests.clai2.test_ui_telemetry:test_reset_bare_commands_and_menu_results', 'cancelled': True},
@@ -255,6 +263,8 @@ async def test_plugin_actions_are_recorded_as_requested(exporter: InMemorySpanEx
     await harness.loader.command(['enable', 'alpha'])
     await harness.loader.command(['reload', 'alpha'])
     await harness.loader.command(['remove', 'alpha'])
+    with pytest.raises(ValueError, match='Unknown plugin'):
+        await harness.loader.command(['disable', 'sk-secret-looking'])
     assert recorded(exporter) == [
         (f'plugin alpha {action}', {'plugin': 'alpha', 'action': action})
         for action in ('disable', 'enable', 'reload', 'remove')
@@ -294,7 +304,7 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
             steer=lambda text: steered.append(text) is None,
         )
         async with live.opened():
-            for text in ('a private prompt', '/help me', '!ls'):
+            for text in ('a private prompt', '/help me', '/sk-secret', '!ls'):
                 live.buffer.replace(text)
                 live.feed('enter')
                 assert await live.read() == text
@@ -313,6 +323,10 @@ async def test_prompt_submissions_interrupts_and_steering(exporter: InMemorySpan
         (
             'prompt submitted',
             {'route': 'submitted', 'recalled': False, 'kind': 'command', 'command': 'help', 'chars': 8},
+        ),
+        (
+            'prompt submitted',
+            {'route': 'submitted', 'recalled': False, 'kind': 'command', 'command': 'unknown', 'chars': 10},
         ),
         ('prompt submitted', {'route': 'submitted', 'recalled': False, 'kind': 'shell', 'chars': 3}),
         ('prompt submitted', {'route': 'submitted', 'recalled': True, 'kind': 'shell', 'chars': 3}),

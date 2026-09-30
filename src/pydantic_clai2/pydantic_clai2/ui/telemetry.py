@@ -11,7 +11,8 @@ prompt text, secrets, and free-text values stay out.
 """
 
 from collections.abc import Callable, Generator
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import partial
 
 import logfire
@@ -25,6 +26,8 @@ NAMES = frozenset({'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'l
 """Attributes that only ever hold names and listed choices, which `keep_names` exempts from scrubbing."""
 
 _sinks: list[logfire.Logfire] = []
+_emitting: ContextVar[bool] = ContextVar('_emitting', default=False)
+"""Set while a UI record is handed to the sinks, which is when Logfire scrubs it: `keep_names` checks it."""
 
 
 def subscribe(sink: logfire.Logfire) -> Callable[[], None]:
@@ -40,8 +43,12 @@ def subscribe(sink: logfire.Logfire) -> Callable[[], None]:
 
 def record(msg_template: str, /, **attributes: Attribute) -> None:
     """Log one UI interaction, such as a setting change or a key saved, to every sink."""
-    for sink in list(_sinks):
-        sink.log('info', msg_template, attributes=dict(attributes), tags=[TAG])
+    token = _emitting.set(True)
+    try:
+        for sink in list(_sinks):
+            sink.log('info', msg_template, attributes=dict(attributes), tags=[TAG])
+    finally:
+        _emitting.reset(token)
 
 
 class UiSpan:
@@ -62,10 +69,25 @@ def span(msg_template: str, /, **attributes: Attribute) -> Generator[UiSpan]:
     """Time a UI interaction that contains others, such as a command that opens a menu.
 
     Spans nest: a menu opened by a command, and the setting it changes, land under that command's span.
-    An exception is recorded on the span and propagates.
+    An exception propagates, but the span records only its type as `error`: messages can quote what was typed,
+    such as a token a plugin's settings rejected.
     """
-    with ExitStack() as stack:
-        yield UiSpan([stack.enter_context(_open(sink, msg_template, attributes)) for sink in list(_sinks)])
+    spans = [_open(sink, msg_template, attributes) for sink in list(_sinks)]
+    for opened in spans:
+        opened.__enter__()
+    ui = UiSpan(spans)
+    try:
+        yield ui
+    except BaseException as error:
+        ui.set('error', type(error).__name__)
+        raise
+    finally:
+        token = _emitting.set(True)
+        try:
+            for opened in reversed(spans):
+                opened.__exit__(None, None, None)
+        finally:
+            _emitting.reset(token)
 
 
 def _open(sink: logfire.Logfire, msg_template: str, attributes: dict[str, Attribute]) -> logfire.LogfireSpan:
@@ -102,9 +124,14 @@ def keep_names(match: logfire.ScrubMatch) -> object:
     """A Logfire scrubbing callback that keeps UI telemetry's names, which can look like secrets but are not.
 
     A setting such as `sessions.naming`, a key's name such as `OPENAI_API_KEY`, or a field such as `auth` trips
-    Logfire's default patterns. Only the top-level `NAMES` attributes, and the message placeholders filled from
-    them, are kept; everything else, including every agent span's content, is scrubbed as usual.
+    Logfire's default patterns. Only the top-level `NAMES` attributes of UI records, and the message placeholders
+    filled from them, are kept; everything else, including every agent span, is scrubbed as usual.
     """
-    if len(match.path) == 2 and match.path[0] in ('attributes', 'message') and match.path[1] in NAMES:
+    if (
+        _emitting.get()
+        and len(match.path) == 2
+        and match.path[0] in ('attributes', 'message')
+        and match.path[1] in NAMES
+    ):
         return match.value
     return None
