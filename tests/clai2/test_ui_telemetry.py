@@ -209,6 +209,35 @@ def test_operation_names_are_where_the_menu_was_written() -> None:
     assert telemetry.operation_name(len) == 'builtins:len'
 
 
+def test_only_the_newest_subscriber_records(exporter: InMemorySpanExporter, tmp_path: Path) -> None:
+    other = InMemorySpanExporter()
+    propagator = propagate.get_global_textmap()
+    newer = logfire.configure(
+        local=True,
+        send_to_logfire=False,
+        console=False,
+        metrics=False,
+        config_dir=tmp_path / 'newer',
+        data_dir=tmp_path / 'newer',
+        additional_span_processors=[SimpleSpanProcessor(other)],
+        scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names),
+        advanced=logfire.AdvancedOptions(emit_configuration_span=False),
+    )
+    propagate.set_global_textmap(propagator)
+    unsubscribe = telemetry.subscribe(newer)
+    try:
+        with telemetry.span('command /{command}', command='session'):
+            telemetry.record('inner')
+    finally:
+        unsubscribe()
+        newer.shutdown(timeout_millis=3000)
+    telemetry.record('after')
+    assert recorded(other) == [('inner', {}), ('command /session', {'command': 'session'})]
+    inner, command = other.get_finished_spans()
+    assert inner.parent == command.context
+    assert recorded(exporter) == [('after', {})]
+
+
 def test_nothing_is_recorded_without_a_subscriber() -> None:
     telemetry.record('ignored', value=1)
     with telemetry.span('ignored') as span:

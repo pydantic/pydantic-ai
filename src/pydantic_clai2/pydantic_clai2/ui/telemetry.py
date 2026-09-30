@@ -26,12 +26,17 @@ NAMES = frozenset({'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'l
 """Attributes that only ever hold names and listed choices, which `keep_names` exempts from scrubbing."""
 
 _sinks: list[logfire.Logfire] = []
+"""Subscribed instances, newest last; only the newest receives UI telemetry."""
 _emitting: ContextVar[bool] = ContextVar('_emitting', default=False)
-"""Set while a UI record is handed to the sinks, which is when Logfire scrubs it: `keep_names` checks it."""
+"""Set while a UI record is handed to its sink, which is when Logfire scrubs it: `keep_names` checks it."""
 
 
 def subscribe(sink: logfire.Logfire) -> Callable[[], None]:
-    """Send UI telemetry to `sink` until the returned function is called; calling it again does nothing."""
+    """Send UI telemetry to `sink` until the returned function is called; calling it again does nothing.
+
+    Telemetry goes to one instance, the most recently subscribed, so each destination gets whole, correctly
+    nested traces; when it unsubscribes, the previous one takes over again.
+    """
     _sinks.append(sink)
 
     def unsubscribe() -> None:
@@ -41,27 +46,33 @@ def subscribe(sink: logfire.Logfire) -> Callable[[], None]:
     return unsubscribe
 
 
-def record(msg_template: str, /, **attributes: Attribute) -> None:
-    """Log one UI interaction, such as a setting change or a key saved, to every sink."""
+@contextmanager
+def _exempt() -> Generator[None]:
     token = _emitting.set(True)
     try:
-        for sink in list(_sinks):
-            sink.log('info', msg_template, attributes=dict(attributes), tags=[TAG])
+        yield
     finally:
         _emitting.reset(token)
 
 
-class UiSpan:
-    """The open span in every sink; `set` adds what is only known at the end, such as whether it was cancelled."""
+def record(msg_template: str, /, **attributes: Attribute) -> None:
+    """Log one UI interaction, such as a setting change or a key saved."""
+    if _sinks:
+        with _exempt():
+            _sinks[-1].log('info', msg_template, attributes=dict(attributes), tags=[TAG])
 
-    def __init__(self, spans: list[logfire.LogfireSpan]) -> None:
-        """Wrap one span per sink; none when nothing is subscribed."""
-        self._spans = spans
+
+class UiSpan:
+    """The open span, if anything is subscribed; `set` adds what is only known at the end, such as a cancel."""
+
+    def __init__(self, span: logfire.LogfireSpan | None) -> None:
+        """Wrap the span; `None` when nothing is subscribed."""
+        self._span = span
 
     def set(self, key: str, value: Attribute) -> None:
-        """Set `key` on every sink's span."""
-        for span in self._spans:
-            span.set_attribute(key, value)
+        """Set `key` on the span."""
+        if self._span is not None:
+            self._span.set_attribute(key, value)
 
 
 @contextmanager
@@ -72,22 +83,20 @@ def span(msg_template: str, /, **attributes: Attribute) -> Generator[UiSpan]:
     An exception propagates, but the span records only its type as `error`: messages can quote what was typed,
     such as a token a plugin's settings rejected.
     """
-    spans = [_open(sink, msg_template, attributes) for sink in list(_sinks)]
-    for opened in spans:
-        opened.__enter__()
-    ui = UiSpan(spans)
+    if not _sinks:
+        yield UiSpan(None)
+        return
+    with _exempt():
+        opened = _open(_sinks[-1], msg_template, attributes).__enter__()
+    ui = UiSpan(opened)
     try:
         yield ui
     except BaseException as error:
         ui.set('error', type(error).__name__)
         raise
     finally:
-        token = _emitting.set(True)
-        try:
-            for opened in reversed(spans):
-                opened.__exit__(None, None, None)
-        finally:
-            _emitting.reset(token)
+        with _exempt():
+            opened.__exit__(None, None, None)
 
 
 def _open(sink: logfire.Logfire, msg_template: str, attributes: dict[str, Attribute]) -> logfire.LogfireSpan:
