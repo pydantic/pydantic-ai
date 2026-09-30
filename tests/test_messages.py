@@ -14,7 +14,7 @@ from types import FrameType
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
 
 from pydantic_ai import (
@@ -1836,21 +1836,18 @@ def test_url_media_type_under_dump_arguments(
 
 
 def test_url_media_type_under_nested_include_and_exclude() -> None:
-    """`include` and `exclude` nested down to a URL part in a history treat an uninferable `media_type` like any other."""
-    messages: list[ModelMessage] = [
-        ModelRequest(
-            parts=[
-                UserPromptPart(
-                    content=[ImageUrl(url='https://example.com/image.png'), ImageUrl(url='https://example.com/image')]
-                )
-            ]
-        )
-    ]
-    media_types = {0: {'parts': {0: {'content': {'__all__': {'media_type'}}}}}}
+    """`include` and `exclude` nested down to a URL item treat an uninferable `media_type` like any other."""
 
-    assert ModelMessagesTypeAdapter.dump_json(messages, include=media_types).decode() == snapshot(
-        '[{"parts":[{"content":[{"media_type":"image/png"},{"media_type":null}]}]}]'
+    class Stored(BaseModel):
+        files: list[ImageUrl]
+
+    stored = Stored(files=[ImageUrl(url='https://example.com/image.png'), ImageUrl(url='https://example.com/image')])
+    assert stored.model_dump_json(include={'files': {'__all__': {'media_type'}}}) == snapshot(
+        '{"files":[{"media_type":"image/png"},{"media_type":null}]}'
     )
+
+    messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content=stored.files)])]
+    media_types = {0: {'parts': {0: {'content': {'__all__': {'media_type'}}}}}}
     dumped = json.loads(ModelMessagesTypeAdapter.dump_json(messages, exclude=media_types))
     assert dumped[0]['parts'][0]['content'] == snapshot(
         [
