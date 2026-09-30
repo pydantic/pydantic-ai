@@ -64,6 +64,11 @@ concurrency:
 
 env:
   COLUMNS: 150
+  # `ci.yml` sets this at workflow level, which does not cross the `workflow_call` boundary
+  # (#7847), so the called workflow needs its own copy. Inert while this matrix is 3.10/3.14 --
+  # both managed downloads -- but it stops a future matrix entry silently resolving to a
+  # system interpreter.
+  UV_PYTHON_PREFERENCE: only-managed
 
 jobs:
   latest-versions:
@@ -79,9 +84,9 @@ jobs:
         python-version: ['3.10', '3.14']
     env:
       CI: true
-      # Both as on `ci.yml`'s all-extras test job, for the reasons documented there: blocking
-      # detection is exercised by the slimmer jobs, and Temporal's deadlock detector reads
-      # runner contention as a blocking call.
+      # `BLOCKBUSTER_ENABLED` as on `ci.yml`'s all-extras shards, whose time budget can't absorb its
+      # stack-inspection overhead; blocking detection runs in `ci.yml`'s slimmer jobs.
+      # `TEMPORAL_DEBUG` as on `ci.yml`'s `test-durable-exec` job, for the reasons documented there.
       BLOCKBUSTER_ENABLED: false
       TEMPORAL_DEBUG: '1'
     steps:
@@ -278,3 +283,6 @@ jobs:
       # than drop flake. That self-skip is also why this job needs none of `ci.yml`'s
       # out-of-band HF cache warming.
       - run: uv run --no-sync pytest --durations=100 -n logical --dist=loadgroup
+        env:
+          # The docs examples are type-checked against the locked dependencies, in `ci.yml`.
+          TYPECHECK_EXAMPLES: false

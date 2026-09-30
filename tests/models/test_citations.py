@@ -38,10 +38,13 @@ with try_import() as google_available:
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
 pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+
+# The Anthropic recordings sent this explicitly; without it, requests are streamed behind the scenes.
+ANTHROPIC_SETTINGS = ModelSettings(max_tokens=4096)
 
 
 @pytest.fixture()
@@ -74,7 +77,7 @@ class ExpectedWebCitation:
 @dataclass(frozen=True)
 class WebCitationCase:
     id: str
-    provider: Literal['anthropic', 'google-gemini', 'google-vertex', 'openai']
+    provider: Literal['anthropic', 'google-gemini', 'google-vertex', 'openai', 'openai-chat']
     stream: bool = False
     expected: list[ExpectedWebCitation] = field(default_factory=list[ExpectedWebCitation])
 
@@ -256,6 +259,35 @@ WEB_CASES = [
             ]
         ),
     ),
+    WebCitationCase(
+        'openai-chat',
+        'openai-chat',
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    ['github.com'],
+                    [0],
+                    MarkerCitationAnchor(start=119, end=205),
+                    '([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))',
+                )
+            ]
+        ),
+    ),
+    WebCitationCase(
+        'openai-chat-stream',
+        'openai-chat',
+        stream=True,
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    ['github.com'],
+                    [0],
+                    MarkerCitationAnchor(start=249, end=335),
+                    '([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))',
+                )
+            ]
+        ),
+    ),
 ]
 
 
@@ -264,6 +296,7 @@ WEB_PROVIDER_AVAILABLE = {
     'google-gemini': google_available,
     'google-vertex': google_available,
     'openai': openai_available,
+    'openai-chat': openai_available,
 }
 
 
@@ -276,9 +309,10 @@ def _web_citation_agent(
     vertex_provider: GoogleCloudProvider | None,
 ) -> tuple[Agent[None, str], str]:
     prompt = "Use web search to find Pydantic AI's documentation and cite it."
-    settings = None
     if case.provider == 'anthropic':
-        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+        model = AnthropicModel(
+            'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+        )
         tool = WebSearchTool(max_uses=1)
     elif case.provider == 'google-gemini':
         model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
@@ -291,10 +325,15 @@ def _web_citation_agent(
         model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
         tool = WebSearchTool(max_uses=1)
         prompt = "Use web search to find Pydantic AI's GitHub repository and cite it."
+    elif case.provider == 'openai-chat':
+        # Chat Completions search models always search, so no tool is needed.
+        model = OpenAIChatModel('gpt-5-search-api', provider=OpenAIProvider(api_key=openai_api_key))
+        tool = None
+        prompt = "Find Pydantic AI's GitHub repository and cite it in one sentence."
     else:  # pragma: no cover
         assert_never(case.provider)
 
-    return Agent(model, capabilities=[NativeTool(tool)], model_settings=settings), prompt
+    return Agent(model, capabilities=[NativeTool(tool)] if tool else []), prompt
 
 
 def _cited_text_parts(messages: list[ModelMessage]) -> list[TextPart]:
@@ -449,7 +488,9 @@ async def test_document_citations(
     if not anthropic_available():
         pytest.skip('anthropic dependencies not installed')
 
-    model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+    model = AnthropicModel(
+        'claude-sonnet-4-5', provider=AnthropicProvider(api_key=anthropic_api_key), settings=ANTHROPIC_SETTINGS
+    )
     agent = Agent(model, model_settings=ModelSettings(include_citations=True))
     prompt: str | list[str | BinaryContent]
     if case.pdf:

@@ -184,3 +184,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
     @classmethod
     def get_serialization_name(cls) -> str | None:
         return None  # Not spec-serializable (takes a callable)
+
+    @property
+    def _emits_app_events(self) -> bool:
+        return True

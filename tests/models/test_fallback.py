@@ -10,6 +10,7 @@ from datetime import timezone
 from decimal import Decimal
 from typing import Any, Literal, cast
 
+import httpx2
 import pytest
 from dirty_equals import IsJson
 from pydantic import BaseModel
@@ -36,6 +37,8 @@ from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import (
+    AgentInstructionSource,
+    InstructionId,
     InstructionPart,
     ModelResponseState,
     NativeToolCallPart,
@@ -58,6 +61,7 @@ from ..conftest import IsDatetime, IsFloat, IsNow, IsStr, strip_logfire_metrics,
 
 with try_import() as openai_imports_successful:
     from anthropic.types.beta import BetaTextBlock, BetaUsage
+    from openai import AsyncOpenAI
     from openai.types.chat import ChatCompletionMessage
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -85,9 +89,6 @@ else:
 
 with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
-
-
-pytestmark = pytest.mark.anyio
 
 
 def success_response(_model_messages: list[ModelMessage], _agent_info: AgentInfo) -> ModelResponse:
@@ -1208,7 +1209,7 @@ Always respond with a JSON object that's compatible with this schema:
 Don't include any text or Markdown fencing before or after.
 """,
                 instruction_parts=[
-                    InstructionPart(content='Be kind'),
+                    InstructionPart(content='Be kind', id=InstructionId(AgentInstructionSource())),
                     InstructionPart(
                         content="""\
 
@@ -1318,7 +1319,13 @@ Don't include any text or Markdown fencing before or after.
                         'allow_text_output': True,
                         'allow_image_output': False,
                         'instruction_parts': [
-                            {'content': 'Be kind', 'dynamic': False, 'part_kind': 'instruction'},
+                            {
+                                'content': 'Be kind',
+                                'dynamic': False,
+                                'name': None,
+                                'id': 'agent',
+                                'part_kind': 'instruction',
+                            },
                             {
                                 'content': """\
 
@@ -1329,6 +1336,8 @@ Always respond with a JSON object that's compatible with this schema:
 Don't include any text or Markdown fencing before or after.
 """,
                                 'dynamic': False,
+                                'name': None,
+                                'id': None,
                                 'part_kind': 'instruction',
                             },
                         ],
@@ -3367,3 +3376,61 @@ def test_fallback_continuation_delay_without_pin_polls_inner_models() -> None:
     # No inner model claims a non-background response, so there's no delay to apply.
     foreground = ModelResponse(parts=[], state='suspended')
     assert fallback.continuation_delay(foreground) is None
+
+
+def test_context_window_is_smallest_known_candidate_window() -> None:
+    """`FallbackModel.context_window` is the minimum over candidates that know theirs, `None` when none does.
+
+    Any candidate may answer, so compacting against the smallest window is the safe choice; a wrapper
+    around the fallback model must forward it because there's no profile to read it from.
+    """
+
+    def windowed(context_window: int | None) -> FunctionModel:
+        return FunctionModel(success_response, profile=ModelProfile(context_window=context_window))
+
+    assert FallbackModel(windowed(200_000), windowed(128_000), windowed(None)).context_window == 128_000
+    assert FallbackModel(windowed(None), windowed(None)).context_window is None
+
+    with pytest.raises(NotImplementedError):
+        FallbackModel(windowed(200_000)).profile
+    assert WrapperModel(FallbackModel(windowed(200_000), windowed(128_000))).context_window == 128_000
+
+
+@requires_openai
+async def test_fallback_tries_next_model_on_non_json_response_body(allow_model_requests: None) -> None:
+    """A 200 response whose body is not valid JSON fires the default fallback trigger, so the second model answers.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+    completion = openai_completion_message(ChatCompletionMessage(content='Hello from fallback', role='assistant'))
+    requests_made = {'primary': 0, 'fallback': 0}
+
+    async def primary_handler(request: httpx2.Request) -> httpx2.Response:
+        requests_made['primary'] += 1
+        return httpx2.Response(200, text='   ', headers={'content-type': 'application/json'})
+
+    async def fallback_handler(request: httpx2.Request) -> httpx2.Response:
+        requests_made['fallback'] += 1
+        return httpx2.Response(200, json=completion.model_dump(mode='json'))
+
+    async with (
+        AsyncOpenAI(
+            api_key='test',
+            base_url='https://api.openai.com/v1',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(primary_handler)),
+        ) as primary_client,
+        AsyncOpenAI(
+            api_key='test',
+            base_url='https://api.openai.com/v1',
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(fallback_handler)),
+        ) as fallback_client,
+    ):
+        primary_model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=primary_client))
+        fallback_model = OpenAIChatModel('gpt-4o-mini', provider=OpenAIProvider(openai_client=fallback_client))
+        agent = Agent(FallbackModel(primary_model, fallback_model))
+
+        result = await agent.run('Hello')
+
+    assert result.output == 'Hello from fallback'
+    assert requests_made == {'primary': 1, 'fallback': 1}

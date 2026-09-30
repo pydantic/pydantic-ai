@@ -4,11 +4,18 @@ Read this file when the user needs the core `Agent` workflow: creating agents, c
 
 ## Create a Basic Agent
 
+Include Logfire instrumentation in new applications from the start, so every run is visible; see [Debug and Validate Agent Behavior](./TESTING-AND-DEBUGGING.md#debug-and-validate-agent-behavior) for credentials and other OpenTelemetry backends.
+
 ```python
+import logfire
+
 from pydantic_ai import Agent
 
+logfire.configure()
+logfire.instrument_pydantic_ai()
+
 agent = Agent(
-    'anthropic:claude-sonnet-4-6',
+    'anthropic:claude-fable-5-1',
     name='hello_world_agent',
     instructions='Be concise, reply with one sentence.',
 )
@@ -45,6 +52,34 @@ If the user is choosing between output modes:
 - `output_type=MyModel` for structured output
 - `TextOutput` for custom text parsing
 - `NativeOutput` or `ToolOutput` when they need explicit output-mode control
+
+## Picking One of a Run-Time Set
+
+Use `Choices({key: description})` when the model has to pick one of a set that only exists once the run is under
+way — the records a search returned, the actions available on a screen. Each option carries its meaning into the
+schema, the output is validated against the keys, and it is a type, so the same value also works as a model field
+or a tool parameter — there, write `Annotated[str, Intent]` so type checkers see a `str`. For a set you know when you write the code, use a `Literal` or an `Enum` (with
+`UseEnumMemberDocstrings` for per-member descriptions), which give exhaustiveness checking.
+
+```python
+from pydantic_ai import Agent, Choices
+
+agent = Agent('openai:gpt-5.2', name='triage_agent')
+
+result = agent.run_sync(
+    'The blender arrived smashed. Just send me another one.',
+    output_type=Choices(
+        {'refund': 'They want their money back.', 'replace': 'They want a working unit.'},
+        description='What the customer is asking for.',
+    ),
+)
+print(result.output)
+```
+
+`Choice(description, value=...)` makes an option stand for something other than its key. When that value is
+callable, picking it *calls* it — sync or async, with no arguments — so the run's output is what the action
+returned, the way an output function's is, and `ModelRetry` from it sends the model back for another pick. A set
+with a callable value is an `output_type` only; as a field or a parameter it raises `UserError`.
 
 ## Dependency Injection
 
@@ -103,6 +138,11 @@ Examples:
 - `anthropic:claude-sonnet-4-6`
 - `google:gemini-3-pro-preview`
 
+Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/), one `PYDANTIC_AI_GATEWAY_API_KEY` reaches models from several providers, with spending limits and cost monitoring in Logfire. Prefix the model string with `gateway/`, using the provider's API format:
+
+- `gateway/anthropic:claude-fable-5-1`
+- `gateway/openai:gpt-6-sol`
+
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
 ## Run Methods and Streaming
@@ -139,6 +179,33 @@ async def main():
 ```
 
 Deferred tool calls also surface as batch-level events: `DeferredToolRequestsEvent` (once per batch of deferred calls, before any `HandleDeferredToolCalls` handler runs) and `DeferredToolResultsEvent` (when a handler resolves requests inline). Use these to tell a frontend the run is paused waiting for approvals or external calls.
+
+To surface progress or intermediate results from an async tool into the same event stream without polluting the model's context, define a dataclass subclass of `CustomEvent` (its fields are the payload; the event name derives from the class name) and await `ctx.emit(event)`. Sync tools cannot emit events. It reaches the `event_stream_handler`, `run_stream_events()`, `iter()` streaming, and the AG-UI/Vercel AI adapters; when emitted from a tool, its `tool_call_id` and `tool_name` are auto-stamped, and consumers use `isinstance()` against the class. Code driving `agent.iter()` can inject events by awaiting `AgentRun.emit()`. The payload can't reuse the envelope's own field names: `data`, `tool_call_id`, `tool_name`, and `event_kind` are rejected at class definition.
+
+`CustomEvent` is for application-owned code only. Code that lives inside a capability must define namespaced `CapabilityEvent` subclasses instead; emitting either family from the other's side raises `UserError`. See CAPABILITIES-AND-HOOKS.md.
+
+Custom events reach the AG-UI and Vercel AI frontends by default. For an event that should stay server-side (metrics, audit logs), declare the class `ui=False` — `class IndexProgressEvent(CustomEvent, ui=False)` — and every UI adapter skips it while in-process consumers still receive it. Declaring a `ui` field or `ClassVar` on an event class is rejected, since it would shadow that flag. The flag is class-level, not on the wire, so adapters also skip an `UnknownCustomEvent` (a class this process never imported): when events reach the frontend from another process, import their defining modules there or none of them are forwarded.
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, CustomEvent, RunContext
+
+agent = Agent('openai:gpt-5.2', name='progress_agent')
+
+
+@dataclass(kw_only=True)
+class ProgressEvent(CustomEvent):
+    done: int
+    total: int
+
+
+@agent.tool
+async def process(ctx: RunContext, count: int) -> str:
+    for i in range(count):
+        await ctx.emit(ProgressEvent(done=i + 1, total=count))
+    return 'done'
+```
 
 ## Handle Provider Failures
 

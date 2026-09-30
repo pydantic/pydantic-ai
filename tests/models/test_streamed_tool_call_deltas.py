@@ -88,7 +88,6 @@ with try_import() as huggingface_imports_successful:
 
     from .test_huggingface import MockHuggingFace
 
-pytestmark = pytest.mark.anyio
 
 FinishReason = Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']
 

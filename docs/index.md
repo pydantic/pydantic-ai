@@ -1,9 +1,8 @@
 ---
 title: Pydantic AI
+hideTitle: true
 description: "How Python does AI: agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end."
 ---
-
-# Pydantic AI {.hide}
 
 <div style="text-align: center">
   <img class="off-glb only-dark" src="./img/pydantic-ai-dark.svg" alt="Pydantic AI" />
@@ -18,9 +17,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
   <a href="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml?query=branch%3Amain">
     <img src="https://github.com/pydantic/pydantic-ai/actions/workflows/ci.yml/badge.svg?event=push" alt="CI" />
   </a>
-  <a href="https://coverage-badge.samuelcolvin.workers.dev/redirect/pydantic/pydantic-ai">
-    <img src="https://coverage-badge.samuelcolvin.workers.dev/pydantic/pydantic-ai.svg" alt="Coverage" />
-  </a>
+  <img src="https://img.shields.io/badge/coverage-100%25-brightgreen.svg" alt="Coverage" />
   <a href="https://pypi.python.org/pypi/pydantic-ai">
     <img src="https://img.shields.io/pypi/v/pydantic-ai.svg" alt="PyPI" />
   </a>
@@ -39,20 +36,22 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
   Agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](capabilities/image-generation.md) and [embeddings](embeddings.md) come in the same box.
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), in [GitHub Actions](https://pydantic.dev/docs/ai/harness/gh-aw/), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](image-generation.md) and [embeddings](embeddings.md) come in the same box; [Pydantic Graph](graph.md) and [Pydantic Evals](evals.md) are separate packages, for typed control flow and for testing agent behavior the way pytest tests code.
 
-**[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+**[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) to [planning](https://pydantic.dev/docs/ai/harness/planning/), [context management](https://pydantic.dev/docs/ai/harness/compaction/), and [persistence](persistence.md), up to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
+
+[Pydantic Logfire](https://pydantic.dev/logfire) is the AI observability platform that sees your whole app, not just the LLM calls, and the [Pydantic AI Gateway](gateway.md) is one key for every model with real-time cost monitoring and budget control; the Gateway self-hosts if you would rather, and our [instrumentation](logfire.md) is plain OpenTelemetry, so any backend you already run works. Underneath both, [genai-prices](https://github.com/pydantic/genai-prices) keeps model pricing current, and [Monty](https://github.com/pydantic/monty) is the sandboxed Python interpreter that runs model-written code.
 
 ## What are you building?
 
 From simple typed data extraction to complex, long-running multi-agent collaboration, Pydantic AI and [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) have got you covered.
 
-=== "Coding agent"
+=== "Coding agent" {#coding-agent}
 
     A complete coding agent in your terminal: workspace-rooted [file access](https://pydantic.dev/docs/ai/harness/filesystem/), allowlisted [shell](https://pydantic.dev/docs/ai/harness/shell/), [repo orientation](https://pydantic.dev/docs/ai/harness/repo-context/), [planning](https://pydantic.dev/docs/ai/harness/planning/), and [context management](https://pydantic.dev/docs/ai/harness/compaction/) that survives long sessions. Here with [web search](capabilities/web-search.md) and a second-opinion [advisor](https://pydantic.dev/docs/ai/harness/advisor/) snapped on alongside:
 
     ```bash
-    uv add pydantic-ai pydantic-ai-harness
+    pip/uv-add pydantic-ai pydantic-ai-harness
     ```
 
     ```python {test="skip" lint="skip"}
@@ -61,11 +60,11 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     from pydantic_ai_harness import Advisor, Coder
 
     agent = Agent(
-        'anthropic:claude-fable-5',
+        'anthropic:claude-fable-5-1',
         capabilities=[
-            Coder(),  # files, shell, repo context, planning, sub-agents, context management
+            Coder(),  # files, shell, repo context, sub-agents, context management
             WebSearch(),  # look up docs and error messages on the web
-            Advisor('openai:gpt-5.6-sol'),  # a second opinion from another model when stuck
+            Advisor('openai:gpt-6-sol'),  # a second opinion from another model when stuck
         ],
     )
     agent.to_cli_sync()
@@ -75,8 +74,8 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     ```python {test="skip" lint="skip"}
     capabilities = [
-        FileSystem('.'), Shell(cwd='.'), RepoContext(), Planning(), SubAgents(...),
-        ClearToolResults(), WarnNearLimits(), ToolOutputLimits(),
+        FileSystem('.'), Shell(cwd='.'), RepoContext(), SubAgents(...),
+        ClearToolResults(), WarnNearLimits(), ToolOutputLimits(), RepairToolArguments(),
     ]
     ```
 
@@ -88,12 +87,14 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Coder](https://pydantic.dev/docs/ai/harness/coder/), from the [Harness](https://pydantic.dev/docs/ai/harness/)
 
-=== "Data extraction"
+    **Run it on GitHub →** [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/), on issues, pull requests or a schedule
+
+=== "Data extraction" {#data-extraction}
 
     Give the agent an [output type](output.md) and [tools](tools.md), and every run comes back validated and typed:
 
     ```bash
-    uv add pydantic-ai
+    pip/uv-add pydantic-ai
     ```
 
     ```python {title="review_sentiment.py"}
@@ -109,11 +110,11 @@ From simple typed data extraction to complex, long-running multi-agent collabora
         score: float = Field(ge=-1, le=1)
 
 
-    agent = Agent('openai:gpt-5.6-sol', output_type=Sentiment)
+    agent = Agent('openai:gpt-6-sol', output_type=Sentiment)
 
 
     @agent.tool
-    def recent_reviews(ctx: RunContext[None], product: str) -> list[str]:
+    def recent_reviews(ctx: RunContext, product: str) -> list[str]:
         """Fetch recent review snippets for a product."""
         return ['The new release fixed everything I complained about!']
 
@@ -127,12 +128,49 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Agents](agent.md), [Function Tools](tools.md), and [Structured Output](output.md)
 
-=== "Realtime voice"
+=== "Durable workflow" {#durable-workflow}
+
+    Attach [`TemporalDurability`](durable_execution/temporal.md) and the same agent runs inside a [Temporal](durable_execution/temporal.md) workflow under [durable execution](durable_execution/overview.md): every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
+
+    ```bash
+    pip/uv-add "pydantic-ai[temporal]"
+    ```
+
+    ```python {title="durable_research.py"}
+    from temporalio import workflow
+
+    from pydantic_ai import Agent
+    from pydantic_ai.capabilities import WebFetch, WebSearch
+    from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
+
+    agent = Agent(
+        'openai:gpt-6-sol',
+        instructions='Research the topic and write a structured brief.',
+        name='researcher',
+        capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
+    )
+
+
+    @workflow.defn
+    class ResearchWorkflow(PydanticAIWorkflow):
+        __pydantic_ai_agents__ = [agent]
+
+        @workflow.run
+        async def run(self, topic: str) -> str:
+            result = await agent.run(f'Write a brief on: {topic}')
+            return result.output
+    ```
+
+    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, AWS Lambda, Kitaru, and Airflow](durable_execution/overview.md) integrations besides.
+
+    **Build this →** [Durable Execution](durable_execution/overview.md)
+
+=== "Realtime voice" {#realtime-voice}
 
     Put the same agent on a live voice session, [tools](realtime/tools.md) and [capabilities](realtime/capabilities.md) included:
 
     ```bash
-    uv add "pydantic-ai[openai-realtime]"
+    pip/uv-add "pydantic-ai[openai-realtime]"
     ```
 
     ```python {test="skip" lint="skip"}
@@ -152,7 +190,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
         return f'Order {order_id}: shipped, arriving Thursday.'
 
     async with agent.realtime('openai:gpt-realtime-2.1').session() as session:
-        microphone = asyncio.create_task(stream_microphone(session))  # chunks → session.send_audio()
+        microphone = asyncio.create_task(session.send_audio(microphone_chunks()))  # your microphone → the model
         speaker = asyncio.create_task(play_audio(session.stream_audio()))  # model audio → your speaker
         async for part in session.stream_transcripts():
             print(f'{part.speaker}: {part.transcript}')
@@ -162,84 +200,40 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
     **Build this →** [Realtime Voice](realtime/overview.md), starting from the [voice assistant example](examples/realtime-voice.md)
 
-=== "Durable background agent"
+=== "Image gen" {#image-gen}
 
-    Attach [`TemporalDurability`](durable_execution/temporal.md) and the same agent runs inside a [Temporal](durable_execution/temporal.md) workflow: every model and tool call becomes a durable activity, so a run working through a background queue survives restarts, failures, and long waits:
-
-    ```bash
-    uv add "pydantic-ai[temporal]"
-    ```
-
-    ```python {title="durable_research.py"}
-    from temporalio import workflow
-
-    from pydantic_ai import Agent
-    from pydantic_ai.capabilities import WebFetch, WebSearch
-    from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
-
-    agent = Agent(
-        'openai:gpt-5.6-sol',
-        instructions='Research the topic and write a structured brief.',
-        name='researcher',
-        capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
-    )
-
-
-    @workflow.defn
-    class ResearchWorkflow(PydanticAIWorkflow):
-        __pydantic_ai_agents__ = [agent]
-
-        @workflow.run
-        async def run(self, topic: str) -> str:
-            result = await agent.run(f'Write a brief on: {topic}')
-            return result.output
-    ```
-
-    [DBOS](durable_execution/dbos.md) and [Prefect](durable_execution/prefect.md) attach the same way, first-party and co-maintained, with [Restate, Kitaru, and Airflow](durable_execution/overview.md) integrations besides.
-
-    **Build this →** [Durable Execution](durable_execution/overview.md)
-
-=== "Image generation"
-
-    Ask for an image and make it the run's typed [output](output.md):
+    Generate an image with a dedicated image model, no agent run required:
 
     ```bash
-    uv add pydantic-ai
+    pip/uv-add pydantic-ai
     ```
 
     ```python {title="logo_generation.py"}
     from pathlib import Path
 
-    from pydantic_ai import Agent, BinaryImage
+    from pydantic_ai import ImageGenerator
 
-    agent = Agent('openai:gpt-5.6-sol', output_type=BinaryImage)
-    result = agent.run_sync('Generate a minimalist logo for a coffee shop called Extract.')
-    Path('logo.png').write_bytes(result.output.data)
+    generator = ImageGenerator('openai:gpt-image-2')
+    result = generator.generate_sync('A minimalist logo for a coffee shop called Extract.')
+    Path('logo.png').write_bytes(result.image.data)
     ```
 
-    [Provider-native generation](native-tools.md#image-generation-tool) on models that support it (like this one), a [subagent fallback](capabilities/image-generation.md) you can configure for the rest, and a [standalone image API](https://github.com/pydantic/pydantic-ai/pull/5357) on the way.
+    That [standalone image API](image-generation.md) is for when your application decides; when an agent run decides, there is [provider-native generation](native-tools.md#image-generation-tool) with `output_type=BinaryImage` for a typed image [output](output.md#image-output), and the [`ImageGeneration` capability](capabilities/image-generation.md) with its fallbacks for models that generate no images of their own.
 
-    **Build this →** [Image Generation](capabilities/image-generation.md)
+    **Build this →** [Image Generation](image-generation.md)
 
-=== "Embeddings"
+!!! tip "See your first run in Logfire"
+    Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire). Logfire has a [free tier](https://pydantic.dev/pricing/) that needs no credit card, and you can sign up with just a GitHub account. Run `uvx logfire auth` and `uvx logfire projects new` once first, or point your coding agent at the [Logfire setup skill](https://pydantic.dev/ai-setup.md) to do it for you. The [Logfire guide](logfire.md#using-logfire) has the details, and [any OpenTelemetry backend](logfire.md#using-opentelemetry) works instead.
 
-    Embed documents and queries for semantic search or a [RAG pipeline](examples/rag.md):
+    ```python
+    import logfire
 
-    ```python {title="embeddings_quickstart.py"}
-    from pydantic_ai import Embedder
-
-    embedder = Embedder('openai:text-embedding-3-small')
-    result = embedder.embed_query_sync('What is machine learning?')
-    print(len(result.embeddings[0]))
-    #> 1536
+    logfire.configure()
+    logfire.instrument_pydantic_ai()
     ```
-
-    Seven providers behind one typed API, [instrumented](logfire.md) like everything else. It lives next to the agent that will use the results.
-
-    **Build this →** [Embeddings](embeddings.md), then the [RAG example](examples/rag.md)
 
 !!! tip "No API key yet?"
-    You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) (`Agent('test')`), which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, see [Models and Providers](models/overview.md) to pick a provider and set its API key.
+    You don't need a provider API key to try any of this. Pass the built-in [`'test'` model](testing.md#unit-testing-with-testmodel) (`Agent('test')`), which runs entirely offline without calling an LLM, so you can exercise your agent, tools, and outputs first. When you're ready for a real model, the [Pydantic AI Gateway](gateway.md) gives you one key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, or see [Models and Providers](models/overview.md) to pick a provider and set its own API key.
 
 ## Why Pydantic AI
 
@@ -251,9 +245,11 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 - **Batteries, composably.** One primitive, the [capability](capabilities/overview.md), bundles [tools](tools.md), [instructions](agent.md#instructions), [hooks](hooks.md), and [model settings](agent.md#model-run-settings) into reusable units. Core ships fundamentals like [MCP](capabilities/mcp.md) and [web search](capabilities/web-search.md), the [Harness](https://pydantic.dev/docs/ai/harness/) ships everything else, and complete agents like [Coder](https://pydantic.dev/docs/ai/harness/coder/) and [Researcher](https://pydantic.dev/docs/ai/harness/researcher/) are just capabilities composed: they come apart the way they went together. Or skip code entirely with [YAML/JSON agent specs](agent-spec.md).
 
-- **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), or [realtime speech](realtime/overview.md); [UI event streams](ui/overview.md) (AG-UI, Vercel AI) connect it to your own frontend or anything else; and [ACP](https://pydantic.dev/docs/ai/harness/acp/) *(experimental)* serves it as an editor agent.
+- **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), or [realtime speech](realtime/overview.md); [UI event streams](ui/overview.md) (AG-UI, Vercel AI) connect it to your own frontend or anything else; [ACP](https://pydantic.dev/docs/ai/harness/acp/) serves it as an editor agent; and [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs it headless on issues, pull requests or a schedule.
 
-- **Durable execution.** First-party, co-maintained [durable execution](durable_execution/overview.md) on Temporal, DBOS, or Prefect, with [Restate, Kitaru, and Airflow](durable_execution/overview.md) integrations and more coming. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
+- **Durable execution.** [Durable execution](durable_execution/overview.md) on seven engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Kitaru, and Airflow, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
+
+- **Coming from another framework?** The [comparisons](comparisons/index.md) show where Pydantic AI differs from LangChain, Google ADK, the Claude Agent SDK and seven more, and the [migration skills](framework-migration.md) let your coding agent port an existing application over.
 
 Built by the [Pydantic](https://docs.pydantic.dev) team: [Pydantic Validation](https://pydantic.dev/docs/) is the validation layer of the OpenAI SDK, the Anthropic SDK, the Google ADK, LangChain, and most of the AI ecosystem (and the foundation FastAPI was built on). Pydantic AI brings that same feeling to agents.
 
@@ -339,7 +335,7 @@ async def refund_status(ctx: RunContext[SupportDependencies]) -> str:
 
 
 support_agent = Agent(  # (9)!
-    'openai:gpt-5.6-sol',  # (10)!
+    'openai:gpt-6-sol',  # (10)!
     deps_type=SupportDependencies,
     output_type=SupportOutput,  # (11)!
     instructions=(
@@ -385,7 +381,7 @@ async def main():
 7. The docstring of a tool is also passed to the LLM as the description of the tool. Parameter descriptions are [extracted](tools.md#function-tools-and-schema) from the docstring and added to the parameter schema sent to the LLM.
 8. `defer_loading=True` makes this an [on-demand capability](capabilities/on-demand.md), like an [Agent Skill](capabilities/on-demand.md#loading-skills-from-markdown-files). It collapses to a one-line catalog entry in the prompt, and its tools stay hidden until the model decides it's relevant and loads it with the framework-managed `load_capability` tool.
 9. This [agent](agent.md) will act as first-tier support in a bank. Agents are generic in the type of dependencies they accept and the type of output they return. In this case, the support agent has type `#!python Agent[SupportDependencies, SupportOutput]`.
-10. Here we configure the agent to use [OpenAI's GPT-5.6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
+10. Here we configure the agent to use [OpenAI's GPT-6 Sol](api/models/openai.md) model; you can also set the model when running the agent.
 11. The response from the agent will be guaranteed to be a `SupportOutput`. Since the agent is generic, it'll also be typed as a `SupportOutput` to aid with static type checking. If validation fails, the agent is [prompted to try again](agent.md#reflection-and-self-correction).
 12. Mount the capabilities on the agent. More [capabilities](capabilities/overview.md), like [web search](capabilities/web-search.md) or anything from the [Harness](https://pydantic.dev/docs/ai/harness/), snap on alongside them in the same list.
 13. In a real use case, you'd add more tools and longer instructions to the agent to extend the context it's equipped with and support it can provide.
@@ -418,7 +414,7 @@ logfire.instrument_sqlite3()  # (3)!
 ...
 
 support_agent = Agent(
-    'openai:gpt-5.6-sol',
+    'openai:gpt-6-sol',
     deps_type=SupportDependencies,
     output_type=SupportOutput,
     instructions=(
@@ -466,10 +462,25 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 uvx --with pydantic-ai-harness clai -a pydantic_ai_harness.coder:coder_agent -m anthropic:claude-fable-5
 ```
 
-Or [install Pydantic AI](install.md), pick a [model](models/overview.md), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
+Or [install Pydantic AI](install.md), pick a [model](models/overview.md) (the [Pydantic AI Gateway](gateway.md) is one key for all of them), and put your own coding agent to work: install the [Pydantic AI skill](coding-agent-skills.md) to give it up-to-date framework knowledge, point it at the [examples](examples/setup.md) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build.
 
-**See what your agent did.** [Instrument it](logfire.md): one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire) is the easiest way to look, any OTLP backend works.
+**See what your agent did.** [Instrument it](logfire.md): one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account), is the easiest way to look, any OTLP backend works.
+
+**Put it to work on a repository.** That same agent, or one you write yourself, runs on issues, pull requests or a schedule as a [GitHub Agentic Workflow](https://pydantic.dev/docs/ai/harness/gh-aw/): headless, in a sandbox, writing back through safe outputs.
 
 **Go deeper.** The [Agents guide](agent.md) is the core walkthrough; the [API Reference](api/agent.md) covers the full interface; the [Harness](https://pydantic.dev/docs/ai/harness/) has the batteries.
 
 **Get help.** Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [:simple-github: GitHub](https://github.com/pydantic/pydantic-ai/issues).
+
+## Part of the Pydantic Stack
+
+Everything you need to ship production-grade AI agents:
+
+- [Pydantic Validation](https://pydantic.dev/docs/validation/latest/): the validation layer underneath all of it
+- [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/): the official capability library and harness, from single capabilities to complete agents
+- [Pydantic Logfire](https://pydantic.dev/logfire): AI-first, full-stack observability
+- [Pydantic AI Gateway](gateway.md): one key for every model, with cost monitoring and spending limits
+- [Pydantic Evals](evals.md): evaluate any Python function, agents included, with [production evals on Logfire](https://pydantic.dev/logfire/evals)
+- [Pydantic Graph](graph.md): typed graph control flow
+- [genai-prices](https://github.com/pydantic/genai-prices): model pricing data, kept current
+- [Monty](https://github.com/pydantic/monty): a sandboxed Python interpreter for model-written code

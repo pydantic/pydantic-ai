@@ -1,3 +1,7 @@
+---
+description: "Use Cohere models with Pydantic AI: install the cohere optional group, set your API key, configure the provider and SDK retries, and pass Cohere model settings."
+---
+
 # Cohere
 
 ## Install
@@ -73,6 +77,10 @@ model = CohereModel(
 agent = Agent(model)
 ...
 ```
+
+## SDK retries {#sdk-retries}
+
+Unlike the OpenAI, Anthropic and Groq clients, the Cohere client exposes no `max_retries` knob: its built-in client retries server errors and rate limits twice above whatever transport you pass here, and that cannot be turned off. Keep it in mind when sizing the transport — see [Provider SDK retries](../retries.md#provider-sdk-retries).
 
 ## Model settings
 
