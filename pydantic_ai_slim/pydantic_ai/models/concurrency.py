@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from .._run_context import RunContext
+from .._run_context import RunContext, get_current_run_context
 from ..concurrency import (
     AbstractConcurrencyLimiter,
     AnyConcurrencyLimit,
@@ -16,6 +16,7 @@ from ..concurrency import (
     get_concurrency_context,
     normalize_to_limiter,
 )
+from ..exceptions import UserError
 from ..messages import ModelMessage, ModelResponse
 from ..settings import ModelSettings
 from ..usage import RequestUsage
@@ -75,6 +76,15 @@ class ConcurrencyLimitedModel(WrapperModel):
         else:
             self._limiter = ConcurrencyLimiter.from_limit(limiter)
 
+    def _ensure_distinct_agent_limiter(self, run_context: RunContext[Any] | None = None) -> None:
+        run_context = run_context or get_current_run_context()
+        agent = run_context.agent if run_context is not None else None
+        if agent is not None and agent._concurrency_limiter is self._limiter:  # pyright: ignore[reportPrivateUsage]
+            raise UserError(
+                'The agent and a `ConcurrencyLimitedModel` use the same concurrency limiter, which can deadlock '
+                'a request. Use separate limiters or apply concurrency limiting at only one layer.'
+            )
+
     async def request(
         self,
         messages: list[ModelMessage],
@@ -82,6 +92,7 @@ class ConcurrencyLimitedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Make a request to the model with concurrency limiting."""
+        self._ensure_distinct_agent_limiter()
         async with get_concurrency_context(self._limiter, f'model:{self.model_name}'):
             return await self.wrapped.request(messages, model_settings, model_request_parameters)
 
@@ -92,6 +103,7 @@ class ConcurrencyLimitedModel(WrapperModel):
         model_request_parameters: ModelRequestParameters,
     ) -> RequestUsage:
         """Count tokens with concurrency limiting."""
+        self._ensure_distinct_agent_limiter()
         async with get_concurrency_context(self._limiter, f'model:{self.model_name}'):
             return await self.wrapped.count_tokens(messages, model_settings, model_request_parameters)
 
@@ -99,6 +111,7 @@ class ConcurrencyLimitedModel(WrapperModel):
         self, request_context: ModelRequestContext, *, instructions: str | None = None
     ) -> ModelResponse:
         """Compact messages with concurrency limiting."""
+        self._ensure_distinct_agent_limiter()
         async with get_concurrency_context(self._limiter, f'model:{self.model_name}'):
             return await self.wrapped.compact_messages(request_context, instructions=instructions)
 
@@ -111,6 +124,7 @@ class ConcurrencyLimitedModel(WrapperModel):
         run_context: RunContext[Any] | None = None,
     ) -> AsyncGenerator[StreamedResponse]:
         """Make a streaming request to the model with concurrency limiting."""
+        self._ensure_distinct_agent_limiter(run_context)
         async with get_concurrency_context(self._limiter, f'model:{self.model_name}'):
             async with self.wrapped.request_stream(
                 messages, model_settings, model_request_parameters, run_context

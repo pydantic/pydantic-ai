@@ -17,9 +17,12 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -537,6 +540,51 @@ class TestAgentWithSharedLimiter:
                         await result.get_output()
                 else:
                     await agent.run('test')
+
+        assert limiter.running_count == 0
+
+    @pytest.mark.parametrize('stream', [False, True])
+    async def test_agent_rejects_shared_limiter_in_selected_fallback(self, stream: bool):
+        limiter = ConcurrencyLimiter(max_running=1)
+        model = FallbackModel(ConcurrencyLimitedModel(TestModel(), limiter=limiter), TestModel())
+        agent = Agent(model, max_concurrency=limiter)
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            with pytest.raises(UserError, match='same concurrency limiter'):
+                if stream:
+                    async with agent.run_stream('test') as result:
+                        await result.get_output()
+                else:
+                    await agent.run('test')
+
+        assert limiter.running_count == 0
+
+    async def test_agent_allows_unused_shared_limiter_in_fallback(self):
+        limiter = ConcurrencyLimiter(max_running=1)
+        model = FallbackModel(TestModel(), ConcurrencyLimitedModel(TestModel(), limiter=limiter))
+        agent = Agent(model, max_concurrency=limiter)
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await agent.run('test')
+
+        assert limiter.running_count == 0
+
+    async def test_agent_rejects_shared_limiter_before_token_counting(self):
+        class CountingModel(TestModel):
+            async def count_tokens(
+                self,
+                messages: list[ModelMessage],
+                model_settings: ModelSettings | None,
+                model_request_parameters: ModelRequestParameters,
+            ) -> RequestUsage:
+                return RequestUsage(input_tokens=1)
+
+        limiter = ConcurrencyLimiter(max_running=1)
+        agent = Agent(ConcurrencyLimitedModel(CountingModel(), limiter=limiter), max_concurrency=limiter)
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            with pytest.raises(UserError, match='same concurrency limiter'):
+                await agent.run('test', usage_limits=UsageLimits(count_tokens_before_request=True))
 
         assert limiter.running_count == 0
 

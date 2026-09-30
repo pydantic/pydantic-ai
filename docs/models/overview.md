@@ -209,6 +209,10 @@ async def main():
     #> 20
 ```
 
+An agent and its model cannot share the same `ConcurrencyLimiter` instance. If you set
+`Agent(max_concurrency=...)` as well as `ConcurrencyLimitedModel(limiter=...)`, give each a
+separate limiter; using the same instance raises [`UserError`][pydantic_ai.exceptions.UserError].
+
 When instrumentation is enabled, requests waiting for a concurrency slot appear as spans with
 attributes showing the queue depth and configured limits. The `name` parameter on
 `ConcurrencyLimiter` helps identify shared limiters in traces.
