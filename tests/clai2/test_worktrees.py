@@ -1,6 +1,7 @@
 """Launch the installed CLI against real repositories without provider requests."""
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -300,6 +301,18 @@ def test_existing_branch_checked_out_elsewhere_is_kept(repository: Path, monkeyp
         open_worktree(name='feature')
     assert git(repository, 'branch', '--list', 'clai-feature')
     assert not (repository / '.worktrees/feature').exists()
+
+
+def test_hand_deleted_worktree_is_checked_out_again(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`rm -rf .worktrees/NAME` leaves Git's registration behind; the branch and its commits come back."""
+    monkeypatch.chdir(repository)
+    first = open_worktree(name='feature')
+    (first.path / 'work.txt').write_text('committed')
+    git(first.path, 'add', 'work.txt')
+    git(first.path, 'commit', '-m', 'Work')
+    shutil.rmtree(first.path)
+    assert open_worktree(name='feature') == first
+    assert (first.path / 'work.txt').read_text() == 'committed'
 
 
 def test_symlink_loop_is_a_clean_error(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -28,12 +28,15 @@ def open_worktree(*, name: str) -> Worktree:
         exclude = Path(_git('rev-parse', '--git-path', 'info/exclude'))
         contents = exclude.read_bytes() if exclude.exists() else b''
         path = root / '.worktrees' / name
-        if os.path.realpath(path) in _registered_worktrees():
+        registered = os.path.realpath(path) in _registered_worktrees()
+        if registered and path.exists():
             branch = _git('-C', str(path), 'branch', '--show-current') or 'detached HEAD'
             worktree = Worktree(path=path, branch=branch, created=False)
         elif path.exists():
             raise ValueError(f'Cannot create worktree: {path} exists but is not a Git worktree. Pick another name.')
         else:
+            if registered:
+                _git('worktree', 'prune')  # The checkout was deleted by hand; Git still lists it until pruned.
             worktree = Worktree(path=path, branch=_check_out(path=path, name=name), created=True)
         # Also when reopening: a worktree made with plain `git worktree add` has no exclude entry yet.
         if b'/.worktrees/' not in contents.splitlines():
