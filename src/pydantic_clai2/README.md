@@ -1467,8 +1467,9 @@ shows how to put a different one, a web form for instance, in its place.
 The stock CLI enables the built-in `logfire` plugin by default. It adds Pydantic
 AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
 capability to CLAI turns for agent, model-request, and tool
-spans, including timing, token usage, and failures. It adds no separate CLAI spans
-and does not instrument HTTP clients or unrelated agents globally.
+spans, including timing, token usage, and failures. It adds CLAI's own UI spans
+only when `ui_events` is on (see below), and does not instrument HTTP clients or
+unrelated agents globally.
 
 Set `LOGFIRE_TOKEN` to a write token for your Logfire project. Alternatively,
 place the SDK's `logfire_credentials.json` in your user config directory at
@@ -1504,6 +1505,46 @@ than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags contro
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
 model/tool names and tool definitions may still be recorded. Logfire's normal
 scrubbing remains enabled.
+
+Two more options choose where telemetry goes and what it covers. `token` names a
+`/keys` entry holding a Logfire write token, which then takes the place of
+`LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
+rather than falling back. `ui_events` (default `false`) adds spans and logs, tagged
+`clai2-ui`, for UI interactions: menus, slash commands, `/set`, plugin actions,
+`/keys`, prompt submissions, steering, interrupts, completions, and session start,
+clear, and resume. They record names and listed choices, never prompt text, typed
+values, or secrets.
+
+### Setting up where traces go
+
+`/plugins configure logfire` (or `C` on `logfire` in `/plugins`) opens a setup menu:
+
+1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
+2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
+3. Pick one of the projects you can write to.
+
+CLAI then creates a write token for that project, saves it in `/keys` as
+`LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
+reloads and the next turn is traced there. The sign-in itself is not kept. The
+URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
+send the token elsewhere, and sending is turned on if it was off. Run the menu
+again to switch projects.
+
+### Sending UX telemetry to the Pydantic shared project
+
+`@pydantic.dev` staff can send CLAI UX telemetry to the team's shared Logfire
+project: run `/plugins configure logfire`, pick Logfire US, sign in with your
+Pydantic account, and pick the shared CLAI project. Then turn on UI events:
+
+```text
+/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"token": {"name": "LOGFIRE_TOKEN_<ORG>_<PROJECT>"}, "ui_events": true}'
+```
+
+using the key name the setup menu printed (Esc closes the menu that `/plugins add`
+opens). Run the setup menu again to go back to your personal project. Agent spans
+still include content by default; add `"include_content": false,
+"include_binary_content": false` if you'd rather share only UX telemetry and
+timing with the team.
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.

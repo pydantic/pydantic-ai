@@ -20,6 +20,7 @@ from pydantic_clai2.config.credential_store import (
     load_codex_credentials,
     save_codex_credentials,
 )
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
@@ -136,8 +137,10 @@ def save_key(*, name: str, value: str, replace: bool = True) -> str:
         keys = _load_keys()
         if not replace and name in keys:
             raise KeyExistsError(f'{name} is already saved.')
+        replaced = name in keys
         keys[name] = SecretStr(value)
         _save_keys(keys=keys)
+    telemetry.record('key saved', key_name=name, replaced=replaced)
     path = credentials_path(account='api-keys')
     if path.is_file():
         return f'Saved {name}. No OS keyring is available; keys are stored in plaintext at {path}.'
@@ -200,6 +203,7 @@ def rename_key(*, name: str, new_name: str) -> str:
             raise ValueError(f'Key is used by {", ".join(users)}. Reconfigure those connections before renaming.')
         keys[new_name] = keys.pop(name)
         _save_keys(keys=keys)
+    telemetry.record('key renamed', key_name=name, new_key_name=new_name)
     return f'Renamed {name} to {new_name}.'
 
 
@@ -209,6 +213,7 @@ def delete_key(*, name: str) -> str:
         keys = _load_keys()
         keys.pop(name, None)
         _save_keys(keys=keys)
+    telemetry.record('key deleted', key_name=name)
     return f'Deleted {name}. Connections referencing it can no longer authenticate.'
 
 
@@ -250,10 +255,26 @@ def build_key_menu(*, names: list[str], label: str, optional: bool) -> Menu:
 
 async def prompt_api_key(*, prompt: SecretPrompt, label: str, optional: bool = False) -> str | KeyReference | None:
     """Return a saved-key reference or a masked inline value; None means cancellation."""
+    with telemetry.span('key prompt', label=label) as span:
+        choice = await _prompt_api_key(prompt=prompt, label=label, optional=optional)
+        span.set('answer', _answer(choice))
+        return choice
+
+
+def _answer(choice: str | KeyReference | None) -> str:
+    """What kind of answer the key prompt got; never the key's value."""
+    if choice is None:
+        return 'cancelled'
+    if isinstance(choice, KeyReference):
+        return 'saved key'
+    return 'typed' if choice else 'no key'
+
+
+async def _prompt_api_key(*, prompt: SecretPrompt, label: str, optional: bool) -> str | KeyReference | None:
     keys = await asyncio.to_thread(load_keys)
     if keys:
         menu = build_key_menu(names=list(keys), label=label, optional=optional)
-        result = await run_worker(menu.run)
+        result = await run_worker(lambda: menu.run())
         if result.cancelled or result.item is None:
             return None
         selected = result.item.value

@@ -309,9 +309,33 @@ Manage it with `/plugins disable logfire`, `/plugins enable logfire`, or
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
 `include_binary_content` (both default `true`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
-over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings.
+over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
+`token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
+whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
+project receives the telemetry. If that key is missing, the plugin warns and
+exports nothing rather than falling back to another project.
 Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled.
+
+`base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
+`LOGFIRE_BASE_URL`, else the region the token names. `/plugins configure logfire`
+sets `token`, `base_url`, and `send_to_logfire` for you: it asks
+where traces go, runs Logfire's own device sign-in there (the one behind
+`logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
+accepts), lists the projects you can write to, and saves a new write token for
+the one you pick in `/keys`. The sign-in token is used only during setup. The flow
+lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+
+`ui_events` (default `false`) also records CLAI's UI interactions on the same
+instance, as spans and logs tagged `clai2-ui`: menus opened and how they closed,
+slash commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
+submissions, steering, interrupts, completions, and session start, clear, and
+resume. Attributes carry names and listed choices, never prompt text, typed
+values, or secrets. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
+`run_worker` opens every menu's span, so a new menu is covered without extra code.
+With `ui_events` on, the attributes that only hold names (`command`, `menu`,
+`setting`, `key_name`, ...) are exempt from scrubbing, since names like
+`OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted.
 
 Unload flushes and shuts down only this plugin's providers. Reload creates a new
 instance. The supplied agent and global providers are unchanged, and the existing
