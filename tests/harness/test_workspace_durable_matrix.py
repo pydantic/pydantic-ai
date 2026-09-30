@@ -34,7 +34,7 @@ from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkfl
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
-from tests.harness.conftest import skip_temporal_sandbox_on_314
+from tests.harness._temporal import skip_temporal_sandbox_on_314
 
 
 @pytest.fixture
