@@ -213,10 +213,11 @@ agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate th
 
 Gotchas: rejections share the `retries={'output': n}` budget with other output validation, and
 exhaustion raises `UnexpectedModelBehavior`; `UsageLimits` still end the run with no grace request.
-Verify real evidence (files, tests, external state), not the model's claim. Output functions run
-before the check and can run again after a rejection, so keep them idempotent. `headless=False`
-keeps the instructions but never vetoes, so interactive runs can stop to ask. Partial streamed
-output is not checked, and `run_stream()` cannot retry a rejected final output.
+Verify real evidence (files, tests, external state), not the model's claim. An LLM judge agent inside
+`verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
+Output functions run before the check and can run again after a rejection, so keep them idempotent.
+`headless=False` keeps the instructions but never vetoes, so interactive runs can stop to ask.
+Partial streamed output is not checked, and `run_stream()` cannot retry a rejected final output.
 
 ## PromptInjectionDefender
 
