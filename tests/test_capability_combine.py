@@ -899,7 +899,7 @@ async def test_a_merge_takes_the_later_of_two_models_differing_only_in_settings(
     """Two model instances are two values, so the later one runs even where the models compare equal.
 
     A model's `settings` live on the non-dataclass `Model` base, outside the field equality its
-    dataclass subclasses generate. Merging these two to the first ran the fallback subagent with the
+    dataclass subclasses generate. Merging them to the first would run the fallback subagent with the
     earlier model's settings under the later capability.
     """
     subagent_settings: list[ModelSettings | None] = []
