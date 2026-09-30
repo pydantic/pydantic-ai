@@ -7,6 +7,7 @@ import json
 import json as _json
 import os
 import sqlite3
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypeGuard
@@ -30,6 +31,8 @@ from pydantic_ai_harness.media import (
     DiskMediaStore,
     MediaContext,
     MediaStore,
+    PostgresConnection,
+    PostgresMediaStore,
     S3MediaStore,
     SqliteMediaStore,
     externalize_media,
@@ -1401,9 +1404,17 @@ def _assert_media_store_protocol(store: MediaStore) -> None:
     assert isinstance(store, MediaStore)
 
 
+class _UnusedPostgresPool:
+    """Satisfies `PostgresPool` structurally; a protocol check never acquires."""
+
+    def acquire(self) -> AbstractAsyncContextManager[PostgresConnection]:
+        raise AssertionError('the pool must not be used')  # pragma: no cover
+
+
 def test_concrete_stores_satisfy_protocol(tmp_path: Path) -> None:
     _assert_media_store_protocol(DiskMediaStore(tmp_path))
     _assert_media_store_protocol(SqliteMediaStore(database=tmp_path / 'm.db'))
+    _assert_media_store_protocol(PostgresMediaStore(_UnusedPostgresPool()))
     _assert_media_store_protocol(
         S3MediaStore(
             bucket='b',
