@@ -344,7 +344,7 @@ async def test_api_key_selects_the_keyed_endpoint(monkeypatch: pytest.MonkeyPatc
     assert all('keen_live_x' not in str(request.url) and b'keen_live_x' not in request.content for request in seen)
 
 
-@pytest.mark.parametrize('body', [b'', b'<html>gateway timeout</html>'])
+@pytest.mark.parametrize('body', [b'', b'<html>gateway timeout</html>', b'{"results": "\xff"}'])
 async def test_malformed_2xx_bodies_become_retries(monkeypatch: pytest.MonkeyPatch, body: bytes):
     # A 2xx that is not JSON is neither an `httpx.HTTPError` nor a deliberate
     # exception; without this it would kill the run as a bare decode error.
@@ -373,6 +373,10 @@ def test_base_url_accepts_https_and_loopback_http(base_url: str):
         # would land in front of it and the request would miss the endpoint.
         'https://api.keenable.ai?token=x',
         'https://api.keenable.ai#frag',
+        # An empty query or fragment parses as none at all, but the path would
+        # still land behind the `?` or `#`.
+        'https://api.keenable.ai?',
+        'https://api.keenable.ai#',
     ],
 )
 def test_base_url_rejects_plaintext_hostless_and_query_bearing_urls(base_url: str):

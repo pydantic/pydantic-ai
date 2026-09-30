@@ -150,13 +150,14 @@ def _normalize_base_url(base_url: str | None) -> str:
     plaintext request. Plain `http` is allowed only against loopback, for local
     development against a Keenable instance.
 
-    A query or fragment is rejected too: the endpoint path is appended to this
-    string, so either one would land before it and the request would go
+    A query or fragment is rejected too, even an empty one (a bare trailing
+    `?` or `#`, which parses as no query at all): the endpoint path is appended
+    to this string, so either one would land before it and the request would go
     somewhere other than the endpoint it names.
     """
     base = (base_url or KEENABLE_DEFAULT_BASE_URL).rstrip('/')
     parsed = httpx.URL(base)
-    if parsed.host and not parsed.query and not parsed.fragment:
+    if parsed.host and '?' not in base and '#' not in base:
         if parsed.scheme == 'https':
             return base
         if parsed.scheme == 'http' and parsed.host in {'localhost', '127.0.0.1', '::1'}:
@@ -201,7 +202,9 @@ def _recoverable(
             raise ModelRetry(f'Keenable request failed: {error}') from error
         except httpx.HTTPError as error:
             raise ModelRetry(f'Keenable request failed: {error}') from error
-        except json.JSONDecodeError as error:
+        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            # `Response.json()` decodes the bytes before parsing them, so a body
+            # in a broken encoding fails as a decode error, not a JSON one.
             raise ModelRetry(f'Keenable returned a malformed response: {error}') from error
 
     return wrapper
