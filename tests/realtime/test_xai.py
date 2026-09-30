@@ -880,7 +880,10 @@ async def test_connect_reconnect_closes_previous_connection(monkeypatch: pytest.
 
 
 async def test_max_duration_error_is_not_reconnected(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The close after a `max_duration` error ends the session: a re-dial would resume into the same limit."""
+    """The close after a `max_duration` error ends the session: a re-dial would resume into the same limit.
+
+    The error already reports why the session ended, so the close isn't reported again.
+    """
     ended = FakeWebSocket(
         [
             _created(),
@@ -904,7 +907,6 @@ async def test_max_duration_error_is_not_reconnected(monkeypatch: pytest.MonkeyP
             code='max_duration',
             recoverable=False,
         ),
-        RealtimeSessionErrorEvent(message='xAI Grok Voice connection closed: received 1000', recoverable=False),
     ]
     assert connect.urls == ['wss://api.x.ai/v1/realtime?model=grok-voice-latest']
 

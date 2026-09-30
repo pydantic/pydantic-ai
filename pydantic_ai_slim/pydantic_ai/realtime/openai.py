@@ -384,6 +384,11 @@ class _DecodedFrame:
     """Whether the frame is about a response that has already ended, so its codec events repeat or trail
     that response's terminal and are left out of the lifecycle stream."""
 
+    @property
+    def ends_session(self) -> bool:
+        """Whether the frame reports the session over, with a non-recoverable error."""
+        return any(isinstance(event, RealtimeSessionErrorEvent) and not event.recoverable for event in self.codec)
+
     def tagged(self) -> list[tuple[RealtimeCodecEvent | LifecycleEvent, bool]]:
         """The frame's events in order, each with whether it is stale (see `_all_events`)."""
         return [
@@ -444,6 +449,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._input_transcription_enabled = input_transcription_enabled
         self._reconnects_used = 0
         self._gave_up = False
+        # Set once the server reports the session over, e.g. xAI's `max_duration` error.
+        self._session_ended = False
         self._observes_output_audio = observes_output_audio
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
@@ -523,6 +530,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
     def _can_reconnect(self) -> bool:
         return (
             not self._gave_up
+            and not self._session_ended
             and self._dial is not None
             and self._reconnect is not None
             and self._reconnects_used < self._reconnect.get('max_reconnects', DEFAULT_MAX_RECONNECTS)
@@ -816,12 +824,10 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                             yield event, False
                         yield _frame_error(e), False
                         continue
+                    # The server reporting the session over makes the close that follows final:
+                    # re-dialing would only run into the same end.
+                    self._session_ended = self._session_ended or frame.ends_session
                     for tagged in frame.tagged():
-                        event = tagged[0]
-                        if isinstance(event, RealtimeSessionErrorEvent) and not event.recoverable:
-                            # The server reported the session over (e.g. xAI's `max_duration`), so the close
-                            # that follows is final: re-dialing would only run into the same end.
-                            self._gave_up = True
                         yield tagged
                 # `websockets` ends iteration silently on a *normal* close (1000/1001) and only raises
                 # on an abnormal one, but a session the server hung up on is over either way: OpenAI
@@ -841,7 +847,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
                 # instead of escaping the stream and bypassing the reconnect policy.
                 closed = str(e)
 
-            reconnects = not self._gave_up and self._reconnect is not None and self._dial is not None
+            reconnects = not self._session_ended and self._reconnect is not None and self._dial is not None
             if reconnects and await self._try_reconnect():
                 for event in self._take_pending_lifecycle():
                     yield event, False
@@ -853,6 +859,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
             self._lifecycle.closed(self._unanswered_inputs())
             for event in self._take_pending_lifecycle():
                 yield event, False
+            if self._session_ended:
+                # The server already said why the session ended; the close adds nothing to report.
+                return
             # No reconnect policy, or the reconnect failed: a closed connection is fatal. Surface it as a
             # non-recoverable error and end the stream cleanly, rather than raising.
             reconnect_failed = '; reconnect failed' if reconnects else ''
