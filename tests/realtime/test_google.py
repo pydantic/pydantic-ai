@@ -482,7 +482,8 @@ def test_tool_def_accepts_a_recursive_map(kids: dict[str, Any]) -> None:
 
     `additionalProperties` is dropped because Gemini mishandles it, and `Schema` has no
     `patternProperties`, so the map arrives empty like any other `dict` field. Not a cassette test: the
-    declaration is built before a session opens, into the same shape `counts` sends in the test above.
+    declaration is built before a session opens, into the shape `counts` takes in
+    `test_tool_def_narrows_schema_to_the_openapi_subset`.
     """
     tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
         ToolDefinition(
@@ -505,6 +506,35 @@ def test_tool_def_accepts_a_recursive_map(kids: dict[str, Any]) -> None:
                 },
             )
         },
+    )
+
+
+def test_tool_def_keeps_a_recursive_ref_in_an_all_of_member_uninlined() -> None:
+    """A recursive `$ref` under a typeless `allOf` member is left for the declaration to drop, not refused.
+
+    The member is flattened into the typed one, so the field arrives unconstrained and the tool still works
+    (live-verified on `gemini-2.5-flash-native-audio-latest`); inlining it would refuse the whole tool, as
+    `test_tool_def_rejects_a_recursive_schema` shows for a typed one. Not a cassette test: the declaration is
+    built before a session opens.
+    """
+    tool = rt_google._tool_def_to_genai(  # pyright: ignore[reportPrivateUsage]
+        ToolDefinition(
+            name='save_tree',
+            parameters_json_schema={
+                '$defs': {
+                    'Node': {
+                        'type': 'object',
+                        'properties': {'name': {'type': 'string'}, 'child': {'$ref': '#/$defs/Node'}},
+                    },
+                    'Base': {'type': 'object', 'properties': {'id': {'type': 'string'}}},
+                },
+                'allOf': [{'$ref': '#/$defs/Base'}, {'properties': {'tree': {'$ref': '#/$defs/Node'}}}],
+            },
+        )
+    )
+    assert tool.parameters == genai_types.Schema(
+        type=genai_types.Type.OBJECT,
+        properties={'id': genai_types.Schema(type=genai_types.Type.STRING), 'tree': genai_types.Schema()},
     )
 
 

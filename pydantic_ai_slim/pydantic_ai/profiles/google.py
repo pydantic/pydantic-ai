@@ -485,6 +485,13 @@ class GoogleOpenAPISchemaTransformer(GoogleJsonSchemaTransformer):
         schema.pop('patternProperties', None)
         return super()._handle_object(schema)
 
+    def _should_walk_untyped_keywords(self, schema: JsonSchema, keywords: tuple[str, ...]) -> bool:
+        # A recursive definition can't be expressed, and inlining one raises below. Left unwalked, its `$ref` is
+        # dropped on the way to Gemini instead, which a typeless `allOf` member, flattened into a typed one,
+        # survives.
+        reached = self._reachable_defs([schema[keyword] for keyword in keywords if keyword in schema])
+        return bool(reached) and not any(key in (self._reachable_defs([self.defs[key]]) or ()) for key in reached)
+
     def transform(self, schema: JsonSchema) -> JsonSchema:
         # `additionalProperties` is mishandled by Gemini, so a `dict[str, MyType]` field always arrives
         # empty. Dropping it is what makes the rest of the schema usable; the alternative is refusing
