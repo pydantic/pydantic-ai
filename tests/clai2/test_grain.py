@@ -114,22 +114,20 @@ def test_a_saved_catalog_declaration_moves_to_the_builtin(tmp_path: Path, enable
     store = SettingsStore(tmp_path / 'settings.db')
     store.save_plugin(PluginSettings(id='grain', factory=RETIRED, enabled=enabled))
     store.save_plugin(PluginSettings(id='other', factory=RETIRED))
-    shell_for(store)
-    saved = {plugin.id: plugin for plugin in store.plugins()}
-    assert saved['grain'] == PluginSettings(id='grain', factory='pydantic_clai2.grain', enabled=enabled)
-    assert saved['other'].factory == RETIRED, 'only the id the built-in replaced moves'
+    loaded = declarations(store)
+    assert loaded['grain'] == PluginSettings(id='grain', factory='pydantic_clai2.grain', enabled=enabled)
+    assert loaded['other'].factory == RETIRED, 'only the id the built-in replaced moves'
 
 
 def test_a_saved_declaration_with_settings_stays(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'settings.db')
     chosen = PluginSettings(id='grain', factory=RETIRED, settings={'read_only': True})
     store.save_plugin(chosen)
-    shell_for(store)
-    assert store.plugins() == [chosen]
+    assert declarations(store)['grain'] == chosen
 
 
-def shell_for(store: SettingsStore) -> None:
-    create_shell(
+def declarations(store: SettingsStore) -> dict[str, PluginSettings]:
+    shell = create_shell(
         Agent(TestModel()),
         deps=None,
         plugins=(),
@@ -141,6 +139,7 @@ def shell_for(store: SettingsStore) -> None:
         project=ProjectSettings(),
         headless=True,
     )
+    return {entry.name: entry.declaration for entry in shell.loader.entries()}
 
 
 async def test_enabling_the_builtin_adds_grain_and_the_menu_saves_settings(

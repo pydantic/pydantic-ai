@@ -220,6 +220,17 @@ def config_completions(args: list[str]) -> Iterable[str]:
     return ()
 
 
+PLUGINS_USAGE = 'Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID'
+
+
+def added_plugin(args: list[str]) -> PluginSettings:
+    """The declaration `plugins add ID MODULE[:ATTR] [JSON]` describes, without saving it."""
+    if len(args) not in (3, 4) or args[0] != 'add':
+        raise ValueError(PLUGINS_USAGE)
+    settings = TypeAdapter(dict[str, JsonValue]).validate_json(args[3]) if len(args) == 4 else {}
+    return PluginSettings(id=args[1], factory=args[2], settings=settings)
+
+
 def plugins_command(store: SettingsStore, args: list[str]) -> str:
     """Manage explicit plugin declarations without importing plugins."""
     declarations = store.plugins()
@@ -228,9 +239,8 @@ def plugins_command(store: SettingsStore, args: list[str]) -> str:
             '\n'.join(f'{p.id}: {p.factory} ({"enabled" if p.enabled else "disabled"})' for p in declarations)
             or 'No plugins.'
         )
-    if len(args) in (3, 4) and args[0] == 'add':
-        settings = TypeAdapter(dict[str, JsonValue]).validate_json(args[3]) if len(args) == 4 else {}
-        store.save_plugin(PluginSettings(id=args[1], factory=args[2], settings=settings))
+    if args[0] == 'add':
+        store.save_plugin(added_plugin(args))
     elif len(args) == 2 and args[0] in ('enable', 'disable'):
         plugin = next((p for p in declarations if p.id == args[1]), None)
         if plugin is None:
@@ -239,5 +249,5 @@ def plugins_command(store: SettingsStore, args: list[str]) -> str:
     elif len(args) == 2 and args[0] == 'remove':
         store.delete_plugin(args[1])
     else:
-        raise ValueError('Usage: plugins list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID')
+        raise ValueError(PLUGINS_USAGE)
     return 'Saved. Plugin code is trusted and loads on next startup.'

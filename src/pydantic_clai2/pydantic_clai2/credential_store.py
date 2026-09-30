@@ -2,6 +2,9 @@
 
 import os
 import re
+import sqlite3
+from collections.abc import Generator
+from contextlib import closing, contextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -30,6 +33,22 @@ def credentials_path(*, account: str = _ACCOUNT) -> Path:
     """
     root = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
     return root / f'credentials-{account}.json'
+
+
+@contextmanager
+def credential_lock(*, account: str, busy: str) -> Generator[None]:
+    """Serialize one account's read-modify-write across processes; the SQLite lock file holds no secrets.
+
+    `busy` is the error shown when the lock cannot be taken, so it can name what to close.
+    """
+    path = credentials_path(account=account).with_suffix('.lock')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with closing(sqlite3.connect(path, timeout=20)) as connection, connection:
+            connection.execute('BEGIN IMMEDIATE')
+            yield
+    except sqlite3.Error:
+        raise UserError(busy) from None
 
 
 def _chunk_services(*, value: str, account: str = _ACCOUNT) -> list[str]:
