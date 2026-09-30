@@ -303,9 +303,11 @@ result the tool returned, not the result the hook passed on to the model.
 
 A nested `Agent` a capability runs (a summarizer, a judge, a reminder generator)
 is traced only if that agent is instrumented. That happens through
-`Agent.instrument_all()` (which `logfire.instrument_pydantic_ai()` calls) or an
-agent the user supplies with its own instrumentation. The parent run's
-`Instrumentation` capability does not carry over.
+`Agent.instrument_all()` (which `logfire.instrument_pydantic_ai()` calls), an
+`InstrumentedModel` passed as the helper's `model=`, or an agent the user
+supplies with its own instrumentation. The nested agent's own instrumentation
+settings control content recording. The parent run's `Instrumentation`
+capability does not carry over.
 
 `warnings.warn` is a diagnostic for the developer, not telemetry. It is not
 recorded on a span.
