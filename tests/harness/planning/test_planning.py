@@ -1203,11 +1203,13 @@ class TestEndToEnd:
                 'stop_sequence': None,
                 'usage': {'input_tokens': 1, 'output_tokens': 1},
             }
-            start_block, delta = (
-                ({'type': 'text', 'text': ''}, {'type': 'text_delta', 'text': 'done'})
-                if step is None
-                else ({**block, 'input': {}}, {'type': 'input_json_delta', 'partial_json': json.dumps(step[1])})
-            )
+            start_block: dict[str, Any]
+            delta: dict[str, Any]
+            if step is None:
+                start_block, delta = {'type': 'text', 'text': ''}, {'type': 'text_delta', 'text': 'done'}
+            else:
+                start_block = {**block, 'input': {}}
+                delta = {'type': 'input_json_delta', 'partial_json': json.dumps(step[1])}
             events: list[dict[str, Any]] = [
                 {'type': 'message_start', 'message': {**message, 'content': [], 'stop_reason': None}},
                 {'type': 'content_block_start', 'index': 0, 'content_block': start_block},
