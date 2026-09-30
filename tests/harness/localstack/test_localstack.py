@@ -277,6 +277,8 @@ class TestAwsCli:
             'AWS_WEB_IDENTITY_TOKEN_FILE': '/tmp/web-token',
             'AWS_ROLE_ARN': 'arn:aws:iam::123:role/prod',
             'AWS_ACCESS_KEY_ID': 'real-key',
+            'AWS_ENV': 'inherited-env',
+            'AWS_NAMES': 'inherited-names',
             'NOT_AWS': 'kept',
         }
         stub = _make_stub(
@@ -284,13 +286,13 @@ class TestAwsCli:
             'printf "%s\\n" '
             '"${AWS_PROFILE-unset}|${AWS_CONFIG_FILE-unset}|${AWS_SHARED_CREDENTIALS_FILE-unset}|'
             '${AWS_SESSION_TOKEN-unset}|${AWS_WEB_IDENTITY_TOKEN_FILE-unset}|${AWS_ROLE_ARN-unset}|'
-            '$AWS_ACCESS_KEY_ID|$AWS_SECRET_ACCESS_KEY|$NOT_AWS"',
+            '$AWS_ACCESS_KEY_ID|$AWS_SECRET_ACCESS_KEY|${AWS_ENV-unset}|${AWS_NAMES-unset}|$NOT_AWS"',
         )
         workspace = Workspace(LocalWorkspaceBackend(tmp_path, env=workspace_env))
 
         result = await _toolset(aws_cli_path=stub).aws_cli(_run_context(workspace), 's3 ls')
 
-        assert 'unset|unset|unset|unset|unset|unset|test|test|kept' in result
+        assert 'unset|unset|unset|unset|unset|unset|test|test|unset|unset|kept' in result
 
     async def test_runs_in_the_workspace_working_directory(self, tmp_path: Path) -> None:
         workspace_dir = tmp_path / 'repo'
@@ -514,9 +516,17 @@ class TestContainerManagement:
 
     async def test_managed_starts_on_endpoint_port_and_stops(self, tmp_path: Path) -> None:
         docker, log = _docker_stub(tmp_path)
+        cli = _make_stub(tmp_path, 'echo "$@"')
         with http_server([HttpResponse(200)]) as health:
-            async with _toolset(endpoint_url=health.endpoint_url, manage_container=True, docker_path=docker):
-                pass
+            async with _toolset(
+                endpoint_url=f'http://sandbox-visible.example:{health.port}',
+                manage_container=True,
+                docker_path=docker,
+                aws_cli_path=cli,
+            ) as toolset:
+                result = await toolset.aws_cli(_run_context(tmp_path), 's3 ls')
+        assert f'--endpoint-url http://localhost.localstack.cloud:{health.port}' in result
+        assert 'sandbox-visible.example' not in result
         log_text = log.read_text()
         assert (f'run -d --rm -p 127.0.0.1:{health.port}:4566 -e GATEWAY_LISTEN localstack/localstack') in log_text
         assert 'stop managed-xyz' in log_text

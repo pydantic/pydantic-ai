@@ -53,9 +53,13 @@ _NOT_FOUND_EXIT = 127
 """Exit status of `_LAUNCHER`, with no output, when the AWS CLI is not on the workspace's PATH."""
 
 _LAUNCHER = (
-    r"for name in $(env | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/\1/p'); do" + '\n'
+    'AWS_ENV=$(env) || { echo "Could not read the workspace environment." >&2; exit 1; }\n'
+    r"""AWS_NAMES=$(printf '%s\n' "$AWS_ENV" | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/\1/p')"""
+    ' || { echo "Could not filter AWS environment variables." >&2; exit 1; }\n'
+    'for name in $AWS_NAMES; do\n'
     f'  case "$name" in {"|".join(_INJECTED_AWS_ENV)}) ;; *) unset "$name" ;; esac\n'
     'done\n'
+    'unset AWS_ENV AWS_NAMES\n'
     f'command -v "$1" > /dev/null 2>&1 || exit {_NOT_FOUND_EXIT}\n'
     'exec "$@"'
 )

@@ -48,8 +48,9 @@ class LocalStack(AbstractCapability[AgentDepsT]):
 
     Defaults to LocalStack's `localhost.localstack.cloud` domain (which resolves to
     `127.0.0.1`) for compatibility with AWS SDKs that need subdomain-style hosts.
-    The AWS CLI connects to it from the workspace, so with a sandbox workspace point
-    this at an address the sandbox can reach.
+    For an external instance, it must be reachable from both the workspace (AWS CLI)
+    and the agent's host (health check). With `manage_container=True`, only this URL's
+    port is used; the endpoint host comes from `host_address`.
     """
 
     region: str = 'us-east-1'
@@ -87,7 +88,11 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     """Docker image to run when `manage_container` is True."""
 
     host_address: str = '127.0.0.1'
-    """Host address Docker publishes the LocalStack edge port on."""
+    """Host address Docker publishes the LocalStack edge port on, also used for the CLI endpoint.
+
+    For a remote workspace, use a concrete host interface address it can reach.
+    `127.0.0.1` and `0.0.0.0` both produce a loopback endpoint.
+    """
 
     service_port_range: str | None = None
     """Optional host/container port range for services that expose their own ports, e.g. `4510-4559`."""

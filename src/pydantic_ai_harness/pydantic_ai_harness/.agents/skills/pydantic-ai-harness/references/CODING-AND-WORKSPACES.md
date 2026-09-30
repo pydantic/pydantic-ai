@@ -389,13 +389,18 @@ or `FileSystem`/`Shell`: `Agent(..., capabilities=[LocalWorkspace('.'), Coder(),
 ## LocalStack
 
 AWS CLI against emulated AWS. `aws_cli` runs in the run's workspace (a run without one fails at its
-start), so the AWS CLI must be installed there and `endpoint_url` reachable from it; the workspace's
-other `AWS_*` variables are removed. `localstack_health` and `docker` (managed container) run on the
+start), so the AWS CLI must be installed there; the workspace's other `AWS_*` variables are removed.
+For an external instance, `endpoint_url` must be reachable from both the workspace and the host.
+`localstack_health` and `docker` (managed container) run on the
 agent's host. No extra. Tools: `aws_cli` (command without `aws` or `--endpoint-url`; argv, no shell)
 and `localstack_health`.
 
 `LocalStack(allowed_services=['s3', 'dynamodb'])` connects to an instance you started;
-`LocalStack(manage_container=True)` starts a fresh Docker container per run. `allowed_services`/`denied_services` are mutually exclusive. The default image needs
+`LocalStack(manage_container=True)` starts a fresh Docker container per run, using only the port
+from `endpoint_url`; the endpoint host comes from `host_address`. For a remote workspace, set that
+to a concrete host interface address the workspace can reach: `127.0.0.1` and `0.0.0.0` both produce
+a loopback endpoint. For a separate hostname or proxy URL, manage the instance externally.
+`allowed_services`/`denied_services` are mutually exclusive. The default image needs
 `LOCALSTACK_AUTH_TOKEN` (forwarded automatically); concurrent managed runs need distinct ports. The AWS
 CLI can read and write workspace files (`file://`, `s3 cp`).
 

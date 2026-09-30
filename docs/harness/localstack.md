@@ -57,9 +57,11 @@ the capability start and stop a fresh Docker container per run.
 
 `aws_cli` runs in the agent's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/),
 like `Shell`: on your machine with `LocalWorkspace`, or in the sandbox when the run uses one. A run
-without a workspace fails at its start. The AWS CLI must be installed in the workspace, and the
-workspace must be able to reach `endpoint_url`; the default `localhost.localstack.cloud` address
-only works when LocalStack runs on the same machine as the workspace. Commands get the workspace's
+without a workspace fails at its start. The AWS CLI must be installed in the workspace.
+For an externally managed instance, `endpoint_url` must be reachable from both the workspace
+and the agent's host (for the health check). The default `localhost.localstack.cloud` address
+only works when LocalStack runs on the same machine as the workspace. For managed containers,
+see [Managing the container](#managing-the-container). Commands get the workspace's
 environment with the endpoint, region, and credentials set on top, and every other `AWS_*`
 variable (profiles, session tokens, config files) removed. `localstack_health` and a managed
 container always run on the agent's host.
@@ -101,6 +103,13 @@ both. The service is the first non-flag token of the command (`s3` in `s3 ls`).
 Set `manage_container=True` and the capability starts a LocalStack Docker
 container for each run and stops it when the run ends, so the agent always gets a
 fresh, isolated environment. Docker must be installed and running.
+
+In this mode, only the port from `endpoint_url` is used: the CLI endpoint host comes from
+`host_address`. For a remote workspace, set `host_address` to a concrete interface address on
+this host that the workspace can reach. Both `127.0.0.1` and `0.0.0.0` produce the loopback
+`localhost.localstack.cloud` endpoint, so binding to all interfaces is not enough. To use a
+separate hostname or proxy URL, manage the instance externally (`manage_container=False`)
+and set `endpoint_url` to an address reachable from both the workspace and the agent's host.
 
 ```python
 from pydantic_ai_harness import LocalStack
@@ -201,6 +210,7 @@ you supply your own.
 # agent.yaml
 model: anthropic:claude-sonnet-4-6
 capabilities:
+  - LocalWorkspace: .
   - LocalStack:
       endpoint_url: http://localhost.localstack.cloud:4566
       allowed_services: ['s3', 'dynamodb', 'sqs']
