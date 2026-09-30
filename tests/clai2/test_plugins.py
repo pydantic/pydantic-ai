@@ -172,14 +172,14 @@ def test_saved_settings_round_trip_through_aliases() -> None:
     assert plugin.settings(AliasedSettings).api_key_name == 'NEW'
 
 
-def test_settings_that_fail_to_save_are_not_kept() -> None:
-    def fail(_settings: dict[str, JsonValue]) -> None:
-        raise OSError('disk full')
+def test_settings_that_fail_to_persist_are_not_kept() -> None:
+    def refuse(settings: dict[str, JsonValue]) -> None:
+        raise OSError('read-only database')
 
     plugin = PluginHost[None](
-        name='test', console=Console(file=io.StringIO()), settings={'api-key-name': 'OLD'}, save_settings=fail
+        name='test', console=Console(file=io.StringIO()), settings={'api-key-name': 'OLD'}, save_settings=refuse
     )
-    with pytest.raises(OSError, match='disk full'):
+    with pytest.raises(OSError, match='read-only database'):
         plugin.save_settings(AliasedSettings.model_validate({'api-key-name': 'NEW'}))
     assert plugin.settings(AliasedSettings).api_key_name == 'OLD'
 

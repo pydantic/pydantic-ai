@@ -216,7 +216,7 @@ Definitions are read at the start of every run from the run's [workspace](https:
 
 `agent_folders` controls which folders are read:
 
-- A folder-name `str` (`'agents'` is the conventional layout): load from `.agents/<name>/` under the workspace's working directory, falling back to `.claude/<name>/` when `.agents/` is absent. A run without a workspace skips it.
+- A folder-name `str` (`'agents'` is the conventional layout): load from both `.agents/<name>/` and `.claude/<name>/` under the workspace's working directory, so a workspace that uses `.agents/` for something else (such as skills) still loads agents from `.claude/`. A run without a workspace skips them.
 - A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
 - `None`, the default, disables disk loading, exposing only the explicitly-passed `agents`.
 
@@ -282,7 +282,7 @@ SubAgents(agent_folders='agents', tool_resolver=resolve)
 
 ### Precedence
 
-When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first, then earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
+When the same name appears in more than one source, the higher-precedence one wins and the others are skipped with a warning: explicitly-passed `agents` first; for convention discovery, the workspace's `.agents/` folder before its `.claude/` folder; and for an explicit path sequence, earlier folders before later ones. A duplicate name within the explicitly-passed `agents` list is still an error.
 
 ## Configuration
 

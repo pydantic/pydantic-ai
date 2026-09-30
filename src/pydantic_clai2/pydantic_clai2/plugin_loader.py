@@ -46,6 +46,7 @@ _RETIRED_BUILTINS: dict[str, PluginSettings] = {
         id='google_workspace', factory='pydantic_ai_harness.google_workspace:GoogleWorkspace', enabled=False
     ),
     'ordinal': PluginSettings(id='ordinal', factory='pydantic_ai_harness.ordinal:Ordinal', enabled=False),
+    'slack': PluginSettings(id='slack', factory='pydantic_ai_harness.slack:Slack', enabled=False),
 }
 """Former built-in declarations. A stored copy of one loads the built-in now declared under its id."""
 
