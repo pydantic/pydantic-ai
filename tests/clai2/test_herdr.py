@@ -261,7 +261,7 @@ async def test_background_title_watcher(
     herdr.activate(host)
 
     def no_transcript(*args: object, **kwargs: object) -> None:
-        raise AssertionError('Title polling must not load transcripts or media')
+        raise AssertionError('Title polling must not load transcripts or media')  # pragma: no cover
 
     monkeypatch.setattr(store, 'get', no_transcript)
     monkeypatch.setattr(store.media, 'get', no_transcript)
