@@ -3163,8 +3163,8 @@ class TemporalFallbackImageGenerationWorkflow:
         return (await _durability_fallback_image_generation_agent.run('Generate an image')).output
 
 
-async def test_durability_image_generation_notice_reads_each_fallback_model(client: Client):
-    """The dropped-settings notice reads each `FallbackModel` member's profile in workflow code.
+async def test_durability_image_generation_notice_meets_the_fallback_model_in_workflow_code(client: Client):
+    """In workflow code the dropped-settings notice meets the `FallbackModel` itself without crashing or warning.
 
     `TemporalDurability` leaves the agent's own model on the run context, so the notice's prepare
     function meets the `FallbackModel` itself, which has no profile of its own. Every member here
