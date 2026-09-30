@@ -41,11 +41,12 @@ def host() -> PluginHost[None]:
     return PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={})
 
 
-def test_host_records_a_login() -> None:
+async def test_host_records_a_login() -> None:
     plugin = host()
     login = plugin.login('claude', signed_in, description='Claude Code subscription')
     assert plugin.logins == [login]
     assert login == PluginLogin(name='claude', handler=signed_in, description='Claude Code subscription')
+    assert await login.handler() == 'Signed in.'
 
 
 @pytest.mark.parametrize('name', ['', 'Claude', '1claude', 'claude code', 'claude:code'])
