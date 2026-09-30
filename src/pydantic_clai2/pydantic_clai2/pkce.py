@@ -27,8 +27,12 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers._oauth import OAuthFlow
-
-from .credential_store import credential_lock, delete_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.credential_store import (
+    credential_lock,
+    delete_credentials,
+    load_codex_credentials,
+    save_codex_credentials,
+)
 
 REFRESH_MARGIN = 300
 """Seconds before expiry at which a token is refreshed, so a run does not start with one about to lapse."""

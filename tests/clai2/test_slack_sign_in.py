@@ -11,8 +11,9 @@ from pydantic import SecretStr
 from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai.exceptions import UserError
-from pydantic_clai2 import slack as slack_plugin, slack_app
-from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
+from pydantic_clai2 import slack_app
+from pydantic_clai2.builtin_plugins import slack as slack_plugin
+from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
 from pydantic_clai2.pkce import PKCEFlow, PKCESignIn, Tokens
 from tests.clai2.menu_script import UNTIL_CLOSED, pick, typed
 from tests.clai2.slack_shell import CLOSE, ESC, Shell, script, shell

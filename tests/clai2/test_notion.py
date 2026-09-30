@@ -20,15 +20,18 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.notion import Notion
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys, key_picker, notion
-from pydantic_clai2.api_keys import KeyReference
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins import notion
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
-from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.api_keys import KeyReference
+from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.ui.menus import key_picker
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import Script, pick, typed
 
 Vault = dict[tuple[str, str], str]
@@ -100,7 +103,7 @@ def reset(key: str) -> MenuResult:
 
 
 def test_declared_as_a_disabled_builtin_without_settings() -> None:
-    assert BUILTIN.factory == 'pydantic_clai2.notion'
+    assert BUILTIN.factory == 'pydantic_clai2.builtin_plugins.notion'
     assert not BUILTIN.enabled and BUILTIN.settings == {}
     assert all(plugin.factory != 'pydantic_ai_harness.notion:Notion' for plugin in DEFAULT_PLUGINS)
 
@@ -306,7 +309,9 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu(tmp_path: Path) -> No
     shell = Shell(tmp_path)
     with pytest.raises(ValueError, match='not loaded; enable it before configuring'):
         await shell.loader.command(['configure', 'notion'])
-    shell.store.save_plugin(BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.repo_context'}))
+    shell.store.save_plugin(
+        BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.builtin_plugins.repo_context'})
+    )
     assert await shell.loader.command(['enable', 'plain']) == 'Enabled plain.'
     with pytest.raises(ValueError, match='no settings menu'):
         await shell.loader.configure('plain')
@@ -336,7 +341,7 @@ async def test_cancelling_configure_cancels_an_open_key_picker(tmp_path: Path, m
             finished.append(label)
         return None  # pragma: no cover -- unreachable; keeps the signature honest
 
-    monkeypatch.setattr('pydantic_clai2.key_picker.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.key_picker.prompt_api_key', prompt_api_key)
     script(monkeypatch, lists=[pick('key')])
     with anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:

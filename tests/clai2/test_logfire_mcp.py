@@ -21,16 +21,17 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.logfire_mcp import LOGFIRE_EU_MCP_URL, LogfireMCP
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys
-from pydantic_clai2.api_keys import KeyReference, SavedKey
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins.logfire_mcp import SETUP, LogfireMCPSource, activate
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.field_menu import CUSTOM, is_save_and_close
-from pydantic_clai2.logfire_mcp import SETUP, LogfireMCPSource, activate
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.api_keys import KeyReference, SavedKey
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.logfire_oauth import SIGN_IN_TIMEOUT, DeviceAuth, SignInError, Tokens
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
-from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
 from pydantic_clai2.plugins import PluginHost, SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.ui.menus.field_menu import CUSTOM, is_save_and_close
+from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import Script, pick, typed
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'logfire_mcp')
@@ -75,7 +76,7 @@ def script(
     texts: list[TextInputResult] | None = None,
 ) -> Script:
     scripted = Script(lists=[*lists, CLOSE], choices=choices or [], texts=texts or [])
-    monkeypatch.setattr('pydantic_clai2.logfire_mcp.RUNNERS', scripted.runners)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.RUNNERS', scripted.runners)
     return scripted
 
 
@@ -87,7 +88,7 @@ def key_choice(monkeypatch: pytest.MonkeyPatch, choice: str | KeyReference | Non
         calls.append((label, optional))
         return choice
 
-    monkeypatch.setattr('pydantic_clai2.logfire_mcp.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.prompt_api_key', prompt_api_key)
     return calls
 
 
@@ -109,7 +110,11 @@ def keyed(name: str) -> LogfireMCP[None]:
 
 
 def test_declared_disabled_with_no_settings() -> None:
-    assert (BUILTIN.factory, BUILTIN.enabled, BUILTIN.settings) == ('pydantic_clai2.logfire_mcp', False, {})
+    assert (BUILTIN.factory, BUILTIN.enabled, BUILTIN.settings) == (
+        'pydantic_clai2.builtin_plugins.logfire_mcp',
+        False,
+        {},
+    )
 
 
 async def test_enable_opens_the_menu_and_every_option_saves_immediately(
@@ -363,7 +368,7 @@ async def test_login_failures_are_reported(monkeypatch: pytest.MonkeyPatch) -> N
 
 async def test_logout_forgets_only_the_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
     forgotten: list[bool] = [True, False]
-    monkeypatch.setattr('pydantic_clai2.logfire_mcp.forget', lambda: forgotten.pop(0))
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.forget', lambda: forgotten.pop(0))
     api_keys.save_key(name='LOGFIRE_API_KEY', value='kept')
     command, _ = logfire_command()
     assert await command(['logout']) == 'Forgot the Logfire browser sign-in. Keys in /keys are kept.'
@@ -398,7 +403,9 @@ async def test_add_replacing_the_builtin_opens_the_menu(tmp_path: Path, monkeypa
     api_keys.save_key(name='LOGFIRE_API_KEY', value='saved')
     shell = Shell(tmp_path)
     script(monkeypatch, lists=[pick('read_only')], choices=[pick('true')])
-    added = await shell.loader.command(['add', 'logfire_mcp', 'pydantic_clai2.logfire_mcp', '{"read_only": false}'])
+    added = await shell.loader.command(
+        ['add', 'logfire_mcp', 'pydantic_clai2.builtin_plugins.logfire_mcp', '{"read_only": false}']
+    )
     assert added == 'Replaced built-in logfire_mcp.\nSaved Tools.'
     assert shell.capability() == keyed('LOGFIRE_API_KEY')
 
@@ -407,7 +414,9 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu(tmp_path: Path) -> No
     shell = Shell(tmp_path)
     with pytest.raises(ValueError, match='not loaded; enable it before configuring'):
         await shell.loader.command(['configure', 'logfire_mcp'])
-    shell.store.save_plugin(BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.repo_context'}))
+    shell.store.save_plugin(
+        BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.builtin_plugins.repo_context'})
+    )
     assert await shell.loader.command(['enable', 'plain']) == 'Enabled plain.'
     with pytest.raises(ValueError, match='no settings menu'):
         await shell.loader.configure('plain')
@@ -435,7 +444,9 @@ async def test_enabling_in_the_plugins_menu_opens_the_settings_menu(
 async def test_plugins_menu_stays_open_when_there_is_nothing_to_configure(tmp_path: Path) -> None:
     shell = Shell(tmp_path)
     shell.store.save_plugin(
-        BUILTIN.model_copy(update={'id': 'plain', 'factory': 'pydantic_clai2.repo_context', 'enabled': True})
+        BUILTIN.model_copy(
+            update={'id': 'plain', 'factory': 'pydantic_clai2.builtin_plugins.repo_context', 'enabled': True}
+        )
     )
     await shell.loader.load_all()
 
@@ -471,7 +482,7 @@ async def test_cancelling_configure_waits_for_the_key_picker_to_clean_up(
             finished.append(label)
         return None  # pragma: no cover -- unreachable; keeps the signature honest
 
-    monkeypatch.setattr('pydantic_clai2.logfire_mcp.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.prompt_api_key', prompt_api_key)
     script(monkeypatch, lists=[pick('key')])
     with anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:
@@ -495,7 +506,7 @@ async def test_keys_are_read_at_session_start_off_the_event_loop(
         threads.append(threading.get_ident())
         return {}
 
-    monkeypatch.setattr('pydantic_clai2.logfire_mcp.load_keys', load_keys)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.load_keys', load_keys)
     host = PluginHost[None](name='logfire_mcp', console=Console(file=io.StringIO()), settings={})
     activate(host)
     assert (host.capabilities, threads) == ([], [])
@@ -517,7 +528,7 @@ async def test_the_settings_menu_reads_keys_and_sign_in_off_the_event_loop(
         threads.append(threading.get_ident())
         return 'signed out'
 
-    monkeypatch.setattr('pydantic_clai2.logfire_mcp.status', status)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire_mcp.status', status)
     script(monkeypatch, lists=[])
     assert await shell.loader.command(['configure', 'logfire_mcp']) == 'Logfire MCP settings unchanged.'
     assert threads

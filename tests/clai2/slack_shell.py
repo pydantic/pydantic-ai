@@ -14,12 +14,13 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.slack import Slack
-from pydantic_clai2 import DEFAULT_PLUGINS, slack as slack_plugin
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins import slack as slack_plugin
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugin_loader import PluginLoader
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginLoader
 from tests.clai2.menu_script import Script
 
 BUILTIN = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'slack')

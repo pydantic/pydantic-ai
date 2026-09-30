@@ -14,7 +14,7 @@ from keyring.errors import KeyringError
 from pydantic import JsonValue
 
 from pydantic_clai2 import logfire_oauth
-from pydantic_clai2.credential_store import save_codex_credentials
+from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.logfire_oauth import DeviceAuth, SignInError, Tokens, forget, load, sign_in, status
 
 ORIGIN = 'https://logfire.test'

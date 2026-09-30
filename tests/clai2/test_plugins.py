@@ -21,8 +21,8 @@ from pydantic_ai.capabilities import Capability, Hooks, ValidatedToolArgs
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session, StreamRenderer
 from pydantic_clai2.commands import Command
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import CoreHookName, PluginHost, SessionEnd, SessionStart, Transcript, TurnEnd, TurnStart
-from pydantic_clai2.settings_store import SettingsStore
 
 
 @dataclass(kw_only=True)
