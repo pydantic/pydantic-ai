@@ -579,10 +579,11 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
 
 PAYLOAD_REF: dict[str, Any] = {'$ref': '#/$defs/Payload'}
 PAYLOAD: dict[str, Any] = {'type': 'object', 'properties': {'value': {'type': 'string'}}}
+TITLED: dict[str, Any] = {'type': 'string', 'title': 'A'}
 
 
 @pytest.mark.parametrize(
-    ('object_keywords', 'expected'),
+    ('keywords', 'expected'),
     [
         pytest.param(
             {'properties': {'payload': PAYLOAD_REF}},
@@ -604,33 +605,44 @@ PAYLOAD: dict[str, Any] = {'type': 'object', 'properties': {'value': {'type': 's
             {'type': ['object', 'null'], 'properties': {'payload': PAYLOAD}},
             id='object-in-type-list',
         ),
+        pytest.param({'items': PAYLOAD_REF}, {'items': PAYLOAD}, id='items'),
+        pytest.param({'prefixItems': [PAYLOAD_REF]}, {'prefixItems': [PAYLOAD]}, id='prefixItems'),
+        pytest.param(
+            {'type': ['array', 'null'], 'items': PAYLOAD_REF},
+            {'type': ['array', 'null'], 'items': PAYLOAD},
+            id='array-in-type-list',
+        ),
     ],
 )
-def test_inline_defs_untyped_object_keywords_are_inlined(object_keywords: dict[str, Any], expected: dict[str, Any]):
-    """A node not typed `'object'` that carries object keywords must not strand `$ref`s when `$defs` is dropped.
+def test_inline_defs_untyped_keywords_are_inlined(keywords: dict[str, Any], expected: dict[str, Any]):
+    """A node carrying object or array keywords its `type` doesn't name must not strand `$ref`s when `$defs` is dropped.
 
-    Object keywords apply whenever the node's `type` is absent or admits objects, so the node is walked
-    as an object, and its `type` is left as is: adding `'object'` would narrow the instances the schema
-    accepts. Not a VCR test: cassettes match on method and URI, so a stranded `$ref` in the request
-    body would still replay.
+    Those keywords apply whenever the node's `type` is absent or admits objects or arrays, so the node
+    is walked through them, and its `type` is left as is: adding one would narrow the instances the
+    schema accepts. Not a VCR test: cassettes match on method and URI, so a stranded `$ref` in the
+    request body would still replay.
     """
-    schema = {'$defs': {'Payload': PAYLOAD}, **object_keywords}
+    schema = {'$defs': {'Payload': PAYLOAD}, **keywords}
 
     assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == expected
 
 
 @pytest.mark.parametrize(
-    'object_type',
-    [pytest.param({}, id='typeless'), pytest.param({'type': ['object', 'null']}, id='object-in-type-list')],
+    'schema',
+    [
+        pytest.param({'properties': {'a': TITLED}}, id='typeless-object'),
+        pytest.param({'type': ['object', 'null'], 'properties': {'a': TITLED}}, id='object-in-type-list'),
+        pytest.param({'items': TITLED}, id='typeless-array'),
+        pytest.param({'type': ['array', 'null'], 'items': TITLED}, id='array-in-type-list'),
+    ],
 )
-def test_only_inlining_transformers_walk_untyped_object_keywords(object_type: dict[str, Any]):
-    """Only a transformer that drops `$defs` walks the object keywords of a node not typed `'object'`.
+def test_only_inlining_transformers_walk_untyped_keywords(schema: dict[str, Any]):
+    """Only a transformer that drops `$defs` walks object or array keywords that the node's `type` doesn't name.
 
     A transformer that keeps `$defs` has no dangling `$ref` to fix there, and walking would change what
     its `transform()` produces. A recording transformer isolates the gate: asserting on a provider's
     request would also pin that provider's `transform()` output for these nodes.
     """
-    schema = {**object_type, 'properties': {'a': {'type': 'string', 'title': 'A'}}}
     inlining = _TitleRecordingTransformer(deepcopy(schema))
     keeping = _TitleRecordingTransformer(deepcopy(schema), prefer_inlined_defs=False)
 

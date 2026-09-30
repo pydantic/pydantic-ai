@@ -107,7 +107,7 @@ class JsonSchemaTransformer(ABC):
 
         return handled
 
-    def _handle(self, schema: _JsonSchemaNode) -> _JsonSchemaNode:
+    def _handle(self, schema: _JsonSchemaNode) -> _JsonSchemaNode:  # noqa: C901
         if isinstance(schema, bool):
             return schema
 
@@ -133,18 +133,22 @@ class JsonSchemaTransformer(ABC):
         elif type_ == 'array':
             schema = self._handle_array(schema)
         elif type_ is None:
-            # `properties` etc. apply without an explicit `type`, and `walk()` drops `$defs` when
-            # inlining, so an object-shaped typeless node must be walked or its `$ref`s dangle.
-            if self.prefer_inlined_defs and any(
-                k in schema for k in ('properties', 'additionalProperties', 'patternProperties')
-            ):
-                schema = self._handle_object(schema)
+            # `properties`, `items` etc. apply without an explicit `type`, and `walk()` drops `$defs`
+            # when inlining, so an object- or array-shaped typeless node must be walked or its `$ref`s dangle.
+            if self.prefer_inlined_defs:
+                if any(k in schema for k in ('properties', 'additionalProperties', 'patternProperties')):
+                    schema = self._handle_object(schema)
+                if any(k in schema for k in ('items', 'prefixItems')):
+                    schema = self._handle_array(schema)
             schema = self._handle_union(schema, 'allOf')
             schema = self._handle_union(schema, 'anyOf')
             schema = self._handle_union(schema, 'oneOf')
-        elif self.prefer_inlined_defs and isinstance(type_, list) and 'object' in type_:
-            # Same for a `type` list that admits objects, like `['object', 'null']`.
-            schema = self._handle_object(schema)
+        elif self.prefer_inlined_defs and isinstance(type_, list):
+            # Same for a `type` list that admits objects or arrays, like `['object', 'null']`.
+            if 'object' in type_:
+                schema = self._handle_object(schema)
+            if 'array' in type_:
+                schema = self._handle_array(schema)
 
         if type_ is not None:
             for union_kind in ('allOf', 'anyOf', 'oneOf'):
