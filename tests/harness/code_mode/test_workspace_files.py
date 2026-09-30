@@ -119,19 +119,19 @@ async def test_directories_and_metadata() -> None:
         "Path('a/b').mkdir(parents=True)\n"
         "Path('a').mkdir(exist_ok=True)\n"
         "Path('c').mkdir()\n"
-        "Path('c/log.txt').append_text('x')\n"
-        "Path('c/log.txt').append_bytes(b'y')\n"
+        "appended = [Path('c/log.txt').append_text('x'), Path('c/log.txt').append_bytes(b'yz')]\n"
         "listed = sorted(str(p) for p in Path('.').iterdir())\n"
         "logged = Path('c/log.txt').read_text()\n"
         "Path('c/log.txt').unlink()\n"
         "Path('c').rmdir()\n"
-        "[listed, logged, Path('c').exists(), Path('file.txt').stat().st_size, Path('a').stat().st_size,\n"
+        "[listed, appended, logged, Path('c').exists(), Path('file.txt').stat().st_size, Path('a').stat().st_size,\n"
         " Path('file.txt').is_file(), Path('a').is_file(), Path('a').is_dir(), Path('missing').is_dir(),\n"
         " Path('file.txt').is_symlink(), Path('/').is_symlink(), str(Path('a/../file.txt').resolve())]",
     )
     assert result == [
         ['a', 'c', 'file.txt'],
-        'xy',
+        [1, 2],
+        'xyz',
         False,
         5,
         0,

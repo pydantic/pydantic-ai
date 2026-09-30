@@ -106,10 +106,12 @@ class WorkspaceFiles:
             case 'Path.write_text' | 'Path.write_bytes' | 'Path.append_text' | 'Path.append_bytes':
                 data = args[0]
                 encoded = data.encode() if isinstance(data, str) else _bytes(data)
+                # Characters for text, bytes for binary, and only what this call adds.
+                written = len(data) if isinstance(data, str) else len(encoded)
                 if name.startswith('Path.append'):
                     encoded = await self._read_or_empty(path) + encoded
                 await self._write(path, encoded)
-                return len(data) if isinstance(data, str) else len(encoded)
+                return written
             case 'Path.mkdir':
                 await self._mkdir(path, parents=kwargs.get('parents') is True, exist_ok=kwargs.get('exist_ok') is True)
                 return None
