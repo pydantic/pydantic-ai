@@ -157,6 +157,15 @@ class TokenStore:
         return await self.delete_many([key], collection=collection) == 1
 
 
+class SignIn(OAuth):
+    """A browser sign-in whose tokens persist under `name`; FastMCP refreshes them or opens the browser on connect."""
+
+    def __init__(self, name: str, *, callback_host: str = '127.0.0.1') -> None:
+        """Tokens go to the `mcp-NAME` credential; see `TokenStore`."""
+        self.tokens = TokenStore(name)
+        super().__init__(client_name='CLAI', callback_host=callback_host, token_storage=self.tokens)
+
+
 def oauth(name: str, server: RemoteServer) -> OAuth | None:
     """A sign-in handler with keyring-backed tokens; FastMCP refreshes them or opens the browser on connect."""
     return sign_in(name) if server.auth else None
@@ -164,4 +173,4 @@ def oauth(name: str, server: RemoteServer) -> OAuth | None:
 
 def sign_in(name: str) -> OAuth:
     """Browser sign-in whose tokens are kept in the `mcp-NAME` credential."""
-    return OAuth(client_name='CLAI', callback_host='127.0.0.1', token_storage=TokenStore(name))
+    return SignIn(name)

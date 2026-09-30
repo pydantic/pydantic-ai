@@ -49,11 +49,11 @@ from pydantic_ai.capabilities import WebSearch
 from pydantic_ai_harness import Advisor, Coder
 
 agent = Agent(
-    'anthropic:claude-fable-5',
+    'anthropic:claude-fable-5-1',
     capabilities=[
         Coder(),  # files, shell, repo context, sub-agents, context management
         WebSearch(),  # look up docs and error messages on the web
-        Advisor('openai:gpt-5.6-sol'),  # a second opinion from another model when stuck
+        Advisor('openai:gpt-6-sol'),  # a second opinion from another model when stuck
     ],
 )
 agent.to_cli_sync()
@@ -99,7 +99,7 @@ class Sentiment(BaseModel):
     score: float = Field(ge=-1, le=1)
 
 
-agent = Agent('openai:gpt-5.6-sol', output_type=Sentiment)
+agent = Agent('openai:gpt-6-sol', output_type=Sentiment)
 
 
 @agent.tool
@@ -133,7 +133,7 @@ from pydantic_ai.capabilities import WebFetch, WebSearch
 from pydantic_ai.durable_exec.temporal import PydanticAIWorkflow, TemporalDurability
 
 agent = Agent(
-    'openai:gpt-5.6-sol',
+    'openai:gpt-6-sol',
     instructions='Research the topic and write a structured brief.',
     name='researcher',
     capabilities=[WebSearch(), WebFetch(), TemporalDurability()],
@@ -210,6 +210,17 @@ Path('logo.png').write_bytes(result.image.data)
 That [standalone image API](https://pydantic.dev/docs/ai/guides/image-generation/) is for when your application decides; when an agent run decides, there is [provider-native generation](https://pydantic.dev/docs/ai/tools-toolsets/native-tools/#image-generation-tool) with `output_type=BinaryImage` for a typed image [output](https://pydantic.dev/docs/ai/core-concepts/output/#image-output), and the [`ImageGeneration` capability](https://pydantic.dev/docs/ai/capabilities/image-generation/) with its fallbacks for models that generate no images of their own.
 
 **Build this →** [Image Generation](https://pydantic.dev/docs/ai/guides/image-generation/)
+
+### See your first run in Logfire
+
+> **Tip:** Add two lines before any of these agents runs, and every model call and tool call shows up in [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai). Logfire has a [free tier](https://pydantic.dev/pricing/) that needs no credit card, and you can sign up with just a GitHub account. Run `uvx logfire auth` and `uvx logfire projects new` once first, or point your coding agent at the [Logfire setup skill](https://pydantic.dev/ai-setup.md) to do it for you. The [Logfire guide](https://pydantic.dev/docs/ai/integrations/logfire/#using-logfire) has the details, and [any OpenTelemetry backend](https://pydantic.dev/docs/ai/integrations/logfire/#using-opentelemetry) works instead.
+>
+> ```python
+> import logfire
+>
+> logfire.configure()
+> logfire.instrument_pydantic_ai()
+> ```
 
 ## Why Pydantic AI
 
@@ -292,7 +303,7 @@ async def refund_status(ctx: RunContext[SupportDependencies]) -> str:
 
 
 support_agent = Agent(
-    'openai:gpt-5.6-sol',
+    'openai:gpt-6-sol',
     deps_type=SupportDependencies,
     output_type=SupportOutput,  # the run returns a validated SupportOutput, typed as such
     instructions=(
@@ -333,7 +344,8 @@ For the annotated walkthrough and Logfire tracing, see the [same example in the 
 
 ## Next Steps
 
-- [Install Pydantic AI](https://pydantic.dev/docs/ai/overview/install/) and put your own coding agent to work: install the [Pydantic AI skill](https://pydantic.dev/docs/ai/overview/coding-agent-skills/), point it at the [examples](https://pydantic.dev/docs/ai/examples/setup/) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build. No API key needed to start (there's a built-in [`'test'` model](https://pydantic.dev/docs/ai/guides/testing/#unit-testing-with-testmodel)).
+- [Install Pydantic AI](https://pydantic.dev/docs/ai/overview/install/) and put your own coding agent to work: install the [Pydantic AI skill](https://pydantic.dev/docs/ai/overview/coding-agent-skills/), point it at the [examples](https://pydantic.dev/docs/ai/examples/setup/) and the [Harness index](https://pydantic.dev/docs/ai/harness/), and tell it what you'd like to build. No API key needed to start (there's a built-in [`'test'` model](https://pydantic.dev/docs/ai/guides/testing/#unit-testing-with-testmodel)), and the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/) is one key for every model when you're ready.
+- See what your agent did: [instrument it](https://pydantic.dev/docs/ai/integrations/logfire/) with one line of setup, and every model call and tool call shows up. It's standard OpenTelemetry: [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai), which has a [free tier](https://pydantic.dev/pricing/) (no credit card; sign up with just a GitHub account), is the easiest way to look, any OTLP backend works.
 - Read the [docs](https://pydantic.dev/docs/ai/core-concepts/agent/) and the [API reference](https://pydantic.dev/docs/ai/api/pydantic-ai/agent/).
 - Give your agent its batteries: [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/).
 - Join [Slack](https://logfire.pydantic.dev/docs/join-slack/) or file an issue on [GitHub](https://github.com/pydantic/pydantic-ai/issues).
@@ -345,7 +357,7 @@ Everything you need to ship production-grade AI agents:
 - [Pydantic AI](https://pydantic.dev/pydantic-ai?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai): the type-safe AI SDK
 - [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/): the official capability library and harness, from single capabilities to complete agents
 - [Pydantic Logfire](https://pydantic.dev/logfire?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai): AI-first, full-stack observability
-- [Pydantic AI Gateway](https://pydantic.dev/ai-gateway?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai): unified LLM proxy
+- [Pydantic AI Gateway](https://pydantic.dev/ai-gateway?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai): one key for every model, with cost monitoring and spending limits
 - [Pydantic Evals](https://pydantic.dev/docs/ai/evals/evals/): evaluate any Python function, agents included, with [production evals on Logfire](https://pydantic.dev/logfire/evals?utm_source=github&utm_medium=readme&utm_campaign=pydantic-ai)
 - [Pydantic Graph](https://pydantic.dev/docs/ai/graph/graph/): typed graph control flow
 - [genai-prices](https://github.com/pydantic/genai-prices): model pricing data, kept current

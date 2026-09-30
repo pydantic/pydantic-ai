@@ -8,7 +8,9 @@ import time
 from collections.abc import Coroutine, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
-from typing import Any, Generic, cast
+from typing import Any, Generic
+
+from typing_extensions import TypeIs
 
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AgentCapability, HookTimeoutError
@@ -66,6 +68,12 @@ def at_max_depth(max_depth: int) -> bool:
 _MODEL_ARG = 'model'
 """Name of the delegate tool's model-selection argument, shared by the function
 signature and the schema rewrite that shapes it to the configured menu."""
+
+
+def _is_request_response_model(model: object) -> TypeIs[Model]:
+    """Narrow a model without losing its provider client type."""
+    return isinstance(model, Model)
+
 
 # Signals that must always reach the parent run, even when a delegate has
 # `contain_errors` on. Containing the first five would break the agent graph
@@ -125,10 +133,9 @@ class SubAgent(Generic[AgentDepsT]):
     usage_limits: UsageLimits | None = None
     """Request/token budget for one delegation. When set, the child runs with
     its own usage accounting so the budget counts only the child's own requests
-    and tokens (not the parent's or siblings'), even when `forward_usage=True`.
-    The tradeoff: that child's tokens no longer aggregate into the parent's
-    `usage`. Hitting this budget is a soft outcome (steering message), not a
-    run-stopping `UsageLimitExceeded`."""
+    and tokens (not the parent's or siblings'). When `forward_usage=True`, that
+    usage is added to the parent's usage after the delegation. Hitting this budget
+    is a soft outcome (steering message), not a run-stopping `UsageLimitExceeded`."""
 
     timeout_seconds: float | None = None
     """Wall-clock budget for one delegation. When the child exceeds it, the run
@@ -451,13 +458,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             # `ctx.model` is an `AbstractModel`; only a request-response `Model` can drive a
             # sub-agent run. When the parent run uses something else (a realtime model), fall
             # back to `None` so the sub-agent uses its own default rather than being handed a
-            # model it cannot run with. Bind to a local, then `cast` to recover `Model[Any]`
-            # from the generic `Model` (which `isinstance` narrows to `Model[Unknown]`),
-            # mirroring core's own `reinject_system_prompt` idiom.
+            # model it cannot run with.
             ctx_model = ctx.model
             run_model = (
-                cast('Model[Any]', ctx_model)
-                if (is_self or sub_agent.agent.model is None) and isinstance(ctx_model, Model)
+                ctx_model
+                if (is_self or sub_agent.agent.model is None) and _is_request_response_model(ctx_model)
                 else None
             )
             settings = None
@@ -478,6 +483,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             ended = await self._settle(agent_name, sub_agent, run, own_budget=own_budget)
         finally:
             _depth.reset(token)
+            if child_usage is not None and self._forward_usage:
+                ctx.usage.incr(child_usage)
         if emits:
             text, truncated = bounded_text(ended.output)
             await ctx.emit(

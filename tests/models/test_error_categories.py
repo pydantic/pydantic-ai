@@ -398,8 +398,11 @@ CASES = [
             _ANTHROPIC_MESSAGE_START,
             ('error', {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}}),
         ),
-        categories={ModelOverloadedError},
+        # The error event follows a 200, but `AnthropicModel` reports the status the same error has on a
+        # non-streaming request, since it may stream a `run()` behind the scenes.
+        categories={ModelHTTPError, ModelOverloadedError},
         attrs={
+            'status_code': 529,
             'provider_error_type': 'overloaded_error',
             'body': {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}},
             'retry_after': None,
@@ -413,8 +416,8 @@ CASES = [
             _ANTHROPIC_MESSAGE_START,
             ('error', {'type': 'error', 'error': {'type': 'api_error', 'message': 'Internal server error'}}),
         ),
-        categories=set(),
-        attrs={'provider_error_type': 'api_error'},
+        categories={ModelHTTPError},
+        attrs={'status_code': 500, 'provider_error_type': 'api_error'},
         stream=True,
     ),
     Case(

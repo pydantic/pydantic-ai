@@ -46,6 +46,9 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [xAI](xai.md) | Model developer | `xai:` |
 | [Z.AI](zai.md) | Model developer | `zai:` |
 
+!!! tip "One key for every model"
+    The easiest way to try models from several providers is the [Pydantic AI Gateway](../gateway.md): one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring in [Pydantic Logfire](../logfire.md). Set `PYDANTIC_AI_GATEWAY_API_KEY` and add the `gateway/` prefix to the model string, for example `Agent('gateway/anthropic:claude-fable-5-1')`. The [Gateway quick start](../gateway.md#quick-start) shows how to create a key.
+
 The service descriptions help you find a deployment option; a company may offer more than one kind of service. Feature support depends on the model and API you select, even when two services use the same API format.
 
 For an OpenAI-compatible endpoint not listed here, see [Other endpoints](compatible-apis.md#other-endpoints); for any other API, implement a [custom model](#custom-models).

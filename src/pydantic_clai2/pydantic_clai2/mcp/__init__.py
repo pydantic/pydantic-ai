@@ -25,7 +25,7 @@ from ._settings import (
     http_client,
 )
 from ._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
-from ._tokens import TokenStore, oauth, sign_in
+from ._tokens import SignIn, TokenStore, oauth, sign_in
 
 __all__ = [
     'CLAUDE_MCP_FILE',
@@ -45,6 +45,7 @@ __all__ = [
     'ServerEntry',
     'ServerForm',
     'ServerSettings',
+    'SignIn',
     'State',
     'StdioServer',
     'TokenStore',
