@@ -341,7 +341,7 @@ The store creates its schema on the first operation of each store instance, read
 
 - The connecting role needs `CREATE` on the schema for that first call. A role without it fails on the first operation, not at construction.
 - Processes that start together wait on the advisory lock instead of colliding in the catalog, which `CREATE TABLE IF NOT EXISTS` alone does not rule out. The lock is released when the transaction ends.
-- `table` must match `[A-Za-z_][A-Za-z0-9_]*` and is limited to 40 characters, so that every derived table, index, and constraint name fits PostgreSQL's 63-byte identifier limit. Anything else raises `ValueError` at construction.
+- `table` must match `[a-z_][a-z0-9_]*` and is limited to 40 characters, so that every derived table, index, and constraint name fits PostgreSQL's 63-byte identifier limit. Lowercase only, because PostgreSQL folds unquoted identifiers and `'Orders'` would share tables with `'orders'`. Anything else raises `ValueError` at construction.
 - There is no migration step. An existing table with one of these names and a different layout is left as it is, and the mismatch surfaces on the first statement that uses a missing column.
 
 `PostgresStepStore` accepts the driver-neutral `PostgresPool` protocol (exported from `pydantic_ai_harness.media`), so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:

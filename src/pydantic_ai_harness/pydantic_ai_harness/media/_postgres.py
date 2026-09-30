@@ -26,8 +26,10 @@ from pydantic_ai_harness.media._store import (
 )
 
 # Postgres truncates identifiers past 63 bytes, which would let two distinct
-# names collide on the same table.
-_TABLE_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,62}')
+# names collide on the same table. Lowercase only: the interpolated identifier
+# is unquoted, so Postgres folds it to lowercase and `'Media'` would share a
+# table with `'media'`.
+_TABLE_RE = re.compile(r'[a-z_][a-z0-9_]{0,62}')
 
 
 @runtime_checkable

@@ -73,8 +73,10 @@ _logger = logging.getLogger(__name__)
 # fits: the longest is the implicit primary-key constraint
 # `{table}_snapshot_keys_pkey` (40 + 19 = 59), ahead of the longest index
 # `{table}_snapshots_run_idx` and the identity sequence
-# `{table}_snapshots_seq_seq` (40 + 18 = 58 each).
-_TABLE_RE = re.compile(r'[A-Za-z_][A-Za-z0-9_]{0,39}')
+# `{table}_snapshots_seq_seq` (40 + 18 = 58 each). Lowercase only: the
+# interpolated identifiers are unquoted, so Postgres folds them to lowercase
+# and `'Orders'` would share tables with `'orders'`.
+_TABLE_RE = re.compile(r'[a-z_][a-z0-9_]{0,39}')
 
 _RUN_COLUMNS = 'run_id, conversation_id, parent_run_id, agent_name, metadata, started_at, registration_id'
 _EVENT_COLUMNS = (

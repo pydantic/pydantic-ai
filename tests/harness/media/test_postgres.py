@@ -38,12 +38,13 @@ class _StubPool:
 
 
 class TestPostgresMediaStoreConstruction:
-    @pytest.mark.parametrize('table', ['media-store', 'x; DROP TABLE users', '1media', 'a' * 64, ''])
+    @pytest.mark.parametrize('table', ['media-store', 'x; DROP TABLE users', '1media', 'a' * 64, '', 'Media_2'])
     def test_rejects_invalid_table_name(self, table: str) -> None:
+        """Uppercase is rejected: Postgres folds unquoted identifiers, so `'Media'` would alias `'media'`."""
         with pytest.raises(ValueError, match='invalid table name'):
             PostgresMediaStore(_StubPool(), table=table)
 
-    @pytest.mark.parametrize('table', ['a' * 63, '_media', 'Media_2'])
+    @pytest.mark.parametrize('table', ['a' * 63, '_media', 'media_2'])
     def test_accepts_valid_table_name(self, table: str) -> None:
         """63 characters is the longest identifier Postgres keeps without truncating."""
         store = PostgresMediaStore(_StubPool(), table=table)

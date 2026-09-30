@@ -31,8 +31,9 @@ class _UnusedPool:
 
 
 class TestPostgresStepStoreConstruction:
-    @pytest.mark.parametrize('table', ['step-store', 'x; DROP TABLE users', '1steps', 'a' * 41, ''])
+    @pytest.mark.parametrize('table', ['step-store', 'x; DROP TABLE users', '1steps', 'a' * 41, '', 'Orders'])
     def test_rejects_invalid_table_name(self, table: str) -> None:
+        """Uppercase is rejected: Postgres folds unquoted identifiers, so `'Orders'` would alias `'orders'`."""
         with pytest.raises(ValueError, match='invalid table name'):
             PostgresStepStore(_UnusedPool(), table=table)
 
