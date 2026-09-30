@@ -2,7 +2,7 @@
 
 `OpenAIResponsesStreamedResponse` must build the same response as `OpenAIResponsesModel._process_response` does for the
 complete `Response` that the stream's terminal event (`response.completed`, `.incomplete` or `.failed`) carries. This
-replays each recorded stream, from OpenAI and every other provider served through the Responses API, through both.
+replays each recorded stream, from OpenAI and the other providers recorded through the Responses API, through both.
 """
 
 from __future__ import annotations as _annotations
@@ -42,7 +42,6 @@ with try_import() as imports_successful:
     from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexProvider
-    from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.toolsets._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
@@ -70,9 +69,13 @@ def _recorded_streams() -> dict[str, dict[str, Any]]:
     return streams
 
 
+def _request_body(interaction: dict[str, Any]) -> dict[str, Any]:
+    return interaction['request'].get('parsed_body') or {}
+
+
 def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesModel:
     # A resumed background stream is a `GET` without a body; its model comes from the stream itself.
-    model_name = (interaction['request'].get('parsed_body') or {}).get('model', 'gpt-5')
+    model_name: str = _request_body(interaction).get('model', 'gpt-5')
     host = httpx2.URL(interaction['request']['uri']).host
     if host == 'chatgpt.com':
         return OpenAICodexModel(model_name, provider=OpenAICodexProvider(openai_client=client))
@@ -80,8 +83,6 @@ def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesM
         return BedrockMantleResponsesModel(model_name, provider=BedrockMantleProvider(openai_client=client))
     if host == 'api.deepseek.com':
         return OpenAIResponsesModel(model_name, provider=DeepSeekProvider(openai_client=client))
-    if host == 'openrouter.ai':
-        return OpenAIResponsesModel(model_name, provider=OpenRouterProvider(openai_client=client))
     assert host == 'api.openai.com', host
     return OpenAIResponsesModel(model_name, provider=OpenAIProvider(openai_client=client))
 
@@ -89,7 +90,7 @@ def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesM
 def _model_request_parameters(interaction: dict[str, Any]) -> ModelRequestParameters:
     # The streamed parts manager types a client-executed tool search call from the `search_tools` definition the
     # request was built from, where the complete response is typed from the output item itself.
-    tools = (interaction['request'].get('parsed_body') or {}).get('tools') or []
+    tools: list[dict[str, Any]] = _request_body(interaction).get('tools') or []
     if any(tool['type'] == 'tool_search' and tool.get('execution') == 'client' for tool in tools):
         return ModelRequestParameters(
             function_tools=[ToolDefinition(name=TOOL_SEARCH_FUNCTION_TOOL_NAME, tool_kind='tool-search')]
