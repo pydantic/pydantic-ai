@@ -582,6 +582,8 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
       TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
+      # onnxruntime 1.30.0 has no Python 3.15 wheel.
+      PY315_EXCLUDE_ONNX: ${{ matrix.python-version == '3.15' }}
     continue-on-error: ${{ matrix.python-version == '3.15' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -671,9 +673,13 @@ jobs:
       - name: run tests
         shell: bash
         run: |
+          excluded_extras=()
+          if [[ "$PY315_EXCLUDE_ONNX" == "true" ]]; then
+            excluded_extras=(--no-extra prompt-injection-defender-ml)
+          fi
           if [[ "$COLLECT_COVERAGE" == "true" ]]; then
             export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
-            uv run --all-packages --all-extras --no-extra mcp-tasks python -c 'pass'
+            uv run --all-packages --all-extras --no-extra mcp-tasks "${excluded_extras[@]}" python -c 'pass'
             uv pip install --python .venv/bin/python --no-deps "$TESTMON_PACKAGE"
             uv_extra=(--no-sync)
             runner=(python -m testmon.incremental_coverage --cache .testmon-cache/.coverage --no-report \
@@ -685,7 +691,7 @@ jobs:
           fi
           # `--all-packages` so the extras of every workspace member are installed, not just the
           # root package's: that is where `pydantic-ai-harness`'s optional integrations get tested.
-          uv run --all-packages --all-extras --no-extra mcp-tasks "${uv_extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
+          uv run --all-packages --all-extras --no-extra mcp-tasks "${excluded_extras[@]}" "${uv_extra[@]}" "${runner[@]}" --durations=100 -n logical --dist=loadgroup \
             --ignore=tests/durable_exec -m "not temporal" --splits 2 --group ${{ matrix.shard }}
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
