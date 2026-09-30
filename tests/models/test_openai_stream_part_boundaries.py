@@ -1,14 +1,16 @@
 """OpenAI Chat Completions can resume text or reasoning after another part in the same stream.
 
 The resumed content must start a new part: the earlier part has already ended, and UI
-adapters reject a delta on an ended part. Hosted providers did not reproduce these
-orderings, so these tests use synthetic chunks.
+adapters reject a delta on an ended part. These tests use synthetic chunks: text after a
+tool call (#8208) did not reproduce on hosted providers, and reasoning after text (#8726)
+came from vLLM's Gemma 4 reasoning parser.
 """
 
 from __future__ import annotations as _annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
@@ -46,10 +48,13 @@ with try_import() as ag_ui_imports_successful:
     from ag_ui.core import RunAgentInput, UserMessage
 
     from pydantic_ai.ui.ag_ui import AGUIAdapter
+    from pydantic_ai.ui.ag_ui._utils import detect_ag_ui_version, parse_ag_ui_version
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
 ]
+
+_AG_UI_HAS_REASONING_EVENTS = ag_ui_imports_successful() and parse_ag_ui_version(detect_ag_ui_version()) >= (0, 1, 11)
 
 
 def _reasoning_chunk(text: str) -> ChatCompletionChunk:
@@ -58,7 +63,7 @@ def _reasoning_chunk(text: str) -> ChatCompletionChunk:
 
 
 def _reasoning_text_reasoning_text_agent() -> Agent:
-    """The reporter's shape: reasoning resumes after text, then text resumes after it."""
+    """The #8726 shape: reasoning resumes after text, then text resumes after it."""
     stream = [
         _reasoning_chunk('Think.'),
         text_chunk('Answer.'),
@@ -93,7 +98,7 @@ def _assert_part_lifecycles(events: list[Any]) -> None:
 
 
 async def test_text_after_tool_is_not_a_vercel_delta_on_the_ended_part(allow_model_requests: None):
-    """Reporter shape: text, tool, then more content. That content must not be a delta on the ended text id."""
+    """The #8208 shape: text, tool, then more content. That content must not be a delta on the ended text id."""
     agent = Agent(
         OpenAIChatModel(
             'test',
@@ -161,12 +166,77 @@ async def test_closing_think_tag_after_tool_is_not_leaked_as_text(allow_model_re
 
 
 @pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed')
-async def test_resumed_reasoning_is_a_new_ag_ui_reasoning_message(allow_model_requests: None):
-    """Reporter shape: reasoning, text, reasoning, text. Each burst is its own AG-UI message and the run finishes.
+@pytest.mark.parametrize(
+    'ag_ui_version, expected_events',
+    [
+        pytest.param(
+            '0.1.10',
+            snapshot(
+                [
+                    ('RUN_STARTED', None),
+                    ('THINKING_START', None),
+                    ('THINKING_TEXT_MESSAGE_START', None),
+                    ('THINKING_TEXT_MESSAGE_CONTENT', 'Think.'),
+                    ('THINKING_TEXT_MESSAGE_END', None),
+                    ('THINKING_END', None),
+                    ('TEXT_MESSAGE_START', None),
+                    ('TEXT_MESSAGE_CONTENT', 'Answer.'),
+                    ('TEXT_MESSAGE_END', None),
+                    ('THINKING_START', None),
+                    ('THINKING_TEXT_MESSAGE_START', None),
+                    ('THINKING_TEXT_MESSAGE_CONTENT', 'Again'),
+                    ('THINKING_TEXT_MESSAGE_CONTENT', '.'),
+                    ('THINKING_TEXT_MESSAGE_END', None),
+                    ('THINKING_END', None),
+                    ('TEXT_MESSAGE_START', None),
+                    ('TEXT_MESSAGE_CONTENT', ' More'),
+                    ('TEXT_MESSAGE_CONTENT', '.'),
+                    ('TEXT_MESSAGE_END', None),
+                    ('RUN_FINISHED', None),
+                ]
+            ),
+            id='thinking-events',
+        ),
+        pytest.param(
+            '0.1.11',
+            snapshot(
+                [
+                    ('RUN_STARTED', None),
+                    ('REASONING_START', None),
+                    ('REASONING_MESSAGE_START', None),
+                    ('REASONING_MESSAGE_CONTENT', 'Think.'),
+                    ('REASONING_MESSAGE_END', None),
+                    ('REASONING_ENCRYPTED_VALUE', None),
+                    ('REASONING_END', None),
+                    ('TEXT_MESSAGE_START', None),
+                    ('TEXT_MESSAGE_CONTENT', 'Answer.'),
+                    ('TEXT_MESSAGE_END', None),
+                    ('REASONING_START', None),
+                    ('REASONING_MESSAGE_START', None),
+                    ('REASONING_MESSAGE_CONTENT', 'Again'),
+                    ('REASONING_MESSAGE_CONTENT', '.'),
+                    ('REASONING_MESSAGE_END', None),
+                    ('REASONING_ENCRYPTED_VALUE', None),
+                    ('REASONING_END', None),
+                    ('TEXT_MESSAGE_START', None),
+                    ('TEXT_MESSAGE_CONTENT', ' More'),
+                    ('TEXT_MESSAGE_CONTENT', '.'),
+                    ('TEXT_MESSAGE_END', None),
+                    ('RUN_FINISHED', None),
+                ]
+            ),
+            id='reasoning-events',
+            marks=pytest.mark.skipif(not _AG_UI_HAS_REASONING_EVENTS, reason='requires ag-ui-protocol >= 0.1.11'),
+        ),
+    ],
+)
+async def test_resumed_reasoning_is_a_new_ag_ui_reasoning_message(
+    allow_model_requests: None, ag_ui_version: str, expected_events: list[tuple[str, str | None]]
+):
+    """The #8726 shape: each burst is its own AG-UI message and the run ends with `RUN_FINISHED`.
 
-    Resumed reasoning used to be a delta on the ended thinking part, and the adapter ended the run with `RUN_ERROR`.
+    A thinking delta after its message ended would end the run with `RUN_ERROR` instead.
     """
-    agent = _reasoning_text_reasoning_text_agent()
     run_input = RunAgentInput(
         thread_id='thread',
         run_id='run',
@@ -176,40 +246,18 @@ async def test_resumed_reasoning_is_a_new_ag_ui_reasoning_message(allow_model_re
         tools=[],
         forwarded_props=None,
     )
-    adapter = AGUIAdapter(agent=agent, run_input=run_input, ag_ui_version='0.1.10')
+    adapter = AGUIAdapter(
+        agent=_reasoning_text_reasoning_text_agent(), run_input=run_input, ag_ui_version=ag_ui_version
+    )
     events = [json.loads(raw.removeprefix('data: ')) async for raw in adapter.encode_stream(adapter.run_stream())]
 
-    assert [(event['type'], event.get('delta')) for event in events] == snapshot(
-        [
-            ('RUN_STARTED', None),
-            ('THINKING_START', None),
-            ('THINKING_TEXT_MESSAGE_START', None),
-            ('THINKING_TEXT_MESSAGE_CONTENT', 'Think.'),
-            ('THINKING_TEXT_MESSAGE_END', None),
-            ('THINKING_END', None),
-            ('TEXT_MESSAGE_START', None),
-            ('TEXT_MESSAGE_CONTENT', 'Answer.'),
-            ('TEXT_MESSAGE_END', None),
-            ('THINKING_START', None),
-            ('THINKING_TEXT_MESSAGE_START', None),
-            ('THINKING_TEXT_MESSAGE_CONTENT', 'Again'),
-            ('THINKING_TEXT_MESSAGE_CONTENT', '.'),
-            ('THINKING_TEXT_MESSAGE_END', None),
-            ('THINKING_END', None),
-            ('TEXT_MESSAGE_START', None),
-            ('TEXT_MESSAGE_CONTENT', ' More'),
-            ('TEXT_MESSAGE_CONTENT', '.'),
-            ('TEXT_MESSAGE_END', None),
-            ('RUN_FINISHED', None),
-        ]
-    )
+    assert [(event['type'], event.get('delta')) for event in events] == expected_events
 
 
 async def test_resumed_reasoning_is_not_a_vercel_delta_on_an_ended_part(allow_model_requests: None):
-    """Reporter shape: reasoning, text, reasoning, text. No reasoning or text delta may land on an ended id."""
-    agent = _reasoning_text_reasoning_text_agent()
+    """The #8726 shape: no reasoning or text delta may land on an ended id."""
     adapter = VercelAIAdapter(
-        agent,
+        _reasoning_text_reasoning_text_agent(),
         SubmitMessage(id='foo', messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Think twice.')])]),
         sdk_version=6,
     )
@@ -220,52 +268,117 @@ async def test_resumed_reasoning_is_not_a_vercel_delta_on_an_ended_part(allow_mo
     _assert_part_lifecycles(events)
 
 
-@pytest.mark.parametrize(
-    'stream, expected_parts',
-    [
-        pytest.param(
-            lambda: [
-                _reasoning_chunk('Think.'),
-                struc_chunk('lookup', '{}'),
-                _reasoning_chunk('Again'),
-                _reasoning_chunk('.'),
-                chunk([ChoiceDelta()], finish_reason='tool_calls'),
-            ],
-            snapshot(
-                [
-                    ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
-                    ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
-                    ThinkingPart(content='Again.', id='reasoning_content', provider_name='openai'),
-                ]
-            ),
-            id='reasoning-tool-reasoning',
+@dataclass(frozen=True)
+class ResumedContentCase:
+    id: str
+    stream: Callable[[], list[ChatCompletionChunk]]
+    expected_parts: list[ModelResponsePart]
+    ignore_streamed_leading_whitespace: bool = False
+
+
+RESUMED_CONTENT_CASES = [
+    ResumedContentCase(
+        id='reasoning-tool-reasoning',
+        stream=lambda: [
+            _reasoning_chunk('Think.'),
+            struc_chunk('lookup', '{}'),
+            _reasoning_chunk('Again'),
+            _reasoning_chunk('.'),
+            chunk([ChoiceDelta()], finish_reason='tool_calls'),
+        ],
+        expected_parts=snapshot(
+            [
+                ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
+                ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
+                ThinkingPart(content='Again.', id='reasoning_content', provider_name='openai'),
+            ]
         ),
-        pytest.param(
-            lambda: [
-                text_chunk('Answer.'),
-                _reasoning_chunk('Think.'),
-                text_chunk(' More'),
-                text_chunk('.'),
-                chunk([ChoiceDelta()], finish_reason='stop'),
-            ],
-            snapshot(
-                [
-                    TextPart(content='Answer.'),
-                    ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
-                    TextPart(content=' More.'),
-                ]
-            ),
-            id='text-reasoning-text',
+    ),
+    ResumedContentCase(
+        id='text-reasoning-text',
+        stream=lambda: [
+            text_chunk('Answer.'),
+            _reasoning_chunk('Think.'),
+            text_chunk(' More'),
+            text_chunk('.'),
+            chunk([ChoiceDelta()], finish_reason='stop'),
+        ],
+        expected_parts=snapshot(
+            [
+                TextPart(content='Answer.'),
+                ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
+                TextPart(content=' More.'),
+            ]
         ),
-    ],
-)
-async def test_resumed_content_starts_a_new_part(
-    allow_model_requests: None,
-    stream: Callable[[], list[ChatCompletionChunk]],
-    expected_parts: list[ModelResponsePart],
-):
-    """Content resumed after another part started gets its own part, never a delta after its part ended."""
-    model = OpenAIChatModel('test', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream())))
+    ),
+    ResumedContentCase(
+        id='resumed-text-keeps-leading-whitespace-after-reasoning',
+        stream=lambda: [
+            _reasoning_chunk('Think.'),
+            text_chunk('Answer.'),
+            _reasoning_chunk('Again.'),
+            text_chunk('\n\n'),
+            text_chunk('More.'),
+            chunk([ChoiceDelta()], finish_reason='stop'),
+        ],
+        expected_parts=snapshot(
+            [
+                ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
+                TextPart(content='Answer.'),
+                ThinkingPart(content='Again.', id='reasoning_content', provider_name='openai'),
+                TextPart(content='\n\nMore.'),
+            ]
+        ),
+        ignore_streamed_leading_whitespace=True,
+    ),
+    ResumedContentCase(
+        id='resumed-text-keeps-leading-whitespace-after-tool',
+        stream=lambda: [
+            text_chunk('Checking now.'),
+            struc_chunk('lookup', '{}'),
+            text_chunk('\n\n'),
+            text_chunk('Done.'),
+            chunk([ChoiceDelta()], finish_reason='tool_calls'),
+        ],
+        expected_parts=snapshot(
+            [
+                TextPart(content='Checking now.'),
+                ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
+                TextPart(content='\n\nDone.'),
+            ]
+        ),
+        ignore_streamed_leading_whitespace=True,
+    ),
+    ResumedContentCase(
+        id='leading-whitespace-before-tool-is-dropped',
+        stream=lambda: [
+            _reasoning_chunk('Think.'),
+            text_chunk('\n\n'),
+            struc_chunk('lookup', '{}'),
+            chunk([ChoiceDelta()], finish_reason='tool_calls'),
+        ],
+        expected_parts=snapshot(
+            [
+                ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
+                ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
+            ]
+        ),
+        ignore_streamed_leading_whitespace=True,
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in RESUMED_CONTENT_CASES])
+async def test_resumed_content_starts_a_new_part(allow_model_requests: None, case: ResumedContentCase):
+    """Content resumed after another part gets its own part, never a delta after its part ended.
+
+    `ignore_streamed_leading_whitespace` drops only the response's leading whitespace, so resumed text keeps its separator.
+    """
+    model = OpenAIChatModel(
+        'test',
+        provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(case.stream())),
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=case.ignore_streamed_leading_whitespace),
+    )
     ended: set[int] = set()
     async with model.request_stream(
         [ModelRequest(parts=[UserPromptPart('Think twice.')])],
@@ -278,4 +391,4 @@ async def test_resumed_content_starts_a_new_part(
             elif isinstance(event, PartDeltaEvent):
                 assert event.index not in ended, f'delta on ended part {event.index}'
 
-    assert response.get().parts == expected_parts
+    assert response.get().parts == case.expected_parts

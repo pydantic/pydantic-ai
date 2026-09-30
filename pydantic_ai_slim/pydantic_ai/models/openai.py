@@ -4039,8 +4039,9 @@ class OpenAIStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _timestamp: datetime = field(default_factory=_now_utc)
     _model_settings: OpenAIChatModelSettings | None = None
-    # Both keys rotate when a different part starts, so text or reasoning that resumes later in
-    # the stream opens a new part instead of sending a delta to the ended one.
+    # These keys rotate when a different part starts, so text or reasoning that resumes later in the
+    # stream opens a new part instead of sending a delta to the ended one. `'content'` rotates only
+    # while it names a `TextPart`, so a `</think>` arriving after another part still closes its tag.
     _vendor_part_id: str = field(default='content', init=False)
     _thinking_vendor_part_suffix: str = field(default='', init=False)
     _has_refusal: bool = field(default=False, init=False)
@@ -4203,7 +4204,9 @@ class OpenAIStreamedResponse(StreamedResponse):
                 vendor_part_id=self._vendor_part_id,
                 content=content,
                 thinking_tags=self._model_profile.get('thinking_tags', DEFAULT_THINKING_TAGS),
-                ignore_leading_whitespace=self._model_profile.get('ignore_streamed_leading_whitespace', False),
+                # Only the response's leading text: text resumed after another part keeps its separator.
+                ignore_leading_whitespace=self._vendor_part_id == 'content'
+                and self._model_profile.get('ignore_streamed_leading_whitespace', False),
             ):
                 if isinstance(event, PartStartEvent):
                     self._thinking_vendor_part_suffix = f'-{event.index}'
