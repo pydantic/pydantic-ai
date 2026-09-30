@@ -10,6 +10,7 @@ back on demand through the registered `read_tool_result` tool; the `OverflowStor
 is the seam for any other backend.
 """
 
+from pydantic_ai_harness.compaction import drain_summary_events
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -18,7 +19,6 @@ from pydantic_ai_harness.tool_output_limits._bands import (
     Summarize,
     SummarizeFunc,
     Truncate,
-    drain_summary_events,
 )
 from pydantic_ai_harness.tool_output_limits._capability import READ_TOOL_NAME, ToolOutputLimits
 from pydantic_ai_harness.tool_output_limits._payload import (

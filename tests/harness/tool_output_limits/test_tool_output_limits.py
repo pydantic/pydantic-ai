@@ -116,7 +116,7 @@ def _fixed_model(text: str) -> FunctionModel:
 
 
 def _stream_only_summarizer(chunks: list[str] | None = None) -> FunctionModel:
-    """A summarizer that only accepts streaming requests (#687).
+    """A summarizer that only accepts streaming requests (#9249).
 
     No `function` is provided, so a non-streaming request fails outright -- mirroring an
     endpoint that returns HTTP 400 on `stream:false`.
@@ -934,7 +934,7 @@ class TestSummarize:
 
     async def test_stream_only_summarizer_without_a_handler_falls_back(self):
         # No handler means the nested run takes the non-streaming request path, which this
-        # summarizer rejects; the failure degrades to the `then` fallback (#687).
+        # summarizer rejects; the failure degrades to the `then` fallback (#9249).
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[Band(over=5, action=Summarize(model=_stream_only_summarizer(), then=Truncate(max_chars=95)))]
         )
@@ -983,7 +983,7 @@ class TestSummarize:
 
     async def test_stream_only_summarizer_completes_the_parent_run(self):
         # Through the public surface: an oversized tool return is summarized over the
-        # streaming path inside a full agent run (#687).
+        # streaming path inside a full agent run (#9249).
         cap: ToolOutputLimits[object] = ToolOutputLimits(
             bands=[
                 Band(

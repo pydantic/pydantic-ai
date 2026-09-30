@@ -341,6 +341,7 @@ journaled operation input, so prefer `Spill` over built-in `Summarize` for outpu
 engine's payload limit. And a custom `summarize` callable runs directly rather than as a durable
 operation -- arbitrary callables cannot be reconstructed on the worker side -- so it may be called
 again on replay.
+
 ## Summary streaming
 
 The summary request is non-streaming unless `event_stream_handler` is set on the `Summarize`

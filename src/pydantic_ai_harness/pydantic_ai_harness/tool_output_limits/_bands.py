@@ -19,10 +19,7 @@ from typing import TYPE_CHECKING
 from pydantic_ai_harness.tool_output_limits._payload import TruncationStrategy
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterable
-
     from pydantic_ai.agent import EventStreamHandler
-    from pydantic_ai.messages import AgentStreamEvent
     from pydantic_ai.models import Model
     from pydantic_ai.tools import RunContext
 
@@ -118,17 +115,3 @@ class Band:
 
     over: int
     action: Action
-
-
-async def drain_summary_events(
-    _ctx: RunContext[object],
-    events: AsyncIterable[AgentStreamEvent],
-) -> None:
-    """An `event_stream_handler` that consumes summary events and discards them.
-
-    Pass this as `Summarize(event_stream_handler=drain_summary_events)` when the summary
-    endpoint requires a streaming request but the events themselves are not wanted. Supplying
-    any handler selects the streaming request path; this one just discards what it receives.
-    """
-    async for _ in events:
-        pass
