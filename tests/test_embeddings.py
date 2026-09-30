@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-import time
+import threading
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -1420,8 +1420,11 @@ class TestBedrock:
             'ResponseMetadata': {'HTTPStatusCode': 429},
         }
 
+        # Every request waits for the others before failing, so all three fail rather than being cancelled.
+        all_sent = threading.Barrier(3, timeout=5)
+
         def invoke_model(**kwargs: Any) -> Any:
-            time.sleep(0.05)  # let every request reach its thread before the first failure cancels the task group
+            all_sent.wait()
             raise ClientError(error_response, 'InvokeModel')  # pyright: ignore[reportArgumentType]
 
         with patch.object(model.client, 'invoke_model', side_effect=invoke_model):
