@@ -474,7 +474,7 @@ def test_tool_def_rejects_a_recursive_schema() -> None:
         pytest.param({'type': 'object', 'additionalProperties': {'$ref': '#/$defs/Node'}}, id='dict'),
         pytest.param({'additionalProperties': {'$ref': '#/$defs/Node'}}, id='typeless-additional-properties'),
         pytest.param({'patternProperties': {'^k': {'$ref': '#/$defs/Node'}}}, id='typeless-pattern-properties'),
-        pytest.param({'additionalProperties': {'$ref': '#'}}, id='root-ref'),
+        pytest.param({'type': 'object', 'additionalProperties': {'$ref': '#'}}, id='root-ref'),
     ],
 )
 def test_tool_def_accepts_a_recursive_map(kids: dict[str, Any]) -> None:
