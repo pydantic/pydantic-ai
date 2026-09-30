@@ -23,7 +23,7 @@ from .api_keys import KeyReference, SavedKey, load_keys
 from .field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from .mcp import TokenStore, http_client, sign_in
 from .menu_worker import run_worker
-from .plugin_keys import pick_key_from_menu
+from .plugin_keys import choose_key, on_loop
 from .plugins import DepsT, PluginHost, SessionStart
 
 DAY_AI_MCP_URL = 'https://day.ai/api/mcp'
@@ -213,13 +213,8 @@ async def _configure(source: DayAISource[DepsT]) -> str:
             return []
         if pick.item.value != _KEY:
             return [source.apply(_AUTH, str(pick.item.value))]
-        reference = pick_key_from_menu(
-            loop,
-            name=KEY_NAME,
-            label=f'Day AI access token (saved in /keys as {KEY_NAME})',
-            placeholder='Paste a Day AI access token; it is saved in /keys',
-            runners=RUNNERS,
-        )
+        label = f'Day AI access token (saved in /keys as {KEY_NAME})'
+        reference = on_loop(lambda: choose_key(name=KEY_NAME, label=label, runners=RUNNERS), loop)
         if reference is None:
             return []
         source.save(source.settings.model_copy(update={'auth': reference}))

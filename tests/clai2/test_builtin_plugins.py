@@ -32,8 +32,26 @@ CURATED = {
     'github',
     'google_workspace',
     'pylon',
+    'notion',
+    'slack',
+    'logfire_mcp',
+    'posthog',
+    'grain',
+    'linear',
 }
-OPT_IN = {'day_ai', 'github', 'google_workspace', 'ordinal', 'pylon'}
+OPT_IN = {
+    'day_ai',
+    'github',
+    'google_workspace',
+    'grain',
+    'linear',
+    'logfire_mcp',
+    'notion',
+    'ordinal',
+    'posthog',
+    'pylon',
+    'slack',
+}
 
 
 class Menu:

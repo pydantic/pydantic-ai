@@ -103,6 +103,12 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='google_workspace', factory='pydantic_clai2.google_workspace', enabled=False),
     PluginSettings(id='day_ai', factory='pydantic_clai2.day_ai', enabled=False),
     PluginSettings(id='ordinal', factory='pydantic_clai2.ordinal', enabled=False),
+    PluginSettings(id='notion', factory='pydantic_clai2.notion', enabled=False),
+    PluginSettings(id='slack', factory='pydantic_clai2.slack', enabled=False),
+    PluginSettings(id='logfire_mcp', factory='pydantic_clai2.logfire_mcp', enabled=False),
+    PluginSettings(id='posthog', factory='pydantic_clai2.posthog', enabled=False),
+    PluginSettings(id='grain', factory='pydantic_clai2.grain', enabled=False),
+    PluginSettings(id='linear', factory='pydantic_clai2.linear', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 
