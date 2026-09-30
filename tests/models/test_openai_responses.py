@@ -49,6 +49,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
+    UsageNotReportedWarning,
     UserError,
     UserPromptPart,
     capture_run_messages,
@@ -4685,6 +4686,33 @@ async def test_openai_responses_web_search_usage_without_token_usage(allow_model
     result = await agent.run('What is pydantic?')
     # The mock response's model name (`gpt-4o-123`) is unknown to genai-prices, so `cost` stays `None`.
     assert result.usage == snapshot(RunUsage(web_searches=1, details={'web_search_requests': 1}, requests=2))
+
+
+async def test_openai_responses_web_search_without_token_usage_warns_with_token_limit(allow_model_requests: None):
+    """A counted web search doesn't make up for the missing token usage, so a token limit still can't count it."""
+    c = response_message(
+        [
+            ResponseFunctionWebSearch.model_construct(
+                id='web-search-1',
+                action={'type': 'search', 'query': 'pydantic'},
+                status='completed',
+                type='web_search_call',
+            ),
+            ResponseOutputMessage(
+                id='output-1',
+                content=cast(list[Content], [ResponseOutputText(text='done', type='output_text', annotations=[])]),
+                role='assistant',
+                status='completed',
+                type='message',
+            ),
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(c)))
+
+    with pytest.warns(UsageNotReportedWarning, match="the response from 'gpt-4o-123' reported no token usage"):
+        result = await Agent(model).run('What is pydantic?', usage_limits=UsageLimits(input_tokens_limit=100))
+
+    assert result.usage == snapshot(RunUsage(web_searches=1, details={'web_search_requests': 1}, requests=1))
 
 
 async def test_openai_responses_web_search_usage_stream_in_progress_snapshot(allow_model_requests: None):

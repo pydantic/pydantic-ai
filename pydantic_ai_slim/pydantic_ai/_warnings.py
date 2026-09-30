@@ -23,7 +23,7 @@ class CostNotFoundWarning(Warning):
 
 
 class UsageNotReportedWarning(Warning):
-    """Warning raised when token or cost limits are set but a model response reported no usage.
+    """Warning raised when token or cost limits are set but a model response reported no token usage.
 
     Such a response counts as zero tokens, so the limits cannot account for it.
     """

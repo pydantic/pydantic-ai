@@ -621,7 +621,7 @@ async def test_limits_warn_when_response_reports_no_usage(allow_model_requests: 
     mock_client = MockOpenAI.create_mock(c.model_copy(update={'model': 'gpt-4o'}))
     agent = Agent(OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=mock_client)))
 
-    with pytest.warns(UsageNotReportedWarning, match="the response from 'gpt-4o' reported no usage"):
+    with pytest.warns(UsageNotReportedWarning, match="the response from 'gpt-4o' reported no token usage"):
         result = await agent.run('hello', usage_limits=usage_limits)
 
     assert result.usage == snapshot(RunUsage(requests=1, cost=Decimal('0.00')))
@@ -633,7 +633,7 @@ async def test_limits_warn_when_stream_reports_no_usage(allow_model_requests: No
         OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
     )
 
-    with pytest.warns(UsageNotReportedWarning, match="the response from 'gpt-4o-123' reported no usage"):
+    with pytest.warns(UsageNotReportedWarning, match="the response from 'gpt-4o-123' reported no token usage"):
         async with agent.run_stream('hello', usage_limits=UsageLimits(output_tokens_limit=100)) as result:
             assert await result.get_output() == 'hello '
 

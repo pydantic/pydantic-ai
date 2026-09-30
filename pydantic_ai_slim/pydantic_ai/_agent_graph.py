@@ -1056,17 +1056,19 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
 
 
 def _warn_if_usage_not_reported(usage_limits: _usage.UsageLimits, response: _messages.ModelResponse) -> None:
-    """Warn when token or cost limits are set but the model's response reported no usage.
+    """Warn when token or cost limits are set but the model's response reported no token usage.
 
     Providers, and OpenAI-compatible servers in particular, can omit the usage object, which is then
     recorded as zero tokens and would otherwise let the run pass those limits without any signal.
+    Tokens are checked rather than `has_values()`, since units counted from the response itself (like
+    `web_searches`) can be present when the provider reported no usage.
     Only responses the model produced are checked: a `SkipModelRequest` response rightly has no usage.
     """
-    if response.usage.has_values() or not (usage_limits.has_token_limits() or usage_limits.cost_limit is not None):
+    if response.usage.total_tokens or not (usage_limits.has_token_limits() or usage_limits.cost_limit is not None):
         return
     warnings.warn(
         UsageNotReportedWarning(
-            f'A token or cost limit is set, but the response from {response.model_name!r} reported no usage, '
+            f'A token or cost limit is set, but the response from {response.model_name!r} reported no token usage, '
             'so it counts as zero tokens toward the limits. This usually means the provider or '
             'OpenAI-compatible server did not return a usage object.'
         ),
