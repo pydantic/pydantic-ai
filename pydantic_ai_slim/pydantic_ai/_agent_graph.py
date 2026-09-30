@@ -1061,19 +1061,22 @@ def _warn_if_usage_not_reported(usage_limits: _usage.UsageLimits, response: _mes
     Providers, and OpenAI-compatible servers in particular, can omit the usage object, which is then
     recorded as zero tokens and would otherwise let the run pass those limits without any signal.
     Tokens are checked rather than `has_values()`, since units counted from the response itself (like
-    `web_searches`) can be present when the provider reported no usage.
+    `web_searches`) can be present when the provider reported no usage. A cost the provider reported
+    itself still lets `cost_limit` count the response.
     Only responses the model produced are checked: a `SkipModelRequest` response rightly has no usage.
     """
-    if response.usage.total_tokens or not (usage_limits.has_token_limits() or usage_limits.cost_limit is not None):
+    usage = response.usage
+    if usage.total_tokens:
         return
-    warnings.warn(
-        UsageNotReportedWarning(
-            f'A token or cost limit is set, but the response from {response.model_name!r} reported no token usage, '
-            'so it counts as zero tokens toward the limits. This usually means the provider or '
-            'OpenAI-compatible server did not return a usage object.'
-        ),
-        stacklevel=2,
-    )
+    if usage_limits.has_token_limits() or (usage_limits.cost_limit is not None and usage.cost is None):
+        warnings.warn(
+            UsageNotReportedWarning(
+                f'A token or cost limit is set, but the response from {response.model_name!r} reported no token '
+                'usage, so it counts as zero tokens toward the limits. This usually means the provider or '
+                'OpenAI-compatible server did not return a usage object.'
+            ),
+            stacklevel=2,
+        )
 
 
 async def _check_resume_seed_usage(
