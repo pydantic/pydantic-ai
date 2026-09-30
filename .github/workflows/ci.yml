@@ -1088,8 +1088,9 @@ jobs:
           include-hidden-files: true
 
   # Live-service suites for the harness storage and AWS backends, outside `tests/` because they need
-  # a real server. Each runs when its capability, the dependencies, or this workflow change, and
-  # always on tags.
+  # a real server. The LocalStack, MongoDB, and Redis suites each run when their capability, the
+  # dependencies, or this workflow change, and always on tags. The Postgres suite is not path-gated:
+  # its data feeds the `coverage` job, so it runs wherever the `test` job runs.
   harness-integration-changes:
     name: classify harness integration changes
     if: github.event_name == 'pull_request' || github.ref_type == 'branch'
@@ -1237,6 +1238,75 @@ jobs:
 
       - run: make integration-redis
 
+  # Unlike the suites above this one is not path-gated and does not need
+  # `harness-integration-changes`: it is the only job that runs `PostgresStepStore` and
+  # `PostgresMediaStore` against a real server, and the `coverage` job combines its data. It is
+  # gated like `test`.
+  harness-postgres-integration:
+    name: harness Postgres integration tests
+    needs: classify
+    # No fork clause: the service below reads no secret.
+    if: needs.classify.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - 5432:5432
+        env:
+          # A throwaway password for a container that exists only for this job.
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI: true
+      COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
+      # An unreachable server is a skip locally and must be a failure here.
+      POSTGRES_REQUIRE_LIVE: "1"
+      # The same throwaway password as the service container above.
+      POSTGRES_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-postgres
+
+      - run: mkdir .coverage
+
+      # `make integration-postgres` under `coverage run`: keep the install shape and the path in
+      # step with that target.
+      - run: >-
+          uv run
+          --all-packages
+          --all-extras
+          --no-extra mcp-tasks
+          coverage run -m pytest
+          src/pydantic_ai_harness/integration_tests/postgres
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.postgres
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        run: uv run --all-packages --all-extras --no-extra mcp-tasks coverage combine
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.postgres
+
+      - name: store coverage files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-postgres
+          path: .coverage
+          include-hidden-files: true
+
   # Release gate: resolve the workspace at the top of the ranges this tag declares and run the
   # suite there, so we can't publish a version whose own dependency ranges already admit an SDK
   # we cannot drive (the `anthropic` 1.0.0 case). Tag refs only — on every other event the job
@@ -1249,9 +1319,9 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4]
-    # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
-    # otherwise skip this job too.
+    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, harness-postgres-integration]
+    # A `pydantic-clai2`-only change skips every test job but `test` and
+    # `harness-postgres-integration`, and a skipped need would otherwise skip this job too.
     if: ${{ !failure() && !cancelled() && needs.classify.outputs.docs_only != 'true' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1309,6 +1379,7 @@ jobs:
       - harness-localstack-integration
       - harness-mongodb-integration
       - harness-redis-integration
+      - harness-postgres-integration
       - latest-versions-canary
       - coverage
     runs-on: ubuntu-latest
@@ -1323,12 +1394,14 @@ jobs:
           # jobs that exercise the rest of the workspace.
           # On tags only `docs-only` may skip; full CI jobs may skip only on the reduced PR path.
           # The harness integration jobs run only when their paths change (always on tags), and
-          # LocalStack also skips where its secret is unreadable.
+          # LocalStack also skips where its secret is unreadable. The Postgres job is the exception
+          # among them: it is the only job that covers the Postgres stores against a real server, so
+          # it may skip only on the docs-only path, and a skip anywhere else fails this gate.
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
               needs.classify.outputs.docs_only == 'true'
-              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,latest-versions-canary,coverage'
+              && 'quality,mypy,test,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration,harness-postgres-integration,latest-versions-canary,coverage'
               || needs.classify.outputs.clai2_only == 'true'
               && 'docs-only,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || github.ref_type == 'tag'
