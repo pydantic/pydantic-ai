@@ -21,7 +21,7 @@ from anyio import to_thread
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
-from pydantic_clai2.config.api_keys import KeyReference, save_key
+from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, save_key
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
@@ -67,7 +67,8 @@ class Project(BaseModel):
     @property
     def label(self) -> str:
         """As Logfire shows it: `organization/project`."""
-        return f'{self.organization_name}/{self.project_name}'
+        # A self-hosted server chooses these names, so terminal controls in them are made inert.
+        return terminal_text(f'{self.organization_name}/{self.project_name}', keep='')
 
     @property
     def key_name(self) -> str:
@@ -98,8 +99,12 @@ class Chosen:
     project: Project
 
 
-async def run_setup(setup: Setup, *, current: str | None) -> Chosen | None:
-    """Pick a destination, sign in, pick a project, and save its write token; `None` when cancelled."""
+async def run_setup(setup: Setup, *, current: str | None, owned: KeyReference | None) -> Chosen | None:
+    """Pick a destination, sign in, pick a project, and save its write token; `None` when cancelled.
+
+    `owned` is the key the plugin already uses: setting up the same project again replaces it, but any other
+    key of the same name is left alone.
+    """
     base_url = await run_worker(lambda: pick_destination(setup.runners, current=current))
     if base_url is None:
         return None
@@ -114,10 +119,10 @@ async def run_setup(setup: Setup, *, current: str | None) -> Chosen | None:
                 span.set('outcome', 'cancelled')
                 return None
             value = await _write_token(http, base_url, user_token, project)
-        await to_thread.run_sync(lambda: save_key(name=project.key_name, value=value))
+        name = await to_thread.run_sync(lambda: _save(project.key_name, value, owned=owned))
         span.set('outcome', 'saved')
     return Chosen(
-        token=KeyReference(name=project.key_name),
+        token=KeyReference(name=name),
         base_url=None if base_url in REGIONS.values() else base_url,
         project=project,
     )
@@ -165,6 +170,9 @@ def https_origin(text: str) -> str:
     text = text.strip()
     parts = urlsplit(text if '://' in text else f'https://{text}')
     # User tokens and write tokens are sent here.
+    if parts.username is not None or parts.password is not None:
+        # It would be saved in plaintext plugin settings; do not echo it back either.
+        raise SetupError('Leave credentials out of the URL: CLAI signs in through the browser.')
     if parts.scheme != 'https' or not parts.netloc or parts.path not in ('', '/') or parts.query or parts.fragment:
         raise SetupError(f'Use an https URL with no path, like https://logfire.example.com, not {text}.')
     return f'https://{parts.netloc}'
@@ -244,6 +252,21 @@ def _parse(model: type[ModelT], response: httpx.Response) -> ModelT:
         return model.model_validate_json(response.content)
     except ValidationError:
         raise SetupError(f'Logfire answered {response.request.url.path} with something unexpected.') from None
+
+
+def _save(name: str, value: str, *, owned: KeyReference | None) -> str:
+    """Save under `name`, or `name_2`, `name_3`, ... when another credential already has it; returns the name."""
+    candidates = [name, *(f'{name}_{number}' for number in range(2, 100))]
+    if owned is not None and owned.name in candidates:
+        save_key(name=owned.name, value=value)
+        return owned.name
+    for candidate in candidates:
+        try:
+            save_key(name=candidate, value=value, replace=False)
+        except KeyExistsError:
+            continue
+        return candidate
+    raise SetupError(f'Too many /keys entries start with {name}; delete some and retry.')
 
 
 def _destination(url: str) -> str:

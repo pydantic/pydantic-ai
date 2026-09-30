@@ -119,7 +119,7 @@ SETUP: Callable[[PluginHost[None]], Setup] = _announce
 async def _configure(host: PluginHost[None], setup: Setup) -> str:
     """The setup menu; saving new settings makes the loader load the plugin again, now sending to the project."""
     config = host.settings(LogfireSettings)
-    chosen = await run_setup(setup, current=config.base_url)
+    chosen = await run_setup(setup, current=config.base_url, owned=config.token)
     if chosen is None:
         return 'Logfire setup cancelled; settings unchanged.'
     host.save_settings(config.model_copy(update={'token': chosen.token, 'base_url': chosen.base_url}))

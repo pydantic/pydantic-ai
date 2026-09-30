@@ -4,7 +4,7 @@ import io
 import json
 import re
 import webbrowser
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Generator
 from dataclasses import dataclass, field
 
 import httpx
@@ -17,9 +17,10 @@ from termflow.tui.textinput import TextInput, TextInputResult
 from pydantic_clai2.builtin_plugins import logfire as logfire_plugin, logfire_setup
 from pydantic_clai2.builtin_plugins.logfire import LogfireSettings
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, SetupError, https_origin
-from pydantic_clai2.config.api_keys import KeyReference, load_keys
+from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, load_keys, save_key
 from pydantic_clai2.plugins import PluginHost, SessionEnd
 from pydantic_clai2.ui.menus.field_menu import Runners
+from tests.clai2.test_logfire import Recorder
 
 US = 'https://logfire-us.pydantic.dev'
 PROJECTS = [
@@ -122,8 +123,21 @@ Configure = Callable[[PluginHost[None], Setup], Awaitable[str]]
 
 
 @pytest.fixture
-def configure(monkeypatch: pytest.MonkeyPatch) -> Configure:
+def recorder() -> Generator[Recorder]:
+    recorded = Recorder()
+    try:
+        yield recorded
+    finally:
+        for instance in recorded.instances:
+            instance.shutdown(timeout_millis=3000)
+
+
+@pytest.fixture
+def configure(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> Configure:
     """Open the plugin's real setup menu, as `/plugins configure logfire` does, with `setup` in place."""
+
+    # The recorder keeps the SDK local: a saved token would otherwise make it check the token over the network.
+    monkeypatch.setattr(logfire_plugin.logfire, 'configure', recorder.configure)
 
     async def run(host: PluginHost[None], setup: Setup) -> str:
         def scripted_setup(host: PluginHost[None]) -> Setup:
@@ -271,6 +285,8 @@ def test_project_key_names_are_valid_key_names() -> None:
     project = logfire_setup.Project(organization_name='Pydantic Inc.', project_name='clai-2')
     assert project.key_name == 'LOGFIRE_TOKEN_PYDANTIC_INC_CLAI_2'
     assert project.label == 'Pydantic Inc./clai-2'
+    hostile = logfire_setup.Project(organization_name='org', project_name='p\x1b]52;c;UE9JU09O\x07\n')
+    assert hostile.label == 'org/p\\x1b]52;c;UE9JU09O\\x07\\x0a'
 
 
 async def test_self_hosted_error_text_is_made_inert(configure: Configure) -> None:
@@ -286,3 +302,36 @@ def test_the_real_setup_announces_on_the_console_with_controls_made_inert() -> N
     output = host.console.file
     assert isinstance(output, io.StringIO)
     assert output.getvalue() == 'Sign in: https://logfire.example.com/\\x1b[2Jauth\n'
+
+
+async def test_an_unrelated_key_of_the_same_name_is_kept(configure: Configure, recorder: Recorder) -> None:
+    save_key(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2', value='someone-elses')
+    project = logfire_setup.Project(**PROJECTS[0])
+    host = make_host()
+    await configure(host, Harness().setup(scripted([US, project])))
+    assert host.settings(LogfireSettings).token == KeyReference(name='LOGFIRE_TOKEN_PYDANTIC_CLAI2_2')
+    keys = load_keys()
+    assert keys['LOGFIRE_TOKEN_PYDANTIC_CLAI2'].get_secret_value() == 'someone-elses'
+    assert keys['LOGFIRE_TOKEN_PYDANTIC_CLAI2_2'].get_secret_value() == 'pylf_v1_us_write'
+    # Setting up the same project again replaces the key the plugin owns, instead of adding another.
+    renewed = FakeLogfire(write_token=httpx.Response(200, json={'token': 'pylf_v1_us_renewed'}))
+    await configure(host, Harness(server=renewed).setup(scripted([US, project])))
+    assert recorder.tokens == [None, 'pylf_v1_us_write']  # The second activation sent with the saved key.
+    keys = load_keys()
+    assert keys['LOGFIRE_TOKEN_PYDANTIC_CLAI2_2'].get_secret_value() == 'pylf_v1_us_renewed'
+    assert 'LOGFIRE_TOKEN_PYDANTIC_CLAI2_3' not in keys
+
+
+async def test_running_out_of_key_names_says_so(configure: Configure, monkeypatch: pytest.MonkeyPatch) -> None:
+    def taken(*, name: str, value: str, replace: bool = True) -> str:
+        raise KeyExistsError(name)
+
+    monkeypatch.setattr(logfire_setup, 'save_key', taken)
+    with pytest.raises(SetupError, match='Too many /keys entries start with LOGFIRE_TOKEN_PYDANTIC_CLAI2'):
+        await configure(make_host(), Harness().setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
+
+
+def test_https_origin_rejects_credentials_without_echoing_them() -> None:
+    with pytest.raises(SetupError, match='Leave credentials out of the URL') as error:
+        https_origin('https://mike:hunter2@logfire.example.com')
+    assert 'hunter2' not in str(error.value)
