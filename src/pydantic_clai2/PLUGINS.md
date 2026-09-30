@@ -2216,6 +2216,11 @@ pure frame and scripted-key tests follow the same headless menu conventions.
 The selected project stays highlighted while browsing sessions. The focused pane
 is labeled **SELECT PROJECT** or **SELECT SESSION**, with matching key hints.
 
+The browser groups existing Git worktrees by repository and labels session cards
+with the current branch or detached worktree name. This is display metadata only;
+saved workspace paths and cross-directory confirmation are unchanged. See
+[Saved sessions](README.md#saved-sessions-and-resume) for fallback behavior.
+
 The resume transcript preview displays at most 24,000 characters of the newest-first
 text, with a truncation notice for longer histories. Search is Unicode
 case-insensitive and includes text instructions in multimodal prompts.
