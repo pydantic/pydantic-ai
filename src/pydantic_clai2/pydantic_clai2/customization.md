@@ -487,8 +487,10 @@ def activate(host: PluginHost[None]) -> None:
 my-service:NAME works with /add_model or /set model. resolve receives NAME
 without the prefix and runs in a worker thread before every run with that
 model, so it may read the keyring; raise UserError with setup instructions
-when it cannot build the model. A prefix Pydantic AI or CLAI already runs is
-rejected with ValueError.
+when it cannot build the model. The prefix starts with a lowercase letter,
+followed by lowercase letters, digits, and hyphens. A prefix Pydantic AI or
+CLAI already runs, aliases like openai-chat included, is rejected with
+ValueError.
 
 For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose

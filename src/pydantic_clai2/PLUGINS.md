@@ -1905,9 +1905,11 @@ one of these models, so reading the keyring there is fine, and a sign-in made
 since the last run applies. Raise `UserError` naming the setup step when it cannot
 build the model; the run fails with that message.
 
-The prefix is lowercase letters, digits, and hyphens, and cannot be one Pydantic AI
-or CLAI already runs (`anthropic`, `openai-codex`, `vllm`, ...): that raises
-`ValueError` during activation. When two plugins register one prefix, the later one
+The prefix starts with a lowercase letter, followed by lowercase letters, digits,
+and hyphens. It cannot be one Pydantic AI or CLAI already runs, aliases included
+(`anthropic`, `openai-chat`, `azure`, `openai-codex`, `vllm`, ...): that raises
+`ValueError` during activation. Only a name with a colon is looked up, so a bare
+`my-service` is never routed to the plugin. When two plugins register one prefix, the later one
 wins. Unloading the plugin removes the prefix; a saved model under it stays in
 `/model`, and runs with it fail as an unknown provider until the plugin is enabled
 again.

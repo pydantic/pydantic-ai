@@ -278,8 +278,8 @@ class _ModelResolver:
             return await asyncio.to_thread(github_copilot.model, name)
         if name.startswith('openai-codex:'):
             return self.codex_auth().model(name)
-        prefix, _, model_name = name.partition(':')
-        provider = self.plugins().get(prefix)
+        prefix, separator, model_name = name.partition(':')
+        provider = self.plugins().get(prefix) if separator else None
         return name if provider is None else await asyncio.to_thread(provider.resolve, model_name)
 
 

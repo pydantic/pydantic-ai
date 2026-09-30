@@ -49,7 +49,8 @@ from pydantic_ai.capabilities.hooks import (
     WrapToolValidateHookFunc,
 )
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import Model, known_model_names
+from pydantic_ai.models import Model
+from pydantic_ai.providers import infer_provider_class
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import Settings
@@ -172,6 +173,24 @@ class ModelProvider:
 
 
 _PROVIDER_PREFIX = re.compile(r'[a-z][a-z0-9-]*')
+
+
+def _runs_already(prefix: str) -> bool:
+    """Whether CLAI or Pydantic AI already runs `prefix:` models, aliases such as `openai-chat` included.
+
+    `infer_model` accepts exactly the prefixes `infer_provider_class` knows, so that is the source of truth.
+    An unknown prefix raises `ValueError` without importing anything; a known one whose SDK is missing
+    raises `ImportError`, and is still taken.
+    """
+    if prefix in CLAI_PROVIDERS:
+        return True
+    try:
+        infer_provider_class(prefix)
+    except ValueError:
+        return False
+    except ImportError:
+        return True
+    return True
 
 
 HostEvent = SessionStart | SessionEnd | TurnStart | TurnEnd
@@ -405,8 +424,11 @@ class PluginHost(Generic[DepsT]):
         a model under it then fails as an unknown provider until the plugin is enabled again.
         """
         if not _PROVIDER_PREFIX.fullmatch(prefix):
-            raise ValueError(f'Model prefix {prefix!r} must be lowercase letters, digits, and hyphens.')
-        if prefix in CLAI_PROVIDERS or prefix in {name.partition(':')[0] for name in known_model_names()}:
+            raise ValueError(
+                f'Model prefix {prefix!r} must start with a lowercase letter, followed by lowercase letters, '
+                'digits, and hyphens.'
+            )
+        if _runs_already(prefix):
             raise ValueError(f'Model prefix {prefix!r} is a provider CLAI already runs; choose your own.')
         provider = ModelProvider(prefix=prefix, resolve=resolve, models=tuple(models))
         self._model_providers.append(provider)
