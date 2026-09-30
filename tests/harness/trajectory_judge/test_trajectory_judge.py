@@ -654,8 +654,103 @@ class TestTranscript:
         await asyncio.wait_for(done.wait(), timeout=_WAIT)
 
         transcript = seen[0].split('<trajectory>\n', 1)[1].rsplit('\n</trajectory>', 1)[0]
-        assert 'recent-marker' in transcript
+        assert transcript.startswith('user: xxx')
+        assert 'xxx [truncated]\nassistant: recent-marker' in transcript
         assert len(transcript) <= 25 * 4  # window tokens * ~4 chars per token
+
+    @pytest.mark.parametrize(
+        ('messages', 'expected_start'),
+        [
+            pytest.param(
+                [ModelRequest(parts=[SpeechPart(speaker='user', transcript='Fix the login bug only.')])],
+                'user: Fix the login bug only.\n[...]\n',
+                id='user-speech',
+            ),
+            pytest.param(
+                [
+                    ModelRequest(parts=[UserPromptPart('Fix the login bug only.')]),
+                    ModelResponse(parts=[ThinkingPart('hmm'), TextPart('')]),
+                    ModelRequest(parts=[UserPromptPart('follow-up')]),
+                ],
+                'user: Fix the login bug only.\n[...]\n',
+                id='follow-up-after-silent-response',
+            ),
+            pytest.param(
+                [
+                    ModelRequest(parts=[UserPromptPart('Fix the login bug only.')]),
+                    ModelRequest(parts=[RetryPromptPart('bad output'), UserPromptPart('follow-up')]),
+                ],
+                'user: Fix the login bug only.\n[...]\n',
+                id='follow-up-after-retry',
+            ),
+        ],
+    )
+    async def test_original_request_ends_at_the_first_agent_activity(
+        self, messages: list[ModelMessage], expected_start: str
+    ) -> None:
+        seen: list[str] = []
+        done = asyncio.Event()
+        cap = TrajectoryJudge(model=_steer_model(seen=seen), every=1, window=100, on_verdict=lambda _: done.set())
+        ctx = _ctx()
+        run_cap = await cap.for_run(ctx)
+
+        history = [*messages, ModelRequest(parts=[ToolReturnPart('read_file', 'a' * 1000, tool_call_id='c1')])]
+        await run_cap.after_model_request(
+            ctx, request_context=_request_context(history), response=_text_response('recent-marker')
+        )
+        await asyncio.wait_for(done.wait(), timeout=_WAIT)
+
+        transcript = seen[0].split('<trajectory>\n', 1)[1].rsplit('\n</trajectory>', 1)[0]
+        assert transcript.startswith(expected_start)
+        assert 'follow-up' not in transcript
+
+    @pytest.mark.parametrize(
+        ('window', 'expected'),
+        [
+            pytest.param(25, 'user: ' + 'x' * 32 + ' [truncated]', id='request-only'),
+            pytest.param(2, 'xxxxxxxx', id='window-too-small-to-pin'),
+        ],
+    )
+    async def test_oversized_request(self, window: int, expected: str) -> None:
+        seen: list[str] = []
+        done = asyncio.Event()
+        cap = TrajectoryJudge(model=_steer_model(seen=seen), every=1, window=window, on_verdict=lambda _: done.set())
+        ctx = _ctx()
+        run_cap = await cap.for_run(ctx)
+
+        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('x' * 2000)])]
+        await run_cap.after_model_request(ctx, request_context=_request_context(messages), response=_text_response(''))
+        await asyncio.wait_for(done.wait(), timeout=_WAIT)
+
+        transcript = seen[0].split('<trajectory>\n', 1)[1].rsplit('\n</trajectory>', 1)[0]
+        assert transcript == expected
+
+    async def test_window_keeps_the_original_request(self) -> None:
+        """Large tool returns past the window do not evict the request the judge measures drift against."""
+        seen: list[str] = []
+        done = asyncio.Event()
+        cap = TrajectoryJudge(model=_steer_model(seen=seen), every=1, window=100, on_verdict=lambda _: done.set())
+        ctx = _ctx()
+        run_cap = await cap.for_run(ctx)
+
+        messages: list[ModelMessage] = [
+            ModelRequest(parts=[SystemPromptPart('sys'), UserPromptPart('Fix the login bug only.')]),
+            ModelResponse(parts=[ToolCallPart('read_file', {'path': 'a.py'}, tool_call_id='c1')]),
+            ModelRequest(parts=[ToolReturnPart('read_file', 'a' * 1000, tool_call_id='c1')]),
+            ModelResponse(parts=[ToolCallPart('read_file', {'path': 'b.py'}, tool_call_id='c2')]),
+            ModelRequest(parts=[ToolReturnPart('read_file', 'b' * 1000, tool_call_id='c2')]),
+        ]
+        await run_cap.after_model_request(
+            ctx, request_context=_request_context(messages), response=_text_response('recent-marker')
+        )
+        await asyncio.wait_for(done.wait(), timeout=_WAIT)
+
+        transcript = seen[0].split('<trajectory>\n', 1)[1].rsplit('\n</trajectory>', 1)[0]
+        assert transcript.startswith('user: Fix the login bug only.\n')
+        assert transcript.endswith('assistant: recent-marker')
+        assert '\n[...]\n' in transcript
+        assert 'aaaa' not in transcript
+        assert len(transcript) == 100 * 4
 
 
 class TestUsageCoordination:

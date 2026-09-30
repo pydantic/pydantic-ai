@@ -28,17 +28,17 @@ from pydantic_ai_harness.ask_user import (
     QuestionOption,
 )
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.ask_user_menu import QuestionMenu, TerminalAnswerer, activate, render_answer
-from pydantic_clai2.menu_worker import menu_key
+from pydantic_clai2.builtin_plugins.ask_user_menu import QuestionMenu, TerminalAnswerer, activate, render_answer
 from pydantic_clai2.plugins import PluginHost
-from pydantic_clai2.prompt_surface import PromptSurface
-from pydantic_clai2.question_input import Paste
+from pydantic_clai2.ui.menus.menu_worker import menu_key
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.question_input import Paste
 
 
 @pytest.fixture
 def question_pipe(monkeypatch: pytest.MonkeyPatch) -> Generator[PipeInput]:
     with create_pipe_input() as pipe:
-        monkeypatch.setattr('pydantic_clai2.question_input.create_input', lambda: pipe)
+        monkeypatch.setattr('pydantic_clai2.ui.prompt.question_input.create_input', lambda: pipe)
         yield pipe
 
 
@@ -301,7 +301,7 @@ async def test_cancellation_joins_question_reader_before_releasing_screen(monkey
             input_ready.set()
             allow_exit.set()
 
-    monkeypatch.setattr('pydantic_clai2.menu_worker.read_key', read_key)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', read_key)
     answerer = TerminalAnswerer(full_screen=screen, runner=run)
     with anyio.fail_after(10):
         async with anyio.create_task_group() as tasks:
