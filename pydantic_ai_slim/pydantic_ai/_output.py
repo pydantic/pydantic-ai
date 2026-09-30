@@ -989,10 +989,20 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
 
         def validate_with(validator: SchemaValidator) -> dict[str, object]:
             if isinstance(data, str):
-                return validator.validate_json(
+                validated = validator.validate_json(
                     data or '{}', allow_partial=pyd_allow_partial, context=validation_context
                 )
-            return validator.validate_python(data or {}, allow_partial=pyd_allow_partial, context=validation_context)
+            else:
+                validated = validator.validate_python(
+                    data or {}, allow_partial=pyd_allow_partial, context=validation_context
+                )
+            # Partial validation can omit an invalid field with a default. That must trigger the fallback,
+            # not return an empty envelope that crashes when its value is unwrapped.
+            if (key := self.outer_typed_dict_key) is not None and key not in validated:
+                raise ValidationError.from_exception_data(
+                    'response_validation_typed_dict', [{'type': 'missing', 'loc': (key,), 'input': validated}]
+                )
+            return validated
 
         try:
             return validate_with(self.validator)

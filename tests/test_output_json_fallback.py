@@ -1,13 +1,14 @@
 import json
 from collections.abc import AsyncIterator
+from contextlib import nullcontext
 from datetime import date
 from typing import Annotated
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import AfterValidator, BaseModel, ConfigDict, Strict, ValidationInfo
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, Strict, ValidationInfo
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
@@ -65,6 +66,24 @@ def test_json_string_fallback_validation_context(json_args: bool):
     )
     assert agent.run_sync('Test').output == [1, 2]
     assert modes == ['json', 'json']
+
+
+@pytest.mark.parametrize('valid_json', [False, True])
+async def test_partial_defaulted_output_fallback(valid_json: bool):
+    async def stream(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None
+        args = json.dumps({'response': '[1, 2]' if valid_json else 'not-json'})
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args=args)}
+
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        output_type=Annotated[list[int], Field(default_factory=list)],
+    )
+
+    expectation = nullcontext() if valid_json else pytest.raises(UnexpectedModelBehavior, match='retries')
+    with expectation:
+        async with agent.run_stream('Test') as result:
+            assert [output async for output in result.stream_output(debounce_by=None)] == snapshot([[1, 2], [1, 2]])
 
 
 class Person(BaseModel):
