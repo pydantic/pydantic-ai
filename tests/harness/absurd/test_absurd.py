@@ -606,35 +606,21 @@ class TestMcpSessions:
         assert counts == after_first_run
 
 
-_STREAM_RESPONSE: JsonValue = {
-    'parts': [{'content': 'from-checkpoint', 'part_kind': 'text'}],
-    'model_name': 'fn',
-    'kind': 'response',
-}
-
-
 class TestCheckpointFormat:
-    @pytest.mark.parametrize(
-        'payload',
-        [
-            {
-                'response': _STREAM_RESPONSE,
-                'events': [
-                    {
-                        'index': 0,
-                        'part': {'content': 'from-checkpoint', 'part_kind': 'text'},
-                        'event_kind': 'part_start',
-                    }
-                ],
-            },
-            _STREAM_RESPONSE,
-        ],
-        ids=['with-events', 'bare-response'],
-    )
-    async def test_stream_checkpoint_replays(self, absurd: AsyncAbsurd, payload: JsonValue) -> None:
-        """Pins the `request_stream` checkpoint shapes a replay reads: `{response, events}` or a bare response."""
+    async def test_stream_checkpoint_replays(self, absurd: AsyncAbsurd) -> None:
         counter = {'calls': 0}
         agent = Agent(_make_model(counter), name='gold', capabilities=[AbsurdDurability()])
+        # Pins the `{response, events}` payload shape of a stream checkpoint.
+        payload: JsonValue = {
+            'response': {
+                'parts': [{'content': 'from-checkpoint', 'part_kind': 'text'}],
+                'model_name': 'fn',
+                'kind': 'response',
+            },
+            'events': [
+                {'index': 0, 'part': {'content': 'from-checkpoint', 'part_kind': 'text'}, 'event_kind': 'part_start'}
+            ],
+        }
 
         async def write() -> JsonValue:
             return payload

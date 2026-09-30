@@ -3,19 +3,13 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TypeGuard
 
-from pydantic import TypeAdapter
-
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.durable_exec import (
-    CallableOperationBackend,
     DurableOperationId,
-    JournalOperationNamer,
-    ModelRequestId,
+    JournalCallableOperationBackend,
     RoleBasedOperationConfig,
     ToolsetCallToolId,
 )
-from pydantic_ai.messages import ModelResponse, ModelResponseStreamEvent
-from pydantic_ai.models import CompletedStreamedResponse, ModelRequestParameters
 
 from ._context import current_async_task_context
 
@@ -38,23 +32,6 @@ def _is_envelope(stored: object) -> TypeGuard[dict[str, object]]:
     return is_str_dict(payload) and payload.get('kind') in _RAW_RESULT_KINDS and 'result' in payload
 
 
-_response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
-_events_adapter: TypeAdapter[list[ModelResponseStreamEvent]] = TypeAdapter(list[ModelResponseStreamEvent])
-
-
-async def _from_stream_checkpoint(stored: object) -> object:
-    """Read a `request_stream` checkpoint; one stored as a bare `ModelResponse` has its events rebuilt from the parts."""
-    if not is_str_dict(stored) or 'response' in stored:
-        return stored
-    completed = CompletedStreamedResponse(
-        _response_adapter.validate_python(stored),
-        model_request_parameters=ModelRequestParameters(),
-        replay_events=True,
-    )
-    events = [event async for event in completed]
-    return {'response': stored, 'events': _events_adapter.dump_python(events, mode='json')}
-
-
 def _to_checkpoint(payload: dict[str, object]) -> object:
     """Reduce an encoded `CallToolResult` to the stored checkpoint: the raw return value."""
     result = payload['result']
@@ -74,11 +51,9 @@ def _from_checkpoint(stored: object) -> object:
     return {'kind': 'tool_return', 'result': stored}
 
 
-class AbsurdOperationBackend(CallableOperationBackend[None]):
+class AbsurdOperationBackend(JournalCallableOperationBackend[None]):
     def __init__(self, *, agent_name: str, default_model_id: str | None) -> None:
-        super().__init__(
-            namer=JournalOperationNamer(agent_name, default_model_id=default_model_id or 'default'), config=_NO_CONFIG
-        )
+        super().__init__(agent_name=agent_name, default_model_id=default_model_id, config=_NO_CONFIG)
 
     async def execute(
         self,
@@ -92,8 +67,6 @@ class AbsurdOperationBackend(CallableOperationBackend[None]):
         del cache_key, config
         task_ctx = current_async_task_context()
         assert task_ctx is not None
-        if isinstance(operation_id, ModelRequestId) and operation_id.streaming:
-            return await _from_stream_checkpoint(await task_ctx.step(name, body))
         if not isinstance(operation_id, ToolsetCallToolId):
             return await task_ctx.step(name, body)
 
