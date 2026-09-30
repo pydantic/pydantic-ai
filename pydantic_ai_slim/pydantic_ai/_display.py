@@ -12,7 +12,7 @@ from importlib import metadata
 from itertools import zip_longest
 from textwrap import wrap
 from threading import Lock
-from typing import Protocol, cast, get_args
+from typing import IO, Protocol, cast, get_args
 
 _banner_displayed = False
 _banner_lock = Lock()
@@ -51,8 +51,12 @@ floor, which only the vertex reaches.
 _LOGO_LINES = _LOGO.splitlines()
 _LOGO_WIDTH = max(map(len, _LOGO_LINES))
 _GUTTER = 2
-_TEXT_WIDTH = 100 - _LOGO_WIDTH - _GUTTER
-"""Wrap width for the text column, chosen so the whole banner fits in 100 columns."""
+_DEFAULT_WIDTH = 100
+"""Width the banner lays itself out in when there's no terminal to measure.
+
+A pipe has no width — a coding agent reading `stderr` back, or output on its way to a file — so
+rather than guess at one, the banner keeps the width it was designed to fit.
+"""
 _MAX_OUTPUT_TYPE_LENGTH = 40
 """How much of the output type's name the banner shows before cutting it off."""
 
@@ -67,11 +71,25 @@ _LOGFIRE_LINE = 'set it up free with Logfire and a GitHub login: https://pydanti
 _OTEL_LINE = 'or use any OpenTelemetry backend: https://pydantic.dev/docs/ai/logfire/#otel'
 """The two paths, one link each.
 
-Both are written to fit `_TEXT_WIDTH` unbroken: a URL `textwrap` splits across lines stops being
-clickable in most terminals, which is the only reason either is in the banner. `test_display` holds
-that, so a reworded line or a wider logo can't quietly cost a link.
+Neither is ever broken across lines: a URL `textwrap` splits stops being clickable in most
+terminals, which is the only reason either is in the banner. `_MIN_TEXT_WIDTH` is measured off
+these so that no width can wrap them, and `test_display` holds that at every width the banner is
+laid out for, so a reworded line or a wider logo can't quietly cost a link.
 """
 _HIDE_LINE = 'goes away once observability is on — or PYDANTIC_AI_NO_BANNER=1'
+
+_MIN_TEXT_WIDTH = len(_INFO_INDENT) + max(
+    len(word) for line in (_OBSERVABILITY_HEADING, _LOGFIRE_LINE, _OTEL_LINE, _HIDE_LINE) for word in line.split()
+)
+"""Narrowest the text column can be and still hold the banner's own words whole.
+
+Measured off the copy rather than written down, so a longer URL raises the floor with it instead of
+quietly starting to wrap — a URL `textwrap` splits stops being clickable, which is the only reason
+either link is in the banner.
+"""
+
+_MIN_WIDTH_FOR_LOGO = _LOGO_WIDTH + _GUTTER + _MIN_TEXT_WIDTH
+"""Narrowest terminal with room for the logo beside the text, rather than no room for the text."""
 
 # Written as ANSI rather than with `rich`, which isn't a dependency of the library the banner ships
 # in. `clai` reads the codes back into its own console, so both paths colour the banner identically.
@@ -223,6 +241,7 @@ def render_banner(
     capabilities: int,
     observability: bool = True,
     color: bool = True,
+    width: int | None = None,
 ) -> str:
     """Render the banner: what's running, what the agent is, and how to see what it does.
 
@@ -235,7 +254,10 @@ def render_banner(
         capabilities: Number of capabilities registered on the agent.
         observability: Whether to include the pointer to setting up observability.
         color: Whether to emit the ANSI colour codes that highlight the logo and the agent's identity.
+        width: Columns the banner has to lay itself out in, or `None` when the caller is writing
+            somewhere that has no width to report, such as a pipe.
     """
+    text_width, beside_logo = _columns(width)
     # What identifies the agent is highlighted; what it was given to work with is counted plainly.
     info = [('agent', name, True)] if name else []
     info.append(('model', model, True))
@@ -247,17 +269,33 @@ def render_banner(
         info.append(('tools', str(tools), False))
     info.append(('capabilities', str(capabilities), False))
 
-    # The versions carry no colour, so `textwrap` can be trusted to break them at a separator.
-    lines = [*wrap(_version_line(), width=_TEXT_WIDTH, subsequent_indent=_INFO_INDENT), '', *_info_lines(info)]
+    # The versions carry no colour, so unlike the details below them they can be left to `textwrap`.
+    lines = [*_wrapped(_version_line(), text_width), '', *_info_lines(info, text_width)]
     if observability:
         # Both halves of this are advice for someone who hasn't set observability up, so a session
         # that has stays out of it entirely rather than being told to do what it has already done.
-        lines += ['', *_observability_lines()]
+        lines += ['', *_observability_lines(text_width)]
         # Only what the block above doesn't already say: it opens by telling them to set it up.
-        lines += ['', *_wrapped(_HIDE_LINE)]
+        lines += ['', *_wrapped(_HIDE_LINE, text_width)]
 
-    banner = _beside_logo(lines)
+    banner = _beside_logo(lines) if beside_logo else '\n'.join(line.rstrip() for line in lines)
     return banner if color else _COLOR_PATTERN.sub('', banner)
+
+
+def _columns(width: int | None) -> tuple[int, bool]:
+    """How wide the text column gets out of `width`, and whether the logo still fits beside it.
+
+    A terminal too narrow for both gives the room to the words: the logo is decoration, and keeping
+    it would push the text past the edge, where the terminal breaks the lines itself and drops the
+    remainder in column zero — right through the logo, which is what a fixed width does at any size
+    the user didn't happen to have.
+    """
+    width = width or _DEFAULT_WIDTH
+    if width >= _MIN_WIDTH_FOR_LOGO:
+        return width - _LOGO_WIDTH - _GUTTER, True
+    # Narrower than the words themselves, there's nothing left to give them, and the floor at least
+    # keeps the links whole for a terminal that reflows rather than truncates.
+    return max(width, _MIN_TEXT_WIDTH), False
 
 
 def display_agent_banner(
@@ -295,6 +333,7 @@ def display_agent_banner(
             # Nothing renders this one for us, so the conventions have to be honored here: colour
             # belongs to a terminal, and an agent reading `stderr` back would get the codes raw.
             color=is_terminal and 'NO_COLOR' not in os.environ,
+            width=terminal_width(stderr),
         )
         # Written to the stream that was checked, rather than to whatever `sys.stderr` is by now.
         print(banner, file=stderr)
@@ -303,6 +342,32 @@ def display_agent_banner(
         # whose encoding can't take the logo (`LC_ALL=C`) raises here, as does a `stderr` that has
         # been closed or wrapped in something unusual.
         pass
+
+
+def terminal_width(stream: IO[str]) -> int | None:
+    """Columns `stream`'s terminal has to write in, or `None` when it isn't one or won't say.
+
+    Asked of the stream the banner is going to rather than of the process: `stdout` is often a pipe
+    while `stderr` is the terminal the user is reading. `COLUMNS` then overrides what the terminal
+    reports, as `shutil` and `rich` both read it. `clai` asks its console first, which knows the
+    same two things and a width it was handed, and falls through to here when it has no terminal —
+    so a `COLUMNS` the user exported is honoured whichever of the two shows the banner.
+    """
+    width: int | None = None
+    try:
+        width = os.get_terminal_size(stream.fileno()).columns
+    except Exception:
+        # Not a terminal, a stream with no `fileno()` at all, or one closed under us.
+        pass
+
+    columns = os.environ.get('COLUMNS', '')
+    # `isdecimal` rather than `isdigit`, which also accepts the likes of `²` — a width `int` then
+    # refuses, and the banner would be lost to the `except` that a failed measurement lands in
+    # rather than simply falling back to the width it was designed for.
+    if columns.isdecimal():
+        width = int(columns)
+    # A terminal that reports zero columns is one that doesn't know, not one with no room.
+    return width or None
 
 
 def _stderr_is_terminal() -> bool:
@@ -318,7 +383,7 @@ def _stderr_is_terminal() -> bool:
         return False
 
 
-def _info_lines(info: Sequence[tuple[str, str, bool]]) -> list[str]:
+def _info_lines(info: Sequence[tuple[str, str, bool]], text_width: int) -> list[str]:
     """Lay `(label, value, highlight)` details out over as many lines as they need.
 
     Packed here rather than by `textwrap`, which would count the colour codes as width and break
@@ -327,10 +392,10 @@ def _info_lines(info: Sequence[tuple[str, str, bool]]) -> list[str]:
     lines: list[str] = []
     width = 0
     for label, value, highlight in info:
-        value = _elided(value, _TEXT_WIDTH - len(_INFO_INDENT) - len(label) - len(': '))
+        value = _elided(value, text_width - len(_INFO_INDENT) - len(label) - len(': '))
         item = f'{label}: {value}'
         styled = f'{label}: {_colored(value, _HIGHLIGHT_COLOR)}' if highlight else item
-        if lines and width + len(_INFO_SEPARATOR) + len(item) <= _TEXT_WIDTH:
+        if lines and width + len(_INFO_SEPARATOR) + len(item) <= text_width:
             lines[-1] += _INFO_SEPARATOR + styled
             width += len(_INFO_SEPARATOR) + len(item)
         else:
@@ -399,11 +464,11 @@ def _version_line() -> str:
     return version + f' • Python {platform.python_version()}'
 
 
-def _wrapped(text: str, *, indented: bool = False) -> list[str]:
+def _wrapped(text: str, text_width: int, *, indented: bool = False) -> list[str]:
     """`text` re-flowed to the text column, continuing under its own indent rather than the label."""
     return wrap(
         text,
-        width=_TEXT_WIDTH,
+        width=text_width,
         initial_indent=_INFO_INDENT if indented else '',
         subsequent_indent=_INFO_INDENT,
         # Hyphens here are in URLs and flag names, which don't survive being broken across lines.
@@ -411,13 +476,13 @@ def _wrapped(text: str, *, indented: bool = False) -> list[str]:
     )
 
 
-def _observability_lines() -> list[str]:
+def _observability_lines(text_width: int) -> list[str]:
     """How to see what the agent actually did, for someone who hasn't set that up yet."""
     return [
-        *_wrapped(_OBSERVABILITY_HEADING),
+        *_wrapped(_OBSERVABILITY_HEADING, text_width),
         # One link each, so that whichever of the two the reader wants is a single thing to follow.
-        *_wrapped(_LOGFIRE_LINE, indented=True),
-        *_wrapped(_OTEL_LINE, indented=True),
+        *_wrapped(_LOGFIRE_LINE, text_width, indented=True),
+        *_wrapped(_OTEL_LINE, text_width, indented=True),
     ]
 
 

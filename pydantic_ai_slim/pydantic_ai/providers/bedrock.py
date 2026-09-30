@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Literal, overload
 
 from pydantic_ai import ModelProfile
@@ -236,12 +237,19 @@ class BedrockModelProfile(ModelProfile, total=False):
       Converse; Cohere's `k` and Qwen's key are unverified on Converse, so they stay here too).
     """
 
+    bedrock_disallows_sampling_settings: bool
+    """Whether Converse rejects `temperature`, `top_p` and `top_k` for this model. Default: `False`.
+
+    When set, `BedrockConverseModel` drops these settings with a warning instead of sending them.
+    """
+
     bedrock_supported_on_converse: bool
     """Whether this model is served by the Bedrock Converse API. Default: `True`.
 
     Set to `False` for models that Bedrock serves only through the Mantle OpenAI-compatible API (today,
-    the proprietary OpenAI GPT models); `BedrockConverseModel` raises at construction so the user gets an
-    actionable pointer to `BedrockMantleProvider` instead of an opaque Converse error at request time.
+    the proprietary OpenAI GPT models not allowlisted in `bedrock_openai_model_profile`);
+    `BedrockConverseModel` raises at construction so the user gets an actionable pointer to
+    `BedrockMantleProvider` instead of an opaque Converse error at request time.
     """
 
 
@@ -451,10 +459,8 @@ def bedrock_moonshotai_model_profile(model_name: str) -> ModelProfile | None:
 
 
 # MiniMax, NVIDIA, and Writer don't have non-Bedrock provider modules in `pydantic_ai/profiles/`, so
-# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an
-# upstream profile via `_strip_builtin_tools(<upstream>_model_profile(model_name))` like the
-# other `bedrock_<vendor>_model_profile` fns do. The inline `'openai'` lambda in
-# `BedrockProvider.model_profile` follows the same from-scratch pattern for the same reason.
+# these profile fns build a `BedrockModelProfile` from scratch instead of composing with an upstream
+# profile. OpenAI is handled separately because Converse support differs between its model families.
 
 
 def bedrock_writer_model_profile(model_name: str) -> ModelProfile | None:
@@ -495,16 +501,21 @@ def bedrock_nvidia_model_profile(model_name: str) -> ModelProfile | None:
     )
 
 
+_BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS = frozenset({'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'})
+
+
 def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for an OpenAI model used via Bedrock Converse."""
-    # Only the open-weight GPT-OSS family is served on Converse; every proprietary GPT model (GPT-5.4+
-    # today, and future GPT-6/7/… tomorrow) is Bedrock Mantle-only. Flag those as unsupported so
-    # `BedrockConverseModel` raises an actionable error at construction rather than failing later with an
-    # opaque Converse error.
+    # Exact names, not prefixes: GPT-5.6 Cyber is Mantle-only, unlike Sol/Luna/Terra.
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-sol.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
+    # GPT-6 Sol/Luna have no AWS model card; their Converse support was verified with live requests.
+    if model_name in {'gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-6-astra'}:
+        # Converse rejects `temperature`, `top_p` and `top_k` for these; everything else keeps the defaults.
+        return BedrockModelProfile(bedrock_disallows_sampling_settings=True)
+    # Keep other proprietary GPT models gated until their Converse support is confirmed.
     if not model_name.startswith('gpt-oss'):
         return BedrockModelProfile(bedrock_supported_on_converse=False)
-    # TODO(v3): default `bedrock:` to Bedrock Mantle (with a deprecation warning steering users who want
-    # Converse to a `bedrock-converse:` prefix), mirroring the OpenAI Responses transition.
     # Converse rejects `reasoning_effort='none'` — mark always-on.
     return BedrockModelProfile(
         bedrock_thinking_variant='openai',
@@ -546,13 +557,27 @@ class BedrockProvider(Provider[BaseClient]):
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
         provider_to_profile: dict[str, Callable[[str], ModelProfile | None]] = {
-            'anthropic': bedrock_anthropic_model_profile,
+            'anthropic': lambda model_name: merge_profile(
+                bedrock_anthropic_model_profile(model_name),
+                # Bedrock's Claude model cards document a 5-minute TTL; some models accept a 1-hour
+                # `cachePoint` TTL, which `prompt_cache_outlook` detects in message history.
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                ModelProfile(default_cache_retention=timedelta(minutes=5)),
+            ),
             'mistral': bedrock_mistral_model_profile,
             'cohere': lambda model_name: _strip_builtin_tools(cohere_model_profile(model_name)),
             'amazon': bedrock_amazon_model_profile,
             'meta': bedrock_meta_model_profile,
             'deepseek': lambda model_name: _strip_builtin_tools(bedrock_deepseek_model_profile(model_name)),
-            'openai': bedrock_openai_model_profile,
+            'openai': lambda model_name: merge_profile(
+                bedrock_openai_model_profile(model_name),
+                # Bedrock documents a 30-minute minimum TTL for exactly these; other OpenAI models get
+                # automatic caching with no documented retention.
+                # https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html
+                ModelProfile(default_cache_retention=timedelta(minutes=30))
+                if model_name in _BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS
+                else None,
+            ),
             'qwen': bedrock_qwen_model_profile,
             'google': bedrock_google_model_profile,
             'minimax': bedrock_minimax_model_profile,

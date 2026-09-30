@@ -12,6 +12,25 @@ JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
 
+class UseEnumMemberDocstrings:
+    """Mix into an `Enum` to describe each of its members by the docstring written under it.
+
+    This is the enum counterpart to `model_config = ConfigDict(use_attribute_docstrings=True)` on a Pydantic
+    model, which is how a model's fields get their docstrings as descriptions. With it, the enum is described
+    to the model as `anyOf` of `const`s carrying those docstrings as descriptions, rather than as a bare list
+    of values, so the model can tell similar options apart. Without it the docstrings are ignored and the
+    schema is unchanged.
+
+    The two are expressed differently because an `Enum` has no `model_config` to carry a flag, and cannot carry
+    a plain class attribute either — annotated or not, any assigned value becomes a member. A base class is the
+    only marker left, so mix it in ahead of `str`, `int` or `Enum`:
+    `class Urgency(UseEnumMemberDocstrings, str, Enum)`. It changes nothing else about the enum: its members,
+    their values, and their `str`/`int` behaviour are exactly what they would be without it.
+
+    See [enum options](../tools.md#enum-options) for an example.
+    """
+
+
 @dataclass(init=False)
 class JsonSchemaTransformer(ABC):
     """Walks a JSON schema, applying transformations to it at each level.

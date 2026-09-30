@@ -28,10 +28,10 @@ from ..settings import ModelSettings, ThinkingLevel, merge_model_settings
 from ..tools import ToolDefinition
 from . import ModelRequestParameters, download_item
 from ._reasoning_details import ReasoningDetail, from_reasoning_detail, into_reasoning_detail
-from ._tool_choice import ResolvedToolChoice
+from ._tool_choice import support_tool_forcing, tool_forcing_unavailable_reason
 
 try:
-    from openai import APIError, AsyncOpenAI, omit
+    from openai import APIConnectionError, APIError, AsyncOpenAI, omit
     from openai.types import chat, completion_usage
     from openai.types.chat import chat_completion, chat_completion_chunk, chat_completion_message_function_tool_call
     from openai.types.chat.chat_completion_content_part_param import ChatCompletionContentPartParam
@@ -216,11 +216,13 @@ class OpenRouterProviderConfig(TypedDict, total=False):
     ignore: list[str]
     """List of provider slugs to skip for this request. [See details](https://openrouter.ai/docs/features/provider-routing#ignoring-providers)"""
 
-    quantizations: list[Literal['int4', 'int8', 'fp4', 'fp6', 'fp8', 'fp16', 'bf16', 'fp32', 'unknown']]
+    quantizations: list[
+        Literal['int4', 'int8', 'fp4', 'mxfp4', 'nvfp4', 'fp6', 'fp8', 'mxfp8', 'fp16', 'bf16', 'fp32', 'unknown']
+    ]
     """List of quantization levels to filter by (e.g. ["int4", "int8"]). [See details](https://openrouter.ai/docs/features/provider-routing#quantization)"""
 
-    sort: Literal['price', 'throughput', 'latency']
-    """Sort providers by price or throughput. (e.g. "price" or "throughput"). [See details](https://openrouter.ai/docs/features/provider-routing#provider-sorting)"""
+    sort: Literal['price', 'throughput', 'latency', 'exacto']
+    """Sort providers by price, throughput, latency, or exacto. [See details](https://openrouter.ai/docs/features/provider-routing#provider-sorting) and [Exacto](https://openrouter.ai/docs/guides/routing/model-variants/exacto)."""
 
     max_price: _OpenRouterMaxPrice
     """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""
@@ -685,12 +687,12 @@ class OpenRouterModel(OpenAIChatModel):
         return cast(OpenRouterModelProfile, self.profile)
 
     @override
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the longest explicit retention accepted by OpenRouter's downstream model."""
         settings = merge_model_settings(self.settings, model_settings) or {}
         if not self._resolved_profile.get('openrouter_supports_cache_ttl', False):
             return None
-        return self._max_prompt_cache_retention(
+        return self._max_cache_retention(
             settings.get('openrouter_cache_instructions')
             if self._resolved_profile.get('openrouter_supports_cache_control', False)
             else None,
@@ -898,46 +900,47 @@ class OpenRouterModel(OpenAIChatModel):
         return omit
 
     @override
-    def _supports_tool_forcing(
-        self,
-        model_settings: OpenAIChatModelSettings,
-        model_request_parameters: ModelRequestParameters,
-        resolved_tool_choice: ResolvedToolChoice,
-        context: str = 'forcing specific tools',
+    def _request_thinks(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> bool:
-        if self._resolved_profile.get('openrouter_supports_forced_tool_choice_with_thinking', True):
-            return super()._supports_tool_forcing(
-                model_settings, model_request_parameters, resolved_tool_choice, context
-            )
-
-        openrouter_model_settings = cast(OpenRouterModelSettings, model_settings)
-        # OpenRouter-specific reasoning takes precedence over unified thinking. Also check params.thinking
-        # since Model.prepare_request strips unified `thinking` from model_settings into params.thinking.
+        openrouter_model_settings = cast(OpenRouterModelSettings, model_settings or {})
+        # OpenRouter-specific reasoning takes precedence over the settings `OpenAIChatModel` reads.
         if 'openrouter_reasoning' in openrouter_model_settings:
             openrouter_reasoning = openrouter_model_settings['openrouter_reasoning']
-            thinking_enabled = (
+            return (
                 bool(openrouter_reasoning)
                 and openrouter_reasoning.get('enabled', True)
                 and openrouter_reasoning.get('effort') != 'none'
             )
-        else:
-            thinking_enabled = bool(model_request_parameters.thinking)
+        return super()._request_thinks(model_settings, model_request_parameters)
 
-        if not thinking_enabled:
-            return super()._supports_tool_forcing(
-                model_settings, model_request_parameters, resolved_tool_choice, context
-            )
-
-        explicit_choice = model_settings.get('tool_choice')
-        if explicit_choice == 'required' or isinstance(explicit_choice, list):
-            raise UserError(
-                f"OpenRouter does not support {context} with thinking mode. Disable thinking or use `tool_choice='auto'`; "
-                'otherwise OpenRouter silently drops reasoning.'
-            )
-
-        # Thinking is on and the user didn't explicitly ask for forcing, so it was inferred from the output
-        # mode or a tool-returning output. Silently fall back to `'auto'` rather than dropping reasoning.
-        return False
+    @override
+    def _supports_tool_forcing(
+        self, model_settings: OpenAIChatModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> bool:
+        thinking = self._request_thinks(model_settings, model_request_parameters)
+        # Where forcing isn't supported while thinking, OpenRouter doesn't reject the request: it drops `reasoning`
+        # and answers without any, so a resolved forced choice falls back to `'auto'` rather than losing it. An
+        # explicit forcing `tool_choice` only conflicts with thinking the user asked for; thinking the model does by
+        # default gives way to it, as on the direct API.
+        requested_thinking = thinking and (
+            'openrouter_reasoning' in model_settings
+            or model_settings.get('openai_reasoning_effort') is not None
+            or model_request_parameters.thinking is not None
+        )
+        return support_tool_forcing(
+            self.model_name,
+            model_settings,
+            tool_forcing_unavailable_reason(
+                self._resolved_profile,
+                thinking=requested_thinking,
+                thinking_remedy=(
+                    'OpenRouter would silently drop reasoning. Disable thinking with `thinking=False` or '
+                    "`openrouter_reasoning={'enabled': False}`"
+                ),
+            ),
+            disables_thinking=thinking and self._resolved_profile.get('forced_tool_choice_disables_thinking', False),
+        )
 
     @override
     def _get_tool_choice(
@@ -1245,9 +1248,17 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                     _raise_for_no_completion(chunk_dict, self._model_name, exc)
                     raise
                 yield validated
+        except APIConnectionError:
+            # A transport failure mid-stream (read timeout, connection reset) carries no error body;
+            # `OpenAIStreamedResponse` maps it to `ModelAPIError`.
+            raise
         except APIError as e:
-            error = _OpenRouterError.model_validate(e.body)
-            raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message)
+            try:
+                error = _OpenRouterError.model_validate(e.body)
+            except ValidationError:
+                # An error object without an integer `code`: there's no status to report.
+                raise ModelAPIError(model_name=self._model_name, message=e.message) from e
+            raise ModelHTTPError(status_code=error.code, model_name=self._model_name, body=error.message) from e
 
     @override
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:

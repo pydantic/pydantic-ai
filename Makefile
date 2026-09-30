@@ -7,11 +7,6 @@
 .PHONY: install
 install: .uv ## Install the package, dependencies, and pre-commit for local development
 	uv sync --frozen --all-extras --no-extra mcp-tasks --all-packages --group lint
-	# pyright typechecks the gh-aw shim, which imports pydantic-ai-harness. The
-	# harness is kept out of the lock (its pydantic-ai-slim dep collides with the
-	# workspace member under lowest-direct), so install it out-of-band; --no-deps
-	# because pydantic-ai-slim is already present. See .github/workflows/ci.yml.
-	uv pip install --no-deps "pydantic-ai-harness==0.7.0"
 	@if command -v pre-commit >/dev/null 2>&1; then \
 		pre-commit install --install-hooks; \
 	else \
@@ -51,10 +46,12 @@ typecheck-pyright:
 	@# To typecheck for a specific version of python, run 'make install-all-python' then set environment variable PYRIGHT_PYTHON=3.10 or similar
 	@# PYRIGHT_PYTHON_IGNORE_WARNINGS avoids the overhead of making a request to github on every invocation
 	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
+	@# Pyright skips everything under a dot directory, so `.github/scripts` is a project of its own
+	PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright -p .github/scripts $(if $(PYRIGHT_THREADS),--threads $(PYRIGHT_THREADS)) $(if $(PYRIGHT_PYTHON),--pythonversion $(PYRIGHT_PYTHON))
 
 .PHONY: typecheck-changed
 typecheck-changed: ## Run static type checking on the files reached by changes since it last passed
-	@# The pre-commit hook's entry point. Whenever the narrowed set is not provably the same answer, it
+	@# CI's Pyright entry point. Locally, whenever the narrowed set is not provably the same answer, it
 	@# runs pyright over every tracked file it reports on, minus the unchanged `tests/` files. Only `CI`, an
 	@# interpreter older than 3.11 and a pyright configuration it cannot reproduce hand the whole project to
 	@# `typecheck-pyright`; see scripts/typecheck_changed.py
@@ -92,6 +89,18 @@ testcov: ## Run tests with coverage and generate an HTML report
 	@uv run coverage report
 	@echo "building coverage html"
 	@uv run coverage html
+
+.PHONY: integration-localstack
+integration-localstack: ## Run the harness LocalStack tests (needs Docker and LOCALSTACK_AUTH_TOKEN)
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/localstack
+
+.PHONY: integration-mongodb
+integration-mongodb: ## Run the harness MongoDB tests (`docker run -d -p 27017:27017 mongo:8`, or set MONGODB_TEST_URL)
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/mongodb
+
+.PHONY: integration-redis
+integration-redis: ## Run the harness Redis tests (`docker run -d -p 6379:6379 redis:8`, or set REDIS_TEST_URL)
+	uv run --all-packages --all-extras --no-extra mcp-tasks pytest src/pydantic_ai_harness/integration_tests/redis
 
 .PHONY: update-examples
 update-examples: ## Update documentation examples

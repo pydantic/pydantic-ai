@@ -1,3 +1,7 @@
+---
+description: "Use Z.AI (Zhipu AI) GLM models with Pydantic AI: install the zai optional group, set your API key, and enable thinking mode with preserved thinking."
+---
+
 # Z.AI
 
 ## Install

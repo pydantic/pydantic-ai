@@ -1,3 +1,7 @@
+---
+description: "Set timeouts in Pydantic AI for model requests, tool calls, hooks, MCP servers and realtime sessions, bound a whole run, and end a run early from inside a tool."
+---
+
 # Timeouts
 
 Bounding how long one step inside a run may take, and ending a run from inside a tool, are answered by separate mechanisms with separate failure modes. This page maps them. To stop a run that is already in flight, see [Cancelling a Run](agent.md#cancelling-a-run).
@@ -13,7 +17,7 @@ Each knob below bounds a different unit of work. None of them bounds the wall-cl
 | A [hook](hooks.md) function | `timeout=` on the `@hooks.on.*` decorator | [`HookTimeoutError`][pydantic_ai.capabilities.HookTimeoutError], which is an [`AgentRunError`][pydantic_ai.exceptions.AgentRunError] and aborts the run. Like a `def` tool, a `def` hook is not actually stopped: the worker thread runs to completion |
 | Connecting to an MCP server | `MCPToolset(init_timeout=...)`, default `5` seconds | The connection and `initialize` handshake fail |
 | A single MCP request | `MCPToolset(read_timeout=...)`, default `300` seconds | The request fails; under the default [`tool_error_behavior='retry'`](mcp/client.md#tool-errors) the model sees it as a retryable tool error |
-| Opening a [realtime session](realtime/overview.md) | `handshake_timeout` on [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings], default `30` seconds — OpenAI, Azure OpenAI, and xAI | Opening the session raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. On a reconnect it consumes a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] attempt instead |
+| Opening a [realtime session](realtime/overview.md) | `handshake_timeout` on [`RealtimeModelSettings`][pydantic_ai.realtime.RealtimeModelSettings], default `30` seconds — OpenAI, Azure OpenAI, xAI, and Gemini | Opening the session raises [`RealtimeError`][pydantic_ai.realtime.RealtimeError]. On a reconnect it consumes a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy] attempt instead |
 | Total work done by a run | [`UsageLimits`][pydantic_ai.usage.UsageLimits] — requests, tool calls, tokens, or cost — see [Usage Limits](agent.md#usage-limits) | [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded] |
 | Wall-clock duration of a whole run | Nothing built in — wrap `agent.run()` in `asyncio.timeout` (Python 3.11+) or `anyio.fail_after()`, or cancel a [`CancellationToken`][pydantic_ai.CancellationToken] from a timer | The run is [cancelled](agent.md#cancelling-a-run) |
 

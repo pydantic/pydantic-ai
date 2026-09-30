@@ -18,6 +18,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -37,6 +38,7 @@ from pydantic_ai import Agent
 from pydantic_ai._instrumentation import provider_attributes
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import Instrumentation
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -75,12 +77,10 @@ from pydantic_ai.realtime.codec import (
     SessionUsage,
     ToolCall,
 )
-from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.usage import RequestUsage, RunUsage
 
 from .test_session import FakeRealtimeModel, make_tool_manager
-
-pytestmark = pytest.mark.anyio
 
 
 def RealtimeSession(connection: RealtimeConnection, runner: Any, **kwargs: Any) -> _RealtimeSession:
@@ -230,6 +230,48 @@ async def test_owner_error_marks_active_chat_and_session_spans() -> None:
     assert spans['chat gpt-realtime'].status.is_ok is False
     assert spans['invoke_agent agent'].status.is_ok is False
     assert all(span.events for span in spans.values())
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_error_events_honor_include_content(include_content: bool) -> None:
+    """Session and provider errors follow the setting, like the classic spans' exceptions do.
+
+    A realtime `ModelHTTPError` carries the provider's error body in its message and a
+    `RealtimeError` relays the provider's own error text, so the message and stack trace are
+    withheld when content capture is off. The ERROR status carries no description either way.
+    """
+    settings, exporter = _settings(include_content=include_content)
+    session = RealtimeSession(
+        _Connection([OutputTranscript(text='partial')]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    with pytest.raises(ModelHTTPError):
+        async with session:
+            stream = session.__aiter__()
+            await anext(stream)
+            raise ModelHTTPError(status_code=400, model_name='gpt-realtime', body='invalid content: prompt-secret')
+
+    spans = {span.name: span for span in exporter.get_finished_spans()}
+    events = [
+        (name, dict(event.attributes or {}))
+        for name, span in spans.items()
+        for event in span.events
+        if event.name == 'exception'
+    ]
+    assert [(name, attributes['exception.type']) for name, attributes in events] == [
+        ('chat gpt-realtime', 'pydantic_ai.exceptions.ModelHTTPError'),
+        ('invoke_agent agent', 'pydantic_ai.exceptions.ModelHTTPError'),
+    ]
+    assert all(span.status.description is None for span in spans.values())
+    if include_content:
+        assert all({'exception.message', 'exception.stacktrace'} <= set(a) for _, a in events)
+        assert 'prompt-secret' in str(events)
+    else:
+        assert all(set(a) == {'exception.type', 'exception.escaped'} for _, a in events)
+        assert 'prompt-secret' not in str(events)
 
 
 async def test_playback_boundary_opens_a_speak_span_outlasting_the_response() -> None:
@@ -426,6 +468,63 @@ async def test_session_and_tool_spans_with_usage() -> None:
     assert sess.context is not None
     assert chat.parent is not None and chat.parent.span_id == sess.context.span_id
     assert tool.parent is not None and tool.parent.span_id == sess.context.span_id
+
+
+async def test_session_span_reports_its_own_usage_not_a_carried_total() -> None:
+    """A session handed a running total reports only what it added, like a classic agent-run span.
+
+    `usage=` accumulates into the object it is given, so `session.usage` is the conversation's total by
+    design. The span reporting that would count every earlier run again for anyone summing agent-run
+    spans; the per-turn `chat` spans already carry each response's own usage.
+    """
+    settings, exporter = _settings()
+    agent = _weather_agent(name='assistant')
+    agent.instrument = settings
+    conn = _Connection([SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)), ResponseDone()])
+    async with agent.realtime(
+        _Model(conn), usage=RunUsage(requests=1, input_tokens=100, output_tokens=40)
+    ).session() as session:
+        _ = [e async for e in session]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent assistant')
+    assert sess.attributes is not None
+    assert sess.attributes['gen_ai.aggregated_usage.input_tokens'] == 10
+    assert sess.attributes['gen_ai.aggregated_usage.output_tokens'] == 4
+    assert session.usage.input_tokens == 110
+
+
+async def test_session_span_leaves_a_delegates_usage_to_its_own_span() -> None:
+    """A run a tool starts with `usage=ctx.usage` adds to `session.usage`, but reports on its own span."""
+    settings, exporter = _settings()
+    sub = Agent(TestModel(), name='sub')
+    sub.instrument = settings
+
+    agent = Agent[None, str](name='assistant', deps_type=type(None))
+
+    @agent.tool
+    async def analyze(ctx: RunContext[None]) -> str:
+        result = await sub.run('hi', usage=ctx.usage)
+        return result.output
+
+    agent.instrument = settings
+    conn = _Connection(
+        [
+            ToolCall(tool_call_id='c', tool_name='analyze', args='{}'),
+            SessionUsage(usage=RequestUsage(input_tokens=10, output_tokens=4)),
+            ResponseDone(),
+        ]
+    )
+    async with agent.realtime(_Model(conn)).session() as session:
+        _ = [e async for e in session]
+
+    spans = {s.name: s for s in exporter.get_finished_spans()}
+    sess = spans['invoke_agent assistant']
+    delegate = spans['invoke_agent sub']
+    assert sess.attributes is not None and delegate.attributes is not None
+    assert sess.attributes['gen_ai.aggregated_usage.input_tokens'] == 10
+    assert sess.attributes['gen_ai.aggregated_usage.output_tokens'] == 4
+    assert delegate.attributes['gen_ai.aggregated_usage.input_tokens'] == snapshot(51)
+    assert session.usage.input_tokens == 10 + 51
 
 
 async def test_session_and_chat_spans_carry_request_config() -> None:
@@ -1015,7 +1114,8 @@ async def test_session_captures_transcript_messages() -> None:
 
 async def test_session_span_counts_dropped_audio_chunks() -> None:
     settings, exporter = _settings()
-    chunks = [bytes([index]) for index in range(40)]
+    # Minute-long chunks of 24 kHz PCM16, so seven of them overflow the view's five-minute window by two.
+    chunks = [bytes([index]) * 60 * 48000 for index in range(7)]
     session = RealtimeSession(
         _Connection([AudioDelta(chunk) for chunk in chunks]),
         _ok_runner,
@@ -1024,11 +1124,11 @@ async def test_session_span_counts_dropped_audio_chunks() -> None:
     )
 
     async with session:
-        assert [chunk async for chunk in session.stream_audio()] == chunks[-32:]
+        assert [chunk async for chunk in session.stream_audio()] == chunks[-5:]
 
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
-    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 8
+    assert sess.attributes['pydantic_ai.audio_chunks_dropped'] == 2
     assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 0
 
 
@@ -1071,6 +1171,50 @@ async def test_session_span_counts_dropped_transcript_deltas() -> None:
     sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
     assert sess.attributes is not None
     assert sess.attributes['pydantic_ai.transcript_items_dropped'] == 8
+
+
+async def test_session_span_counts_dropped_session_queue_deltas() -> None:
+    settings, exporter = _settings()
+    chunks = [index.to_bytes(2, 'big') for index in range(520)]
+    session = RealtimeSession(
+        _Connection([AudioDelta(chunk) for chunk in chunks]),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        _ = [chunk async for chunk in session.stream_audio()]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.queue_dropped_deltas'] == 8
+    assert sess.attributes['pydantic_ai.queue_dropped_structural'] == 0
+
+
+async def test_session_span_counts_dropped_session_queue_structural_events() -> None:
+    settings, exporter = _settings()
+    events: list[RealtimeCodecEvent] = []
+    for index in range(200):
+        events.append(RealtimeInputSpeechStartEvent())
+        events.append(AudioDelta(index.to_bytes(4, 'big')))
+        events.append(RealtimeInputSpeechEndEvent())
+        events.append(ResponseDone())
+    session = RealtimeSession(
+        _Connection(events),
+        _ok_runner,
+        instrumentation=settings,
+        model_name='gpt-realtime',
+    )
+
+    async with session:
+        _ = [chunk async for chunk in session.stream_audio()]
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    # Seven structural events per turn, not five: the untranscribed-segment placeholder this PR adds
+    # contributes a part start and end of its own.
+    assert sess.attributes['pydantic_ai.queue_dropped_structural'] == 200 * 7 - 512
 
 
 async def test_session_span_includes_resolved_run_attributes() -> None:
@@ -1256,6 +1400,43 @@ def test_chat_span_without_response_ends_without_metrics() -> None:
 
     assert [span.name for span in exporter.get_finished_spans()] == ['chat']
     assert metric_reader.get_metrics_data() is None
+
+
+@pytest.mark.parametrize('model_name', ['gpt-live-1', 'gpt-realtime'])
+async def test_chat_span_reports_a_cost_the_response_already_carries(model_name: str) -> None:
+    """A cost set on the usage is reported as is, not recalculated from the response's model name.
+
+    OpenAI GPT-Live's responses carry the tokens of the backend it delegated to, priced at the
+    backend's rates, while the response names the Live model. Re-pricing from that name charged the
+    backend's tokens at the Live model's rate: nothing while genai-prices has no Live price, and $0
+    once it prices Live by the second only. `gpt-realtime` is priced by token, so it shows a
+    recalculation would differ.
+    """
+    settings, exporter, metric_reader = _settings_with_metrics()
+    conn = _Connection(
+        [
+            OutputTranscript(text='It will rain.'),
+            SessionUsage(usage=RequestUsage(input_tokens=805, output_tokens=19, cost=Decimal('0.0044'))),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, _ok_runner, instrumentation=settings, model_name=model_name)
+    _ = await collect_events(session)
+
+    chat = next(s for s in exporter.get_finished_spans() if s.name == f'chat {model_name}')
+    assert chat.attributes is not None
+    assert chat.attributes['operation.cost'] == 0.0044
+    metrics = metric_reader.get_metrics_data()
+    assert metrics is not None
+    cost_points = [
+        point
+        for resource in metrics.resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+        if metric.name == 'operation.cost' and isinstance(metric.data, Histogram)
+        for point in metric.data.data_points
+    ]
+    assert [point.sum for point in cost_points] == [0.0044]
 
 
 async def test_chat_span_closed_for_contentless_response() -> None:
@@ -1631,3 +1812,29 @@ async def test_second_agent_level_instrumentation_wins_for_session_spans() -> No
 
     assert not first_exporter.get_finished_spans(), 'the superseded capability must not export'
     assert second_exporter.get_finished_spans(), 'the capability the run keeps is the one that exports'
+
+
+async def test_stalled_utterances_get_a_chat_span_each() -> None:
+    """Two provider responses in one stalled exchange are two model requests, and so two `chat` spans.
+
+    The exchange stays open across them — the first says more is coming — but a span that spanned both
+    would report the sum of two requests' usage as one.
+    """
+    settings, exporter = _settings()
+    conn = _Connection(
+        [
+            OutputTranscript(text='Let me think.', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=60, output_tokens=4)),
+            ResponseDone(more_expected=True),
+            OutputTranscript(text='The answer is 42.', is_final=True),
+            SessionUsage(usage=RequestUsage(input_tokens=70, output_tokens=5)),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(
+        conn, _ok_runner, instrumentation=settings, model_name='gemini-3.8-live-extended-thinking'
+    )
+    await collect_events(session)
+
+    chat_spans = [s for s in exporter.get_finished_spans() if s.name.startswith('chat ')]
+    assert [(s.attributes or {}).get('gen_ai.usage.input_tokens') for s in chat_spans] == [60, 70]
