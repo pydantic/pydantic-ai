@@ -1498,24 +1498,35 @@ rather than falling back. `ui_events` (default `false`) adds spans and logs, tag
 clear, and resume. They record names and listed choices, never prompt text, typed
 values, or secrets.
 
+### Setting up where traces go
+
+`/plugins configure logfire` (or `C` on `logfire` in `/plugins`) opens a setup menu:
+
+1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
+2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
+3. Pick one of the projects you can write to.
+
+CLAI then creates a write token for that project, saves it in `/keys` as
+`LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
+reloads and the next turn is traced there. The sign-in itself is not kept. A
+self-hosted URL is saved as the plugin's `base_url`; hosted regions need none,
+since the write token names its region. Run the menu again to switch projects.
+
 ### Sending UX telemetry to the Pydantic shared project
 
 `@pydantic.dev` staff can send CLAI UX telemetry to the team's shared Logfire
-project, next to or instead of their own. The token never enters the repository
-or plugin settings:
-
-1. Ask in `#harness` for a write token for the shared CLAI project.
-2. Save it with `/keys`, named `CLAI2_LOGFIRE_TOKEN`.
-3. Point the plugin at it and turn on UI events:
+project: run `/plugins configure logfire`, pick Logfire US, sign in with your
+Pydantic account, and pick the shared CLAI project. Then turn on UI events:
 
 ```text
-/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"token": {"name": "CLAI2_LOGFIRE_TOKEN"}, "ui_events": true}'
+/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"token": {"name": "LOGFIRE_TOKEN_<ORG>_<PROJECT>"}, "ui_events": true}'
 ```
 
-Remove `token` to go back to your personal project from `LOGFIRE_TOKEN`, or keep
-it and drop `ui_events` for agent traces only. Agent spans still include content
-by default; add `"include_content": false, "include_binary_content": false` if
-you'd rather share only UX telemetry and timing with the team.
+using the key name the setup menu printed (Esc closes the menu that `/plugins add`
+opens). Run the setup menu again to go back to your personal project. Agent spans
+still include content by default; add `"include_content": false,
+"include_binary_content": false` if you'd rather share only UX telemetry and
+timing with the team.
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.

@@ -317,6 +317,14 @@ exports nothing rather than falling back to another project.
 Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled.
 
+`base_url` names a self-hosted Logfire (an https origin); hosted regions need
+none. `/plugins configure logfire` sets `token` and `base_url` for you: it asks
+where traces go, runs Logfire's own device sign-in there (the one behind
+`logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
+accepts), lists the projects you can write to, and saves a new write token for
+the one you pick in `/keys`. The sign-in token is used only during setup. The flow
+lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+
 `ui_events` (default `false`) also records CLAI's UI interactions on the same
 instance, as spans and logs tagged `clai2-ui`: menus opened and how they closed,
 slash commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt

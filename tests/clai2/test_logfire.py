@@ -59,6 +59,7 @@ class Recorder:
         data_dir: Path,
         token: str | None,
         scrubbing: logfire.ScrubbingOptions | None,
+        advanced: logfire.AdvancedOptions | None,
     ) -> logfire.Logfire:
         self.tokens.append(token)
         self.options.append(
@@ -69,6 +70,7 @@ class Recorder:
                 'console': console,
                 'config_dir': config_dir,
                 'data_dir': data_dir,
+                'base_url': advanced.base_url if advanced else None,
             }
         )
         exporter = Exporter()
@@ -156,6 +158,7 @@ async def test_default_content_images_tools_and_usage_are_traced(recorder: Recor
             'console': False,
             'config_dir': tmp_path / 'config/pydantic-clai2/logfire',
             'data_dir': tmp_path / 'config/pydantic-clai2/logfire',
+            'base_url': None,
         }
     ]
     assert all(exporter.closed for exporter in recorder.exporters)
@@ -496,3 +499,16 @@ async def test_token_from_keys_chooses_the_project(
     output = host.console.file
     assert isinstance(output, io.StringIO)
     assert ('CLAI2_LOGFIRE_TOKEN is not in /keys' in output.getvalue()) == (not saved and send is not False)
+
+
+async def test_self_hosted_base_url_reaches_the_sdk(recorder: Recorder) -> None:
+    host = make_host(base_url='logfire.example.com/')
+    activate(host)
+    await close_host(host)
+    assert recorder.options[0]['base_url'] == 'https://logfire.example.com'
+
+
+def test_base_url_must_be_an_https_origin(recorder: Recorder) -> None:
+    with pytest.raises(ValidationError, match='https URL with no path'):
+        activate(make_host(base_url='http://logfire.example.com'))
+    assert not recorder.instances

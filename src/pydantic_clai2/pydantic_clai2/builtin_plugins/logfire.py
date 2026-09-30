@@ -5,20 +5,23 @@ With `token` naming a `/keys` entry, everything goes to that key's Logfire proje
 """
 
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import logfire
 from anyio import CancelScope, to_thread
 from opentelemetry.propagate import get_global_textmap, set_global_textmap
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_clai2.builtin_plugins.logfire_setup import Setup, https_origin, run_setup
 from pydantic_clai2.config.api_keys import KeyReference, load_keys
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 
 class LogfireSettings(BaseModel):
@@ -33,6 +36,10 @@ class LogfireSettings(BaseModel):
         default=None,
         description='A /keys entry holding the Logfire write token to send with, instead of LOGFIRE_TOKEN or the '
         'credentials file; its project receives the telemetry.',
+    )
+    base_url: Annotated[str, AfterValidator(https_origin)] | None = Field(
+        default=None,
+        description='A self-hosted Logfire to send to; hosted regions need none, since the write token names one.',
     )
     ui_events: bool = Field(
         default=False,
@@ -60,6 +67,7 @@ def activate(host: PluginHost[None]) -> None:
             data_dir=private_dir,
             # UI events name settings and keys, such as `sessions.naming` or `OPENAI_API_KEY`, that look like secrets.
             scrubbing=logfire.ScrubbingOptions(callback=telemetry.keep_names) if config.ui_events else None,
+            advanced=logfire.AdvancedOptions(base_url=config.base_url) if config.base_url else None,
         )
     finally:
         # Even local SDK configuration replaces the process-wide propagator.
@@ -81,6 +89,10 @@ def activate(host: PluginHost[None]) -> None:
     if config.ui_events:
         _record_ui_events(host, instance)
 
+    @host.configure
+    async def configure() -> str:
+        return await _configure(host, SETUP(host))
+
     @host.on('session_end')
     async def shutdown(event: SessionEnd) -> None:
         with CancelScope(shield=True):
@@ -90,6 +102,31 @@ def activate(host: PluginHost[None]) -> None:
                     'Logfire shutdown timed out; some telemetry may not have been sent.',
                     style=theme.color(theme.WARNING),
                 )
+
+
+def _announce(host: PluginHost[None]) -> Setup:
+    def announce(line: str) -> None:
+        # Links can come from a self-hosted server, so terminal controls in them are made inert.
+        host.console.print(terminal_text(line), markup=False, highlight=False)
+
+    return Setup(announce=announce)
+
+
+SETUP: Callable[[PluginHost[None]], Setup] = _announce
+"""How setup talks to the terminal, the browser, and Logfire; tests swap in scripted ones."""
+
+
+async def _configure(host: PluginHost[None], setup: Setup) -> str:
+    """The setup menu; saving new settings makes the loader load the plugin again, now sending to the project."""
+    config = host.settings(LogfireSettings)
+    chosen = await run_setup(setup, current=config.base_url)
+    if chosen is None:
+        return 'Logfire setup cancelled; settings unchanged.'
+    host.save_settings(config.model_copy(update={'token': chosen.token, 'base_url': chosen.base_url}))
+    return (
+        f'Logfire traces now go to {chosen.project.label}. Its write token is saved in /keys as '
+        f'{chosen.token.name}; plugin settings keep only that name.'
+    )
 
 
 def _destination(
