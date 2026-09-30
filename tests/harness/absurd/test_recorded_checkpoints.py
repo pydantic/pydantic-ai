@@ -41,17 +41,15 @@ GOLDEN: dict[str, dict[str, JsonValue]] = json.loads(
     (Path(__file__).parent / 'fixtures' / 'recorded_checkpoints.json').read_text()
 )
 # Fixture key -> whether the first `report_finding` call raises `ModelRetry`.
-CASES = {'id_mcp': False, 'id_mcp_with_retry': True}
+CASES = {'plain': False, 'with_retry': True}
 
 
-class WorkflowOutput(BaseModel):
-    """Structured output of the recorded workflow agent."""
-
+class Report(BaseModel):
     outcome: Literal['completed', 'partial', 'failed']
     report: str
 
 
-def _agent(retry_first: bool, executions: list[str]) -> Agent[object, WorkflowOutput]:
+def _agent(retry_first: bool, executions: list[str]) -> Agent[object, Report]:
     def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         executions.append('model')
         done = [p.tool_name for m in messages for p in m.parts if isinstance(p, ToolReturnPart)]
@@ -64,7 +62,7 @@ def _agent(retry_first: bool, executions: list[str]) -> Agent[object, WorkflowOu
             return ModelResponse(
                 parts=[
                     ToolCallPart('report_finding', {'title': 'p99 up', 'severity': 'high'}, 'c1'),
-                    ToolCallPart('posthog_query', {'query': 'errors'}, 'c2'),
+                    ToolCallPart('query_metrics', {'query': 'errors'}, 'c2'),
                 ]
             )
         if 'add' not in done:
@@ -81,7 +79,7 @@ def _agent(retry_first: bool, executions: list[str]) -> Agent[object, WorkflowOu
             ]
         )
 
-    model = FunctionModel(script, model_name='minimax-m3')
+    model = FunctionModel(script, model_name='fn')
 
     findings = FunctionToolset[object](id='findings')
 
@@ -93,11 +91,11 @@ def _agent(retry_first: bool, executions: list[str]) -> Agent[object, WorkflowOu
         executions.append('report_finding')
         return f'recorded {title} ({severity})'
 
-    posthog = FunctionToolset[object](id='posthog')
+    metrics = FunctionToolset[object](id='metrics')
 
-    @posthog.tool_plain
-    def posthog_query(query: str) -> dict[str, int]:
-        executions.append('posthog_query')
+    @metrics.tool_plain
+    def query_metrics(query: str) -> dict[str, int]:
+        executions.append('query_metrics')
         return {'rows': 7}
 
     knowledge = FunctionToolset[object](id='knowledge')
@@ -111,7 +109,7 @@ def _agent(retry_first: bool, executions: list[str]) -> Agent[object, WorkflowOu
         def get_toolset(self) -> FunctionToolset[object]:
             return knowledge
 
-    server: FastMCP[object] = FastMCP(name='logfire-mcp')
+    server: FastMCP[object] = FastMCP(name='calc')
 
     @server.tool
     def add(a: int, b: int) -> int:
@@ -119,12 +117,12 @@ def _agent(retry_first: bool, executions: list[str]) -> Agent[object, WorkflowOu
         return a + b
 
     return Agent(
-        'logfire:sre',
-        name='sherlockberto',
-        output_type=WorkflowOutput,
-        toolsets=[findings, posthog, MCPToolset[object](server, id='logfire_mcp')],
+        'custom:analyst',
+        name='analyst',
+        output_type=Report,
+        toolsets=[findings, metrics, MCPToolset[object](server, id='calc')],
         capabilities=[
-            ResolveModelId(lambda ctx, model_id: model if model_id == 'logfire:sre' else None),
+            ResolveModelId(lambda ctx, model_id: model if model_id == 'custom:analyst' else None),
             ProjectKnowledge(),
             AbsurdDurability(),
         ],
@@ -133,14 +131,14 @@ def _agent(retry_first: bool, executions: list[str]) -> Agent[object, WorkflowOu
 
 EXPECTED_OUTPUT = {
     'outcome': 'completed',
-    'report': "saw ['add', 'posthog_query', 'report_finding', 'search_knowledge']",
+    'report': "saw ['add', 'query_metrics', 'report_finding', 'search_knowledge']",
 }
 
 
-def _register(absurd: AsyncAbsurd, agent: Agent[object, WorkflowOutput]) -> None:
-    @absurd.register_task(name='workflow')
-    async def workflow(params: JsonValue, ctx: AsyncTaskContext) -> JsonValue:
-        result = await agent.run('Run the SRE investigation now.')
+def _register(absurd: AsyncAbsurd, agent: Agent[object, Report]) -> None:
+    @absurd.register_task(name='analyse')
+    async def analyse(params: JsonValue, ctx: AsyncTaskContext) -> JsonValue:
+        result = await agent.run('Investigate the latency spike.')
         return result.output.model_dump(mode='json')
 
 
@@ -152,7 +150,7 @@ class TestRecordedCheckpoints:
         executions: list[str] = []
         _register(absurd, _agent(CASES[case], executions))
         spawned = await absurd.spawn(
-            'workflow', None, max_attempts=2, retry_strategy={'kind': 'fixed', 'base_seconds': 0}
+            'analyse', None, max_attempts=2, retry_strategy={'kind': 'fixed', 'base_seconds': 0}
         )
         [claimed] = await absurd.claim_tasks(batch_size=1)
         for name, state in GOLDEN[case].items():
@@ -174,7 +172,7 @@ class TestRecordedCheckpoints:
 
     async def test_fresh_run_writes_the_same_checkpoints(self, case: str, absurd: AsyncAbsurd) -> None:
         _register(absurd, _agent(CASES[case], []))
-        spawned = await absurd.spawn('workflow', None)
+        spawned = await absurd.spawn('analyse', None)
         await absurd.work_batch(batch_size=1)
 
         stored = await checkpoints(absurd, spawned['task_id'])

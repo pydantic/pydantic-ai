@@ -25,11 +25,8 @@ from ._context import ENGINE_NAME, current_async_task_context
 from ._operation_backend import AbsurdOperationBackend
 
 AbsurdParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
-"""Tool-call execution modes usable with Absurd. A subset of `ParallelExecutionMode`.
-
-Absurd numbers a repeated step name in encounter order (`name`, `name#2`, ...). `'parallel'` is excluded
-because it emits tool-result events, and so their `event_stream_handler` steps, in completion order,
-which could give a step a different number on replay."""
+"""Tool-call execution modes usable with Absurd: a subset of `ParallelExecutionMode`. `'parallel'` is
+excluded because it emits tool events in completion order, which can differ on replay."""
 
 
 @dataclass(init=False)
@@ -100,10 +97,7 @@ class AbsurdDurability(BaseDurabilityCapability[AgentDepsT]):
         return current_async_task_context() is not None
 
     def get_durable_operation_backend(self) -> AbsurdOperationBackend:
-        return AbsurdOperationBackend(
-            agent_name=self.name,
-            default_model_id=self.default_model_id,
-        )
+        return AbsurdOperationBackend(agent_name=self.name, default_model_id=self.default_model_id)
 
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
         """Apply the configured parallel-execution mode to every run, inside a task or not."""

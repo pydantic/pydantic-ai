@@ -1,6 +1,6 @@
 {
-  "id_mcp": {
-    "sherlockberto__mcp_server__logfire_mcp.get_tools": {
+  "plain": {
+    "analyst__mcp_server__calc.get_tools": {
       "add": {
         "kind": "function",
         "name": "add",
@@ -55,9 +55,9 @@
         }
       }
     },
-    "sherlockberto__model.request": {
+    "analyst__model.request": {
       "kind": "response",
-      "model_name": "minimax-m3",
+      "model_name": "fn",
       "parts": [
         {
           "part_kind": "tool-call",
@@ -70,7 +70,7 @@
         },
         {
           "part_kind": "tool-call",
-          "tool_name": "posthog_query",
+          "tool_name": "query_metrics",
           "args": {
             "query": "errors"
           },
@@ -78,13 +78,13 @@
         }
       ]
     },
-    "sherlockberto__function_toolset__findings.call_tool:report_finding": "recorded p99 up (high)",
-    "sherlockberto__function_toolset__posthog.call_tool:posthog_query": {
+    "analyst__function_toolset__findings.call_tool:report_finding": "recorded p99 up (high)",
+    "analyst__function_toolset__metrics.call_tool:query_metrics": {
       "rows": 7
     },
-    "sherlockberto__model.request#2": {
+    "analyst__model.request#2": {
       "kind": "response",
-      "model_name": "minimax-m3",
+      "model_name": "fn",
       "parts": [
         {
           "part_kind": "tool-call",
@@ -105,16 +105,16 @@
         }
       ]
     },
-    "sherlockberto__mcp_server__logfire_mcp.call_tool": 5,
-    "sherlockberto__function_toolset__knowledge.call_tool:search_knowledge": {
+    "analyst__mcp_server__calc.call_tool": 5,
+    "analyst__function_toolset__knowledge.call_tool:search_knowledge": {
       "hits": [
         "deploys-1",
         "deploys-2"
       ]
     },
-    "sherlockberto__model.request#3": {
+    "analyst__model.request#3": {
       "kind": "response",
-      "model_name": "minimax-m3",
+      "model_name": "fn",
       "parts": [
         {
           "part_kind": "text",
@@ -124,7 +124,7 @@
           "part_kind": "tool-call",
           "tool_name": "final_result",
           "args": {
-            "report": "saw ['add', 'posthog_query', 'report_finding', 'search_knowledge']",
+            "report": "saw ['add', 'query_metrics', 'report_finding', 'search_knowledge']",
             "outcome": "completed"
           },
           "tool_call_id": "c5"
@@ -132,8 +132,8 @@
       ]
     }
   },
-  "id_mcp_with_retry": {
-    "sherlockberto__mcp_server__logfire_mcp.get_tools": {
+  "with_retry": {
+    "analyst__mcp_server__calc.get_tools": {
       "add": {
         "kind": "function",
         "name": "add",
@@ -188,9 +188,9 @@
         }
       }
     },
-    "sherlockberto__model.request": {
+    "analyst__model.request": {
       "kind": "response",
-      "model_name": "minimax-m3",
+      "model_name": "fn",
       "parts": [
         {
           "part_kind": "tool-call",
@@ -203,9 +203,9 @@
         }
       ]
     },
-    "sherlockberto__model.request#2": {
+    "analyst__model.request#2": {
       "kind": "response",
-      "model_name": "minimax-m3",
+      "model_name": "fn",
       "parts": [
         {
           "part_kind": "tool-call",
@@ -218,7 +218,7 @@
         },
         {
           "part_kind": "tool-call",
-          "tool_name": "posthog_query",
+          "tool_name": "query_metrics",
           "args": {
             "query": "errors"
           },
@@ -226,13 +226,13 @@
         }
       ]
     },
-    "sherlockberto__function_toolset__findings.call_tool:report_finding#2": "recorded p99 up (high)",
-    "sherlockberto__function_toolset__posthog.call_tool:posthog_query": {
+    "analyst__function_toolset__findings.call_tool:report_finding#2": "recorded p99 up (high)",
+    "analyst__function_toolset__metrics.call_tool:query_metrics": {
       "rows": 7
     },
-    "sherlockberto__model.request#3": {
+    "analyst__model.request#3": {
       "kind": "response",
-      "model_name": "minimax-m3",
+      "model_name": "fn",
       "parts": [
         {
           "part_kind": "tool-call",
@@ -253,16 +253,16 @@
         }
       ]
     },
-    "sherlockberto__mcp_server__logfire_mcp.call_tool": 5,
-    "sherlockberto__function_toolset__knowledge.call_tool:search_knowledge": {
+    "analyst__mcp_server__calc.call_tool": 5,
+    "analyst__function_toolset__knowledge.call_tool:search_knowledge": {
       "hits": [
         "deploys-1",
         "deploys-2"
       ]
     },
-    "sherlockberto__model.request#4": {
+    "analyst__model.request#4": {
       "kind": "response",
-      "model_name": "minimax-m3",
+      "model_name": "fn",
       "parts": [
         {
           "part_kind": "text",
@@ -272,7 +272,7 @@
           "part_kind": "tool-call",
           "tool_name": "final_result",
           "args": {
-            "report": "saw ['add', 'posthog_query', 'report_finding', 'search_knowledge']",
+            "report": "saw ['add', 'query_metrics', 'report_finding', 'search_knowledge']",
             "outcome": "completed"
           },
           "tool_call_id": "c5"
