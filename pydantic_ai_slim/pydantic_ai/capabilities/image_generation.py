@@ -46,9 +46,6 @@ if TYPE_CHECKING:
 _NATIVE_IMAGE_SIZES = frozenset(get_args(ImageSize))
 _NATIVE_IMAGE_ASPECT_RATIOS = frozenset(get_args(ImageAspectRatio))
 
-# What a `native` instance holds for a setting nobody set, so a value that differs from it was stated.
-_DEFAULT_NATIVE_TOOL = ImageGenerationTool()
-
 _EDIT_ACTION_UNSUPPORTED = (
     'The direct `ImageGeneration` fallback cannot honor `action="edit"` because the '
     '`generate_image` tool does not receive reference images. Use '
@@ -114,7 +111,7 @@ class _DirectImageGenerationTool:
             raise UserError(_EDIT_ACTION_UNSUPPORTED)
         if self.image_model is not None:
             warnings.warn(
-                f'Direct `ImageGeneration` fallback ignored image model {self.image_model!r}; '
+                'Direct `ImageGeneration` fallback ignored `image_model`; '
                 'the direct image model is already selected by `local` or `fallback_image_model`',
                 UserWarning,
                 stacklevel=2,
@@ -160,8 +157,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
 
     When passing a custom `native` instance or factory, its settings are also used for the
     `fallback_subagent_model` subagent; capability-level fields override any `native` settings. A static
-    instance's `aspect_ratio` is also inherited by the direct fallback, which refuses its `action='edit'`
-    and ignores its `model` as it does the capability's `action` and `image_model`.
+    instance's `aspect_ratio` is also inherited by the direct fallback.
     """
 
     local: str | ImageGenerator | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = (
@@ -686,33 +682,21 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return direct_only
 
     def _native_only_settings(self) -> list[str]:
-        """Settings only the native tool can express, which a direct generator drops.
-
-        Read from the capability and from a static `native` instance: the direct generator inherits
-        only that instance's `aspect_ratio`, and its tool checks `action` and `model` itself, so the
-        rest of what the instance states is dropped the same way.
-        """
-        native = self.native if isinstance(self.native, ImageGenerationTool) else _DEFAULT_NATIVE_TOOL
-        default = _DEFAULT_NATIVE_TOOL
+        """Settings only the native tool can express, which a direct generator drops."""
         # Collected as a table rather than a chain of `if`s to keep the callers under the
         # complexity limit.
         return [
             name
-            for name, value, native_value, default_value in (
-                ('background', self.background, native.background, default.background),
-                ('input_fidelity', self.input_fidelity, native.input_fidelity, default.input_fidelity),
-                ('moderation', self.moderation, native.moderation, default.moderation),
-                (
-                    'output_compression',
-                    self.output_compression,
-                    native.output_compression,
-                    default.output_compression,
-                ),
-                ('output_format', self.output_format, native.output_format, default.output_format),
-                ('quality', self.quality, native.quality, default.quality),
-                ('size', self.size, native.size, default.size),
+            for name, value in (
+                ('background', self.background),
+                ('input_fidelity', self.input_fidelity),
+                ('moderation', self.moderation),
+                ('output_compression', self.output_compression),
+                ('output_format', self.output_format),
+                ('quality', self.quality),
+                ('size', self.size),
             )
-            if value is not None or native_value != default_value
+            if value is not None
         ]
 
     def _native_geometry(self) -> tuple[dict[str, Any], list[str]]:
@@ -792,24 +776,22 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         if self.dimensions is not None:
             settings['dimensions'] = self.dimensions
         # A custom `native` instance is the base and capability-level fields override it, the same
-        # precedence `_resolved_native` gives the `fallback_subagent_model` subagent, so the tool
-        # refuses an instance's `action='edit'` and ignores its `model` as it does the capability's.
-        # `size` has no counterpart on the other side of that merge; `dimensions` is the capability's
-        # own spelling of the geometry the inherited `aspect_ratio` expresses, and the two are
-        # mutually exclusive in `ImageGenerationSettings`, so inheriting alongside it would fail the
-        # generate call over a setting the user never passed to the capability.
-        native = self.native if isinstance(self.native, ImageGenerationTool) else _DEFAULT_NATIVE_TOOL
+        # precedence `_resolved_native` gives the `fallback_subagent_model` subagent. `size` has no
+        # counterpart on the other side of that merge; `dimensions` is the capability's own
+        # spelling of the geometry the inherited `aspect_ratio` expresses, and the two are mutually
+        # exclusive in `ImageGenerationSettings`, so inheriting alongside it would fail the generate
+        # call over a setting the user never passed to the capability.
         aspect_ratio = self.aspect_ratio
-        if aspect_ratio is None and self.dimensions is None:
-            aspect_ratio = native.aspect_ratio
+        if aspect_ratio is None and self.dimensions is None and isinstance(self.native, ImageGenerationTool):
+            aspect_ratio = self.native.aspect_ratio
         if aspect_ratio is not None:
             settings['aspect_ratio'] = aspect_ratio
         return Tool[Any](
             _DirectImageGenerationTool(
                 generator=generator,
                 settings=settings,
-                action=self.action or native.action,
-                image_model=self.image_model or native.model,
+                action=self.action,
+                image_model=self.image_model,
             ).__call__,
             name='generate_image',
             description='Generate an image based on the given prompt.',

@@ -506,7 +506,7 @@ class TestImageGenerationCapability:
             ],
         )
 
-        with pytest.warns(UserWarning, match=r"ignored image model 'gpt-image-1'"):
+        with pytest.warns(UserWarning, match=r'ignored `image_model`'):
             result = await agent.run('Generate an image')
 
         assert result.output == 'done'
@@ -716,6 +716,35 @@ class TestImageGenerationCapability:
 
         with pytest.raises(UserError, match='cannot honor `action="edit"`'):
             replace(capability, action='edit')
+
+    @pytest.mark.parametrize(
+        'setting',
+        [
+            pytest.param({'action': 'edit'}, id='action'),
+            pytest.param({'quality': 'high'}, id='quality'),
+            pytest.param({'image_model': 'gpt-image-2'}, id='image_model'),
+        ],
+    )
+    async def test_image_generation_replace_clears_a_setting_from_the_direct_fallback(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel, setting: dict[str, Any]
+    ):
+        """A setting `replace` cleared is gone from the direct fallback: it neither refuses nor reports it.
+
+        `native=True` resolves at construction to a native tool built from the capability's settings,
+        and `replace` hands that tool back as the copy's `native`. The direct fallback reads the
+        capability's own fields, so the copy runs as if the setting had never been set.
+
+        The edit refusal and both notices come before the generator runs, so this is not a VCR test.
+        """
+        image_model = TestImageGenerationModel()
+        capability = ImageGeneration(fallback_image_model=image_model, **setting)
+
+        copy = replace(capability, **dict.fromkeys(setting))
+        # `filterwarnings = ['error']` turns a dropped-settings notice into the failure.
+        result = await Agent(direct_generation_model, capabilities=[copy]).run('Generate an image')
+
+        assert result.output == 'done'
+        assert image_model.last_settings == snapshot({})
 
     async def test_image_generation_composed_capabilities_send_the_merged_dimensions(
         self, allow_model_requests: None, direct_generation_model: FunctionModel
@@ -1047,30 +1076,6 @@ class TestImageGenerationCapability:
         assert result.output == 'done'
         assert image_model.last_settings == snapshot({})
 
-    async def test_image_generation_warns_when_the_direct_fallback_drops_a_native_instances_settings(
-        self, allow_model_requests: None, direct_generation_model: FunctionModel
-    ):
-        """A static `native` instance's native-only settings reach the direct generator no more than the capability's do.
-
-        Only its `aspect_ratio` is inherited, so the request that runs the direct tool names the rest.
-
-        The notice fires while the toolset is prepared, before any request, so this is not a VCR test.
-        """
-        image_model = TestImageGenerationModel()
-        capability = ImageGeneration(
-            native=ImageGenerationTool(quality='high', output_format='jpeg'), fallback_image_model=image_model
-        )
-        agent = Agent(direct_generation_model, capabilities=[capability])
-
-        with pytest.warns(
-            UserWarning,
-            match=r"ignored native-tool setting\(s\) on 'function:outer_model_fn:': `output_format`, `quality`",
-        ):
-            result = await agent.run('Generate an image')
-
-        assert result.output == 'done'
-        assert image_model.last_settings == snapshot({})
-
     async def test_image_generation_native_only_notice_keeps_its_shipped_prefix(
         self, allow_model_requests: None, direct_generation_model: FunctionModel
     ):
@@ -1104,60 +1109,6 @@ class TestImageGenerationCapability:
         ]
         shipped_prefix = re.escape('The direct `ImageGeneration` fallback ignored native-tool setting(s)')
         assert all(re.match(shipped_prefix, message) for message in messages)
-
-    async def test_image_generation_direct_fallback_warns_for_a_native_instances_model(
-        self, allow_model_requests: None, direct_generation_model: FunctionModel
-    ):
-        """A static `native` instance's `model` is the capability's `image_model`, so the direct fallback ignores it the same way.
-
-        The warning is raised inside the direct tool before its generator is called, and the ignored model
-        never reaches the image API, so a recording would pin nothing this asserts.
-        """
-        capability = ImageGeneration(
-            native=ImageGenerationTool(model='gpt-image-2'), fallback_image_model=TestImageGenerationModel()
-        )
-        agent = Agent(direct_generation_model, capabilities=[capability])
-
-        with pytest.warns(UserWarning, match=r"ignored image model 'gpt-image-2'"):
-            result = await agent.run('Generate an image')
-
-        assert result.output == 'done'
-
-    async def test_image_generation_direct_fallback_rejects_a_native_instances_edit_action(
-        self, allow_model_requests: None, direct_generation_model: FunctionModel
-    ):
-        """A static `native` instance's `action='edit'` is refused like the capability's, not served as a fresh image.
-
-        The direct tool raises before it calls any model, so this is not a VCR test.
-        """
-        capability = ImageGeneration(
-            native=ImageGenerationTool(action='edit'), fallback_image_model=TestImageGenerationModel()
-        )
-        agent = Agent(direct_generation_model, capabilities=[capability])
-
-        with pytest.raises(UserError, match='cannot honor `action="edit"`'):
-            await agent.run('Edit an image')
-
-    async def test_image_generation_capability_action_overrides_a_native_instances_edit_action(
-        self, allow_model_requests: None, direct_generation_model: FunctionModel
-    ):
-        """Capability-level `action` takes precedence over the instance's.
-
-        The same precedence the `fallback_subagent_model` subagent's native tool gets.
-
-        `action` is settled inside the direct tool and never reaches the image API, so a recording would
-        pin nothing this asserts.
-        """
-        capability = ImageGeneration(
-            native=ImageGenerationTool(action='edit'),
-            fallback_image_model=TestImageGenerationModel(),
-            action='generate',
-        )
-        agent = Agent(direct_generation_model, capabilities=[capability])
-
-        result = await agent.run('Generate an image')
-
-        assert result.output == 'done'
 
     @pytest.mark.parametrize(
         ('agent_model', 'capability', 'notice'),

@@ -86,10 +86,8 @@ the path its own profile selects, and each of them that would drop a setting get
 [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] whose current model is a `FallbackModel`, no
 warning is given, since nothing public says which model the agent has selected.
 Native-tool-only settings such as
-`quality` and `output_format` do not apply to a direct fallback, whether they are set on the capability or on a
-static `native=ImageGenerationTool(...)` instance; configure their
-provider-prefixed equivalents on the generator. `action='edit'` and `image_model` do not apply either, nor do a static
-instance's `action='edit'` and `model`: the direct
+`quality` and `output_format` do not apply to a direct fallback; configure their
+provider-prefixed equivalents on the generator. `action='edit'` and `image_model` do not apply either: the direct
 fallback raises [`UserError`][pydantic_ai.exceptions.UserError] for `action='edit'`, because the `generate_image` tool
 receives no reference images, and ignores `image_model` with a warning, because the generator already names the image
 model it generates with.
