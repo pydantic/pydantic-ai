@@ -618,6 +618,16 @@ TITLED: dict[str, Any] = {'type': 'string', 'title': 'A'}
             {'properties': {'a': PAYLOAD, 'b': PAYLOAD}},
             id='repeated-ref',
         ),
+        pytest.param(
+            {'properties': {'payload': PAYLOAD_REF, 'config': {'type': 'object', 'default': {'$ref': '#'}}}},
+            {'properties': {'payload': PAYLOAD, 'config': {'type': 'object', 'default': {'$ref': '#'}}}},
+            id='ref-shaped-data',
+        ),
+        pytest.param(
+            {'properties': {'payload': PAYLOAD_REF}, 'additionalProperties': False},
+            {'properties': {'payload': PAYLOAD}, 'additionalProperties': False},
+            id='boolean-subschema',
+        ),
     ],
 )
 def test_inline_defs_untyped_keywords_are_inlined(keywords: dict[str, Any], expected: dict[str, Any]):

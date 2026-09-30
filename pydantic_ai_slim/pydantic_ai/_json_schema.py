@@ -170,22 +170,29 @@ class JsonSchemaTransformer(ABC):
         a `$ref` under them, or in a definition one points at, can't be resolved, since walking raises on it.
         When they are walked, it's all of them, exactly as under a matching `type`.
         """
-        pending: list[JsonValue] = [schema[keyword] for keyword in keywords if keyword in schema]
+        # Only the keywords the walk visits are followed, so a value like a `default` isn't read as a schema.
+        pending: list[JsonValue] = [{keyword: schema[keyword] for keyword in keywords if keyword in schema}]
         seen: set[str] = set()
         while pending:
             node = pending.pop()
-            if isinstance(node, list):
-                pending.extend(node)
-            elif isinstance(node, dict):
-                if isinstance(ref := node.get('$ref'), str):
-                    key = _DEFS_REF_PREFIX.sub('', ref)
-                    # A boolean definition is valid JSON Schema, but `_walk_def` can only merge a dict.
-                    if not isinstance(definition := self.defs.get(key), dict):
-                        return False
-                    if key not in seen:
-                        seen.add(key)
-                        pending.append(definition)
-                pending.extend(node.values())
+            if not isinstance(node, dict):
+                continue
+            if isinstance(ref := node.get('$ref'), str):
+                key = _DEFS_REF_PREFIX.sub('', ref)
+                # A boolean definition is valid JSON Schema, but `_walk_def` can only merge a dict.
+                if not isinstance(definition := self.defs.get(key), dict):
+                    return False
+                if key not in seen:
+                    seen.add(key)
+                    pending.append(definition)
+            for keyword in (*_OBJECT_KEYWORDS, *_ARRAY_KEYWORDS, 'allOf', 'anyOf', 'oneOf'):
+                value = node.get(keyword)
+                if keyword in ('properties', 'patternProperties') and isinstance(value, dict):
+                    pending.extend(value.values())
+                elif isinstance(value, list):
+                    pending.extend(value)
+                elif value is not None:
+                    pending.append(value)
         return bool(seen)
 
     def _walked_def(self, key: str) -> JsonSchema:
