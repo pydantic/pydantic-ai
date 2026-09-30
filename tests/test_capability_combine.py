@@ -59,6 +59,7 @@ from pydantic_ai.native_tools import MCPServerTool, WebFetchTool, WebSearchTool,
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 
 @dataclass
@@ -863,10 +864,11 @@ def test_a_merge_takes_the_later_fallback_subagent_model() -> None:
 
     assert isinstance(merged, XSearch)
     assert merged.fallback_subagent_model == 'xai:grok-4.3', 'the later value, like any scalar'
-    local = merged.local
-    assert isinstance(local, Tool)
-    # The subagent tool is rebuilt from the merged field, so it carries its own copy of the model.
-    assert cast('Any', local).function.__self__.model == 'xai:grok-4.3'
+    toolset = merged.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, FunctionToolset)
+    # The subagent tool is derived from the merged field, so it carries its own copy of the model.
+    assert cast('Any', toolset.wrapped.tools['x_search']).function.__self__.model == 'xai:grok-4.3'
 
 
 def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:

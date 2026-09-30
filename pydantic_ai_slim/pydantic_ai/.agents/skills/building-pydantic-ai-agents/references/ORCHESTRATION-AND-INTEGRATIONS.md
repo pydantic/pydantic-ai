@@ -136,6 +136,8 @@ Pass reference images through `images=[...]` to edit or transform them. A provid
 
 When the agent rather than the application should decide, use the `ImageGeneration` capability with `fallback_image_model='openai:gpt-image-2'` (or an `ImageGenerationModel`; an `ImageGenerator` goes on `local`), which calls the direct image model as a tool when the conversational model has no native image generation.
 
+The image such a run generates is in its message history, not in `result.output`: a local fallback returns it from the `generate_image` tool call (`ToolReturnPart.files`), and the native tool puts it in that response's `ModelResponse.images`. `output_type=BinaryImage` makes it the output only when the agent's model itself supports image output.
+
 ## Use LangChain Tools
 
 Third-party integrations to reach for:

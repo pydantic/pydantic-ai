@@ -10,6 +10,7 @@ which records a real OpenAI image-generation call and snapshots the outgoing `to
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
@@ -286,6 +287,28 @@ async def test_instance_native_config_is_merged_for_fallback(case: Case, allow_m
 
     assert result.output == 'done'
     assert seen_native_tools == case.expected_instance_native_tools
+
+
+@case_param
+async def test_fallback_subagent_model_survives_dataclass_replace(case: Case, allow_model_requests: None):
+    """`dataclasses.replace` rebuilds through `__init__`, and the copy runs the subagent it now names.
+
+    The subagent tool is derived when the toolset is requested, so `local` still holds what the
+    caller declared and the fallback-versus-`local` check sees a single fallback.
+    """
+    original_native_tools: list[AbstractNativeTool] = []
+    seen_native_tools: list[AbstractNativeTool] = []
+    original = case.with_instance_and_overrides(_recording_subagent_model(case, original_native_tools))
+    capability = dataclasses.replace(
+        original, fallback_subagent_model=_recording_subagent_model(case, seen_native_tools)
+    )
+    agent = Agent[str, str](_outer_model(case), deps_type=str, capabilities=[capability])
+
+    result = await agent.run(case.prompt, deps=case.deps)
+
+    assert result.output == 'done'
+    assert seen_native_tools == case.expected_instance_native_tools
+    assert original_native_tools == []
 
 
 @case_param

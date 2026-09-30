@@ -3208,7 +3208,8 @@ async def test_image_generation_prepare_function_reads_the_model_inside_an_activ
     A `DynamicCapability` re-resolves the capability's toolset activity-side, so its prepare
     function runs against a rehydrated context that deliberately left the live model behind. The
     native-vs-direct routing the notice describes was already decided in the workflow process, so
-    the read has to degrade to "say nothing" rather than raise out of `get_tools`.
+    the read has to degrade to "say nothing" rather than raise out of `get_tools`, while the tool
+    still carries the `unless_native` stamp that lets a native-capable model drop it.
     """
     ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run-123')
     reconstructed = deserialize_run_context(
@@ -3225,9 +3226,10 @@ async def test_image_generation_prepare_function_reads_the_model_inside_an_activ
     toolset = capability.get_toolset()
     assert isinstance(toolset, PreparedToolset)
 
-    prepared = toolset.prepare_func(reconstructed, [])
+    tool_def = ToolDefinition(name='generate_image')
+    prepared = toolset.prepare_func(reconstructed, [tool_def])
     assert inspect.isawaitable(prepared)
-    assert await prepared == []
+    assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
 
 
 class LegacyFieldsRunContext(TemporalRunContext[Any]):

@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from collections.abc import Iterator, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -35,6 +36,7 @@ from pydantic_ai.embeddings import (
     InstrumentedEmbeddingModel,
     KnownEmbeddingModelName,
     TestEmbeddingModel,
+    WrapperEmbeddingModel,
     infer_embedding_model,
 )
 from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, UserError
@@ -2296,6 +2298,24 @@ async def test_settings():
     assert model.last_settings == snapshot(
         {'dimensions': 512, 'from_model': True, 'from_embedder': True, 'from_embed': True}
     )
+
+
+def test_embedder_compares_by_identity():
+    embedder = Embedder(TestEmbeddingModel('small'))
+
+    assert embedder == embedder
+    assert embedder != Embedder(TestEmbeddingModel('large'))
+    assert {embedder: 'small'}[embedder] == 'small'
+
+
+def test_wrapper_embedding_model_deepcopy():
+    model = WrapperEmbeddingModel(TestEmbeddingModel('wrapped'))
+
+    copied = deepcopy(model)
+
+    assert copied is not model
+    assert copied.wrapped is not model.wrapped
+    assert copied.model_name == 'wrapped'
 
 
 def test_result():

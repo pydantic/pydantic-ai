@@ -49,8 +49,10 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
     AbstractNativeTool,
     ImageGenerationTool,
@@ -258,6 +260,17 @@ class TestImageGenerationCapability:
             ImageGeneration.from_spec(native=False, fallback_image_model='openai:gpt-image-1.5', quality='high')
 
         assert [warning.filename for warning in recorded] == [inspect.getsourcefile(ImageGeneration)]
+
+    def test_image_generation_native_false_with_a_custom_local_tool_warns_for_native_only_settings(self):
+        """With `native=False` the tool you supply is the only implementation, and the capability hands it nothing.
+
+        No native tool is built and the capability passes no settings to a tool it didn't build, so
+        the native-only settings have nothing left to apply them.
+        """
+        with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): quality, size') as recorded:
+            ImageGeneration(native=False, local=_custom_local_tool, quality='high', size='1024x1024')
+
+        assert [warning.filename for warning in recorded] == [__file__]
 
     def test_image_generation_native_only_settings_are_not_ignored_when_native_is_enabled(self):
         """With native enabled these settings reach the native tool, so reporting them as dropped is wrong.
@@ -993,6 +1006,71 @@ class TestImageGenerationCapability:
         assert result.output == 'done'
         assert image_model.last_settings == snapshot({})
 
+    async def test_image_generation_warns_when_the_direct_fallback_drops_a_native_instances_settings(
+        self, allow_model_requests: None, direct_generation_model: FunctionModel
+    ):
+        """A static `native` instance's native-only settings reach the direct generator no more than the capability's do.
+
+        Only its `aspect_ratio` is inherited, so the request that runs the direct tool names the rest.
+        """
+        image_model = TestImageGenerationModel()
+        capability = ImageGeneration(
+            native=ImageGenerationTool(quality='high', output_format='jpeg'), fallback_image_model=image_model
+        )
+        agent = Agent(direct_generation_model, capabilities=[capability])
+
+        with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): output_format, quality'):
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'done'
+        assert image_model.last_settings == snapshot({})
+
+    @pytest.mark.parametrize('wrapped', [False, True], ids=['fallback', 'wrapped-fallback'])
+    @pytest.mark.parametrize(
+        ('settings', 'notice'),
+        [
+            pytest.param(
+                {'dimensions': (1280, 720)},
+                r'supersedes the direct generator on native, so direct-only setting\(s\) go unapplied: dimensions',
+                id='direct-only',
+            ),
+            pytest.param({'quality': 'high'}, r'ignored native-tool setting\(s\): quality', id='native-only'),
+        ],
+    )
+    async def test_image_generation_dropped_settings_notice_reads_each_fallback_model(
+        self,
+        allow_model_requests: None,
+        wrapped: bool,
+        settings: dict[str, Any],
+        notice: str,
+    ):
+        """A `FallbackModel` has no profile: each of its models resolves the swap against its own.
+
+        The notice follows that resolution, so each setting is named for the model that would drop
+        it, whether the `FallbackModel` is the agent's model or sits inside a wrapper.
+        """
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        no_native = FunctionModel(
+            outer_model_fn, model_name='no_native', profile=ModelProfile(supported_native_tools=frozenset())
+        )
+        native = FunctionModel(
+            outer_model_fn,
+            model_name='native',
+            profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+        )
+        capability = ImageGeneration(fallback_image_model=TestImageGenerationModel(), **settings)
+        fallback_model = FallbackModel(no_native, native)
+        agent = Agent(WrapperModel(fallback_model) if wrapped else fallback_model, capabilities=[capability])
+
+        with pytest.warns(UserWarning, match=notice) as recorded:
+            result = await agent.run('Generate an image')
+
+        assert result.output == 'done'
+        assert len(recorded) == 1
+
     async def test_image_generation_native_only_settings_are_silent_when_the_native_tool_runs(
         self, allow_model_requests: None
     ):
@@ -1065,9 +1143,12 @@ class TestImageGenerationCapability:
         assert native_tool.aspect_ratio == '16:9'
 
     def test_image_generation_with_fallback_subagent_model(self):
-        """ImageGeneration(fallback_subagent_model=...) creates a local fallback tool."""
+        """ImageGeneration(fallback_subagent_model=...) provides a local fallback tool.
+
+        The subagent tool is derived when the toolset is requested, so `local` keeps what was declared.
+        """
         cap = ImageGeneration(fallback_subagent_model='openai-responses:gpt-5.4')
-        assert isinstance(cap.local, Tool)
+        assert cap.local is None
         assert cap.get_toolset() is not None
         builtins = cap.get_native_tools()
         assert len(builtins) == 1
@@ -1196,7 +1277,6 @@ class TestImageGenerationCapability:
             fallback_subagent_model='openai-responses:gpt-5.4',
             output_format='jpeg',  # capability-level override
         )
-        assert isinstance(cap.local, Tool)
         assert cap.get_toolset() is not None
 
     async def test_image_generation_custom_native_ratio_reaches_both_fallbacks(self, allow_model_requests: None):
@@ -1253,8 +1333,7 @@ class TestImageGenerationCapability:
             native=lambda ctx: ImageGenerationTool(quality='high'),
             fallback_subagent_model='openai-responses:gpt-5.4',
         )
-        # Callable native can't be resolved at init time, but local fallback is still created
-        assert isinstance(cap.local, Tool)
+        # Callable native can't be resolved at init time, but the local fallback is still provided
         assert cap.get_toolset() is not None
 
     @pytest.mark.parametrize(

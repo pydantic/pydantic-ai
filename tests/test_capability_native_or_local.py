@@ -301,14 +301,15 @@ class TestXSearchCapability:
             XSearch(fallback_subagent_model='xai:grok-4.3', fallback_model='xai:grok-4-1-fast-non-reasoning')
 
     def test_xsearch_callable_native_with_fallback(self):
-        """Callable native with fallback_subagent_model still creates a local fallback tool."""
-        from pydantic_ai.tools import Tool
+        """Callable native with fallback_subagent_model still provides the subagent tool.
 
+        The tool is derived when the toolset is requested, so `local` keeps what was declared.
+        """
         cap = XSearch(
             native=lambda ctx: XSearchTool(enable_image_understanding=True),
             fallback_subagent_model='xai:grok-4-1-fast-non-reasoning',
         )
-        assert isinstance(cap.local, Tool)
+        assert cap.local is None
         assert cap.get_toolset() is not None
 
     async def test_xsearch_callable_subagent_model(self, allow_model_requests: None):
