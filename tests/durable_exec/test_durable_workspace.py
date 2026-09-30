@@ -57,6 +57,7 @@ from pydantic_ai.workspaces import (
     WorkspaceRef,
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
+    WrapperWorkspace,
 )
 
 from ..workspace_fakes import FakeWorkspace, InMemoryProvider, WorkspaceCapability
@@ -231,6 +232,78 @@ async def test_a_run_level_workspace_policy_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(UserError, match='the workspace comes from the capabilities the agent is built with'):
         await agent.run('go', capabilities=[LocalWorkspace(tmp_path, read_only=True)])
+
+
+class PolicyWorkspace(WrapperWorkspace):
+    def __init__(self, wrapped: Workspace, mode: str):
+        super().__init__(wrapped)
+        self.mode = mode
+
+    def durable_policy(self) -> tuple[object, ...]:
+        return (self.mode,)
+
+
+class PolicyCapability(WrapperCapability[Any]):
+    def __init__(self, wrapped: AbstractCapability[Any], mode: str):
+        super().__init__(wrapped)
+        self.mode = mode
+
+    def get_workspace(self, ctx: RunContext[Any], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        delegated = super().get_workspace(ctx, ref=ref)
+        if delegated is None:
+            return None
+        workspace = delegated if isinstance(delegated, Workspace) else Workspace(delegated)
+        return PolicyWorkspace(workspace, self.mode)
+
+
+async def test_a_run_level_policy_with_the_same_wrapper_type_is_rejected(tmp_path: Path) -> None:
+    agent = Agent(
+        TestModel(),
+        name='ws',
+        capabilities=[PolicyCapability(LocalWorkspace(tmp_path), 'open'), FakeDurability()],
+    )
+
+    with pytest.raises(UserError, match='the workspace comes from the capabilities the agent is built with'):
+        await agent.run('go', capabilities=[PolicyCapability(LocalWorkspace(tmp_path), 'closed')])
+
+
+async def test_a_matching_run_level_policy_is_kept(tmp_path: Path) -> None:
+    agent = Agent(
+        TestModel(),
+        name='ws',
+        capabilities=[PolicyCapability(LocalWorkspace(tmp_path), 'open'), FakeDurability()],
+    )
+
+    result = await agent.run('go', capabilities=[PolicyCapability(LocalWorkspace(tmp_path), 'open')])
+
+    assert isinstance(result.workspace, DurableWorkspace)
+    assert isinstance(result.workspace.wrapped, PolicyWorkspace)
+    assert result.workspace.wrapped.durable_policy() == ('open',)
+
+
+async def test_an_explicit_workspace_policy_with_the_same_wrapper_type_is_rejected(tmp_path: Path) -> None:
+    agent = Agent(
+        TestModel(),
+        name='ws',
+        capabilities=[PolicyCapability(LocalWorkspace(tmp_path), 'open'), FakeDurability()],
+    )
+
+    with pytest.raises(UserError, match=r'a `workspace=` policy would be lost'):
+        await agent.run('go', workspace=PolicyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), 'closed'))
+
+
+async def test_a_matching_explicit_workspace_policy_is_kept(tmp_path: Path) -> None:
+    agent = Agent(
+        TestModel(),
+        name='ws',
+        capabilities=[PolicyCapability(LocalWorkspace(tmp_path), 'open'), FakeDurability()],
+    )
+
+    result = await agent.run('go', workspace=PolicyWorkspace(Workspace(LocalWorkspaceBackend(tmp_path)), 'open'))
+
+    assert isinstance(result.workspace, DurableWorkspace)
+    assert isinstance(result.workspace.wrapped, PolicyWorkspace)
+    assert result.workspace.wrapped.durable_policy() == ('open',)
 
 
 async def test_expected_errors_cross_as_data_and_re_raise(tmp_path: Path) -> None:
