@@ -582,7 +582,7 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
       TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
-      # onnxruntime 1.30.0 has no Python 3.15 wheel.
+      # onnxruntime 1.30.0 has no Python 3.15 wheel; see #9455.
       PY315_EXCLUDE_ONNX: ${{ matrix.python-version == '3.15' }}
     continue-on-error: ${{ matrix.python-version == '3.15' }}
     steps:
