@@ -275,7 +275,7 @@ def _render_reveal(
         signature, catalog[name].resolved_description, conflicting_type_names=conflicting
     )
     block = '\n\n'.join([*type_blocks, function_block])
-    return f'A new sub-agent is now available to call from inside the `{tool_name}` script:\n\n```python\n{block}\n```'
+    return f'{_REVEAL_ANNOUNCEMENT_PREFIX} `{tool_name}` script:\n\n```python\n{block}\n```'
 
 
 def _visible_revealed_agents(messages: Sequence[ModelMessage], tool_name: str, names: Sequence[str]) -> set[str]:
@@ -286,6 +286,8 @@ def _visible_revealed_agents(messages: Sequence[ModelMessage], tool_name: str, n
         if isinstance(message, ModelRequest):
             for part in message.parts:
                 if isinstance(part, SystemPromptPart) and part.content.startswith(prefix):
+                    # Keep this pattern aligned with the signature rendered by `_agent_signature` from
+                    # `_SUB_AGENT_PARAMS_SCHEMA`; it identifies which revealed agents remain visible.
                     revealed.update(name for name in names if f'\nasync def {name}(*, task: str)' in part.content)
     return revealed
 
