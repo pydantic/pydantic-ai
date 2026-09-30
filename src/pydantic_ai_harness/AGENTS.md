@@ -98,7 +98,8 @@ It is an answer to state in the docs, not a step to skip.
 
 Every capability's README and docs page has a `## Telemetry` section listing its
 spans, events, callbacks, run-time warnings, and any model or network calls made
-outside a tool call. `tests/harness/test_telemetry_docs.py` enforces it.
+outside a tool call. `test_capability_documents_telemetry` in
+`tests/harness/test_docs_parity.py` enforces it.
 
 When to use a span versus a `CapabilityEvent` or a callback, what the section
 must say, and the house pattern (spans on `ctx.tracer`, attribute naming,

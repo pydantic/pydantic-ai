@@ -353,10 +353,11 @@ existing `## Observability` or `## Tracing` section also counts. It lists:
 - the warnings it raises while a run is in progress;
 - when it emits no spans of its own, which core spans cover its work.
 
-`tests/harness/test_telemetry_docs.py` fails when a capability's README or docs
-page has no such section. Capabilities that predate this rule are in that test's
-backlog. The backlog only shrinks: the test also fails when a backlog entry has
-gained the section, so remove it from the list in the same PR.
+`test_capability_documents_telemetry` in `tests/harness/test_docs_parity.py`
+fails when a capability's README or docs page has no such section. Capabilities
+that predate this rule are in its `_TELEMETRY_BACKLOG`. The backlog only
+shrinks: the test also fails when a backlog entry has gained the section, so
+remove it from the list in the same PR.
 
 ## CI And Dependency Footprint
 
