@@ -327,11 +327,13 @@ def server() -> Iterator[Server]:
                             assert isinstance(label, str)
                             state.label = label
                         response = {'error': {'message': 'rejected'}} if state.error else {'result': {'ok': True}}
-                    if not state.empty_reply:
-                        connection.sendall((json.dumps(response) + '\n').encode())
+                    # Record before acknowledging: the client may finish and join
+                    # immediately after receiving the reply.
                     with state.condition:
                         state.requests.append(request)
                         state.condition.notify_all()
+                    if not state.empty_reply:
+                        connection.sendall((json.dumps(response) + '\n').encode())
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
