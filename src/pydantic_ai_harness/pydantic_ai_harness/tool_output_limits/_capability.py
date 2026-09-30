@@ -24,7 +24,12 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
-from pydantic_ai_harness.filesystem._providers import FileToolsInfo, file_tools_provider
+from pydantic_ai_harness.filesystem._providers import (
+    FILE_READ_OVERHEAD_CHARS,
+    FileToolsInfo,
+    ProvidesFileTools,
+    file_tools_provider,
+)
 from pydantic_ai_harness.tool_output_limits._bands import (
     Action,
     Band,
@@ -296,7 +301,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     ) -> Any:
         """Reduce the tool result -- both `return_value` and model-visible `content`."""
         original: object = result
-        if call.tool_name == READ_TOOL_NAME or await self._is_workspace_spill_read(ctx, call, args):
+        if call.tool_name == READ_TOOL_NAME or self._is_workspace_spill_read(ctx, call, args):
             return original
         if not await matches_tool_selector(self.tool_filter, ctx, tool_def):
             return original
@@ -519,19 +524,19 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         )
         return preview, handle
 
-    async def _is_workspace_spill_read(
-        self, ctx: RunContext[AgentDepsT], call: ToolCallPart, args: dict[str, Any]
-    ) -> bool:
+    def _is_workspace_spill_read(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, args: dict[str, Any]) -> bool:
         """Exempt a provider read of a known spill from recursively spilling itself."""
         store = self._store
         if not isinstance(store, WorkspaceStore) or store.workspace is not None:
             return False
-        for handle, _ in _workspace_spills(ctx):
-            match = await file_tools_provider(ctx, handle)
-            if match is None:
+        handles = {handle for handle, _ in _workspace_spills(ctx)}
+        if not handles:
+            return False
+        for capability_id, capability in ctx.capabilities.items():
+            if capability_id not in ctx.active_capability_ids or not isinstance(capability, ProvidesFileTools):
                 continue
-            _, info = match
-            if call.tool_name == info.read_tool and args.get(info.path_arg) == handle:
+            info = capability.file_tools()
+            if call.tool_name == info.read_tool and args.get(info.path_arg) in handles:
                 return True
         return False
 
@@ -726,7 +731,7 @@ def _file_tools_can_read_unit(info: FileToolsInfo, unit: _Unit) -> bool:
     if info.max_read_chars is None:
         return True
     longest_line = max((len(line) for line in (unit.text or '').splitlines(keepends=True)), default=0)
-    return longest_line + 512 <= info.max_read_chars
+    return longest_line + FILE_READ_OVERHEAD_CHARS <= info.max_read_chars
 
 
 def _build_spill_preview(

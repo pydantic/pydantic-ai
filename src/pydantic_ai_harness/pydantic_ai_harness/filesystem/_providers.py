@@ -9,6 +9,9 @@ from typing import Protocol, runtime_checkable
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend
 
+FILE_READ_OVERHEAD_CHARS = 512
+"""Conservative room for a provider's model-facing read header and continuation hint."""
+
 
 @dataclass(frozen=True)
 class FileToolsInfo:

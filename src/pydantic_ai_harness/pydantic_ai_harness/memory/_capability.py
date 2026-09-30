@@ -16,7 +16,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, T
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai_harness.filesystem._providers import FileToolsInfo, file_tools_provider
+from pydantic_ai_harness.filesystem._providers import FILE_READ_OVERHEAD_CHARS, FileToolsInfo, file_tools_provider
 from pydantic_ai_harness.memory._store import FileStore, InMemoryStore, MemoryFile, MemoryStore, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
@@ -213,7 +213,7 @@ class Memory(AbstractCapability[AgentDepsT]):
             path,
             tool_names=tool_names,
             require_tree=True,
-            min_read_chars=self.max_memory_size + 512,
+            min_read_chars=self.max_memory_size + FILE_READ_OVERHEAD_CHARS,
         )
         return (path, match[1]) if match is not None else None
 
