@@ -90,9 +90,11 @@ engine:
       // `Coder` acts on the run's workspace, and `LocalWorkspace(".")` makes that
       // the checkout: the launcher runs with the checkout as its working
       // directory. A local workspace hands commands only `PATH`, `HOME` and the
-      // locale variables, so `env` passes the step's environment on, minus the
-      // provider credential variables `Coder`'s shell has always withheld. The
-      // AWF sandbox is the isolation boundary.
+      // locale variables, which is not enough here: AWF's only egress is the
+      // proxy named in `HTTPS_PROXY`, and `git commit` needs the identity gh-aw
+      // sets in `GIT_AUTHOR_*`. So `env` passes the step's environment on, minus
+      // the provider credential variables `Coder`'s shell has always withheld.
+      // The AWF sandbox is the isolation boundary.
       //
       // The gateway's MCP servers are deliberately not part of the module.
       // `pai --mcp-config` reads the same Claude-shaped config file through the
