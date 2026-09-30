@@ -124,7 +124,7 @@ Call `build_memory` during application startup and close the returned pool durin
 
 ## Namespaces
 
-Use a namespace resolver when one `Agent` serves multiple users. It runs once per run from your typed dependencies, and its result is hidden from the model-facing tool schema.
+Use a namespace resolver when one `Agent` serves multiple users. It selects the namespace from your typed dependencies, and its result is hidden from the model-facing tool schema.
 
 ```python
 from dataclasses import dataclass
@@ -247,6 +247,8 @@ The serializable backends are `memory`, `file`, and `sqlite`. A namespace callab
 | DBOS | Automatic snapshot loading is a DBOS step. Ordinary `FunctionToolset` calls are not DBOS-durable; wrap memory tool operations in application-provided DBOS steps when required. |
 
 `Memory` carries the stable default `id='memory'`, so durable recovery works without configuration. The memory backend and workflow state backend remain independent: durable execution does not make an in-memory notebook persistent.
+
+An ordinary run resolves its store and namespace once. A serialized worker reconstructs them from the run context, so a resolver must select the same backing data and namespace each time. A fresh store object pointing to the same database preserves existing notes; a new empty `InMemoryStore` loses access to earlier writes. Use shared persistent storage when tasks can execute in different processes.
 
 Each model request that uses automatic snapshot loading records one bounded snapshot result in workflow history, so choose `max_memory_size` and `max_tokens` with the engine's history limits in mind.
 

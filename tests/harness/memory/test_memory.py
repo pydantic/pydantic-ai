@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from copy import copy
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import cast
@@ -115,7 +116,8 @@ async def test_file_store_hides_mutations_on_read_only_run(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize('run_local_context', [False, True])
-async def test_memory_tools_recover_run_configuration(run_local_context: bool) -> None:
+@pytest.mark.parametrize('prefix', [False, True])
+async def test_memory_tools_recover_run_configuration(run_local_context: bool, prefix: bool) -> None:
     class LimitedMemory(Memory[None]):
         async def for_run(self, ctx: RunContext[None]) -> Memory[None]:
             clone = await super().for_run(ctx)
@@ -129,7 +131,8 @@ async def test_memory_tools_recover_run_configuration(run_local_context: bool) -
     memory = LimitedMemory(store=store, inject_memory=False)
     toolset = MemoryToolset(memory)
     ctx = _ctx()
-    ctx.root_capability = await memory.for_run(ctx) if run_local_context else memory
+    capability = memory.prefix_tools('tenant') if prefix else memory
+    ctx.root_capability = await capability.for_run(ctx) if run_local_context else capability
 
     assert await toolset.read_memory(ctx, 'one') == (
         'need\n\n[Truncated: this file exceeds `max_memory_size`; edit it externally before using `write_memory`.]'
@@ -143,6 +146,30 @@ async def test_memory_tools_recover_run_configuration(run_local_context: bool) -
     assert result['truncated'] is True
     assert (await toolset.delete_memory(ctx, 'one'))['status'] == 'deleted'
     assert await store.read('main/one.md', max_chars=100) is None
+
+
+async def test_memory_store_is_reconstructed_from_fresh_worker_contexts(tmp_path: Path) -> None:
+    def resolver(ctx: RunContext[str]) -> MemoryStore:
+        return SqliteMemoryStore(database=tmp_path / 'memory.sqlite')
+
+    memory = Memory[str](store_resolver=resolver, namespace=lambda ctx: ctx.deps, inject_memory=False)
+    toolset = MemoryToolset(memory)
+
+    def worker_context(tenant: str, tool_call_id: str) -> RunContext[str]:
+        # Serialized workers attach the registered capability, not a live run clone.
+        return RunContext(
+            deps=tenant,
+            model=TestModel(),
+            usage=RunUsage(),
+            run_id=tenant,
+            tool_call_id=tool_call_id,
+            root_capability=memory.prefix_tools('tenant'),
+        )
+
+    await toolset.write_memory(worker_context('alice', 'write'), 'Alice note')
+    await toolset.write_memory(worker_context('bob', 'write'), 'Bob note')
+    assert await toolset.read_memory(worker_context('alice', 'read'), 'MEMORY.md') == 'Alice note\n'
+    assert await toolset.read_memory(worker_context('bob', 'read'), 'MEMORY.md') == 'Bob note\n'
 
 
 def _latest_instructions(messages: list[ModelMessage]) -> str:
@@ -1286,6 +1313,39 @@ class TestInjection:
                 TestModel(),
                 capabilities=[Memory(store=OutOfScopeListingStore(), injection_errors='raise')],
             ).run('go')
+
+    @pytest.mark.parametrize('prefix_depth', [1, 2])
+    async def test_prefixed_memory_uses_run_selected_store_scope_and_limit(self, prefix_depth: int) -> None:
+        stores = {
+            tenant: InMemoryStore({f'{tenant}/main/MEMORY.md': f'{tenant} memory'}) for tenant in ('alice', 'bob')
+        }
+
+        class TenantMemory(Memory[str]):
+            async def for_run(self, ctx: RunContext[str]) -> Memory[str]:
+                selected = copy(self)
+                selected.store = stores[ctx.deps]
+                selected.namespace = ctx.deps
+                selected.max_memory_size = 4
+                return await super(TenantMemory, selected).for_run(ctx)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            returned = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+            if returned:
+                return ModelResponse(parts=[TextPart(str(returned[-1].content))])
+            return ModelResponse(parts=[ToolCallPart('tenant_' * prefix_depth + 'read_memory', {'file': 'MEMORY.md'})])
+
+        capability = TenantMemory(
+            store=InMemoryStore({'admin/main/MEMORY.md': 'ADMIN_SECRET'}), namespace='admin', inject_memory=False
+        ).prefix_tools('tenant')
+        if prefix_depth == 2:
+            capability = capability.prefix_tools('tenant')
+        agent = Agent(FunctionModel(model), deps_type=str, capabilities=[capability])
+        results = await asyncio.gather(*(agent.run('Read my memory.', deps=tenant) for tenant in ('alice', 'bob')))
+        for result, expected in zip(results, ('alic', 'bob ')):
+            assert result.output == (
+                expected
+                + '\n\n[Truncated: this file exceeds `max_memory_size`; edit it externally before using `write_memory`.]'
+            )
 
     async def test_multiple_memories_compose_on_one_agent_without_clobbering(self) -> None:
         store = InMemoryStore()

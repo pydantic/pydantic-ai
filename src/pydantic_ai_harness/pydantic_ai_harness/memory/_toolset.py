@@ -11,7 +11,7 @@ from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
@@ -301,6 +301,8 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
 
         def select(capability: AbstractCapability[AgentDepsT]) -> None:
             nonlocal selected
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
             if not isinstance(capability, Memory):
                 return
             # Run copies share the leaf even when `get_toolset` creates a fresh wrapper.

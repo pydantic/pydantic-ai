@@ -6,7 +6,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from tests.conftest import try_import
@@ -17,7 +17,7 @@ with try_import() as imports_successful:
     from prefect.testing.utilities import prefect_test_harness
 
     from pydantic_ai.durable_exec.prefect import PrefectDurability
-    from pydantic_ai_harness.memory import InMemoryStore, Memory
+    from pydantic_ai_harness.memory import InMemoryStore, Memory, MemoryStore
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='Prefect or Harness is not installed'),
@@ -32,22 +32,31 @@ def prefect_server() -> Iterator[None]:
             yield
 
 
-async def test_memory_tools_run_in_prefect(prefect_server: None) -> None:
+@pytest.mark.parametrize('resolve_store', [False, True])
+@pytest.mark.parametrize('prefix', ['', 'tenant_'])
+async def test_memory_tools_run_in_prefect(prefect_server: None, resolve_store: bool, prefix: str) -> None:
     store = InMemoryStore()
+    resolved_stores: list[InMemoryStore] = []
+
+    def resolver(ctx: RunContext[object]) -> MemoryStore:
+        selected = InMemoryStore()
+        resolved_stores.append(selected)
+        return selected
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         del info
         returned = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
         if not returned:
-            return ModelResponse(parts=[ToolCallPart('write_memory', {'content': 'Prefer short answers.'})])
+            return ModelResponse(parts=[ToolCallPart(f'{prefix}write_memory', {'content': 'Prefer short answers.'})])
         if len(returned) == 1:
-            return ModelResponse(parts=[ToolCallPart('read_memory', {'file': 'MEMORY.md'})])
+            return ModelResponse(parts=[ToolCallPart(f'{prefix}read_memory', {'file': 'MEMORY.md'})])
         return ModelResponse(parts=[TextPart(str(returned[-1].content))])
 
+    memory = Memory(store=store, store_resolver=resolver if resolve_store else None, inject_memory=False)
     agent = Agent(
         FunctionModel(model),
         name='memory-prefect',
-        capabilities=[Memory(store=store, inject_memory=False), PrefectDurability()],
+        capabilities=[memory.prefix_tools(prefix.removesuffix('_')) if prefix else memory, PrefectDurability()],
     )
 
     @flow
@@ -55,6 +64,7 @@ async def test_memory_tools_run_in_prefect(prefect_server: None) -> None:
         return (await agent.run('Remember my preference, then read it.')).output
 
     assert await read_and_write_memory() == 'Prefer short answers.\n'
-    saved = await store.read('main/MEMORY.md', max_chars=100)
+    assert len(resolved_stores) == (1 if resolve_store else 0)
+    saved = await (resolved_stores[0] if resolve_store else store).read('main/MEMORY.md', max_chars=100)
     assert saved is not None
     assert saved.content == 'Prefer short answers.\n'
