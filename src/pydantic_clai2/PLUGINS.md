@@ -596,7 +596,7 @@ Plugins are trusted code running as you. Only install what you trust.
 clai2 --worktree my-task
 ```
 
-`--worktree` (or `-w`) creates `<repository-root>/.worktrees/NAME` and changes to
+`--worktree` (or `-w`) creates or reopens `<repository-root>/.worktrees/NAME` and changes to
 that directory before reading project settings or activating plugins. Relative paths in your plugin, the coding tools,
 and `repo_context` therefore refer to that checkout. User plugins and settings
 still load from the same database directory, even with a relative `--database`

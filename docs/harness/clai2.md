@@ -75,8 +75,9 @@ py-cli clai2 -w
 
 A Git worktree is another checkout of the same repository with its own branch
 and working files. Run these commands inside a repository with at least one
-commit. `--worktree NAME` creates a `clai/NAME` branch from the current `HEAD`
-and starts CLAI at `<repository-root>/.worktrees/NAME`.
+commit. `--worktree NAME` creates a `clai-NAME` branch from the current `HEAD`
+and starts CLAI at `<repository-root>/.worktrees/NAME`. If that worktree already
+exists, CLAI reopens it; if only the `clai-NAME` branch exists, CLAI checks it out.
 `-w` is the short form; omit the name to generate one. Names start with a letter
 or digit and contain only ASCII letters, digits, hyphens, and underscores.
 
@@ -87,8 +88,8 @@ Uncommitted changes, ignored files, and untracked files are not copied. Project 
 tools use the new worktree root. Your user settings and plugins stay available;
 a relative `--database` path still refers to the directory you launched from.
 
-CLAI prints the new path and branch. Existing branches and non-empty directories
-are rejected. If checkout fails, CLAI tries to remove only the branch it just
+CLAI prints the path and branch. A directory at that path that is not a Git
+worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
 names the retained branch or checkout for recovery. The worktree and branch
 remain after exit, including startup
@@ -101,7 +102,7 @@ original repository root. Without `--force`, Git refuses to remove a dirty workt
 
 ```bash
 git worktree remove .worktrees/my-task
-git branch -d clai/my-task
+git branch -d clai-my-task
 ```
 
 !!! warning "Worktrees are not sandboxes"
