@@ -90,10 +90,6 @@ async def test_commands_run_in_bwrap_on_the_wrapped_host(tools: FakeRemoteTools,
 class _FailedHome:
     """A backend whose home probe fails, so the sandbox refuses to start."""
 
-    @property
-    def ref(self) -> None:
-        return None
-
     async def working_dir(self) -> str:
         return '/work'
 
@@ -143,20 +139,16 @@ async def test_an_inherited_path_entry_inside_the_working_dir_is_skipped(
 
 
 async def test_a_symlinked_path_entry_inside_the_working_dir_is_skipped(tools: FakeRemoteTools, tmp_path: Path) -> None:
-    """`/var` and `/private/var` are the same directory; the launcher compares canonical paths."""
-    resolved = tmp_path.resolve()
-    private = Path('/private')
-    if not str(resolved).startswith(f'{private}/') or not private.is_dir():
-        pytest.skip('needs a path under /private, aliased from outside it')
-    alias = Path(str(resolved).replace(str(private), '', 1))
-    if alias.resolve() != resolved:
-        pytest.skip('the path has no non-canonical alias')
-    impostor = alias / 'bin'
-    ran = resolved / 'bin' / 'ran'
-    (resolved / 'bin').mkdir()
-    (resolved / 'bin' / 'bwrap').write_text(f'#!/bin/sh\ntouch {ran}\n')
-    (resolved / 'bin' / 'bwrap').chmod(0o755)
-    backend = LocalWorkspaceBackend(tmp_path, env={'PATH': f'{impostor}{os.pathsep}{os.environ["PATH"]}'})
+    """A `PATH` entry outside the workspace can still be the workspace directory through a symlink."""
+    real_bin = tmp_path / 'bin'
+    real_bin.mkdir()
+    ran = real_bin / 'ran'
+    (real_bin / 'bwrap').write_text(f'#!/bin/sh\ntouch {ran}\n')
+    (real_bin / 'bwrap').chmod(0o755)
+    alias = tmp_path.parent / f'{tmp_path.name}-alias'
+    alias.mkdir()
+    (alias / 'bin').symlink_to(real_bin, target_is_directory=True)
+    backend = LocalWorkspaceBackend(tmp_path, env={'PATH': f'{alias / "bin"}{os.pathsep}{os.environ["PATH"]}'})
 
     result = await BubblewrapWorkspace(Workspace(backend)).run(['true'])
 
@@ -230,6 +222,46 @@ async def test_a_relative_home_directory_is_unavailable(tmp_path: Path) -> None:
 
     with pytest.raises(WorkspaceUnavailableError, match='could not read the host account'):
         await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+
+
+async def test_a_planted_mkdir_on_path_is_not_used(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """Creating `~/.ssh` is `/bin/mkdir`, not whatever `PATH` finds inside the workspace."""
+    home = tmp_path / 'home'
+    impostor = home / 'bin'
+    impostor.mkdir(parents=True)
+    ran = impostor / 'ran'
+    planted = impostor / 'mkdir'
+    planted.write_text(f'#!/bin/sh\ntouch {ran}\n')
+    planted.chmod(0o755)
+    backend = LocalWorkspaceBackend(
+        home, env={'HOME': str(home), 'PATH': f'{impostor}{os.pathsep}{os.environ["PATH"]}'}
+    )
+
+    await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+
+    assert not ran.exists()
+    assert (home.resolve() / '.ssh').is_dir()
+
+
+async def test_ssh_home_resolution_does_not_run_planted_helpers(tools: FakeRemoteTools, tmp_path: Path) -> None:
+    """Resolving `$HOME` over SSH stays inside `/bin/sh`. It does not run `readlink`, `wc`, or `base64`."""
+    impostor = tmp_path / 'bin'
+    impostor.mkdir()
+    ran = impostor / 'ran'
+    for name in ('readlink', 'wc', 'base64'):
+        planted = impostor / name
+        planted.write_text(f'#!/bin/sh\ntouch {ran}\n')
+        planted.chmod(0o755)
+    backend = SSHWorkspaceBackend(
+        'box',
+        working_dir=str(tmp_path),
+        env={'HOME': str(tools.home), 'PATH': f'{impostor}{os.pathsep}{os.environ["PATH"]}'},
+    )
+
+    result = await BubblewrapWorkspace(Workspace(backend)).run(['true'])
+
+    assert result.exit_code == 0
+    assert not ran.exists()
 
 
 async def test_an_ssh_path_that_is_not_a_directory_is_unavailable(tmp_path: Path) -> None:

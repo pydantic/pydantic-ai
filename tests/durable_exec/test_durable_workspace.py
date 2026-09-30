@@ -306,6 +306,17 @@ async def test_a_matching_explicit_workspace_policy_is_kept(tmp_path: Path) -> N
     assert result.workspace.wrapped.durable_policy() == ('open',)
 
 
+def test_a_policy_capability_follows_the_wrapped_answer(tmp_path: Path) -> None:
+    capability = PolicyCapability(LocalWorkspace(tmp_path), 'open')
+    assert capability.get_workspace(_run_context(), ref=WorkspaceRef(provider='other', id='nope')) is None
+
+    read_only = PolicyCapability(LocalWorkspace(tmp_path, read_only=True), 'open').get_workspace(
+        _run_context(), ref=None
+    )
+    assert isinstance(read_only, PolicyWorkspace)
+    assert read_only.durable_policy() == ('open',)
+
+
 async def test_expected_errors_cross_as_data_and_re_raise(tmp_path: Path) -> None:
     durability = FakeDurability()
     agent = Agent(TestModel(), name='ws', capabilities=[LocalWorkspace(tmp_path), durability])

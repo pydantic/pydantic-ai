@@ -98,7 +98,7 @@ fi
 if [ -e "$d" ] || [ -L "$d" ]; then
   exit 2
 fi
-mkdir -m 700 "$d"
+/bin/mkdir -m 700 "$d"
 """
 """Create `~/.ssh` on the host that runs commands when the writable directory would contain it.
 
@@ -106,6 +106,15 @@ OpenSSH runs `~/.ssh/rc` before the command. The directory is then bind-mounted 
 sandboxed command cannot plant that file for the next connection. An existing directory is left
 alone, including a symlink to one; anything else at the path is a failure.
 """
+
+_CANONICAL_HOME = r"""case "$HOME" in
+  /*) ;;
+  *) exit 1 ;;
+esac
+cd -P -- "$HOME" || exit 1
+pwd -P
+"""
+"""`$HOME` as a canonical absolute path, using only shell builtins."""
 
 _PROBE_TIMEOUT = 30.0
 """Seconds to wait for the check that `bwrap` can start a sandbox at all."""
@@ -263,13 +272,15 @@ class BubblewrapWorkspace(WrapperWorkspace):
         """
         if self._ssh_guard is not None:
             return self._ssh_guard
-        reported = await self.wrapped.run(['/bin/sh', '-c', 'printf %s "$HOME"'], timeout=_PROBE_TIMEOUT)
-        if reported.exit_code != 0 or not posixpath.isabs(reported.stdout):
+        # `cd -P` and `pwd -P` are builtins. `Workspace.realpath` over SSH runs `readlink`, `wc` and
+        # `base64` from `PATH`, which a writable directory on that `PATH` could supply.
+        reported = await self.wrapped.run(['/bin/sh', '-c', _CANONICAL_HOME], timeout=_PROBE_TIMEOUT)
+        home = reported.stdout.removesuffix('\n')
+        if reported.exit_code != 0 or not posixpath.isabs(home):
             raise WorkspaceUnavailableError(
                 "bubblewrap could not read the host account's home directory, so it cannot keep `~/.ssh` "
                 'out of the writable sandbox'
             )
-        home = await self.wrapped.realpath(reported.stdout)
         ssh_dir = posixpath.join(home, '.ssh')
         root = posixpath.normpath(working_dir)
         inside = root == '/' or ssh_dir == root or ssh_dir.startswith(root + '/')
