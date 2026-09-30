@@ -247,7 +247,7 @@ async def _run_setup_error_hook(
     run_ctx: RunContext[AgentDepsT],
     error: BaseException,
     *,
-    context_preparation_failed: bool = False,
+    prepare_context: bool = True,
 ) -> None:
     """Dispatch error hooks when setup fails before a run result can be built."""
     if _is_run_control_error(error):
@@ -262,7 +262,7 @@ async def _run_setup_error_hook(
         # A failed `for_run` may leave duplicate ids in the partial tree; cleanup still needs
         # the public registry without replacing the setup error with an id validation error.
         run_ctx.capabilities = _build_run_capabilities(run_capability, validate_ids=False)
-    if not context_preparation_failed:
+    if prepare_context:
         try:
             _prepare_run_capability_context(run_capability, run_ctx)
         except Exception:
@@ -350,7 +350,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
     try:
         _prepare_run_capability_context(run_capability, run_ctx)
     except BaseException as error:
-        await _run_setup_error_hook(resolved_layers, run_ctx, error, context_preparation_failed=True)
+        await _run_setup_error_hook(resolved_layers, run_ctx, error, prepare_context=False)
         raise
 
     outer_context = contextvars.copy_context()
@@ -402,7 +402,12 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     short_circuited = _wrap_task.done() and not _run_ready.is_set()
     if short_circuited:
-        await _finalize_result(_wrap_task.result())
+        try:
+            result = _wrap_task.result()
+        except BaseException as error:
+            await _run_setup_error_hook(resolved_layers, run_ctx, error, prepare_context=False)
+            raise
+        await _finalize_result(result)
 
     try:
         try:

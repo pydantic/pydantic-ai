@@ -28,7 +28,7 @@ from pydantic_ai.capabilities import (
     UseThreadExecutor,
 )
 from pydantic_ai.capabilities._run_resolution import RunCapabilityResolutions
-from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -2245,6 +2245,37 @@ class TestRunErrorHooks:
             await Agent(TestModel(), capabilities=[CleanupCapability()]).run('hello', toolsets=[FailingToolset()])
 
         assert observed == ['cleaned']
+
+    @pytest.mark.parametrize('failure_stage', ['wrap_run', 'before_run'])
+    async def test_failure_before_run_body_dispatches_cleanup(self, failure_stage: str) -> None:
+        error = RuntimeError('run setup failed')
+        cleaned: list[str] = []
+
+        @dataclass
+        class CleanupCapability(AbstractCapability[object]):
+            name: str
+
+            async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[object]:
+                if self.name == 'second' and failure_stage == 'wrap_run':
+                    raise error
+                return await handler()
+
+            async def before_run(self, ctx: RunContext[object]) -> None:
+                if self.name == 'second' and failure_stage == 'before_run':
+                    raise error
+
+            async def on_run_error(self, ctx: RunContext[object], *, error: BaseException) -> AgentRunResult[object]:
+                cleaned.append(self.name)
+                return AgentRunResult(output='setup recovery is unavailable')
+
+        agent: Agent[object, str] = Agent(
+            TestModel(), capabilities=[CleanupCapability('first'), CleanupCapability('second')]
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            await agent.run('hello')
+
+        assert exc_info.value is error
+        assert cleaned == ['second', 'first']
 
     async def test_context_preparation_failure_runs_cleanup_once(self):
         error = RuntimeError('context preparation failed')
