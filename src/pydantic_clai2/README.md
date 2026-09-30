@@ -78,6 +78,13 @@ Python or set `PYTHONWARNINGS=default` to see them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
 
+## Herdr integration
+
+Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report
+CLAI2's state, session reference, model/token metadata, and conversation title.
+It starts disabled and does nothing outside herdr. See
+[the plugin guide](PLUGINS.md#herdr-integration) for details and limitations.
+
 ## Desktop notifications
 
 The built-in `notifications` plugin is enabled by default. Interactive sessions
@@ -863,6 +870,15 @@ asks you a question can open its picker from a fork.
 
 ## Saved sessions and `/resume`
 
+The project pane groups existing Git worktrees and their subdirectories under
+one repository name. Session cards show each checkout's current branch, or its
+worktree directory name for detached HEAD. These labels are read when the browser
+opens, not historical branch names. Missing directories, non-Git workspaces, and
+unavailable Git fall back to directory labels. Separate repositories with the
+same name remain separate and use paths to distinguish them. Transcript previews
+and cross-directory confirmations keep the original saved path; resuming does
+not change directories or migrate saved data.
+
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
 replacement immediately, even if you exit before another prompt. `/new` switches
@@ -1364,6 +1380,10 @@ is kept separately and flushed in order, spilling to a private temporary file
 for large bursts. Full-screen menus release scrolling margins and detach the keyboard reader before taking over.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
+The status row follows Code Puppy's styling: muted surrounding text, an accented
+output-token count, and purple tool names. Colours follow the selected `/theme`;
+context warnings keep the warning colour. The same styling applies while idle
+and working.
 
 A plugin can append its own fragment to the row with `host.status_segment`, such
 as the working directory or a branch name; fragments are muted and dropped when
@@ -1454,8 +1474,9 @@ shows how to put a different one, a web form for instance, in its place.
 The stock CLI enables the built-in `logfire` plugin by default. It adds Pydantic
 AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
 capability to CLAI turns for agent, model-request, and tool
-spans, including timing, token usage, and failures. It adds no separate CLAI spans
-and does not instrument HTTP clients or unrelated agents globally.
+spans, including timing, token usage, and failures. It adds CLAI's own UI spans
+only when `ui_events` is on (see below), and does not instrument HTTP clients or
+unrelated agents globally.
 
 Set `LOGFIRE_TOKEN` to a write token for your Logfire project. Alternatively,
 place the SDK's `logfire_credentials.json` in your user config directory at
@@ -1491,6 +1512,46 @@ than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags contro
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
 model/tool names and tool definitions may still be recorded. Logfire's normal
 scrubbing remains enabled.
+
+Two more options choose where telemetry goes and what it covers. `token` names a
+`/keys` entry holding a Logfire write token, which then takes the place of
+`LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
+rather than falling back. `ui_events` (default `false`) adds spans and logs, tagged
+`clai2-ui`, for UI interactions: menus, slash commands, `/set`, plugin actions,
+`/keys`, prompt submissions, steering, interrupts, completions, and session start,
+clear, and resume. They record names and listed choices, never prompt text, typed
+values, or secrets.
+
+### Setting up where traces go
+
+`/plugins configure logfire` (or `C` on `logfire` in `/plugins`) opens a setup menu:
+
+1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
+2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
+3. Pick one of the projects you can write to.
+
+CLAI then creates a write token for that project, saves it in `/keys` as
+`LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
+reloads and the next turn is traced there. The sign-in itself is not kept. The
+URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
+send the token elsewhere, and sending is turned on if it was off. Run the menu
+again to switch projects.
+
+### Sending UX telemetry to the Pydantic shared project
+
+`@pydantic.dev` staff can send CLAI UX telemetry to the team's shared Logfire
+project: run `/plugins configure logfire`, pick Logfire US, sign in with your
+Pydantic account, and pick the shared CLAI project. Then turn on UI events:
+
+```text
+/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"token": {"name": "LOGFIRE_TOKEN_<ORG>_<PROJECT>"}, "ui_events": true}'
+```
+
+using the key name the setup menu printed (Esc closes the menu that `/plugins add`
+opens). Run the setup menu again to go back to your personal project. Agent spans
+still include content by default; add `"include_content": false,
+"include_binary_content": false` if you'd rather share only UX telemetry and
+timing with the team.
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.

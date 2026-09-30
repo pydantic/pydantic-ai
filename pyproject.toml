@@ -208,9 +208,9 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# termflow-md 0.9.3 is the first release supporting Python 3.10, which `pydantic-clai2` needs.
-# TODO(Kludex): Remove after 2026-10-01 16:36 UTC.
-termflow-md = "2026-09-24T16:36:46Z"
+# Admit termflow-md 0.11.0 for CLAI2's swappable agent-history primitives; later releases stay quarantined.
+# TODO: Remove after 2026-10-07 15:58 UTC.
+termflow-md = "2026-09-30T15:58:29Z"
 # Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
 # TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
 # This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
@@ -339,6 +339,7 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/test_ci_content_classifier.py",
 ]
 
 [tool.ruff.lint]
@@ -403,6 +404,7 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_ci_content_classifier.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]
