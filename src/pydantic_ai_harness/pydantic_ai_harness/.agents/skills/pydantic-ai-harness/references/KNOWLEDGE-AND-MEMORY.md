@@ -194,8 +194,8 @@ Gotchas:
   `agent.run(..., conversation_id=...)`; follow-up runs that thread `message_history` inherit it,
   a run with neither gets a fresh id and searches only itself.
 - `SnapshotHistorySource(store)` raises `TypeError` at construction if the store lacks
-  `list_runs` / `list_snapshots` / `latest_snapshot`; the shipped `InMemoryStepStore`,
-  `FileStepStore`, `SqliteStepStore`, `MongoStepStore` all work. A custom `HistorySource` must
+  `list_runs` / `list_snapshots`; the shipped `InMemoryStepStore`, `FileStepStore`,
+  `SqliteStepStore`, `MongoStepStore` all work. A custom `HistorySource` must
   populate `conversation_id` on its `RunRecord`s and implement
   `list_runs(*, conversation_id=None)` (the old no-argument signature still works but warns).
 - Recovery of compaction-dropped messages depends on pre-compaction snapshots still being

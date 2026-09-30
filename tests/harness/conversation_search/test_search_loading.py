@@ -23,7 +23,6 @@ from pydantic_ai_harness.conversation_search import (
     HistorySource,
     SearchScope,
     SnapshotHistorySource,
-    SnapshotStore,
 )
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
@@ -42,10 +41,13 @@ def _reply(content: str) -> ModelResponse:
     return ModelResponse(parts=[TextPart(content=content)])
 
 
+_Store = InMemoryStepStore | FileStepStore | SqliteStepStore
+
+
 class _RecordingStore:
     """A `SnapshotStore` that records which reads a search makes."""
 
-    def __init__(self, inner: SnapshotStore) -> None:
+    def __init__(self, inner: _Store) -> None:
         self.inner = inner
         self.listed_conversations: list[str | None] = []
         self.snapshot_loads: list[str] = []
@@ -68,8 +70,6 @@ class _RecordingStore:
         self.latest_loads.append(run_id)
         return await self.inner.latest_snapshot(run_id=run_id)
 
-
-_Store = InMemoryStepStore | FileStepStore | SqliteStepStore
 
 STORE_FACTORIES: dict[str, Callable[[Path], _Store]] = {
     'memory': lambda _: InMemoryStepStore(),
@@ -273,6 +273,48 @@ class TestReconstructionCache:
 
         assert store.snapshot_loads == ['r1', 'r1']
         assert store.latest_loads == []
+
+    async def test_store_without_latest_snapshot_still_folds_in_only_new_snapshots(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _NoLatestStore:
+            """A `SnapshotStore` without `latest_snapshot`, so every call relists snapshots."""
+
+            def __init__(self, inner: InMemoryStepStore) -> None:
+                self.inner = inner
+                self.snapshot_loads = 0
+
+            async def list_runs(  # pragma: no cover - `run_history` never lists runs
+                self,
+                *,
+                parent_run_id: str | None = None,
+                conversation_id: str | None = None,
+            ) -> list[RunRecord]:
+                return await self.inner.list_runs(parent_run_id=parent_run_id, conversation_id=conversation_id)
+
+            async def list_snapshots(self, *, run_id: str) -> list[ContinuableSnapshot]:
+                self.snapshot_loads += 1
+                return await self.inner.list_snapshots(run_id=run_id)
+
+        inner = InMemoryStepStore()
+        await inner.register_run(RunRecord(run_id='r1'))
+        question = _user('ZEBRA')
+        await _save(inner, 'r1', 0, [question])
+        store = _NoLatestStore(inner)
+        source = SnapshotHistorySource(store)
+        await source.run_history(run_id='r1')
+
+        hashed: list[ModelMessage] = []
+        real_hash = source_module.message_hash
+
+        def counting_hash(message: ModelMessage) -> str:
+            hashed.append(message)
+            return real_hash(message)
+
+        monkeypatch.setattr(source_module, 'message_hash', counting_hash)
+        assert _texts(await source.run_history(run_id='r1')) == ['ZEBRA']
+        assert hashed == []
+        assert store.snapshot_loads == 2
 
     def test_rejects_negative_bound(self) -> None:
         with pytest.raises(ValueError, match='max_cached_runs must be non-negative'):

@@ -84,8 +84,6 @@ class SnapshotStore(Protocol):
 
     A structural subset of the step-persistence stores: `InMemoryStepStore`,
     `FileStepStore`, `SqliteStepStore`, and `MongoStepStore` all satisfy it.
-    `latest_snapshot` lets `SnapshotHistorySource` confirm a cached run is
-    unchanged without reloading every snapshot.
     `list_snapshots` is not part of the `StepStore` protocol yet -- the shipped
     stores implement it as a plain method; promoting it into the protocol is
     proposed alongside the session-tree evolution (pydantic-ai-harness#321).
@@ -99,6 +97,16 @@ class SnapshotStore(Protocol):
     ) -> list[RunRecord]: ...  # pragma: no cover
 
     async def list_snapshots(self, *, run_id: str) -> list[ContinuableSnapshot]: ...  # pragma: no cover
+
+
+@runtime_checkable
+class _LatestSnapshotStore(SnapshotStore, Protocol):
+    """A `SnapshotStore` that can also load a run's newest snapshot on its own.
+
+    Every `StepStore` can, so every shipped store qualifies. It lets
+    `SnapshotHistorySource` confirm a cached run is unchanged without reloading all
+    of its snapshots; a store without it still gets incremental reconstruction.
+    """
 
     async def latest_snapshot(self, *, run_id: str) -> ContinuableSnapshot | None: ...  # pragma: no cover
 
@@ -192,7 +200,9 @@ class SnapshotHistorySource:
     prunes on that same save), so the cache is checked against the run's latest
     snapshot: unchanged, the cached record is returned without reloading; changed,
     only snapshots appended since are folded in, and anything else (a pruned or
-    replaced snapshot) rebuilds the record from scratch. `max_cached_runs` bounds
+    replaced snapshot) rebuilds the record from scratch. A store without
+    `latest_snapshot` skips the unchanged check and reloads the snapshot list, but
+    still only folds in the new ones. `max_cached_runs` bounds
     how many runs are kept, least recently searched first out; `0` disables the cache.
     """
 
@@ -205,12 +215,13 @@ class SnapshotHistorySource:
         if not isinstance(store, SnapshotStore):
             raise TypeError(
                 f'{type(store).__name__} is not a supported search substrate: SnapshotHistorySource '
-                'needs a store providing `list_runs`, `list_snapshots`, and `latest_snapshot`. The shipped '
+                'needs a store providing both `list_runs` and `list_snapshots`. The shipped '
                 'InMemoryStepStore, FileStepStore, SqliteStepStore, and MongoStepStore satisfy this.'
             )
         if max_cached_runs < 0:
             raise ValueError(f'max_cached_runs must be non-negative, got {max_cached_runs!r}.')
         self._store = store
+        self._latest_store = store if isinstance(store, _LatestSnapshotStore) else None
         self._max_cached_runs = max_cached_runs
         self._cache: OrderedDict[str, _ReconstructedRun] = OrderedDict()
 
@@ -221,8 +232,8 @@ class SnapshotHistorySource:
     async def run_history(self, *, run_id: str) -> list[ModelMessage]:
         """Union one run's snapshots into its durable message record."""
         cached = self._cache.get(run_id)
-        if cached is not None:
-            latest = await self._store.latest_snapshot(run_id=run_id)
+        if cached is not None and self._latest_store is not None:
+            latest = await self._latest_store.latest_snapshot(run_id=run_id)
             if latest is not None and _snapshot_key(latest) == cached.snapshot_keys[-1]:
                 self._remember(run_id, cached)
                 return list(cached.history)
