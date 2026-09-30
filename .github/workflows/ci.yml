@@ -1006,6 +1006,7 @@ jobs:
             tests/test_examples.py -n logical --dist=loadgroup
           uv run --no-sync coverage combine
         env:
+          BLOCKBUSTER_ENABLED: "false"
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.3.14-examples
           TYPECHECK_EXAMPLES: "true"
 
