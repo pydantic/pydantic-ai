@@ -197,21 +197,20 @@ async def process(ctx: RunContext, count: int) -> str:
 
 ## Handle Provider Failures
 
-Use `FallbackModel` when the user wants automatic provider or model failover.
+Use the `Fallback` capability when the user wants automatic provider or model failover. The chain is the model selected for the step (the agent's, `run(model=...)`'s, or `SelectModel`'s), then the capability's models.
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.capabilities import Fallback
 
-fallback = FallbackModel(
-    OpenAIChatModel('gpt-5.2'),
-    AnthropicModel('claude-sonnet-4-6'),
+agent = Agent(
+    'openai:gpt-5.6-sol',
+    name='fallback_agent',
+    capabilities=[Fallback('anthropic:claude-opus-5-5')],
 )
-
-agent = Agent(fallback, name='fallback_agent')
 ```
+
+`fallback_on` defaults to `ModelAPIError`; it also takes exception types, exception handlers, and response handlers (`(ModelResponse) -> bool`, which reject a successful response). Each candidate gets its own `prepare_model_request` pass, so provider-specific preparation is redone per model, and outer capabilities only see the accepted response. Use `FallbackModel` instead only outside an agent (direct model requests or a standalone `Model`).
 
 Good defaults:
 

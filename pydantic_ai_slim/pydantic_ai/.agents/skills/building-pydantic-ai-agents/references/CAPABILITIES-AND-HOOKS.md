@@ -93,7 +93,7 @@ Important hook families:
 
 - run-level hooks (`before_run`, `after_run`, `wrap_run`, `on_run_error`)
 - node-level hooks (`before_node_run`, `after_node_run`, `wrap_node_run`, `on_node_run_error`)
-- model-request hooks (`before_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`)
+- model-request hooks (`before_model_request`, `prepare_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`)
 - tool-validation and tool-execution hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - output-validation and output-processing hooks, each with `before_*`, `after_*`, `wrap_*`, and `on_*_error` variants
 - event-stream hooks
@@ -101,6 +101,8 @@ Important hook families:
 For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. A wrapper that returns without calling its handler skips everything inside, so mandatory authorization belongs in an outer wrapper or outside a short-circuitable cache. Recovered core failures are hidden from wrappers; hook failures and unrecovered core failures propagate through them. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap only later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
 
 In streamed runs, the model request lifecycle runs in a separate asyncio task. `ContextVar` writes made by an async `before_model_request` hook are copied back when the stream opens, so later tool, output, and run hooks observe them as they do in non-streamed runs. Writes made later in the model request task stay task-local; use a mutable attribute on `ctx.deps` for state that must be shared bidirectionally.
+
+A request step can make several attempts. `before_model_request` and `wrap_model_request` run once per step; `prepare_model_request` runs before every attempt with `request_context.model` set to the model about to serve it, so put model-dependent work (compaction, context-window fitting, per-provider translation) there, and once-per-step work (history processors, injected messages) in `before_model_request`. Raise `RetryModelRequest()` to re-run the same model, or `RetryModelRequest(model)` to move to another, from `on_model_request_error` (the attempt raised), `after_model_request` (reject the response), or `prepare_model_request` (switch before sending). `request_context.attempt` counts attempts from 1. Unlike `ModelRetry`, the model sees no retry prompt and `usage.requests` counts the step once; rejected responses stay out of history but their tokens count. A streamed response can't be rejected after it was streamed. The `Fallback` capability is built on this.
 
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 
@@ -222,7 +224,7 @@ Explicit `run(model=...)`, run-spec, and `agent.override(model=...)` choices win
 
 Keep selection separate from construction. Use the `resolve_model_id()` hook, or the `ResolveModelId` convenience capability, when tenant, region, credentials, or another dependency controls how a selected string becomes a `Model` instance. Resolution uses the first non-`None` result in capability order; model selection uses the last non-`None` contribution.
 
-Bootstrap strings use the post-`for_agent`, pre-`for_run` resolver chain. If `for_run()` replaces the capability, strings selected for step one and later use the replacement's resolver chain. Return a `FallbackModel` as the selected model when request failures, rather than routing policy, should trigger fallback.
+Bootstrap strings use the post-`for_agent`, pre-`for_run` resolver chain. If `for_run()` replaces the capability, strings selected for step one and later use the replacement's resolver chain. Add the `Fallback` capability when request failures, rather than routing policy, should trigger fallback: it starts from the selected model, and its own first model only stands in when the agent has no model and nothing else selects one.
 
 Both hooks are eager: deferred capabilities do not select or resolve models. Run-spec capabilities can bootstrap a model-less agent, but `CapabilityFunc` and `for_run()` need an existing model to construct their `RunContext`; they can replace it starting on step one. Do not use adaptive selection with durable execution yet, and pass an explicit model when resuming a selector-backed suspended request in another run.
 
