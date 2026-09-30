@@ -38,6 +38,7 @@ from typing_extensions import Self, TypeForm, TypeIs, TypeVar
 from pydantic_ai._instrumentation import DEFAULT_INSTRUMENTATION_VERSION
 from pydantic_ai._spec import load_from_registry
 from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
+from pydantic_graph import GraphRunContext
 
 from .. import (
     _agent_graph,
@@ -162,7 +163,7 @@ from .wrapper import WrapperAgent
 if TYPE_CHECKING:
     from starlette.applications import Starlette
 
-    from pydantic_graph import Graph, GraphRunContext
+    from pydantic_graph import Graph
 
     from .. import result as _result
     from ..realtime import (
@@ -3314,7 +3315,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # pieces yields the same structure as resolving a pre-composed tree, since the same
         # flatten-and-sort runs on the same resolved children either way.
         if resolution_capture is None:
-            resolved_layers = await _utils.gather(*(_resolve_capability_for_run(cap, ctx) for cap in run_layers))
+            # Signaling setup can be nested inside another run's capability resolution.
+            with _capture_run_capability_resolutions():
+                resolved_layers = await _utils.gather(*(_resolve_capability_for_run(cap, ctx) for cap in run_layers))
         else:
             resolution_capture.layers = layer_resolutions[setup_layer_start:]
 
@@ -4561,7 +4564,12 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 _concurrency.get_concurrency_context(self.concurrency_limiter, f'agent:{self.agent_name}')
             )
             if self.capability_owns_current_model:
-                await self.model_resources.enter_model(self.model)
+                try:
+                    await self.model_resources.enter_model(self.model)
+                except BaseException as error:
+                    run_ctx = _agent_graph.build_run_context(GraphRunContext(state=state, deps=graph_deps))
+                    await _run_setup_error_hook(self.resolved_layers, run_ctx, error)
+                    raise
             graph_run = await stack.enter_async_context(
                 self.graph.iter(
                     inputs=self.user_prompt_node,

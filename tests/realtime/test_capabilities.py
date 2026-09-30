@@ -20,7 +20,14 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai._instrumentation import get_instructions
-from pydantic_ai.capabilities import Hooks, NativeTool, ProcessEventStream, WebSearch
+from pydantic_ai.capabilities import (
+    CombinedCapability,
+    Hooks,
+    NativeTool,
+    ProcessEventStream,
+    WebSearch,
+    WrapperCapability,
+)
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.exceptions import RunCancelled, UserError
 from pydantic_ai.messages import (
@@ -61,6 +68,43 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
+
+
+async def test_signaling_failure_does_not_replace_outer_cleanup_capability() -> None:
+    cleaned: list[str] = []
+    resolved = asyncio.Event()
+
+    class Child(AbstractCapability[None]):
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            resolved.set()
+            return Child('inner')
+
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[None]:
+            cleaned.append(self.label)
+            raise error
+
+    class Fails(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            await resolved.wait()
+            raise RuntimeError('signaling setup failed')
+
+    child = Child('outer')
+    signaling_agent = Agent(deps_type=type(None), capabilities=[child, Fails()])
+
+    class FailingWrapper(WrapperCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            with pytest.raises(RuntimeError, match='signaling setup failed'):
+                await signaling_agent.realtime(_RecordingModel()).create_client_secret()
+            raise RuntimeError('outer setup failed')
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[FailingWrapper(CombinedCapability([child]))])
+    with pytest.raises(RuntimeError, match='outer setup failed'):
+        await agent.run('go')
+
+    assert cleaned == ['outer']
 
 
 class _Connection(RealtimeConnection):

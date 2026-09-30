@@ -1467,6 +1467,68 @@ async def test_setup_failure_cleans_resolved_child_when_wrapper_for_run_fails() 
     assert cleaned == ['resolved']
 
 
+async def test_capability_model_entry_failure_dispatches_setup_cleanup() -> None:
+    events: list[str] = []
+    failure = RuntimeError('model entry failed')
+
+    class FailingModel(TestModel):
+        async def __aenter__(self) -> TestModel:
+            events.append('model entry')
+            raise failure
+
+    class ModelOwner(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            events.append('setup')
+            return self
+
+        def get_model(self) -> TestModel:
+            return FailingModel()
+
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[None]:
+            assert error is failure
+            events.append('cleanup')
+            raise error
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await Agent(deps_type=type(None), capabilities=[ModelOwner()]).run('go')
+
+    assert exc_info.value is failure
+    assert events == ['setup', 'model entry', 'cleanup']
+
+
+async def test_setup_failure_cleans_adopted_wrapper_before_sibling_failure() -> None:
+    cleaned: list[str] = []
+    adopted = asyncio.Event()
+
+    class Child(AbstractCapability[None]):
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            return Child('resolved')
+
+        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[None]:
+            cleaned.append(self.label)
+            raise error
+
+    class Wrapper(WrapperCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            resolved = await super().for_run(ctx)
+            adopted.set()
+            return resolved
+
+    class Fails(AbstractCapability[None]):
+        async def for_run(self, ctx: RunContext[None]) -> AbstractCapability[None]:
+            await adopted.wait()
+            raise RuntimeError('sibling setup failed')
+
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[Wrapper(Child('original')), Fails()])
+    with pytest.raises(RuntimeError, match='sibling setup failed'):
+        await agent.run('go')
+
+    assert cleaned == ['resolved']
+
+
 async def test_setup_error_hook_nested_agent_run_keeps_normal_recovery() -> None:
     nested_results: list[str] = []
 
