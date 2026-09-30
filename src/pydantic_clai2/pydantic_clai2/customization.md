@@ -160,8 +160,15 @@ default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
 /plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
-Other options are service_name (default pydantic-clai2) and send_to_logfire
-(default "if-token-present", or false). This explicit option overrides
+Other options are service_name (default pydantic-clai2), send_to_logfire
+(default "if-token-present", or false), token (the name of a /keys entry
+holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
+then receives the telemetry), and ui_events (default false: also record UI
+interactions such as menus, commands, settings, plugin actions, keys, and prompt
+submissions, by name and never by content). /plugins configure logfire sets
+token and base_url for you, and turns sending on: pick Logfire US, EU, or
+a self-hosted URL, sign in in the browser, and pick a project; its new write
+token is saved in /keys. This explicit option overrides
 LOGFIRE_SEND_TO_LOGFIRE. Use LOGFIRE_TOKEN or the SDK credential file in
 $XDG_CONFIG_HOME/pydantic-clai2/logfire (default ~/.config/pydantic-clai2/logfire).
 Both SDK configuration and credentials are read from that user directory, not

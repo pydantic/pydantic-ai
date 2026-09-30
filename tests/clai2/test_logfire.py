@@ -24,9 +24,12 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins.logfire import LogfirePlugin
 from pydantic_clai2.commands import Commands
+from pydantic_clai2.config import Settings
+from pydantic_clai2.config.api_keys import save_key
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, load_plugin
+from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, TurnEnd, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.ui import telemetry
 
 
 class Exporter(InMemorySpanExporter):
@@ -43,6 +46,7 @@ class Recorder:
         self.exporters: list[Exporter] = []
         self.instances: list[logfire.Logfire] = []
         self.options: list[dict[str, object]] = []
+        self.tokens: list[str | None] = []
 
     def configure(
         self,
@@ -53,7 +57,11 @@ class Recorder:
         console: Literal[False],
         config_dir: Path,
         data_dir: Path,
+        token: str | None,
+        scrubbing: logfire.ScrubbingOptions | None,
+        advanced: logfire.AdvancedOptions | None,
     ) -> logfire.Logfire:
+        self.tokens.append(token)
         self.options.append(
             {
                 'local': local,
@@ -62,6 +70,7 @@ class Recorder:
                 'console': console,
                 'config_dir': config_dir,
                 'data_dir': data_dir,
+                'base_url': advanced.base_url if advanced else None,
             }
         )
         exporter = Exporter()
@@ -72,6 +81,8 @@ class Recorder:
             console=console,
             config_dir=config_dir,
             data_dir=data_dir,
+            token=token,
+            scrubbing=scrubbing,
             metrics=False,
             additional_span_processors=[SimpleSpanProcessor(exporter)],
             advanced=logfire.AdvancedOptions(emit_configuration_span=False),
@@ -150,6 +161,7 @@ async def test_default_content_images_tools_and_usage_are_traced(recorder: Recor
             'console': False,
             'config_dir': tmp_path / 'config/pydantic-clai2/logfire',
             'data_dir': tmp_path / 'config/pydantic-clai2/logfire',
+            'base_url': None,
         }
     ]
     assert all(exporter.closed for exporter in recorder.exporters)
@@ -415,3 +427,82 @@ async def test_interrupted_startup_shuts_down_plugin_providers(
     assert recorder.exporters[0].closed
     assert not loader.capabilities()
     assert loader.entries()[0].loaded is None
+
+
+def messages(recorder: Recorder) -> list[object]:
+    return [(span.attributes or {}).get('logfire.msg') for span in recorder.spans()]
+
+
+async def test_ui_events_are_off_by_default(recorder: Recorder) -> None:
+    plugin = load_logfire(make_host())
+    telemetry.record('setting {setting} changed', setting='display.theme', value='default')
+    await close(plugin)
+    assert messages(recorder) == []
+
+
+async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Recorder) -> None:
+    plugin = load_logfire(make_host(ui_events=True))
+    try:
+        for event in (
+            SessionStart(agent=Agent(TestModel()), settings=Settings()),
+            SessionStart(agent=Agent(TestModel()), settings=Settings(model=None)),
+            TurnEnd(text='a private prompt', outcome='cancelled'),
+        ):
+            await plugin.dispatch(event)
+        telemetry.record('setting {setting} changed', setting='sessions.naming', value='password123')
+        recorder.instances[0].info('not a UI event', setting='password123')
+    finally:
+        await close(plugin)
+    telemetry.record('after the plugin unloaded')
+    assert messages(recorder) == [
+        'session started',
+        'session started',
+        'turn cancelled',
+        'setting sessions.naming changed',
+        'not a UI event',
+    ]
+    started, default, _, changed, other = recorder.spans()
+    # The exemption covers only UI records: another span's `setting` is scrubbed as usual.
+    assert (other.attributes or {})['setting'] == "[Scrubbed due to 'password']"
+    assert (started.attributes or {})['model'] == Settings().model
+    assert (default.attributes or {})['model'] == 'agent default'
+    # Names are exempt from scrubbing; any other attribute that looks like a secret is still scrubbed.
+    assert (changed.attributes or {})['value'] == "[Scrubbed due to 'password']"
+    assert 'a private prompt' not in json.dumps([dict(span.attributes or {}) for span in recorder.spans()])
+
+
+@pytest.mark.parametrize(
+    ('saved', 'send', 'token', 'sent'),
+    [
+        (True, 'if-token-present', 'lf-shared-write-token', 'if-token-present'),
+        (False, 'if-token-present', None, False),
+        (False, False, None, False),
+    ],
+)
+async def test_token_from_keys_chooses_the_project(
+    recorder: Recorder,
+    saved: bool,
+    send: Literal[False, 'if-token-present'],
+    token: str | None,
+    sent: Literal[False, 'if-token-present'],
+) -> None:
+    if saved:
+        save_key(name='CLAI2_LOGFIRE_TOKEN', value='lf-shared-write-token')
+    host = make_host(token={'name': 'CLAI2_LOGFIRE_TOKEN'}, send_to_logfire=send)
+    await close(load_logfire(host))
+    assert recorder.tokens == [token]
+    assert recorder.options[0]['send_to_logfire'] == sent
+    output = host.console.file
+    assert isinstance(output, io.StringIO)
+    assert ('CLAI2_LOGFIRE_TOKEN is not in /keys' in output.getvalue()) == (not saved and send is not False)
+
+
+async def test_self_hosted_base_url_reaches_the_sdk(recorder: Recorder) -> None:
+    await close(load_logfire(make_host(base_url='logfire.example.com/')))
+    assert recorder.options[0]['base_url'] == 'https://logfire.example.com'
+
+
+def test_base_url_must_be_an_https_origin(recorder: Recorder) -> None:
+    with pytest.raises(ValidationError, match='https URL with no path'):
+        load_logfire(make_host(base_url='http://logfire.example.com'))
+    assert not recorder.instances

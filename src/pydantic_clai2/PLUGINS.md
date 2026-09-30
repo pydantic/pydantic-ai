@@ -256,6 +256,49 @@ belongs to the separate [`github` plugin](#github-tools-from-githubs-hosted-mcp-
 Core owns inference and its telemetry; CLAI adds no login-specific spans.
 Bare `/login` continues to sign in to Codex.
 
+## Herdr integration
+
+The built-in `herdr` plugin (`pydantic_clai2.builtin_plugins.herdr`) starts disabled.
+Run `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane. Use
+`/plugins disable herdr` to release the pane and stop reporting. No herdr-side
+integration install is needed. The plugin requires `HERDR_ENV=1`,
+`HERDR_SOCKET_PATH`, and `HERDR_PANE_ID`; optional `HERDR_TAB_ID` enables tab titles.
+Outside herdr, or on Windows, it contributes nothing and starts no worker.
+
+It reports `working` while agent runs are in flight, `blocked` while `AskUser`
+waits for an answer, and `idle` otherwise. Failed and cancelled runs return to
+`idle` too. Nested runs are counted; concurrent question waits are tracked by
+request ID. Tool names supply activity text, never tool arguments or results.
+User-opened menus do not report `blocked`. Other approval UIs are not tracked:
+CLAI2 has no universal approval-wait event. Herdr owns attention notifications;
+this plugin sends none. To avoid duplicate desktop alerts, separately disable
+CLAI2's `notifications` plugin if you prefer herdr's alerts.
+
+Persisted sessions report their stable conversation ID and SQLite database path,
+not a per-run ID. Resume manually with `clai2 --resume SESSION-ID` using the same
+CLAI2 config directory. Automatic restoration by herdr is not verified. Hosts
+without CLAI2 session persistence still report state and token metadata.
+
+Metadata has a 24-hour TTL and reports `$model`, `$tokens` (retained-history
+input plus output tokens), and `$context` (percentage from the compaction
+plugin's context events, omitted when unknown). Add those fields to your herdr
+sidebar's `rows_by_agent.clai2` configuration to display them. No prompts,
+answers, or tool contents are sent; session IDs, database paths, and conversation
+titles are sent to the local herdr socket.
+
+The pane title follows the persisted conversation title, including background
+naming and manual renames, checked every two seconds. Each metadata update keeps
+the current title. Only single-pane tabs are renamed. The original tab label is
+restored on session changes or clean unload, but a manually renamed or shared
+tab is left alone. An abrupt exit may leave the last tab label in place.
+
+Socket IO uses a plugin-owned daemon worker with bounded, latest-wins mailboxes.
+State and session reports take priority over activity and metadata. Requests
+retry up to three times with the same sequence number; missing sockets and
+server errors are nonfatal. Unloading cancels and drains the title watcher,
+discards queued work, and attempts one release with bounded shutdown. A departed
+or unresponsive herdr may miss reports; they do not fail the agent turn.
+
 ## Desktop notifications
 
 The default-enabled `notifications` plugin (`pydantic_clai2.builtin_plugins.notifications`)
@@ -309,9 +352,33 @@ Manage it with `/plugins disable logfire`, `/plugins enable logfire`, or
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
 `include_binary_content` (both default `true`), and `send_to_logfire` (default
 `"if-token-present"`, or `false`). The explicit plugin option takes precedence
-over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings.
+over `LOGFIRE_SEND_TO_LOGFIRE`. Tokens are not accepted in plugin settings;
+`token` takes only the name of a `/keys` entry (`{"name": "CLAI2_LOGFIRE_TOKEN"}`),
+whose write token then replaces `LOGFIRE_TOKEN` and the credential file, so its
+project receives the telemetry. If that key is missing, the plugin warns and
+exports nothing rather than falling back to another project.
 Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled.
+
+`base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
+`LOGFIRE_BASE_URL`, else the region the token names. `/plugins configure logfire`
+sets `token`, `base_url`, and `send_to_logfire` for you: it asks
+where traces go, runs Logfire's own device sign-in there (the one behind
+`logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
+accepts), lists the projects you can write to, and saves a new write token for
+the one you pick in `/keys`. The sign-in token is used only during setup. The flow
+lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
+
+`ui_events` (default `false`) also records CLAI's UI interactions on the same
+instance, as spans and logs tagged `clai2-ui`: menus opened and how they closed,
+slash commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
+submissions, steering, interrupts, completions, and session start, clear, and
+resume. Attributes carry names and listed choices, never prompt text, typed
+values, or secrets. The chokepoints live in `pydantic_clai2.ui.telemetry`, and
+`run_worker` opens every menu's span, so a new menu is covered without extra code.
+With `ui_events` on, the attributes that only hold names (`command`, `menu`,
+`setting`, `key_name`, ...) are exempt from scrubbing, since names like
+`OPENAI_API_KEY` or `sessions.naming` would otherwise be redacted.
 
 Unload flushes and shuts down only this plugin's providers. Reload creates a new
 instance. The supplied agent and global providers are unchanged, and the existing
@@ -571,7 +638,8 @@ Two ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
    `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
-   Its name is the file name without `.py`.
+   Its name is the file name without `.py`. CLAI creates the folder at startup, so it
+   is there to copy into after the first run.
 2. Point CLAI at anything importable, from the shell or from inside CLAI:
 
    ```sh
@@ -613,7 +681,7 @@ See [Git worktrees](README.md#git-worktrees) for naming and cleanup.
 The coding tools are a plugin too, and so are asking you multiple-choice
 questions mid-run, reading the repository's instruction file, and keeping the
 conversation inside the context window. These five plugins are marked
-`(built-in)` and enabled unless you say otherwise. Built-ins activate first, in
+`(built-in)` and enabled unless you say otherwise. Built-ins load first, in
 the order listed below, so `coder`'s guidance leads the system prompt; saved,
 drop-in, and project plugins follow in name order. Registration order is also the
 order plugin instructions, renderers, and status segments are consulted in.
@@ -1352,7 +1420,7 @@ CLAI does the same thing:
 | `/reload` | reload CLAI's own Python modules for development and rebuild the shell without restarting the process |
 
 `/reload` takes no arguments. It uses `importlib.reload`, preserves the conversation,
-agent, selected model, and active settings, and reactivates enabled plugins against
+agent, selected model, and active settings, and reloads enabled plugins against
 the refreshed shell types. Each loaded plugin receives `session_end` before reload
 and `session_start` when loaded again. Plugin hosts and their registrations are
 recreated, but installed module globals not overwritten by the new source can
@@ -1933,7 +2001,8 @@ row itself is CLAI's; a plugin adds to it with `get_status_segments`.
 
 Each segment is a function that takes no arguments and returns a short string. It
 is appended after the built-in figures, painted muted, and dropped when the
-plugin unloads.
+plugin unloads. The built-in row accents output-token counts and tool names using
+the selected theme; plugin fragments stay muted.
 
 ```python
 import os
@@ -2321,6 +2390,11 @@ project/session browser is a dedicated Termflow widget: unlike a single-pane
 pure frame and scripted-key tests follow the same headless menu conventions.
 The selected project stays highlighted while browsing sessions. The focused pane
 is labeled **SELECT PROJECT** or **SELECT SESSION**, with matching key hints.
+
+The browser groups existing Git worktrees by repository and labels session cards
+with the current branch or detached worktree name. This is display metadata only;
+saved workspace paths and cross-directory confirmation are unchanged. See
+[Saved sessions](README.md#saved-sessions-and-resume) for fallback behavior.
 
 The resume transcript preview displays at most 24,000 characters of the newest-first
 text, with a truncation notice for longer histories. Search is Unicode
