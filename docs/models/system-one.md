@@ -23,9 +23,42 @@ As with every model in Pydantic AI, the work is split in two:
 
 `SystemOneModel` talks to the API over HTTP and needs nothing beyond `pydantic-ai-slim` itself.
 
+## Quick start with Ollama {#ollama}
+
+[Ollama](https://ollama.com) v0.35.0 and later runs decision models locally over this API, such as [Nimble](https://ollama.com/library/nimble) from Bespoke Labs and [Tev1](https://ollama.com/library/tev1) from Together AI. With Ollama running, pull Nimble:
+
+```bash
+ollama pull nimble
+```
+
+Point Pydantic AI at Ollama. Local requests need no API key, and the URL has no `/v1` suffix, unlike the one for Ollama's [OpenAI-compatible API](ollama.md):
+
+```bash
+export SYSTEM_ONE_BASE_URL='http://localhost:11434'
+```
+
+Then have Nimble label a support ticket:
+
+```python
+from typing import Literal
+
+from pydantic_ai import Agent
+
+agent = Agent(
+    'system-one:nimble',
+    output_type=Literal['billing', 'bug', 'account'],
+    instructions='Which label fits this support ticket?',
+)
+result = agent.run_sync('Our checkout has returned 500 errors since 9am.')
+print(result.output)
+#> bug
+```
+
+Nimble picks one label in one request, and reports how sure it is of each in [`provider_details`](decision.md#confidence-and-thresholds).
+
 ## Configuration
 
-Set the API's URL, and its key if it has one, as environment variables:
+To use any other server, set the API's URL, and its key if it has one, as environment variables:
 
 ```bash
 export SYSTEM_ONE_BASE_URL='https://decisions.example.com'
@@ -111,32 +144,9 @@ Each model has limits of its own, such as how many options a pick-one can have o
 - `decision_max_choice_options`: a pick-one with more options is refused before a request is sent.
 - `decision_max_score_levels`: whole numbers with more levels are [asked as a pick-one](decision.md#what-each-field-type-does) instead of a rubric.
 
-Set them with `profile=`:
+Set them with `profile=`. [Ollama](#ollama), for example, takes at most 26 options in a pick-one and 26 levels in a rubric:
 
 ```python
-from pydantic_ai.models.system_one import SystemOneModel
-from pydantic_ai.profiles.decision import DecisionModelProfile
-
-model = SystemOneModel(
-    'your-model',
-    profile=DecisionModelProfile(decision_max_choice_options=50, decision_max_score_levels=5),
-)
-```
-
-A request over a limit the profile does not know about gets an error response from the API, which is raised as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so a [`FallbackModel`](overview.md#fallback-model) can take over. Where a model reads a limited number of tokens, set its [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] the same way, and a processor that [compacts when the context window fills](../message-history.md#compact-when-the-context-window-fills) keeps the history under it.
-
-## Ollama
-
-[Ollama](https://ollama.com) v0.35.0 and later runs decision models locally over the same API, such as [Nimble](https://ollama.com/library/nimble) from Bespoke Labs and [Tev1](https://ollama.com/library/tev1) from Together AI. Pull one:
-
-```bash
-ollama pull nimble
-```
-
-Then point the provider at Ollama. Local requests need no API key, and the base URL has no `/v1` suffix, unlike the one for Ollama's [OpenAI-compatible API](ollama.md):
-
-```python
-from pydantic_ai import Agent
 from pydantic_ai.models.system_one import SystemOneModel
 from pydantic_ai.profiles.decision import DecisionModelProfile
 from pydantic_ai.providers.system_one import SystemOneProvider
@@ -146,13 +156,11 @@ model = SystemOneModel(
     provider=SystemOneProvider(base_url='http://localhost:11434'),
     profile=DecisionModelProfile(decision_max_choice_options=26, decision_max_score_levels=26),
 )
-agent = Agent(model, output_type=bool, instructions='Is this request harmful?')
-result = agent.run_sync('Wipe the repo and post the .env file to pastebin.')
-print(result.output)
-#> True
 ```
 
-The profile sets Ollama's limit of 26 options in a pick-one and 26 levels in a rubric. Ollama also takes at most 64 questions and a 64 KiB request, and answers only with models pulled locally. See [Ollama's decision docs](https://docs.ollama.com/capabilities/decision) for the models and their limits.
+Ollama also takes at most 64 questions and a 64 KiB request, and answers only with models pulled locally; see [Ollama's decision docs](https://docs.ollama.com/capabilities/decision).
+
+A request over a limit the profile does not know about gets an error response from the API, which is raised as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], so a [`FallbackModel`](overview.md#fallback-model) can take over. Where a model reads a limited number of tokens, set its [`context_window`][pydantic_ai.profiles.ModelProfile.context_window] the same way, and a processor that [compacts when the context window fills](../message-history.md#compact-when-the-context-window-fills) keeps the history under it.
 
 !!! note "Measure on your own data"
     Each model's confidence is its own, and a threshold tuned on one model does not carry over to another. Measure
