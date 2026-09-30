@@ -2,6 +2,7 @@
 
 from __future__ import annotations as _annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Generator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -56,6 +57,8 @@ class OpenAISimulation(Simulation):
         )
         self.deferred_requests = 0
         """How many requests for a response the connection deferred behind an active one."""
+        self.requests_cut_off = 0
+        """How many requests for a response were cancelled while the connection was sending them."""
         if self.options.latency:
             self.server.network.latency = lambda: self.rng.choice((0, 0, 0, 1, 2, 4))
 
@@ -78,6 +81,16 @@ class OpenAISimulation(Simulation):
             await request_response(input_indexes, answers=answers)
 
         connection._request_response = counted  # pyright: ignore[reportPrivateUsage]
+        create_response = connection._create_response  # pyright: ignore[reportPrivateUsage]
+
+        async def cut_off(input_indexes: Sequence[int], answers: Sequence[int]) -> None:
+            try:
+                await create_response(input_indexes, answers)
+            except asyncio.CancelledError:
+                self.requests_cut_off += 1
+                raise
+
+        connection._create_response = cut_off  # pyright: ignore[reportPrivateUsage]
 
         # The session reads the codec stream; the lifecycle stream the same frames make is checked on the side.
         tagged_frames = connection._tagged_frames  # pyright: ignore[reportPrivateUsage]

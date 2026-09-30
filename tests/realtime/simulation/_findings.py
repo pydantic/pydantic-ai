@@ -769,7 +769,7 @@ FRAME_CUT_OFF_BY_CLOSE = Finding(
     evidence='simulated',
     codes=frozenset({'usage.total', 'usage.attribution', 'response.missing', 'response.truncated', 'usage.requests'}),
     providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: sim.close_requested is not None and getattr(sim, 'deferred_requests', 0) > 0,
+    matches=lambda sim, violation: sim.close_requested is not None and getattr(sim, 'requests_cut_off', 0) > 0,
 )
 
 
