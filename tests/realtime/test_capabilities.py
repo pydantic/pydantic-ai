@@ -107,6 +107,45 @@ async def test_signaling_failure_does_not_replace_outer_cleanup_capability() -> 
     assert cleaned == ['outer']
 
 
+async def test_concurrent_session_setup_failures_clean_only_their_own_instances() -> None:
+    resolved: dict[str, asyncio.Event] = {'first': asyncio.Event(), 'second': asyncio.Event()}
+    first_cleaned = asyncio.Event()
+    cleaned: list[tuple[str, str]] = []
+
+    class Cleanup(AbstractCapability[str]):
+        def __init__(self, label: str) -> None:
+            self.label = label
+
+        async def for_run(self, ctx: RunContext[str]) -> AbstractCapability[str]:
+            resolved[ctx.deps].set()
+            return Cleanup(ctx.deps)
+
+        async def on_run_error(self, ctx: RunContext[str], *, error: BaseException) -> AgentRunResult[None]:
+            cleaned.append((ctx.deps, self.label))
+            if ctx.deps == 'first':
+                first_cleaned.set()
+            raise error
+
+    class Fails(AbstractCapability[str]):
+        async def for_run(self, ctx: RunContext[str]) -> AbstractCapability[str]:
+            for event in resolved.values():
+                await event.wait()
+            if ctx.deps == 'second':
+                await first_cleaned.wait()
+                assert cleaned == [('first', 'first')]
+            raise RuntimeError(f'{ctx.deps} setup failed')
+
+    agent = Agent(deps_type=str, capabilities=[Cleanup('configured'), Fails()])
+
+    async def run_session(label: str) -> None:
+        with pytest.raises(RuntimeError, match=f'{label} setup failed'):
+            async with agent.realtime(_RecordingModel(), deps=label).session():
+                pytest.fail('session setup should fail')  # pragma: no cover
+
+    await asyncio.wait_for(asyncio.gather(run_session('first'), run_session('second')), timeout=10)
+    assert cleaned == [('first', 'first'), ('second', 'second')]
+
+
 class _Connection(RealtimeConnection):
     """Replays a fixed list of events (a lone `ResponseDone` by default) so the session drains."""
 

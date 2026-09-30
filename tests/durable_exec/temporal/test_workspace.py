@@ -43,6 +43,7 @@ try:
     from temporalio.api.failure.v1 import Failure
     from temporalio.client import Client, WorkflowExecutionStatus, WorkflowFailureError, WorkflowHandle, WorkflowHistory
     from temporalio.common import RetryPolicy
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
@@ -152,19 +153,22 @@ class CustomWorkspaceUnavailableError(WorkspaceUnavailableError):
 
 
 @activity.defn
-async def fail_once_with_custom_workspace_error() -> int:
+async def fail_once_with_workspace_error(direct_base: bool) -> int:
     attempt = activity.info().attempt
     if attempt == 1:
+        if direct_base:
+            raise WorkspaceError('temporary workspace failure')
         raise CustomWorkspaceUnavailableError('temporary workspace failure')
     return attempt
 
 
 @workflow.defn
-class CustomWorkspaceErrorRetryWorkflow:
+class WorkspaceErrorRetryWorkflow:
     @workflow.run
-    async def run(self) -> int:
+    async def run(self, direct_base: bool) -> int:
         return await workflow.execute_activity(
-            fail_once_with_custom_workspace_error,
+            fail_once_with_workspace_error,
+            direct_base,
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=with_non_retryable_errors(
                 RetryPolicy(maximum_attempts=2, initial_interval=timedelta(milliseconds=1))
@@ -172,20 +176,30 @@ class CustomWorkspaceErrorRetryWorkflow:
         )
 
 
-async def test_temporal_builtin_workspace_error_subclass_uses_configured_retries(client: Client) -> None:
+@pytest.mark.parametrize('direct_base', [True, False], ids=['base', 'subclass'])
+async def test_temporal_workspace_error_retry_behavior(client: Client, direct_base: bool) -> None:
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
-        workflows=[CustomWorkspaceErrorRetryWorkflow],
-        activities=[fail_once_with_custom_workspace_error],
+        workflows=[WorkspaceErrorRetryWorkflow],
+        activities=[fail_once_with_workspace_error],
     ):
-        attempt = await client.execute_workflow(
-            CustomWorkspaceErrorRetryWorkflow.run,
-            id=f'custom-workspace-error-{uuid.uuid4()}',
-            task_queue=TASK_QUEUE,
-            execution_timeout=timedelta(seconds=30),
-        )
-    assert attempt == 2
+        try:
+            attempt = await client.execute_workflow(
+                WorkspaceErrorRetryWorkflow.run,
+                direct_base,
+                id=f'workspace-error-{uuid.uuid4()}',
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+        except WorkflowFailureError as error:
+            assert direct_base
+            assert isinstance(error.cause, ActivityError)
+            assert isinstance(error.cause.cause, ApplicationError)
+            assert error.cause.cause.type == 'WorkspaceError'
+        else:
+            assert not direct_base
+            assert attempt == 2
 
 
 # --- The shared scenarios, in a workflow ---------------------------------------------------------

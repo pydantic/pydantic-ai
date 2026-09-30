@@ -977,6 +977,45 @@ class TestStepPersistenceCapability:
             for message in parent_snapshot.messages
         )
 
+    async def test_nested_run_failure_persists_each_runs_own_history(self) -> None:
+        parent_store = InMemoryStepStore()
+        child_store = InMemoryStepStore()
+        error = RuntimeError('child tool failed')
+        child: Agent[object, str] = Agent(
+            TestModel(), capabilities=[StepPersistence(store=child_store, run_id='child')]
+        )
+
+        @child.tool_plain
+        async def fail() -> str:
+            raise error
+
+        parent: Agent[object, str] = Agent(
+            TestModel(), capabilities=[StepPersistence(store=parent_store, run_id='parent')]
+        )
+
+        @parent.tool_plain
+        async def delegate() -> str:
+            return (await child.run('child-visible prompt', run_id='shared-run-id')).output
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await parent.run('parent-private prompt', run_id='shared-run-id')
+        assert exc_info.value is error
+
+        for store, run_id, prompt in (
+            (parent_store, 'parent', 'parent-private prompt'),
+            (child_store, 'child', 'child-visible prompt'),
+        ):
+            saved = await store.latest_snapshot(run_id=run_id, include_interrupted=True)
+            assert saved is not None
+            assert [
+                part.content
+                for message in saved.messages
+                if isinstance(message, ModelRequest)
+                for part in message.parts
+                if isinstance(part, UserPromptPart)
+            ] == [prompt]
+            assert await store.latest_snapshot(run_id='shared-run-id', include_interrupted=True) is None
+
     async def test_conversation_id_groups_two_runs(self) -> None:
         """Passing the same `conversation_id` to two `Agent.run` calls -> store.list_runs
         finds both."""
