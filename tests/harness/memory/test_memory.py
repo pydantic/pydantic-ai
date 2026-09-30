@@ -26,6 +26,7 @@ from pydantic_ai.messages import (
     TextContent,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserContent,
     UserPromptPart,
 )
@@ -50,6 +51,12 @@ from pydantic_ai_harness.memory import (
     SqliteMemoryStore,
 )
 from tests.harness._recording_durability import RecordingDurability
+
+
+class FunctionToolsetRejectingDurability(RecordingDurability):
+    """Rejects executing function toolsets added per-run, as Temporal and Prefect do."""
+
+    engine_spec = replace(RecordingDurability.engine_spec, unsupported_runtime_toolset_kinds=frozenset({'function'}))
 
 
 def _ctx(
@@ -1471,3 +1478,47 @@ class TestTelemetryAndComposition:
             name='memory-agent',
             capabilities=[Memory[object](id='memory', inject_memory=False), TemporalDurability()],
         )
+
+    async def test_run_copy_keeps_registered_toolset(self) -> None:
+        memory = Memory[None](inject_memory=False)
+        registered = memory.get_toolset()
+        run_memory = await memory.for_run(_ctx())
+        assert run_memory.get_toolset() is registered
+
+    async def test_durability_runs_registered_tools_against_run_scope(self) -> None:
+        stores: list[InMemoryStore] = []
+
+        def resolver(ctx: RunContext[object]) -> MemoryStore:
+            stores.append(InMemoryStore())
+            return stores[-1]
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('write_memory', {'content': '- fact'}, tool_call_id='write')])
+            if len(messages) == 3:
+                return ModelResponse(parts=[ToolCallPart('read_memory', {'file': 'MEMORY.md'}, tool_call_id='read')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(model),
+            name='memory-agent',
+            capabilities=[
+                Memory[object](store_resolver=resolver, inject_memory=False),
+                FunctionToolsetRejectingDurability(),
+            ],
+        )
+        result = await agent.run('remember')
+
+        # One resolution per run: the tools use the scope the run's copy resolved in `for_run`.
+        assert len(stores) == 1
+        stored = await stores[0].read('main/MEMORY.md', max_chars=1_000)
+        assert stored is not None
+        assert stored.content == '- fact\n'
+        read_returns = [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'read_memory'
+        ]
+        assert read_returns == ['- fact\n']
