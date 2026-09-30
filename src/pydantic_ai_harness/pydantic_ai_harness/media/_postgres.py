@@ -83,8 +83,8 @@ class PostgresMediaStore:
 
     `ON CONFLICT (sha256) DO NOTHING` makes writes idempotent -- the second
     `put` with the same content is a no-op, not an overwrite. `metadata` is
-    stored as JSON of `context.metadata` (empty mapping → `'{}'`) and read
-    back via `get_metadata(uri)`.
+    stored as JSON of `context.metadata` (an empty mapping is stored as
+    `'{}'`) and read back via `get_metadata(uri)`.
 
     A blob is one `BYTEA` value, which Postgres caps at 1 GB.
 
@@ -173,4 +173,7 @@ class PostgresMediaStore:
             row = await connection.fetchrow(f'SELECT metadata FROM {self._table} WHERE sha256 = $1', digest)
         if row is None:
             raise FileNotFoundError(f'media not found: {digest}')
-        return _coerce_metadata_mapping(json.loads(str(row[0])))
+        value = row[0]
+        if not isinstance(value, str):
+            raise ValueError(f'media row for {digest} has wrong types')
+        return _coerce_metadata_mapping(json.loads(value))

@@ -1187,12 +1187,18 @@ async def test_media_foreign_table_layout_fails_loudly_on_get() -> None:
         table = f'{prefix}_media'
         digest = 'a' * 64
         async with pool.acquire() as connection:
-            await connection.execute(f'CREATE TABLE {table} (sha256 TEXT PRIMARY KEY, bytes TEXT NOT NULL)')
-            await connection.execute(f'INSERT INTO {table} (sha256, bytes) VALUES ($1, $2)', digest, 'not bytea')
+            await connection.execute(
+                f'CREATE TABLE {table} (sha256 TEXT PRIMARY KEY, bytes TEXT NOT NULL, metadata BYTEA)'
+            )
+            await connection.execute(
+                f'INSERT INTO {table} (sha256, bytes, metadata) VALUES ($1, $2, $3)', digest, 'not bytea', b'not text'
+            )
         store = PostgresMediaStore(pool, table=table)
 
         with pytest.raises(ValueError, match='has wrong types'):
             await store.get(f'media+sha256://{digest}')
+        with pytest.raises(ValueError, match='has wrong types'):
+            await store.get_metadata(f'media+sha256://{digest}')
 
 
 async def test_list_snapshots_skips_an_unparsable_row(caplog: pytest.LogCaptureFixture) -> None:
