@@ -612,6 +612,7 @@ TITLED: dict[str, Any] = {'type': 'string', 'title': 'A'}
             {'type': ['array', 'null'], 'items': PAYLOAD},
             id='array-in-type-list',
         ),
+        pytest.param({'items': [PAYLOAD_REF]}, {'items': [PAYLOAD]}, id='tuple-items'),
     ],
 )
 def test_inline_defs_untyped_keywords_are_inlined(keywords: dict[str, Any], expected: dict[str, Any]):
@@ -651,6 +652,20 @@ def test_only_inlining_transformers_walk_untyped_keywords(schema: dict[str, Any]
 
     assert inlining.titles == ['A']
     assert keeping.titles == []
+
+
+@pytest.mark.parametrize('prefer_inlined_defs', [True, False])
+def test_list_form_items_are_walked(prefer_inlined_defs: bool):
+    """A draft-7 tuple, spelled as an `items` list rather than `prefixItems`, has each of its schemas walked.
+
+    Every transformer walks it, not only the ones that drop `$defs`. The walk runs before any request is
+    built, so a recording transformer shows what each element went through.
+    """
+    schema = {'type': 'object', 'properties': {'pair': {'type': 'array', 'items': [TITLED, {'title': 'B'}]}}}
+    transformer = _TitleRecordingTransformer(deepcopy(schema), prefer_inlined_defs=prefer_inlined_defs)
+
+    assert transformer.walk() == schema
+    assert transformer.titles == ['A', 'B']
 
 
 def test_inline_defs_typeless_object_with_union_is_walked_once():
