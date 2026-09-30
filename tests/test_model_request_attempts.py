@@ -382,7 +382,7 @@ async def test_open_failure_is_raised_when_the_consumer_never_iterates_the_strea
     agent = Agent(FunctionModel(stream_function=failure_stream), deps_type=type(None), capabilities=[hooks])
     with pytest.raises(ModelAPIError, match='boom'):
         async with agent.iter('x') as run:
-            async for node in run:
+            async for node in run:  # pragma: no branch  # the failed stream ends the run
                 if Agent.is_model_request_node(node):
                     async with node.stream(run.ctx):
                         pass
