@@ -13,13 +13,13 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import TextPart, TextPartDelta, ThinkingPart
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import StreamRenderer
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import PluginSettings, Settings
-from pydantic_clai2.menu_worker import menu_key, run_worker
-from pydantic_clai2.model_settings import ModelSettingsForm
-from pydantic_clai2.plugin_loader import PluginError
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.model_settings import ModelSettingsForm
 from pydantic_clai2.plugins import PluginHost
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError
+from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from tests.clai2.test_plugin_loader import Harness
 
 
@@ -93,7 +93,7 @@ async def test_worker_cancellation_joins_before_return(monkeypatch: pytest.Monke
         loop.call_soon_threadsafe(entered.set)
         return ''
 
-    monkeypatch.setattr('pydantic_clai2.menu_worker.read_key', key)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', key)
     assert menu_key() == ''
 
     def worker() -> None:

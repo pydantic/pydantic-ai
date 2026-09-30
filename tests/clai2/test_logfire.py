@@ -22,11 +22,11 @@ from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins.logfire import activate
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.logfire import activate
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 
 
 class Exporter(InMemorySpanExporter):
@@ -87,7 +87,7 @@ class Recorder:
 @pytest.fixture
 def recorder(monkeypatch: pytest.MonkeyPatch) -> Generator[Recorder]:
     recorded = Recorder()
-    monkeypatch.setattr('pydantic_clai2.logfire.logfire.configure', recorded.configure)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.logfire.configure', recorded.configure)
     try:
         yield recorded
     finally:
@@ -270,7 +270,7 @@ def test_activation_failure_closes_local_providers(recorder: Recorder, monkeypat
     def fail(*, settings: InstrumentationSettings) -> Instrumentation:
         raise RuntimeError('cannot construct instrumentation')
 
-    monkeypatch.setattr('pydantic_clai2.logfire.Instrumentation', fail)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.Instrumentation', fail)
     with pytest.raises(RuntimeError, match='cannot construct'):
         activate(make_host())
     assert recorder.exporters[0].closed
@@ -394,7 +394,7 @@ async def test_interrupted_startup_shuts_down_plugin_providers(
                 await anyio.sleep_forever()
             raise RuntimeError('startup failed')
 
-    monkeypatch.setattr('pydantic_clai2.logfire.activate', start)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.activate', start)
     store = SettingsStore(tmp_path / 'config.db')
     loader: PluginLoader[None] = PluginLoader(
         store=store,
