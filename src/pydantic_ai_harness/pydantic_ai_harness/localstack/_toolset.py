@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import os
+import math
 import shlex
-import tempfile
 from collections.abc import Mapping, Sequence
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-import anyio
 import httpx
 from typing_extensions import Self
 
@@ -18,7 +15,9 @@ from pydantic_ai import RunContext
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
+from pydantic_ai.workspaces import WorkspaceError, WorkspaceTimeoutError
 from pydantic_ai_harness._output import truncate_tail
+from pydantic_ai_harness._workspace import raise_tool_failure, supports_commands
 from pydantic_ai_harness.localstack._container import LocalStackContainer
 
 _HEALTH_PATH = '/_localstack/health'
@@ -41,14 +40,39 @@ _FORBIDDEN_MODEL_GLOBAL_OPTIONS = {
     '--profile',
     '--region',
 }
+_INJECTED_AWS_ENV = (
+    'AWS_ACCESS_KEY_ID',
+    'AWS_SECRET_ACCESS_KEY',
+    'AWS_DEFAULT_REGION',
+    'AWS_REGION',
+    'AWS_ENDPOINT_URL',
+)
+"""The AWS variables the capability sets for every command; each maps to one of its settings."""
+
+_NOT_FOUND_EXIT = 127
+"""Exit status of `_LAUNCHER`, with no output, when the AWS CLI is not on the workspace's PATH."""
+
+_LAUNCHER = (
+    r"for name in $(env | sed -n 's/^\(AWS_[A-Za-z0-9_]*\)=.*/\1/p'); do" + '\n'
+    f'  case "$name" in {"|".join(_INJECTED_AWS_ENV)}) ;; *) unset "$name" ;; esac\n'
+    'done\n'
+    f'command -v "$1" > /dev/null 2>&1 || exit {_NOT_FOUND_EXIT}\n'
+    'exec "$@"'
+)
+"""Scrub the workspace's own AWS settings, look the CLI up, then replace the shell with it.
+
+Every `AWS_*` variable except the injected ones is unset, so a profile, session token, or config
+file meant for real AWS never reaches the CLI. `exec` lets the workspace's timeout reach the CLI.
+"""
 
 
 class LocalStackToolset(FunctionToolset[AgentDepsT]):
     """Gives an agent the ability to drive an emulated AWS environment.
 
-    Wraps the AWS CLI: `aws_cli` runs a command against a running LocalStack
-    instance with the endpoint, region, and credentials injected, while
-    `localstack_health` reports which emulated services are available.
+    Wraps the AWS CLI: `aws_cli` runs a command in the run's workspace (`ctx.workspace`)
+    against a running LocalStack instance with the endpoint, region, and credentials
+    injected, while `localstack_health` reports which emulated services are available.
+    The health check and a managed container stay on the agent's host.
 
     Commands are executed as an argument vector (no shell), so shell operators
     and redirection in the command string have no effect.
@@ -132,6 +156,13 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             docker_path=self._docker_path,
             startup_timeout=self._startup_timeout,
         )
+
+    async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
+        """Offer `aws_cli` only when the workspace can run commands."""
+        tools = await super().get_tools(ctx)
+        if not supports_commands(ctx.workspace):
+            tools.pop('aws_cli')
+        return tools
 
     async def call_tool(
         self,
@@ -249,17 +280,12 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         if self._allowed_services and service not in self._allowed_services:
             raise ModelRetry(f'AWS service {service!r} is not in the allowed list.')
 
-    def _build_env(self) -> dict[str, str]:
-        """Inherit non-AWS environment, then set only the intended LocalStack AWS settings."""
-        env = {key: value for key, value in os.environ.items() if not key.startswith('AWS_')}
-        env['AWS_ACCESS_KEY_ID'] = self._access_key_id
-        env['AWS_SECRET_ACCESS_KEY'] = self._secret_access_key
-        env['AWS_DEFAULT_REGION'] = self._region
-        env['AWS_REGION'] = self._region
-        env['AWS_ENDPOINT_URL'] = self._endpoint_url
-        return env
+    def _aws_env(self) -> dict[str, str]:
+        """The LocalStack AWS settings, set on top of the workspace's environment."""
+        values = (self._access_key_id, self._secret_access_key, self._region, self._region, self._endpoint_url)
+        return dict(zip(_INJECTED_AWS_ENV, values, strict=True))
 
-    async def aws_cli(self, command: str, *, timeout_seconds: float | None = None) -> str:
+    async def aws_cli(self, ctx: RunContext[AgentDepsT], command: str, *, timeout_seconds: float | None = None) -> str:
         """Run an AWS CLI command against the emulated AWS environment.
 
         Pass the command without the leading `aws` and without `--endpoint-url`;
@@ -267,6 +293,7 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         example `s3 mb s3://my-bucket`, `s3 ls`, or `dynamodb list-tables`.
 
         Args:
+            ctx: The current agent run context.
             command: The AWS CLI command to run (e.g. `s3 ls`).
             timeout_seconds: Maximum seconds to wait (default: the configured timeout).
 
@@ -275,6 +302,8 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
         """
         tokens = self._normalize_command(command)
         self._check_service(tokens)
+        if timeout_seconds is not None and not 0 < timeout_seconds < math.inf:
+            raise ModelRetry('`timeout_seconds` must be a positive number of seconds.')
         timeout = timeout_seconds if timeout_seconds is not None else self._default_timeout
         argv = [
             self._aws_cli_path,
@@ -284,62 +313,36 @@ class LocalStackToolset(FunctionToolset[AgentDepsT]):
             self._region,
             *tokens,
         ]
-        return await self._run(argv, timeout)
+        return await self._run(ctx, argv, timeout)
 
-    async def _run(self, argv: list[str], timeout: float) -> str:
-        """Execute the AWS CLI argument vector and format its output.
+    async def _run(self, ctx: RunContext[AgentDepsT], argv: list[str], timeout: float) -> str:
+        """Execute the AWS CLI argument vector in the workspace and format its output.
 
-        Output is captured to temp files rather than pipes: on a timeout the
-        process is killed mid-run, and leftover pipe transports would otherwise
-        leak (a `ResourceWarning` under cancellation-strict runtimes). Files have
-        no transport to leak and the same approach works on every async backend.
+        The workspace enforces `timeout` and stops the command when it expires.
         """
-        stdout_file = tempfile.NamedTemporaryFile(mode='w+b', prefix='harness_aws_out_', delete=False)
-        stderr_file = tempfile.NamedTemporaryFile(mode='w+b', prefix='harness_aws_err_', delete=False)
         try:
-            try:
-                proc = await anyio.open_process(
-                    argv,
-                    env=self._build_env(),
-                    stdout=stdout_file,
-                    stderr=stderr_file,
-                )
-            except FileNotFoundError:
-                return (
-                    f'[error: AWS CLI {self._aws_cli_path!r} not found. Install the AWS CLI to use LocalStack tools.]'
-                )
+            result = await ctx.workspace.run(['sh', '-c', _LAUNCHER, 'sh', *argv], env=self._aws_env(), timeout=timeout)
+        # Before `WorkspaceError`: a timeout is reported to the model, other workspace failures fail the call.
+        except WorkspaceTimeoutError:
+            return f'[command timed out after {timeout}s]'
+        except WorkspaceError as e:
+            raise_tool_failure(e)
 
-            try:
-                try:
-                    with anyio.fail_after(timeout):
-                        await proc.wait()
-                except TimeoutError:
-                    proc.kill()
-                    with anyio.CancelScope(shield=True):
-                        await proc.wait()
-                    return f'[command timed out after {timeout}s]'
-            finally:
-                await proc.aclose()
+        if result.exit_code == _NOT_FOUND_EXIT and not result.stdout and not result.stderr:
+            return (
+                f'[error: AWS CLI {self._aws_cli_path!r} not found in the workspace. '
+                'Install the AWS CLI there to use LocalStack tools.]'
+            )
 
-            stdout = Path(stdout_file.name).read_text(encoding='utf-8', errors='replace')
-            stderr = Path(stderr_file.name).read_text(encoding='utf-8', errors='replace')
-
-            parts: list[str] = []
-            if stdout:
-                parts.append(f'[stdout]\n{stdout}')
-            if stderr:
-                parts.append(f'[stderr]\n{stderr}')
-            output = '\n'.join(parts) if parts else '(no output)'
-
-            exit_code = proc.returncode
-            if exit_code:
-                output = f'{output}\n[exit code: {exit_code}]'
-            return output
-        finally:
-            stdout_file.close()
-            stderr_file.close()
-            os.unlink(stdout_file.name)
-            os.unlink(stderr_file.name)
+        parts: list[str] = []
+        if result.stdout:
+            parts.append(f'[stdout]\n{result.stdout}')
+        if result.stderr:
+            parts.append(f'[stderr]\n{result.stderr}')
+        output = '\n'.join(parts) if parts else '(no output)'
+        if result.exit_code:
+            output = f'{output}\n[exit code: {result.exit_code}]'
+        return output
 
     async def localstack_health(self) -> str:
         """Report the health and availability of the emulated AWS services.

@@ -15,7 +15,11 @@ import httpx
 import pytest
 from pydantic import TypeAdapter
 
-from pydantic_ai_harness.localstack import LocalStack, LocalStackContainer, LocalStackToolset
+from pydantic_ai import RunContext
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace
+from pydantic_ai_harness.localstack import LocalStack, LocalStackContainer
 
 _LOCALSTACK_INFO = TypeAdapter(dict[str, object])
 _STARTUP_TIMEOUT = 240.0
@@ -151,6 +155,14 @@ def test_managed_container_round_trips_can_be_skipped_in_ci(monkeypatch: pytest.
     assert _skip_managed_container_tests() is True
 
 
+def _run_context(workspace_dir: Path) -> RunContext[None]:
+    """A run context whose workspace is a local directory, for calling `aws_cli` directly."""
+    workspace = Workspace(LocalWorkspaceBackend(workspace_dir))
+    return RunContext[None](
+        deps=None, model=TestModel(), usage=RunUsage(), prompt=None, messages=[], run_step=0, workspace=workspace
+    )
+
+
 def _assert_success(output: str) -> None:
     assert '[exit code:' not in output, output
     assert '[error:' not in output, output
@@ -187,23 +199,24 @@ async def _s3_round_trip(endpoint_url: str, aws_cli: str, tmp_path: Path) -> Non
     info = await _info(endpoint_url)
     _assert_license_if_auth_required(info)
 
-    toolset = LocalStack(endpoint_url=endpoint_url, aws_cli_path=aws_cli).get_toolset()
-    assert isinstance(toolset, LocalStackToolset)
+    toolset = LocalStack[None](endpoint_url=endpoint_url, aws_cli_path=aws_cli).get_toolset()
 
     bucket = _bucket_name()
     payload = tmp_path / 'payload.txt'
     payload.write_text('hello from pydantic-ai-harness\n')
 
-    create_bucket = await toolset.aws_cli(f's3api create-bucket --bucket {bucket}', timeout_seconds=60.0)
+    ctx = _run_context(tmp_path)
+    create_bucket = await toolset.aws_cli(ctx, f's3api create-bucket --bucket {bucket}', timeout_seconds=60.0)
     _assert_success(create_bucket)
 
     put_object = await toolset.aws_cli(
+        ctx,
         f's3api put-object --bucket {bucket} --key payload.txt --body {shlex.quote(str(payload))}',
         timeout_seconds=60.0,
     )
     _assert_success(put_object)
 
-    list_objects = await toolset.aws_cli(f's3api list-objects-v2 --bucket {bucket}', timeout_seconds=60.0)
+    list_objects = await toolset.aws_cli(ctx, f's3api list-objects-v2 --bucket {bucket}', timeout_seconds=60.0)
     _assert_success(list_objects)
     assert 'payload.txt' in list_objects
 
@@ -238,7 +251,7 @@ async def test_external_container_s3_round_trip(tmp_path: Path) -> None:
         await _s3_round_trip(localstack.endpoint_url, aws_cli, tmp_path)
 
 
-async def test_managed_container_sqs_round_trip_and_cleanup() -> None:
+async def test_managed_container_sqs_round_trip_and_cleanup(tmp_path: Path) -> None:
     """Drive SQS through `manage_container=True` and verify cleanup."""
     if _skip_managed_container_tests():
         pytest.skip('Managed container round trips are disabled for this environment.')
@@ -247,7 +260,7 @@ async def test_managed_container_sqs_round_trip_and_cleanup() -> None:
     port = _free_port()
     endpoint_url = f'http://localhost:{port}'
 
-    toolset = LocalStack(
+    toolset = LocalStack[None](
         endpoint_url=endpoint_url,
         aws_cli_path=aws_cli,
         manage_container=True,
@@ -256,13 +269,14 @@ async def test_managed_container_sqs_round_trip_and_cleanup() -> None:
         docker_path=docker,
         startup_timeout=_STARTUP_TIMEOUT,
     ).get_toolset()
-    assert isinstance(toolset, LocalStackToolset)
 
     async with toolset:
         info = await _info(endpoint_url)
         _assert_license_if_auth_required(info)
 
-        create_queue = await toolset.aws_cli(f'sqs create-queue --queue-name {_queue_name()}', timeout_seconds=60.0)
+        create_queue = await toolset.aws_cli(
+            _run_context(tmp_path), f'sqs create-queue --queue-name {_queue_name()}', timeout_seconds=60.0
+        )
         _assert_success(create_queue)
         assert 'QueueUrl' in create_queue
 

@@ -89,7 +89,7 @@ On a remote sandbox, `Coder` loads repo instructions at run start and may create
 
 A [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/) is where the agent's files and commands live: your machine with `LocalWorkspace`, or an isolated sandbox. Harness capabilities never pick one for you. Attach one, or the run fails at its start and tells you what to attach.
 
-[Coder](coder.md), [FileSystem](filesystem.md), [Shell](shell.md), [Repo Context](repo-context.md), and [Macroscope](macroscope.md) work in the run's workspace, starting in its working directory. To work in a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. To continue in the same files from a later run or another agent, see [Sharing a workspace](coder.md#sharing-a-workspace).
+[Coder](coder.md), [FileSystem](filesystem.md), [Shell](shell.md), [Repo Context](repo-context.md), [Macroscope](macroscope.md), and [LocalStack](localstack.md) (its `aws_cli` tool) work in the run's workspace, starting in its working directory. To work in a subdirectory, set it on the workspace: `LocalWorkspace('./repo')`. To continue in the same files from a later run or another agent, see [Sharing a workspace](coder.md#sharing-a-workspace).
 
 Skills, SubAgents, ToolOutputLimits, and Memory's `FileStore` use the run's workspace for their own files too. To keep those files on your machine while the agent works in a sandbox, point them at a local location:
 

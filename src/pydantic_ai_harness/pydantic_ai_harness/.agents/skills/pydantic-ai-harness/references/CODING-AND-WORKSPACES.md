@@ -1,7 +1,7 @@
 # Coding Agents and Workspaces
 
 Harness capabilities that touch files or run commands (`Coder`, `FileSystem`, `Shell`, `RepoContext`,
-`Macroscope`) act in the run's **workspace**, never on a path they pick themselves. Attach the
+`Macroscope`, `LocalStack`) act in the run's **workspace**, never on a path they pick themselves. Attach the
 workspace as its own capability: `LocalWorkspace` for this machine, or `ModalSandbox` / `E2BSandbox` /
 `SpritesSandbox` for an isolated cloud machine. Core workspace semantics (refs, `workspace=`
 precedence, `ReadOnlyWorkspace`, continuing from message history) are in the
@@ -388,14 +388,16 @@ or `FileSystem`/`Shell`: `Agent(..., capabilities=[LocalWorkspace('.'), Coder(),
 
 ## LocalStack
 
-AWS CLI against emulated AWS. It does **not** use the run workspace: `aws` and `docker` run on the
+AWS CLI against emulated AWS. `aws_cli` runs in the run's workspace (a run without one fails at its
+start), so the AWS CLI must be installed there and `endpoint_url` reachable from it; the workspace's
+other `AWS_*` variables are removed. `localstack_health` and `docker` (managed container) run on the
 agent's host. No extra. Tools: `aws_cli` (command without `aws` or `--endpoint-url`; argv, no shell)
 and `localstack_health`.
 
 `LocalStack(allowed_services=['s3', 'dynamodb'])` connects to an instance you started;
 `LocalStack(manage_container=True)` starts a fresh Docker container per run. `allowed_services`/`denied_services` are mutually exclusive. The default image needs
 `LOCALSTACK_AUTH_TOKEN` (forwarded automatically); concurrent managed runs need distinct ports. The AWS
-CLI can read and write host files (`file://`, `s3 cp`).
+CLI can read and write workspace files (`file://`, `s3 cp`).
 
 ## CLAI 2
 
