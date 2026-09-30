@@ -218,7 +218,7 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
     # TODO update when new models are released that support structured outputs
     # https://docs.claude.com/en/docs/build-with-claude/structured-outputs#example-usage
 
-    supports_json_schema_output = model_name.startswith(models_that_support_json_schema_output)
+    supports_json_schema_output = bool(model_name.startswith(models_that_support_json_schema_output))
     anthropic_supports_fast_speed = model_name.startswith(
         ('claude-opus-4-6', 'claude-opus-4-7', 'claude-opus-4-8', 'claude-opus-5')
     )
