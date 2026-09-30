@@ -116,10 +116,15 @@ authorization code with PKCE, state validation, and a callback at
 `http://localhost:1455/auth/callback`. It times out after five minutes. The browser
 must be able to reach that callback on the machine running CLAI.
 
-Tokens live in the configured Python `keyring` backend under service `pydantic-clai2`,
-not in SQLite or `~/.codex/auth.json`. Choose an OS-backed credential store: CLAI
+Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
+(`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
+that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
+backend (service `pydantic-clai2`, account `encryption-key`). CLAI reads that entry
+at most once per session, so macOS asks for keychain access at most once, instead of
+once per saved credential. Logins that older versions saved as keyring entries are
+moved into encrypted files the first time they are read. Choose an OS-backed credential store: CLAI
 uses the configured backend and does not enforce its encryption or storage policy.
-Installing or selecting a plaintext backend can store tokens in plaintext. Core owns
+Installing or selecting a plaintext backend can store the key in plaintext. Core owns
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 

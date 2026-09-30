@@ -6809,6 +6809,7 @@ provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras"
 name = "pydantic-clai2"
 source = { editable = "src/pydantic_clai2" }
 dependencies = [
+    { name = "cryptography" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11' or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-11-pydantic-ai-mcp-tasks' and extra == 'group-11-pydantic-ai-dev') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'extra-19-pydantic-ai-harness-stackone') or (extra == 'extra-16-pydantic-ai-slim-mcp-tasks' and extra == 'group-11-pydantic-ai-dev')" },
     { name = "genai-prices" },
     { name = "keyring" },
@@ -6831,6 +6832,7 @@ typesafe = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
     { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.0.2" },
     { name = "genai-prices", specifier = ">=0.1.7" },
     { name = "keyring", specifier = ">=25.6" },
