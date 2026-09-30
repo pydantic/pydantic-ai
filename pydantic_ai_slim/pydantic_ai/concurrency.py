@@ -99,7 +99,7 @@ class ConcurrencyLimit:
 class ConcurrencyLimiter(AbstractConcurrencyLimiter):
     """A concurrency limiter that tracks waiting operations for observability.
 
-    This class wraps an anyio.CapacityLimiter and tracks the number of waiting operations.
+    This class wraps an anyio.Semaphore and tracks the number of waiting operations.
     When an operation has to wait to acquire a slot, a span is created for
     observability purposes.
     """
@@ -126,10 +126,10 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
         """
         _validate_max_running(max_running)
         _validate_max_queued(max_queued)
-        self._limiter = anyio.CapacityLimiter(max_running)
-        # `CapacityLimiter` ties each slot to a borrower, the current task by default. Each acquisition
-        # borrows on behalf of its own token instead, so `release()` works from any task.
-        self._borrowers: list[object] = []
+        # A semaphore rather than `anyio.CapacityLimiter`, which ties each slot to the task that took it:
+        # `release()` must work from any task.
+        self._limiter = anyio.Semaphore(max_running, max_value=max_running)
+        self._max_running = max_running
         self._max_queued = max_queued
         self._name = name
         self._tracer = tracer
@@ -178,17 +178,17 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
     @property
     def running_count(self) -> int:
         """Number of operations currently running."""
-        return self._limiter.statistics().borrowed_tokens
+        return self._max_running - self._limiter.value
 
     @property
     def available_count(self) -> int:
         """Number of slots available."""
-        return int(self._limiter.available_tokens)
+        return self._limiter.value
 
     @property
     def max_running(self) -> int:
         """Maximum concurrent operations allowed."""
-        return int(self._limiter.total_tokens)
+        return self._max_running
 
     def _get_tracer(self) -> Tracer:
         """Get the tracer, falling back to global tracer if not set."""
@@ -204,11 +204,9 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
         """
         from .exceptions import ConcurrencyLimitExceeded
 
-        borrower = object()
         # Try to acquire immediately without blocking
         try:
-            self._limiter.acquire_on_behalf_of_nowait(borrower)
-            self._borrowers.append(borrower)
+            self._limiter.acquire_nowait()
             return
         except anyio.WouldBlock:
             pass
@@ -236,7 +234,7 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
             attributes: dict[str, str | int] = {
                 'source': source,
                 'waiting_count': self._waiting_count,
-                'max_running': int(self._limiter.total_tokens),
+                'max_running': self._max_running,
             }
             if self._name is not None:
                 attributes['limiter_name'] = self._name
@@ -246,15 +244,14 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
             # Span name uses limiter name if set, otherwise source
             span_name = f'waiting for {display_name} concurrency'
             with tracer.start_as_current_span(span_name, attributes=attributes):
-                await self._limiter.acquire_on_behalf_of(borrower)
-            self._borrowers.append(borrower)
+                await self._limiter.acquire()
         finally:
             # We're no longer waiting (either we acquired or we were cancelled)
             self._waiting_count -= 1
 
     def release(self) -> None:
         """Release a slot."""
-        self._limiter.release_on_behalf_of(self._borrowers.pop())
+        self._limiter.release()
 
 
 AnyConcurrencyLimit: TypeAlias = 'int | ConcurrencyLimit | AbstractConcurrencyLimiter | None'

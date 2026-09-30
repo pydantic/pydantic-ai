@@ -3,6 +3,7 @@
 # pyright: reportPrivateUsage=false, reportAttributeAccessIssue=false, reportUnknownMemberType=false, reportUnknownVariableType=false
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
@@ -82,6 +83,29 @@ class TestConcurrencyLimiter:
         assert limiter.running_count == 1
 
         limiter.release()
+        assert limiter.running_count == 0
+
+    async def test_cancel_right_after_taking_a_freed_slot(self):
+        """A task cancelled right after taking a slot that was freed while it queued gives the slot back.
+
+        Uses native `Task.cancel()`, which reaches the acquire's post-grant checkpoint that an anyio
+        cancel scope's shielding would not.
+        """
+        limiter = ConcurrencyLimiter(max_running=1)
+        await limiter.acquire('holder')
+
+        waiter = asyncio.create_task(limiter.acquire('waiter'))
+        # The waiter finds no slot and parks on the queue lock's checkpoint, before its second attempt.
+        await asyncio.sleep(0)
+        limiter.release()
+        # The waiter takes the freed slot and parks on the checkpoint that follows the grant.
+        await asyncio.sleep(0)
+        assert limiter.running_count == 1
+        assert not waiter.done()
+
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
         assert limiter.running_count == 0
 
     @pytest.mark.parametrize('max_running', [0, -1, -5])
@@ -770,8 +794,8 @@ async def _leave_unconsumed(agent: Agent[None, str]) -> None:
 async def _raise_in_consumer(agent: Agent[None, str]) -> None:
     with pytest.raises(ValueError, match='consumer stopped'):
         async with agent.run_stream('hi') as result:
-            async for _ in result.stream_text(debounce_by=None):
-                raise ValueError('consumer stopped')
+            await anext(result.stream_text(debounce_by=None))
+            raise ValueError('consumer stopped')
 
 
 async def _cancel_between_chunks(agent: Agent[None, str]) -> None:
@@ -779,9 +803,9 @@ async def _cancel_between_chunks(agent: Agent[None, str]) -> None:
 
     async def consume() -> None:
         async with agent.run_stream('hi') as result:
-            async for _ in result.stream_text(debounce_by=None):
-                first_chunk.set()
-                await anyio.sleep_forever()
+            await anext(result.stream_text(debounce_by=None))
+            first_chunk.set()
+            await anyio.sleep_forever()
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(consume)
