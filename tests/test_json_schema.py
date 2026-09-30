@@ -599,8 +599,8 @@ def test_inline_defs_typeless_object_keywords_are_inlined(object_keywords: dict[
     """A typeless node carrying object keywords must not strand `$ref`s when `$defs` is dropped.
 
     Object keywords apply without an explicit `type`, so the node is walked as an object, and no
-    `type` is added: that would narrow the instances the schema accepts. The walk is internal;
-    `test_tool_definition_typeless_properties_inlined_for_model` pins the provider-bound shape.
+    `type` is added: that would narrow the instances the schema accepts. Not a VCR test: cassettes
+    match on method and URI, so a stranded `$ref` in the request body would still replay.
     """
     schema = {'$defs': {'Payload': PAYLOAD}, **object_keywords}
 
