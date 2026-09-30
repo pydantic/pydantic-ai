@@ -226,8 +226,9 @@ Key fields: `llm=None`, `allowed_domains=None`, `block_ip_addresses=True`, `head
 
 Gotchas:
 
-- `llm=None` runs the sub-agent on the host run's model (`RunContext.model`). browser-use's hosted
-  `ChatBrowserUse` model is opt-in via `llm=ChatBrowserUse()`: a separate account billed via
+- `llm=None` runs the sub-agent on the host run's model (`RunContext.model`) and inherits its
+  instrumentation settings, including content redaction. browser-use's hosted `ChatBrowserUse`
+  model is opt-in via `llm=ChatBrowserUse()`: a separate account billed via
   `BROWSER_USE_API_KEY`, outside your observability. Pass `llm` for a cheaper sub-agent model.
 - Costs: `use_vision=True` sends a screenshot every step; a judge call runs per task unless
   `BrowserAgentSettings(use_judge=False)`.

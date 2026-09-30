@@ -101,7 +101,9 @@ With `llm=None` (the default), the sub-agent runs on the host run's model,
 read from `RunContext.model` on each `browse_web` call and wrapped in
 `PydanticAIChatModel`. Browsing then stays on the provider, account, and
 observability you already configured, and follows the host agent when a run
-overrides its model.
+overrides its model. This default also inherits the host run's instrumentation
+settings, including its content-redaction policy. Passing an explicit `llm`
+leaves that model's instrumentation unchanged.
 
 browser-use's hosted `ChatBrowserUse` model is opt-in: pass
 `llm=ChatBrowserUse()` (from `browser_use`) to use it. That is a separate

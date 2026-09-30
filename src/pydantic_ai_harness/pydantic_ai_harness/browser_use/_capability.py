@@ -100,8 +100,8 @@ class BrowserUse(AbstractCapability[AgentDepsT]):
     as-is.
 
     With `None`, the sub-agent runs on the host run's model (`RunContext.model`),
-    wrapped in `PydanticAIChatModel`, so browsing stays on the provider you
-    already configured. browser-use's hosted model is opt-in: pass
+    wrapped in `PydanticAIChatModel`, and inherits the host run's instrumentation
+    settings, including its content-redaction policy. browser-use's hosted model is opt-in: pass
     `browser_use.ChatBrowserUse()`, which needs a browser-use account and
     `BROWSER_USE_API_KEY`.
     """

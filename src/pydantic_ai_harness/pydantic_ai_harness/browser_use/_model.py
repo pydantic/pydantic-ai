@@ -13,8 +13,12 @@ from collections.abc import Sequence
 from typing import TypeAlias, TypeVar, overload
 
 from pydantic import BaseModel
+from typing_extensions import TypeIs
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import Instrumentation, WrapperCapability
+from pydantic_ai.capabilities.abstract import leaf_capabilities
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     BinaryContent,
     ImageUrl,
@@ -27,7 +31,8 @@ from pydantic_ai.messages import (
     UserContent,
     UserPromptPart,
 )
-from pydantic_ai.models import KnownModelName, Model, infer_model
+from pydantic_ai.models import AbstractModel, KnownModelName, Model, infer_model
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
 
 try:
@@ -186,6 +191,33 @@ class PydanticAIChatModel(BaseChatModel):
             return ChatInvokeCompletion(completion=text_result.output, usage=_map_usage(text_result.usage))
         result = await self._agent.run(None, output_type=output_format, message_history=history)
         return ChatInvokeCompletion(completion=result.output, usage=_map_usage(result.usage))
+
+
+def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
+    """Narrow a run's model without losing its provider client type."""
+    return isinstance(model, Model)
+
+
+class RunChatModel(PydanticAIChatModel):
+    """Adapt the host run's model and instrumentation for a capability without an `llm`."""
+
+    def __init__(self, ctx: RunContext[AgentDepsT]) -> None:
+        model = ctx.model
+        if not _is_request_response_model(model):
+            raise UserError(
+                f"BrowserUse without an `llm` runs the browser agent on the host run's model, but "
+                f'{model.model_id!r} is not a request-response model. Pass `llm` to BrowserUse.'
+            )
+        super().__init__(model)
+        self._agent.instrument = False
+        # Mirror core's run instrumentation resolution until the effective settings have a public accessor:
+        # the last Instrumentation in application order wins, including resolved capability functions.
+        if ctx.root_capability is not None:
+            for capability in leaf_capabilities(ctx.root_capability):
+                while isinstance(capability, WrapperCapability):
+                    capability = capability.wrapped
+                if isinstance(capability, Instrumentation):
+                    self._agent.instrument = capability.settings
 
 
 def resolve_chat_model(llm: BaseChatModel | Model | KnownModelName | str | None) -> BaseChatModel | None:

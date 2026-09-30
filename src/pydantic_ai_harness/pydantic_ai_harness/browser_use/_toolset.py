@@ -12,13 +12,11 @@ from urllib.parse import urlsplit
 
 import anyio
 from pydantic import BaseModel, ValidationError
-from typing_extensions import TypeIs
 
-from pydantic_ai.exceptions import ModelRetry, UserError
-from pydantic_ai.models import AbstractModel, Model
+from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.browser_use._model import PydanticAIChatModel, resolve_chat_model
+from pydantic_ai_harness.browser_use._model import RunChatModel, resolve_chat_model
 from pydantic_ai_harness.browser_use._settings import BrowserAgentSettings
 
 try:
@@ -432,21 +430,6 @@ def _disable_browser_use_telemetry(agent: BrowserAgent) -> None:
         agent.telemetry = _DisabledTelemetry()  # pyright: ignore[reportAttributeAccessIssue]
 
 
-def _is_request_response_model(model: AbstractModel) -> TypeIs[Model]:
-    """Narrow a run's model without losing its provider client type."""
-    return isinstance(model, Model)
-
-
-def _run_chat_model(model: AbstractModel) -> BaseChatModel:
-    """The host run's model as the sub-agent's chat model, for a capability without an `llm`."""
-    if not _is_request_response_model(model):
-        raise UserError(
-            f"BrowserUse without an `llm` runs the browser agent on the host run's model, but "
-            f'{model.model_id!r} is not a request-response model. Pass `llm` to BrowserUse.'
-        )
-    return PydanticAIChatModel(model)
-
-
 class BrowserUseToolset(FunctionToolset[AgentDepsT]):
     """Provides the `browse_web` tool: run an autonomous browser-use agent per task."""
 
@@ -632,7 +615,7 @@ class BrowserUseToolset(FunctionToolset[AgentDepsT]):
         """
         # Resolved per call rather than cached: the run's model can differ between runs
         # (`agent.run(model=...)`, `agent.override(model=...)`) while the toolset is shared.
-        llm = self._llm if self._llm is not None else _run_chat_model(ctx.model)
+        llm = self._llm if self._llm is not None else RunChatModel(ctx)
         if self._session_scope == 'call':
             history = await self._run_in_fresh_session(task, llm)
         else:
