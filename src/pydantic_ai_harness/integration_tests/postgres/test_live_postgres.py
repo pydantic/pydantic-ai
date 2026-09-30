@@ -1162,3 +1162,80 @@ async def test_agent_run_round_trips_through_step_persistence() -> None:
         assert isinstance(prompt.content, list)
         binary = next(p for p in prompt.content if isinstance(p, BinaryContent))
         assert binary.data == big
+
+
+# ---------------------------------------------------------------------------
+# Rows and tables the stores did not write
+# ---------------------------------------------------------------------------
+
+
+async def test_media_one_instance_initializes_its_schema_once_under_concurrency() -> None:
+    """Two first calls on one instance: the second waits on the lock and finds the schema ready."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresMediaStore(pool, table=f'{prefix}_media')
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(store.put, b'first caller')
+            tg.start_soon(store.put, b'second caller')
+
+        assert await _count_rows(pool, f'{prefix}_media') == 2
+
+
+async def test_media_foreign_table_layout_fails_loudly_on_get() -> None:
+    """An existing table with another layout is left as is, and a read of it raises."""
+    async with _live_tables() as (pool, prefix):
+        table = f'{prefix}_media'
+        digest = 'a' * 64
+        async with pool.acquire() as connection:
+            await connection.execute(f'CREATE TABLE {table} (sha256 TEXT PRIMARY KEY, bytes TEXT NOT NULL)')
+            await connection.execute(f'INSERT INTO {table} (sha256, bytes) VALUES ($1, $2)', digest, 'not bytea')
+        store = PostgresMediaStore(pool, table=table)
+
+        with pytest.raises(ValueError, match='has wrong types'):
+            await store.get(f'media+sha256://{digest}')
+
+
+async def test_list_snapshots_skips_an_unparsable_row(caplog: pytest.LogCaptureFixture) -> None:
+    """One damaged row is logged and skipped, so the rest of the run's history stays readable."""
+    async with _live_tables() as (pool, prefix):
+        store = PostgresStepStore(pool, table=prefix, media_store=None)
+        good = ContinuableSnapshot(run_id='r1', step_index=0, messages=_user_messages())
+        await store.save_snapshot(good)
+        async with pool.acquire() as connection:
+            await connection.execute(
+                f'INSERT INTO {prefix}_snapshots (run_id, step_index, timestamp, messages) VALUES ($1, $2, $3, $4)',
+                'r1',
+                1,
+                datetime.now(timezone.utc).isoformat(),
+                'not json',
+            )
+
+        with caplog.at_level('WARNING'):
+            snapshots = await store.list_snapshots(run_id='r1')
+
+        assert snapshots == [good]
+        assert 'Skipping unparsable snapshot row for run r1' in caplog.text
+
+
+async def test_snapshot_table_with_a_foreign_layout_fails_loudly_on_read() -> None:
+    """A pre-existing snapshots table with other column types is left as is, and a read of it raises."""
+    async with _live_tables() as (pool, prefix):
+        async with pool.acquire() as connection:
+            await connection.execute(
+                f'CREATE TABLE {prefix}_snapshots ('
+                'seq BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, run_id TEXT NOT NULL, '
+                'step_index TEXT NOT NULL, conversation_id TEXT, parent_run_id TEXT, agent_name TEXT, '
+                "timestamp TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'complete', "
+                'messages TEXT NOT NULL, idempotency_key TEXT)'
+            )
+            await connection.execute(
+                f'INSERT INTO {prefix}_snapshots (run_id, step_index, timestamp, messages) VALUES ($1, $2, $3, $4)',
+                'r1',
+                'zero',
+                datetime.now(timezone.utc).isoformat(),
+                '[]',
+            )
+        store = PostgresStepStore(pool, table=prefix, media_store=None)
+
+        with pytest.raises(ValueError, match='snapshot row has wrong types'):
+            await store.latest_snapshot(run_id='r1')
