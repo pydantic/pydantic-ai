@@ -302,6 +302,16 @@ def test_existing_branch_checked_out_elsewhere_is_kept(repository: Path, monkeyp
     assert not (repository / '.worktrees/feature').exists()
 
 
+def test_symlink_loop_is_a_clean_error(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    loop = repository / '.worktrees/loop'
+    loop.parent.mkdir()
+    loop.symlink_to(loop)
+    monkeypatch.chdir(repository)
+    with pytest.raises(ValueError, match='Cannot create worktree'):
+        open_worktree(name='loop')
+    assert not git(repository, 'branch', '--list', 'clai-loop')
+
+
 def test_git_made_worktree_is_reopened_and_excluded(repository: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A detached checkout from plain `git worktree add` is reused, and stops showing in `git status`."""
     path = repository / '.worktrees/loose'

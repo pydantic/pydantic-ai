@@ -28,7 +28,7 @@ def open_worktree(*, name: str) -> Worktree:
         exclude = Path(_git('rev-parse', '--git-path', 'info/exclude'))
         contents = exclude.read_bytes() if exclude.exists() else b''
         path = root / '.worktrees' / name
-        if path.resolve() in _registered_worktrees():
+        if os.path.realpath(path) in _registered_worktrees():
             branch = _git('-C', str(path), 'branch', '--show-current') or 'detached HEAD'
             worktree = Worktree(path=path, branch=branch, created=False)
         elif path.exists():
@@ -72,9 +72,10 @@ def _check_out(*, path: Path, name: str) -> str:
     return branch
 
 
-def _registered_worktrees() -> set[Path]:
+def _registered_worktrees() -> set[str]:
+    # `realpath`, not `Path.resolve`: it never raises, even on a symlink loop planted at `.worktrees/NAME`.
     listing = _git('worktree', 'list', '--porcelain').splitlines()
-    return {Path(line.removeprefix('worktree ')).resolve() for line in listing if line.startswith('worktree ')}
+    return {os.path.realpath(line.removeprefix('worktree ')) for line in listing if line.startswith('worktree ')}
 
 
 def offer_worktree_cleanup() -> None:
