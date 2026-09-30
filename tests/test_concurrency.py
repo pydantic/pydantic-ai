@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
 import anyio
@@ -12,13 +13,14 @@ import pytest
 from pydantic_ai import Agent, ConcurrencyLimit, ConcurrencyLimiter, ConcurrencyLimitExceeded
 from pydantic_ai.concurrency import get_concurrency_context, normalize_to_limiter
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelResponse, TextPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Awaitable, Callable
 
     from logfire.testing import CaptureLogfire
 
@@ -71,6 +73,16 @@ class TestConcurrencyLimiter:
         # With high limit, should acquire immediately
         async with get_concurrency_context(limiter, 'test'):
             pass  # No waiting
+
+    async def test_release_on_another_task(self):
+        """A slot acquired on one task can be released on another."""
+        limiter = ConcurrencyLimiter(max_running=1)
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(limiter.acquire, 'test')
+        assert limiter.running_count == 1
+
+        limiter.release()
+        assert limiter.running_count == 0
 
     @pytest.mark.parametrize('max_running', [0, -1, -5])
     async def test_invalid_max_running(self, max_running: int):
@@ -717,3 +729,109 @@ class TestConcurrencyLimitedModelMethods:
             # Consume the stream
             async for _ in stream:
                 pass
+
+
+async def _stream_chunks(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    for chunk in ('a', 'b', 'c'):
+        yield chunk
+
+
+async def _consume_debounced(agent: Agent[None, str]) -> None:
+    async with agent.run_stream('hi') as result:
+        async for _ in result.stream_text():
+            pass
+
+
+async def _break(agent: Agent[None, str]) -> None:
+    async with agent.run_stream('hi') as result:
+        async for _ in result.stream_text(debounce_by=None):
+            break
+
+
+async def _break_debounced(agent: Agent[None, str]) -> None:
+    async with agent.run_stream('hi') as result:
+        async for _ in result.stream_text():
+            break
+
+
+async def _aclose(agent: Agent[None, str]) -> None:
+    async with agent.run_stream('hi') as result:
+        stream = result.stream_text(debounce_by=None)
+        assert isinstance(stream, AsyncGenerator)
+        await anext(stream)
+        await stream.aclose()
+
+
+async def _leave_unconsumed(agent: Agent[None, str]) -> None:
+    async with agent.run_stream('hi'):
+        pass
+
+
+async def _raise_in_consumer(agent: Agent[None, str]) -> None:
+    with pytest.raises(ValueError, match='consumer stopped'):
+        async with agent.run_stream('hi') as result:
+            async for _ in result.stream_text(debounce_by=None):
+                raise ValueError('consumer stopped')
+
+
+async def _cancel_between_chunks(agent: Agent[None, str]) -> None:
+    first_chunk = anyio.Event()
+
+    async def consume() -> None:
+        async with agent.run_stream('hi') as result:
+            async for _ in result.stream_text(debounce_by=None):
+                first_chunk.set()
+                await anyio.sleep_forever()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(consume)
+        await first_chunk.wait()
+        tg.cancel_scope.cancel()
+
+
+async def _break_run_stream_events(agent: Agent[None, str]) -> None:
+    async with agent.run_stream_events('hi') as events:
+        async for _ in events:
+            break
+
+
+async def _break_node_stream(agent: Agent[None, str]) -> None:
+    async with agent.iter('hi') as run:
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx) as stream:
+                    async for _ in stream:
+                        break
+                break
+
+
+@pytest.mark.parametrize(
+    'consume',
+    [
+        pytest.param(_consume_debounced, id='consume-debounced'),
+        pytest.param(_break, id='break'),
+        pytest.param(_break_debounced, id='break-debounced'),
+        pytest.param(_aclose, id='aclose'),
+        pytest.param(_leave_unconsumed, id='unconsumed'),
+        pytest.param(_raise_in_consumer, id='consumer-raises'),
+        pytest.param(_cancel_between_chunks, id='cancelled-between-chunks'),
+        pytest.param(_break_run_stream_events, id='run-stream-events-break'),
+        pytest.param(_break_node_stream, id='node-stream-break'),
+    ],
+)
+async def test_streamed_request_releases_slot(consume: Callable[[Agent[None, str]], Awaitable[None]]):
+    """A streamed request returns its slot however the consumer stops, and the same task can make another request.
+
+    The consumer iterates and closes the stream on tasks other than the one that opened it (debounce
+    prefetch tasks, the graph's model-request task), so this is about task lifecycle, not the wire.
+    """
+    limiter = ConcurrencyLimiter(max_running=1)
+    agent = Agent(ConcurrencyLimitedModel(FunctionModel(stream_function=_stream_chunks), limiter=limiter))
+
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await consume(agent)
+        assert limiter.running_count == 0
+
+        async with agent.run_stream('hi') as result:
+            assert await result.get_output() == 'abc'
+    assert limiter.running_count == 0

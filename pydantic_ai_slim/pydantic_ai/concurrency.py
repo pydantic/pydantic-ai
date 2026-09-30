@@ -70,7 +70,11 @@ class AbstractConcurrencyLimiter(ABC):
 
     @abstractmethod
     def release(self) -> None:
-        """Release a slot."""
+        """Release a slot.
+
+        This can run on a different task than the matching `acquire()`: a streamed model response
+        is iterated and closed on whichever task consumes it.
+        """
         ...
 
 
@@ -123,6 +127,9 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
         _validate_max_running(max_running)
         _validate_max_queued(max_queued)
         self._limiter = anyio.CapacityLimiter(max_running)
+        # `CapacityLimiter` ties each slot to a borrower, the current task by default. Each acquisition
+        # borrows on behalf of its own token instead, so `release()` works from any task.
+        self._borrowers: list[object] = []
         self._max_queued = max_queued
         self._name = name
         self._tracer = tracer
@@ -197,9 +204,11 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
         """
         from .exceptions import ConcurrencyLimitExceeded
 
+        borrower = object()
         # Try to acquire immediately without blocking
         try:
-            self._limiter.acquire_nowait()
+            self._limiter.acquire_on_behalf_of_nowait(borrower)
+            self._borrowers.append(borrower)
             return
         except anyio.WouldBlock:
             pass
@@ -237,14 +246,15 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
             # Span name uses limiter name if set, otherwise source
             span_name = f'waiting for {display_name} concurrency'
             with tracer.start_as_current_span(span_name, attributes=attributes):
-                await self._limiter.acquire()
+                await self._limiter.acquire_on_behalf_of(borrower)
+            self._borrowers.append(borrower)
         finally:
             # We're no longer waiting (either we acquired or we were cancelled)
             self._waiting_count -= 1
 
     def release(self) -> None:
         """Release a slot."""
-        self._limiter.release()
+        self._limiter.release_on_behalf_of(self._borrowers.pop())
 
 
 AnyConcurrencyLimit: TypeAlias = 'int | ConcurrencyLimit | AbstractConcurrencyLimiter | None'
