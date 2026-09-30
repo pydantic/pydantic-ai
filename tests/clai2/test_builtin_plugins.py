@@ -37,12 +37,14 @@ CURATED = {
     'logfire_mcp',
     'posthog',
     'grain',
+    'linear',
 }
 OPT_IN = {
     'day_ai',
     'github',
     'google_workspace',
     'grain',
+    'linear',
     'logfire_mcp',
     'notion',
     'ordinal',

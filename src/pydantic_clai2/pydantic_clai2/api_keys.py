@@ -161,6 +161,7 @@ _KEY_CONSUMERS = {
     'slack': '/plugins configure slack',
     'posthog': '/plugins configure posthog',
     'grain': '/grain key',
+    'linear': '/plugins configure linear',
 }
 """Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
 

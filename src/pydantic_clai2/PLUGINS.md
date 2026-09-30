@@ -316,6 +316,63 @@ wins while enabled; disabling it restores the supplied agent's own tracing
 behavior. Custom launchers must pass `builtin_plugins=DEFAULT_PLUGINS` to opt in
 to stock built-ins. See [telemetry](README.md#telemetry-and-references).
 
+## Linear: issues and projects
+
+The built-in `linear` plugin (`pydantic_clai2.linear`) gives the agent the tools
+of Linear's hosted MCP server through harness
+[`Linear`](../pydantic_ai_harness/pydantic_ai_harness/linear/README.md). It starts disabled. Turning
+it on (`/plugins enable linear`, or Space in `/plugins`) opens its settings menu,
+and `/plugins configure linear` (or C in `/plugins`) opens it again later:
+
+```text
+ Linear settings
+ search: (type to filter)
+
+ > Sign-in                  API key from /keys
+   API key                  LINEAR_API_KEY
+   Access                   Read-only
+   Server instructions      Include
+   Save & close
+
+ type to filter - Enter edit - R reset - Esc close
+```
+
+| Row | Choices | Default |
+|---|---|---|
+| Sign-in | an API key from `/keys`, or browser sign-in (OAuth) | API key |
+| API key | a `/keys` entry, picked from a searchable list, or a new key typed into a masked prompt | `LINEAR_API_KEY` |
+| Access | read-only, or read and write | read-only |
+| Server instructions | pass Linear's own MCP instructions to the agent, or leave them out | include |
+
+Enter edits a row, R resets it to the default, and Esc backs out of a picker
+without changing anything. Each change is saved as you make it, so **Save & close**
+and Esc both just leave the menu, and the plugin is reloaded with the new settings.
+Read-only is the default because tools that create or change issues act on a
+workspace your team shares. These rows are the settings harness `Linear` takes
+from a user. Linear's hosted server has a single URL (with a read-only variant)
+and takes the workspace from the account you sign in with, so the menu has no
+base URL or workspace field.
+
+The API key lives in [`/keys`](#saved-api-keys), not in plugin settings, which
+are stored in plaintext. On the API key row, pick any saved key (one entry can
+serve several plugins), or choose **Enter a different API key**. A new key is
+saved in `/keys` as `LINEAR_API_KEY`; if that name already exists, CLAI asks
+before replacing it, since other plugins may use it. The plugin stores only the
+key's name and looks the key up at the start of every run, so replacing the value
+in `/keys` takes effect on the next run. If the key is missing, loading the plugin
+prints a warning and each run fails with an error naming `/plugins configure linear`,
+rather than running without Linear. Harness's `LINEAR_ACCESS_TOKEN` environment
+variable is not read.
+
+With browser sign-in, the key row is hidden. Tokens go to the keyring the way
+`/mcp` OAuth tokens do, and `/linear logout` signs out.
+
+The settings are also plain JSON, for scripts:
+
+```text
+/plugins add linear pydantic_clai2.linear '{"auth": "oauth", "read_only": false}'
+```
+
 ## Notion: workspace tools
 
 The built-in `notion` plugin (`pydantic_clai2.notion`) starts disabled. It adds
@@ -579,6 +636,7 @@ CLAI plugins written for them, such as the disabled built-ins
 [`day_ai`](#day_ai-day-ai-crm-tools),
 [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
 [`grain`](#grain-meetings-with-a-saved-sign-in),
+[`linear`](#linear-issues-and-projects),
 [`logfire_mcp`](#logfire-mcp-query-your-telemetry),
 [`notion`](#notion-workspace-tools),
 [`ordinal`](#ordinal-social-posts-in-ordinal),
@@ -1701,8 +1759,16 @@ async def configure() -> str:
     return '\n'.join(messages) or 'Notify settings unchanged.'
 ```
 
-The built-in `github`, `grain`, `notion`, and [`pylon`](#configuring-pylon) plugins are complete
-examples; `pylon` also steps out of the menu worker to run the async key picker.
+For a row that opens something other than a plain value, pass `submenus` to
+`run_flow` to map the row's key to a function that returns messages. When that
+function is itself async, such as `api_keys.prompt_api_key`, await
+`field_menu.run_flow_async` from the `configure` function instead of running
+`run_flow` in a worker: it runs each widget in its own `run_worker`, so the
+submenu can open its own.
+
+The built-in `github`, `grain`, `linear`, `notion`, and [`pylon`](#configuring-pylon) plugins are
+complete examples; `linear` uses `run_flow_async`, and `pylon` steps out of the menu
+worker to run the async key picker.
 
 Plugin settings are plaintext SQLite. Never save a token, API key, or client
 secret in them: keep it in `/keys` with `prompt_api_key` and `save_key`, save only
@@ -1872,9 +1938,19 @@ numbers, and underscores, starting with a letter or underscore. Saving an existi
 name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
 the secret on the command line.
 
+Consumers store a key's name, not its value, and look it up each time they
+connect, so replacing a value in `/keys` updates every consumer and a deleted key
+makes them fail with an error. Renaming a key that vLLM, OpenRouter, or a
+plugin uses is refused until they are pointed at another key. Several
+consumers can share one entry: name keys with the conventional variable name for
+the service, such as `LINEAR_API_KEY` or `GITHUB_TOKEN`, and every plugin for that
+service can pick the same entry. The names are labels only; CLAI does not export
+them as environment variables.
+
 When saved keys exist, vLLM's token prompt, OpenRouter's **Enter API key** flow,
 and plugins such as [`google_workspace`](#google_workspace-gmail-calendar-and-drive-tools),
-[`grain`](#grain-meetings-with-a-saved-sign-in), [`logfire_mcp`](#logfire-mcp-query-your-telemetry), [`notion`](#notion-workspace-tools),
+[`grain`](#grain-meetings-with-a-saved-sign-in), [`linear`](#linear-issues-and-projects),
+[`logfire_mcp`](#logfire-mcp-query-your-telemetry), [`notion`](#notion-workspace-tools),
 [`pylon`](#pylon-support-issues-and-accounts-in-pylon), and
 [`slack`](#slack-your-slack-workspace-as-you) show a
 searchable list of names. Choose one, enter a different key privately, or

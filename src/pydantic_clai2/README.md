@@ -1406,6 +1406,11 @@ settings menu (`/plugins configure notion` reopens it). The token is picked from
 signs in through the browser. Plugin settings never hold the token. See
 [PLUGINS.md](PLUGINS.md#notion-workspace-tools).
 
+`/plugins enable linear` gives the agent Linear's hosted MCP tools, read-only by
+default, and opens its settings menu (`/plugins configure linear` reopens it). The
+key is picked from `/keys` by name (a new one is saved there as `LINEAR_API_KEY`),
+or choose browser sign-in. See [PLUGINS.md](PLUGINS.md#linear-issues-and-projects).
+
 ## Questions from the model
 
 When the task is ambiguous, the model can call `ask_user_question` instead of
@@ -1516,6 +1521,15 @@ and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letter
 numbers, and underscores, starting with a letter or underscore. Saving an existing
 name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
 the secret on the command line.
+
+Consumers store a key's name, not its value, and look it up each time they
+connect, so replacing a value in `/keys` updates every consumer and a deleted key
+makes them fail with an error. Renaming a key that vLLM, OpenRouter, or a
+plugin uses is refused until they are pointed at another key. Several
+consumers can share one entry: name keys with the conventional variable name for
+the service, such as `LINEAR_API_KEY` or `GITHUB_TOKEN`, and every plugin for that
+service can pick the same entry. The names are labels only; CLAI does not export
+them as environment variables.
 
 When saved keys exist, vLLM's token prompt and OpenRouter's **Enter API key** flow
 show a searchable list of names. Choose one, enter a different key privately, or

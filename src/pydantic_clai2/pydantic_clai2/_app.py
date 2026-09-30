@@ -108,6 +108,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='logfire_mcp', factory='pydantic_clai2.logfire_mcp', enabled=False),
     PluginSettings(id='posthog', factory='pydantic_clai2.posthog', enabled=False),
     PluginSettings(id='grain', factory='pydantic_clai2.grain', enabled=False),
+    PluginSettings(id='linear', factory='pydantic_clai2.linear', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 
