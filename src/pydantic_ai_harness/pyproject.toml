@@ -71,6 +71,8 @@ mongodb = ["pymongo>=4.17.0"]
 skills = ["pyyaml>=6.0.2"]
 browser-use = ["browser-use>=0.13.6,<0.14 ; python_full_version >= '3.11'"]
 playwright = ["idna>=3.4", "playwright>=1.61.0"]
+# The MCP client shared by hosted MCP integrations. Provider extras like `linear` install the same thing.
+mcp = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 stackone = ["fastmcp>=3.4.5,<4", "pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 ordinal = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 grain = ["pydantic-ai-slim[mcp]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
