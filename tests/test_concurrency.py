@@ -21,8 +21,7 @@ from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
-from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_ai.usage import UsageLimits
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
@@ -89,15 +88,14 @@ class TestConcurrencyLimiter:
         limiter.release()
         assert limiter.running_count == 0
 
+    @pytest.mark.parametrize('anyio_backend', ['asyncio'])
     async def test_cancel_right_after_taking_a_freed_slot(self, anyio_backend: str):
         """A task cancelled right after taking a slot that was freed while it queued gives the slot back.
 
         Uses native `Task.cancel()`, which reaches the acquire's post-grant checkpoint that an anyio
         cancel scope's shielding would not.
         """
-        if anyio_backend != 'asyncio':
-            pytest.skip('This test exercises native asyncio task cancellation')
-
+        assert anyio_backend == 'asyncio'
         limiter = ConcurrencyLimiter(max_running=1)
         await limiter.acquire('holder')
 
@@ -539,8 +537,8 @@ class TestAgentWithSharedLimiter:
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             with pytest.raises(UserError, match='same concurrency limiter'):
                 if stream:
-                    async with agent.run_stream('test') as result:
-                        await result.get_output()
+                    async with agent.run_stream('test'):
+                        pass
                 else:
                     await agent.run('test')
 
@@ -555,8 +553,8 @@ class TestAgentWithSharedLimiter:
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             with pytest.raises(UserError, match='same concurrency limiter'):
                 if stream:
-                    async with agent.run_stream('test') as result:
-                        await result.get_output()
+                    async with agent.run_stream('test'):
+                        pass
                 else:
                     await agent.run('test')
 
@@ -573,17 +571,8 @@ class TestAgentWithSharedLimiter:
         assert limiter.running_count == 0
 
     async def test_agent_rejects_shared_limiter_before_token_counting(self):
-        class CountingModel(TestModel):
-            async def count_tokens(
-                self,
-                messages: list[ModelMessage],
-                model_settings: ModelSettings | None,
-                model_request_parameters: ModelRequestParameters,
-            ) -> RequestUsage:
-                return RequestUsage(input_tokens=1)
-
         limiter = ConcurrencyLimiter(max_running=1)
-        agent = Agent(ConcurrencyLimitedModel(CountingModel(), limiter=limiter), max_concurrency=limiter)
+        agent = Agent(ConcurrencyLimitedModel(TestModel(), limiter=limiter), max_concurrency=limiter)
 
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             with pytest.raises(UserError, match='same concurrency limiter'):
@@ -602,8 +591,8 @@ class TestAgentWithSharedLimiter:
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             with pytest.raises(UserError, match='same concurrency limiter'):
                 if stream:
-                    async with agent.run_stream('test') as result:
-                        await result.get_output()
+                    async with agent.run_stream('test'):
+                        pass
                 else:
                     await agent.run('test')
 
@@ -867,13 +856,13 @@ async def _consume_debounced(agent: Agent[None, str]) -> None:
 
 async def _break(agent: Agent[None, str]) -> None:
     async with agent.run_stream('hi') as result:
-        async for _ in result.stream_text(debounce_by=None):
+        async for _ in result.stream_text(debounce_by=None):  # pragma: no branch
             break
 
 
 async def _break_debounced(agent: Agent[None, str]) -> None:
     async with agent.run_stream('hi') as result:
-        async for _ in result.stream_text():
+        async for _ in result.stream_text():  # pragma: no branch
             break
 
 
@@ -914,16 +903,16 @@ async def _cancel_between_chunks(agent: Agent[None, str]) -> None:
 
 async def _break_run_stream_events(agent: Agent[None, str]) -> None:
     async with agent.run_stream_events('hi') as events:
-        async for _ in events:
+        async for _ in events:  # pragma: no branch
             break
 
 
 async def _break_node_stream(agent: Agent[None, str]) -> None:
     async with agent.iter('hi') as run:
-        async for node in run:
+        async for node in run:  # pragma: no branch
             if Agent.is_model_request_node(node):
                 async with node.stream(run.ctx) as stream:
-                    async for _ in stream:
+                    async for _ in stream:  # pragma: no branch
                         break
                 break
 
