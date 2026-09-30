@@ -108,7 +108,7 @@ class WorkspaceFiles:
                 encoded = data.encode() if isinstance(data, str) else _bytes(data)
                 if name.startswith('Path.append'):
                     encoded = await self._read_or_empty(path) + encoded
-                await workspace.write_bytes(path, encoded)
+                await self._write(path, encoded)
                 return len(data) if isinstance(data, str) else len(encoded)
             case 'Path.mkdir':
                 await self._mkdir(path, parents=kwargs.get('parents') is True, exist_ok=kwargs.get('exist_ok') is True)
@@ -181,26 +181,33 @@ class WorkspaceFiles:
                 if entry is None:
                     raise FileNotFoundError(errno.ENOENT, 'No such file or directory', path)
             case 'w':
-                await self.workspace.write_bytes(path, b'')
+                await self._write(path, b'')
             case _:  # 'a': create if missing, keep existing content
                 if entry is None:
-                    await self.workspace.write_bytes(path, b'')
+                    await self._write(path, b'')
         return handle
 
     async def _mkdir(self, path: str, *, parents: bool, exist_ok: bool) -> None:
-        workspace = self.workspace
         entry = await self._stat_or_none(path)
         if entry is not None:
             if entry.is_dir and exist_ok:
                 return
             raise FileExistsError(errno.EEXIST, 'File exists', path)
         if not parents:
-            parent = await self._stat_or_none(posixpath.dirname(await workspace.resolve(path)))
-            if parent is None:
-                raise FileNotFoundError(errno.ENOENT, 'No such file or directory', path)
-            if not parent.is_dir:
-                raise NotADirectoryError(errno.ENOTDIR, 'Not a directory', path)
-        await workspace.make_dir(path)
+            await self._require_parent(path)
+        await self.workspace.make_dir(path)
+
+    async def _write(self, path: str, data: bytes) -> None:
+        # `Workspace.write_bytes` creates missing parents, which `pathlib` and `open()` do not.
+        await self._require_parent(path)
+        await self.workspace.write_bytes(path, data)
+
+    async def _require_parent(self, path: str) -> None:
+        parent = await self._stat_or_none(posixpath.dirname(await self.workspace.resolve(path)))
+        if parent is None:
+            raise FileNotFoundError(errno.ENOENT, 'No such file or directory', path)
+        if not parent.is_dir:
+            raise NotADirectoryError(errno.ENOTDIR, 'Not a directory', path)
 
 
 def _path(arg: object) -> PurePosixPath:

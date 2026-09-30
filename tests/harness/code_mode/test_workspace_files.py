@@ -98,6 +98,10 @@ async def test_open_modes() -> None:
         ("from pathlib import Path\nPath('file.txt').rmdir()", 'NotADirectoryError'),
         ("from pathlib import Path\nPath('sub').rmdir()", 'Directory not empty'),
         ("from pathlib import Path\nPath('file.txt').rename('moved.txt')", '`Path.rename` is not supported'),
+        ("from pathlib import Path\nPath('missing/new.txt').write_text('x')", 'FileNotFoundError'),
+        ("from pathlib import Path\nPath('file.txt/new.txt').write_bytes(b'x')", 'NotADirectoryError'),
+        ("from pathlib import Path\nPath('missing/new.txt').append_text('x')", 'FileNotFoundError'),
+        ("open('missing/new.txt', 'w')", 'FileNotFoundError'),
     ],
 )
 async def test_errors_reach_the_sandbox(code: str, error: str) -> None:
@@ -170,10 +174,11 @@ async def test_os_access_still_answers_environment_but_not_files() -> None:
     os_access = OSAccess(environ={'TOKEN': 'secret'})
     [result] = await run_snippets(
         workspace,
-        "import os\nfrom pathlib import Path\n[os.getenv('TOKEN'), Path('ws.txt').read_text()]",
+        'import os\nimport datetime\nfrom pathlib import Path\n'
+        "[os.getenv('TOKEN'), dict(os.environ), datetime.datetime.now().year > 2000, Path('ws.txt').read_text()]",
         capability=CodeMode(workspace_files=True, os_access=os_access),
     )
-    assert result == ['secret', 'from workspace']
+    assert result == ['secret', {'TOKEN': 'secret'}, True, 'from workspace']
 
 
 def test_eager_code_mode_forwards_workspace_files() -> None:
