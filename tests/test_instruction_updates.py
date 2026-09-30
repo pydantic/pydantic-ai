@@ -50,9 +50,10 @@ from .conftest import RequestCapture, try_import
 from .continuation_utils import ScriptedContinuationModel, scripted_response
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel, OpenAIResponsesModelSettings
-    from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
+    from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.realtime._openai_protocol import seed_items
 
 with try_import() as google_available:
@@ -910,7 +911,7 @@ async def test_instruction_updates_direct_unaddressable_append_part_renders_as_w
 
 @dataclass(frozen=True)
 class WireCase:
-    provider: Literal['deepseek', 'anthropic', 'responses']
+    provider: Literal['openrouter', 'anthropic', 'responses']
     model_name: str
     inline_system: bool
     continuation: bool = False
@@ -918,8 +919,8 @@ class WireCase:
 
 WIRE_CASES: list[ParameterSet] = [
     pytest.param(
-        WireCase('deepseek', 'deepseek-chat', False),
-        id='deepseek-fallback',
+        WireCase('openrouter', 'deepseek/deepseek-chat', False),
+        id='openrouter-fallback',
         marks=pytest.mark.skipif(not openai_available(), reason='openai not installed'),
     ),
     pytest.param(
@@ -977,12 +978,13 @@ def wire_model(
     request_capture: RequestCapture,
     openai_api_key: str,
     anthropic_api_key: str,
-    deepseek_api_key: str,
+    openrouter_api_key: str,
 ) -> Model:
-    if case.provider == 'deepseek':
-        model = OpenAIChatModel(
+    if case.provider == 'openrouter':
+        # OpenRouter opts out of inline system prompts, so this is the `<system>`-wrapped fallback path.
+        model = OpenRouterModel(
             case.model_name,
-            provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=request_capture.client),
+            provider=OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client),
         )
     elif case.provider == 'anthropic':
         model = AnthropicModel(
