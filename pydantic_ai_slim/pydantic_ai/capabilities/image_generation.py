@@ -57,9 +57,9 @@ _EDIT_ACTION_UNSUPPORTED = (
 
 # Shared by the construction-time notice (`native=False`, where the direct generator is the only
 # implementation) and the per-request one (a model with no native image generation drops the native
-# tool), so both spellings of the same drop read identically.
+# tool, and `on` names it), so both spellings of the same drop read identically.
 _NATIVE_ONLY_SETTINGS_DROPPED = (
-    'The direct `ImageGeneration` fallback ignored native-tool setting(s): {settings}. '
+    'The direct `ImageGeneration` fallback{on} ignored native-tool setting(s): {settings}. '
     'Configure provider-specific direct settings on the `ImageGenerator` or '
     '`ImageGenerationModel` instead.'
 )
@@ -68,15 +68,22 @@ _NATIVE_ONLY_SETTINGS_DROPPED = (
 def _routed_profiles(model: AbstractModel | None) -> Iterator[tuple[str, ModelProfile]]:
     """The name and profile of each model whose own profile decides native-vs-direct for `model`.
 
-    Follows the route a request takes: a wrapper hands it to the model it wraps, and a
-    `FallbackModel`, which has no profile of its own, to each of its models in turn. Only a regular
-    `Model` carries a profile.
+    A request is prepared against its model's profile, so that is what's read. A `FallbackModel`
+    has no profile of its own and prepares each request against the model it tries, so each of its
+    models is read instead. A wrapper's profile is the one its requests are prepared against --
+    `TemporalModel`'s is whichever model `using_model()` selected, not `wrapped` -- so it is read
+    too, unless it forwards to a `FallbackModel` and raises. Only a regular `Model` has a profile.
     """
     if isinstance(model, FallbackModel):
         for inner in model.models:
             yield from _routed_profiles(inner)
     elif isinstance(model, WrapperModel):
-        yield from _routed_profiles(model.wrapped)
+        try:
+            profile = model.profile
+        except NotImplementedError:
+            yield from _routed_profiles(model.wrapped)
+        else:
+            yield model.model_name, profile
     elif isinstance(model, Model):
         yield model.model_name, model.profile
 
@@ -461,7 +468,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 if native_only := self._native_only_settings():
                     # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
                     warnings.warn(
-                        _NATIVE_ONLY_SETTINGS_DROPPED.format(settings=', '.join(native_only)),
+                        _NATIVE_ONLY_SETTINGS_DROPPED.format(on='', settings=', '.join(native_only)),
                         UserWarning,
                         stacklevel=3,
                     )
@@ -473,14 +480,26 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             _, ignored = self._native_geometry()
         elif not self._has_direct_generator:
             # `native=False` with a local tool of the user's own: no native tool is built and the
-            # tool the capability didn't build carries no settings, so neither the geometry the
-            # native tool could never express nor the settings only it can express has anything left
-            # to apply it.
+            # tool the capability didn't build carries no settings, so nothing is left to apply the
+            # geometry the native tool could never express, nor any setting it could.
             ignored = self._direct_only_geometry()
-            if native_only := self._native_only_settings():
+            native_ratio = self.aspect_ratio if self.aspect_ratio in _NATIVE_IMAGE_ASPECT_RATIOS else None
+            unapplied = [
+                *self._native_only_settings(),
+                *(
+                    name
+                    for name, value in (
+                        ('action', self.action),
+                        ('image_model', self.image_model),
+                        ('aspect_ratio', native_ratio),
+                    )
+                    if value is not None
+                ),
+            ]
+            if unapplied:
                 # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
                 warnings.warn(
-                    f'`ImageGeneration` ignored native-tool setting(s): {", ".join(native_only)}. '
+                    f'`ImageGeneration` ignored native-tool setting(s): {", ".join(unapplied)}. '
                     'With `native=False` the `local` tool you supplied is the only implementation, and the '
                     'capability passes it no settings; configure that tool instead.',
                     UserWarning,
@@ -856,7 +875,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                     )
                 elif not native_supersedes and native_only:
                     warnings.warn(
-                        _NATIVE_ONLY_SETTINGS_DROPPED.format(settings=', '.join(native_only)),
+                        _NATIVE_ONLY_SETTINGS_DROPPED.format(on=f' on {model_name}', settings=', '.join(native_only)),
                         UserWarning,
                         stacklevel=2,
                     )

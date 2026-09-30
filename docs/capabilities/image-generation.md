@@ -82,7 +82,7 @@ Only the direct generator can apply `dimensions`, and only it can apply the aspe
 share, so pass `native=False` when you need either to be guaranteed: with the default `native=True` a model that
 generates images natively takes the native path, which has no equivalent for them, and the request warns that the
 settings went unapplied. Under a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each of its models takes
-the path its own profile selects, and the warning covers every one of them that would drop a setting.
+the path its own profile selects, and each of them that would drop a setting gets a warning naming it.
 Native-tool-only settings such as
 `quality` and `output_format` do not apply to a direct fallback, whether they are set on the capability or on a
 static `native=ImageGenerationTool(...)` instance; configure their
@@ -139,9 +139,10 @@ that last response carries it. Where the image lands depends on the path that pr
 
 - The native tool puts it on the model response that generated it, in
   [`ModelResponse.images`][pydantic_ai.messages.ModelResponse.images].
-- A direct generator, the `fallback_subagent_model` subagent, or a `local` tool of your own returns it from the
-  `generate_image` tool call, so it is in that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], among
-  its [`files`][pydantic_ai.messages.BaseToolReturnPart.files].
+- A direct generator or the `fallback_subagent_model` subagent returns it from the `generate_image` tool call, so it
+  is in that call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart], among its
+  [`files`][pydantic_ai.messages.BaseToolReturnPart.files]. A `local` tool of your own returns whatever it returns,
+  under its own tool name, so match that name instead.
 
 Collecting both covers whichever path each request took:
 
@@ -189,7 +190,7 @@ Two built-in mechanisms cover a model that does not generate images natively:
   image. Reach for it when you want that model's native tool semantics and the settings the native tool carries.
 
 A `local=` callable, `Tool`, or toolset of your own replaces both with an implementation you write. The capability
-passes it none of its image settings, so with `native=False`, where it is the only implementation, any it would drop
+passes it none of its image settings, so with `native=False`, where it is the only implementation, setting any of them
 warns at construction. The three fields are
 alternatives: stating more than one raises [`UserError`][pydantic_ai.exceptions.UserError].
 

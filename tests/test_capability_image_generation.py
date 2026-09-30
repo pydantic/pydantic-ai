@@ -267,8 +267,18 @@ class TestImageGenerationCapability:
         No native tool is built and the capability passes no settings to a tool it didn't build, so
         the native-only settings have nothing left to apply them.
         """
-        with pytest.warns(UserWarning, match=r'ignored native-tool setting\(s\): quality, size') as recorded:
-            ImageGeneration(native=False, local=_custom_local_tool, quality='high', size='1024x1024')
+        with pytest.warns(
+            UserWarning, match=r'ignored native-tool setting\(s\): quality, size, action, image_model, aspect_ratio'
+        ) as recorded:
+            ImageGeneration(
+                native=False,
+                local=_custom_local_tool,
+                quality='high',
+                size='1024x1024',
+                action='generate',
+                image_model='gpt-image-2',
+                aspect_ratio='16:9',
+            )
 
         assert [warning.filename for warning in recorded] == [__file__]
 
@@ -1034,7 +1044,11 @@ class TestImageGenerationCapability:
                 r'supersedes the direct generator on native, so direct-only setting\(s\) go unapplied: dimensions',
                 id='direct-only',
             ),
-            pytest.param({'quality': 'high'}, r'ignored native-tool setting\(s\): quality', id='native-only'),
+            pytest.param(
+                {'quality': 'high'},
+                r'fallback on no_native ignored native-tool setting\(s\): quality',
+                id='native-only',
+            ),
         ],
     )
     async def test_image_generation_dropped_settings_notice_reads_each_fallback_model(

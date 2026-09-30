@@ -77,6 +77,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import ImageGenerationTool
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -3230,6 +3231,48 @@ async def test_image_generation_prepare_function_reads_the_model_inside_an_activ
     prepared = toolset.prepare_func(reconstructed, [tool_def])
     assert inspect.isawaitable(prepared)
     assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
+
+
+async def test_image_generation_prepare_function_reads_the_model_temporal_selected():
+    """`ImageGeneration`'s per-request notice reads the model `using_model()` selected, not the default.
+
+    `TemporalModel` prepares a request against its current model's profile, and `wrapped` is only
+    the default, so the notice has to read the `TemporalModel`'s own profile to match that routing.
+    """
+
+    def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='done')])  # pragma: no cover
+
+    no_native = FunctionModel(reply, model_name='no_native', profile=ModelProfile(supported_native_tools=frozenset()))
+    native = FunctionModel(
+        reply, model_name='native', profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool}))
+    )
+    temporal_model = TemporalModel(
+        no_native,
+        activity_name_prefix='image_generation_selected_model',
+        activity_config=ActivityConfig(start_to_close_timeout=timedelta(seconds=60)),
+        deps_type=type(None),
+        models={'native': native},
+    )
+    ctx = RunContext(deps=None, model=temporal_model, usage=RunUsage(), run_id='run-123')
+    tool_def = ToolDefinition(name='generate_image')
+
+    with temporal_model.using_model('native'):
+        quality = ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high').get_toolset()
+        assert isinstance(quality, PreparedToolset)
+        # `filterwarnings = ['error']` turns an absent notice into the assertion: `native` applies it.
+        prepared = quality.prepare_func(ctx, [tool_def])
+        assert inspect.isawaitable(prepared)
+        assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
+
+        dimensions = ImageGeneration(
+            fallback_image_model=TestImageGenerationModel(), dimensions=(1280, 720)
+        ).get_toolset()
+        assert isinstance(dimensions, PreparedToolset)
+        with pytest.warns(UserWarning, match=r'supersedes the direct generator on native'):
+            prepared = dimensions.prepare_func(ctx, [tool_def])
+        assert inspect.isawaitable(prepared)
+        await prepared
 
 
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
