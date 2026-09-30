@@ -750,7 +750,7 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Cancellation is terminal: the hook may observe it and clean up, but cannot recover the
         run to success.
 
-        Not called for `GeneratorExit`, `KeyboardInterrupt`, or an exception group containing either.
+        Not called for `GeneratorExit`, `KeyboardInterrupt`, `SystemExit`, or an exception group containing any of them.
 
         For agent runs, errors from capability or toolset `for_run()` setup also reach this hook so it
         can clean up partial setup. Since setup has not produced an `AgentRunResult`, returning one does
