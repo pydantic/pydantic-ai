@@ -240,6 +240,23 @@ class TestXSearchCapability:
         assert XSearch(allowed_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(allowed_x_handles=['h'])])
         assert XSearch(excluded_x_handles=['h']).get_native_tools() == snapshot([XSearchTool(excluded_x_handles=['h'])])
 
+    async def test_xsearch_native_false_local_callable(self):
+        """XSearch(native=False, local=some_function) → the user's function is the only tool offered.
+
+        It is decided at construction and toolset build, before any request, so this is not a VCR test.
+        """
+
+        def my_search(query: str) -> str:
+            return f'results for {query}'  # pragma: no cover
+
+        cap = XSearch(native=False, local=my_search)
+
+        assert cap.get_native_tools() == []
+        toolset = cap.get_toolset()
+        assert toolset is not None
+        tools = await toolset.get_tools(_build_run_context())
+        assert list(tools) == ['my_search']
+
     def test_xsearch_native_false_local_false_raises(self):
         """XSearch(native=False, local=False) → UserError."""
         with pytest.raises(UserError, match='both `native` and `local` cannot be False'):

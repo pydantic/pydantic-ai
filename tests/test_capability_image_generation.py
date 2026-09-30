@@ -8,6 +8,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import re
+import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import cached_property
@@ -302,9 +303,73 @@ class TestImageGenerationCapability:
 
         assert [warning.filename for warning in recorded] == [inspect.getsourcefile(ImageGeneration)]
 
-    @pytest.mark.parametrize('aspect_ratio', ['16:9', '2:1'])
+    @pytest.mark.parametrize(
+        ('construct', 'expected_messages'),
+        [
+            pytest.param(
+                lambda: ImageGeneration(
+                    native=False,
+                    local=_custom_local_tool,
+                    background='transparent',
+                    input_fidelity='high',
+                    moderation='low',
+                    output_compression=80,
+                    output_format='webp',
+                    quality='high',
+                    size='1024x1024',
+                    action='generate',
+                    image_model='gpt-image-2',
+                    dimensions=(1280, 720),
+                    aspect_ratio='16:9',
+                ),
+                [
+                    '`ImageGeneration` ignored setting(s): `background`, `input_fidelity`, `moderation`, '
+                    '`output_compression`, `output_format`, `quality`, `size`, `action`, `image_model`, '
+                    '`dimensions`, `aspect_ratio`. With `native=False` the `local` tool you supplied is the only '
+                    'implementation, and the capability passes it no settings; configure that tool instead.'
+                ],
+                id='every-setting-native-aspect-ratio',
+            ),
+            pytest.param(
+                lambda: ImageGeneration(
+                    native=False,
+                    local=_custom_local_tool,
+                    background='transparent',
+                    input_fidelity='high',
+                    moderation='low',
+                    output_compression=80,
+                    output_format='webp',
+                    quality='high',
+                    size='1024x1024',
+                    action='generate',
+                    image_model='gpt-image-2',
+                    dimensions=(1280, 720),
+                    aspect_ratio='2:1',
+                ),
+                [
+                    '`ImageGeneration` ignored setting(s): `background`, `input_fidelity`, `moderation`, '
+                    '`output_compression`, `output_format`, `quality`, `size`, `action`, `image_model`, '
+                    '`dimensions`, `aspect_ratio`. With `native=False` the `local` tool you supplied is the only '
+                    'implementation, and the capability passes it no settings; configure that tool instead.'
+                ],
+                id='every-setting-direct-only-aspect-ratio',
+            ),
+            pytest.param(
+                lambda: ImageGeneration(
+                    native=False, local=_custom_local_tool, quality='high', dimensions=(1280, 720), aspect_ratio='16:9'
+                ),
+                [
+                    '`ImageGeneration` ignored setting(s): `quality`, `dimensions`, `aspect_ratio`. With '
+                    '`native=False` the `local` tool you supplied is the only implementation, and the '
+                    'capability passes it no settings; configure that tool instead.'
+                ],
+                id='some-settings',
+            ),
+            pytest.param(lambda: ImageGeneration(native=False, local=_custom_local_tool), [], id='no-settings'),
+        ],
+    )
     def test_image_generation_native_false_with_a_custom_local_tool_warns_for_every_setting_it_ignores(
-        self, aspect_ratio: Literal['16:9', '2:1']
+        self, construct: Callable[[], object], expected_messages: list[str]
     ):
         """With `native=False` the tool you supply is the only implementation, and the capability hands it nothing.
 
@@ -312,35 +377,19 @@ class TestImageGenerationCapability:
         every setting goes unapplied for that one reason and one notice names them all, whether or
         not the native tool could have expressed the aspect ratio. The `dimensions` docstring sends
         users to `native=False` to guarantee the setting takes effect, so the one arrangement that
-        applies nothing at all cannot be the silent one. The notice blames the caller's line, which
-        its `filename` pins.
+        applies nothing at all cannot be the silent one. Only the settings the caller stated are
+        named, and stating none warns about nothing. The notice blames the caller's line, which its
+        `filename` pins.
 
         It warns at construction, before any request, so this is not a VCR test.
         """
-        with pytest.warns(UserWarning) as recorded:
-            ImageGeneration(
-                native=False,
-                local=_custom_local_tool,
-                background='transparent',
-                input_fidelity='high',
-                moderation='low',
-                output_compression=80,
-                output_format='webp',
-                quality='high',
-                size='1024x1024',
-                action='generate',
-                image_model='gpt-image-2',
-                dimensions=(1280, 720),
-                aspect_ratio=aspect_ratio,
-            )
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter('always')
+            construct()
 
-        assert [str(warning.message) for warning in recorded] == [
-            '`ImageGeneration` ignored setting(s): `background`, `input_fidelity`, `moderation`, '
-            '`output_compression`, `output_format`, `quality`, `size`, `action`, `image_model`, '
-            '`dimensions`, `aspect_ratio`. With `native=False` the `local` tool you supplied is the only '
-            'implementation, and the capability passes it no settings; configure that tool instead.'
+        assert [(warning.category, str(warning.message), warning.filename) for warning in recorded] == [
+            (UserWarning, message, __file__) for message in expected_messages
         ]
-        assert [warning.filename for warning in recorded] == [__file__]
 
     def test_image_generation_native_only_settings_are_not_ignored_when_native_is_enabled(self):
         """With native enabled these settings reach the native tool, so reporting them as dropped is wrong.

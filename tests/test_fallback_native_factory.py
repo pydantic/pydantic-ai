@@ -199,13 +199,19 @@ def _outer_model(
     *,
     supported_native_tools: frozenset[type[AbstractNativeTool]] = frozenset(),
     seen_function_tools: list[list[str]] | None = None,
+    seen_native_tools: list[list[AbstractNativeTool]] | None = None,
 ) -> FunctionModel:
-    """A model that calls the capability's local fallback tool once, then answers."""
+    """A model that calls the capability's local fallback tool once if it is offered, then answers."""
 
     def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        function_tool_names = [t.name for t in info.function_tools]
         if seen_function_tools is not None:
-            seen_function_tools.append([t.name for t in info.function_tools])
-        if any(isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts):
+            seen_function_tools.append(function_tool_names)
+        if seen_native_tools is not None:
+            seen_native_tools.append(list(info.model_request_parameters.native_tools))
+        if case.tool_name not in function_tool_names or any(
+            isinstance(p, ToolReturnPart) for m in messages if isinstance(m, ModelRequest) for p in m.parts
+        ):
             return ModelResponse(parts=[TextPart(content='done')])
         return ModelResponse(parts=[ToolCallPart(tool_name=case.tool_name, args=case.tool_args)])
 
@@ -287,6 +293,36 @@ async def test_instance_native_config_is_merged_for_fallback(case: Case, allow_m
 
     assert result.output == 'done'
     assert seen_native_tools == case.expected_instance_native_tools
+
+
+@case_param
+async def test_native_capable_outer_model_skips_the_fallback_subagent(case: Case, allow_model_requests: None):
+    """An outer model that supports the native tool is handed it, and the subagent tool is withheld.
+
+    The subagent tool is derived per toolset request and marked `unless_native`, so a model that
+    runs the native tool itself never sees it and the subagent's model is never called.
+    """
+    seen_function_tools: list[list[str]] = []
+    outer_native_tools: list[list[AbstractNativeTool]] = []
+    subagent_native_tools: list[AbstractNativeTool] = []
+    capability = case.with_instance_and_overrides(_recording_subagent_model(case, subagent_native_tools))
+    agent = Agent[str, str](
+        _outer_model(
+            case,
+            supported_native_tools=frozenset({case.native_tool_type}),
+            seen_function_tools=seen_function_tools,
+            seen_native_tools=outer_native_tools,
+        ),
+        deps_type=str,
+        capabilities=[capability],
+    )
+
+    result = await agent.run(case.prompt, deps=case.deps)
+
+    assert result.output == 'done'
+    assert seen_function_tools == [[]]
+    assert [[type(tool) for tool in tools] for tools in outer_native_tools] == [[case.native_tool_type]]
+    assert subagent_native_tools == []
 
 
 @case_param

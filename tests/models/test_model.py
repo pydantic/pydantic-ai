@@ -712,3 +712,4 @@ def test_wrapper_model_deepcopy():
     assert copied is not model
     assert copied.wrapped is not model.wrapped
     assert copied.model_name == 'test'
+    assert copied.custom_output_text == 'wrapped'
