@@ -2567,3 +2567,9 @@ async def test_a_message_too_long_to_replay_alone_is_skipped() -> None:
     ]
     items = await live_module.replay_input_items(messages, provider_name='openai')
     assert [item['content'][0]['text'] for item in items] == ['earlier']
+
+    # A skipped message doesn't take up one of the 128 places.
+    many = [ModelRequest(parts=[UserPromptPart(content=f'message {i}')]) for i in range(130)]
+    items = await live_module.replay_input_items([*many, *messages[1:]], provider_name='openai')
+    assert len(items) == 128
+    assert items[0]['content'][0]['text'] == 'message 2'

@@ -458,7 +458,7 @@ async def replay_input_items(messages: Sequence[ModelMessage], *, provider_name:
     encoding = await _utils.run_in_executor(tiktoken.get_encoding, _CONTEXT_ENCODING)
     kept: list[dict[str, Any]] = []
     tokens = 0
-    for item in reversed(items[-_SEED_ITEM_LIMIT:]):
+    for item in reversed(items):
         text = item['content'][0]['text']
         cost = len(encoding.encode(text, allowed_special='all')) + _SEED_ITEM_TOKEN_OVERHEAD
         if cost > _SEED_TOKEN_LIMIT:
@@ -468,6 +468,8 @@ async def replay_input_items(messages: Sequence[ModelMessage], *, provider_name:
             break
         tokens += cost
         kept.append(item)
+        if len(kept) == _SEED_ITEM_LIMIT:
+            break
     return kept[::-1]
 
 
