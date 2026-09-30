@@ -6,10 +6,10 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from types import NoneType
-from typing import TYPE_CHECKING, Any, Generic, Literal, cast, get_origin, overload
+from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, cast, get_origin, overload
 
-from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
-from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator
+from pydantic import BaseModel, TypeAdapter, ValidationError, ValidatorFunctionWrapHandler, WrapValidator, create_model
+from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator, from_json
 from typing_extensions import Self, TypedDict, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
@@ -865,6 +865,25 @@ def _output_type_name(output: Any) -> str | None:
     return getattr(output, '__name__', None)
 
 
+def _validate_with_json_string_fallback(value: object, handler: ValidatorFunctionWrapHandler) -> object:
+    """Validate `value` as the output type, falling back to it being a JSON string containing that type.
+
+    Some models don't follow the schema correctly and send `{"response": "<JSON string>"}`,
+    e.g. `BedrockConverseModel('us.meta.llama3-2-11b-instruct-v1:0')`.
+    If the fallback fails too, only the original error is raised, so a value that just fails validation
+    (like a string rejected by an `AfterValidator`) doesn't also report a confusing JSON parsing error.
+    """
+    try:
+        return handler(value)
+    except ValidationError as error:
+        if isinstance(value, str):
+            try:
+                return handler(from_json(value))
+            except ValueError:  # invalid JSON, or a `ValidationError` for the parsed value
+                pass
+        raise error
+
+
 @dataclass(kw_only=True)
 class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
     object_def: OutputObjectDefinition
@@ -929,12 +948,9 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 )
                 json_schema_type_adapter = TypeAdapter(response_data_typed_dict)
 
-                # More lenient validator: allow either the native type or a JSON string containing it
-                # i.e. `response: OutputDataT | Json[OutputDataT]`, as some models don't follow the schema correctly,
-                # e.g. `BedrockConverseModel('us.meta.llama3-2-11b-instruct-v1:0')`
                 response_validation_typed_dict = TypedDict(  # noqa: UP013
                     'response_validation_typed_dict',
-                    {'response': output_type | Json[output_type]},  # pyright: ignore[reportInvalidTypeForm]
+                    {'response': Annotated[output_type, WrapValidator(_validate_with_json_string_fallback)]},  # pyright: ignore[reportInvalidTypeForm]
                 )
                 validation_type_adapter = TypeAdapter(response_validation_typed_dict)
 
