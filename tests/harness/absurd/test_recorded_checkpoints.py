@@ -1,13 +1,12 @@
-"""Checkpoint compatibility with `pydantic-ai-absurd` 0.8.0, against a real Absurd PostgreSQL schema.
+"""Pins the stored checkpoint format against recorded runs, on a real Absurd PostgreSQL schema.
 
-The fixture holds checkpoints recorded by real `pydantic-ai-absurd` 0.8.0 runs of the agent built by
-`_agent` below (shaped like a production workflow agent: a logical string model ID resolved by a
-capability, id'd function toolsets, a capability-contributed toolset, an MCP server, and structured
-output). Model payloads are trimmed to the fields a replay reads; tool payloads are verbatim.
+The fixture holds checkpoints recorded from runs of the agent built by `_agent` below (a logical
+string model ID resolved by a capability, function toolsets, a capability-contributed toolset, an MCP
+server, and structured output). Model payloads are trimmed to the fields a replay reads; tool payloads
+are verbatim.
 
-A run started under `pydantic-ai-absurd` must resume under `AbsurdDurability` without re-running any
-checkpointed step, and a fresh run must write the same step names and payloads, so tasks in flight
-when a worker fleet switches packages resume without repeating work.
+A recorded run must resume without re-running any checkpointed step, and a fresh run must write the
+same step names and payloads, so tasks in flight across a deploy resume without repeating work.
 """
 
 from __future__ import annotations
@@ -39,10 +38,9 @@ from pydantic_ai_harness.absurd import AbsurdDurability
 from ._task import checkpoints
 
 GOLDEN: dict[str, dict[str, JsonValue]] = json.loads(
-    (Path(__file__).parent / 'fixtures' / 'pydantic_ai_absurd_0.8.0_checkpoints.json').read_text()
+    (Path(__file__).parent / 'fixtures' / 'recorded_checkpoints.json').read_text()
 )
-# Fixture key -> whether the first `report_finding` call raises `ModelRetry`. The retry case was recorded
-# with an id-less MCP server; its two MCP step names were renamed by hand to the id'd form.
+# Fixture key -> whether the first `report_finding` call raises `ModelRetry`.
 CASES = {'id_mcp': False, 'id_mcp_with_retry': True}
 
 
@@ -147,10 +145,8 @@ def _register(absurd: AsyncAbsurd, agent: Agent[object, WorkflowOutput]) -> None
 
 
 @pytest.mark.parametrize('case', CASES)
-class TestPydanticAiAbsurdCheckpoints:
-    """Checkpoints recorded by `pydantic-ai-absurd` 0.8.0 match the ones written here."""
-
-    async def test_resumes_a_run_recorded_by_pydantic_ai_absurd(
+class TestRecordedCheckpoints:
+    async def test_resumes_a_recorded_run(
         self, case: str, absurd: AsyncAbsurd, async_conn: AsyncConnection[TupleRow], queue_name: str
     ) -> None:
         executions: list[str] = []
@@ -173,7 +169,7 @@ class TestPydanticAiAbsurdCheckpoints:
         result = await absurd.fetch_task_result(spawned['task_id'])
         assert result is not None and result.state == 'completed'
         assert result.result == EXPECTED_OUTPUT
-        # Only the `ModelRetry` call re-runs: `pydantic-ai-absurd` never checkpointed it either.
+        # Only the `ModelRetry` call re-runs: it is never checkpointed.
         assert executions == (['report_finding:retry'] if CASES[case] else [])
 
     async def test_fresh_run_writes_the_same_checkpoints(self, case: str, absurd: AsyncAbsurd) -> None:
