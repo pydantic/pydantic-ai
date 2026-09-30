@@ -362,8 +362,27 @@ async def test_primed_stream_the_consumer_never_iterates_is_closed():
 
     agent = Agent(FunctionModel(stream_function=fn), deps_type=type(None), capabilities=[hooks])
     async with agent.iter('x') as run:
-        node = await run.next(run.next_node)
-        assert Agent.is_model_request_node(node)
-        async with node.stream(run.ctx):
-            pass
+        async for node in run:
+            if Agent.is_model_request_node(node):
+                async with node.stream(run.ctx):
+                    pass
+                break
     assert closed == [True]
+
+
+async def test_open_failure_is_raised_when_the_consumer_never_iterates_the_stream():
+    hooks = Hooks[None]()
+
+    @hooks.on.model_request_error
+    async def passthrough(
+        ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        raise error
+
+    agent = Agent(FunctionModel(stream_function=failure_stream), deps_type=type(None), capabilities=[hooks])
+    with pytest.raises(ModelAPIError, match='boom'):
+        async with agent.iter('x') as run:
+            async for node in run:
+                if Agent.is_model_request_node(node):
+                    async with node.stream(run.ctx):
+                        pass

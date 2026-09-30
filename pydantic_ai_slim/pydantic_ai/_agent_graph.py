@@ -2309,11 +2309,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     handoff.offers.put_nowait(_StreamOffer(sr, outcome))
                     if (error := await outcome) is not None:
                         raise error
-            except (exceptions.ModelRetry, exceptions.RetryModelRequest):
+            except BaseException as e:
                 await attempt_stack.aclose()
-                raise
-            except Exception as e:
-                await attempt_stack.aclose()
+                # Cancellation and control flow aren't failures to open for the error hooks to handle.
+                if not isinstance(e, Exception) or isinstance(e, (exceptions.ModelRetry, exceptions.RetryModelRequest)):
+                    raise
                 try:
                     recovered = await self._recover_model_request_error(ctx, run_context, request_context, e)
                 except exceptions.RetryModelRequest as retry:
@@ -2334,9 +2334,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     request_context,
                     request_start,
                 )
-            except BaseException:
-                await attempt_stack.aclose()
-                raise
             stream_stack.push_async_exit(attempt_stack)
             return sr, request_context, request_start
 
