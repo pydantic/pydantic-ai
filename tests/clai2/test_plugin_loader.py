@@ -17,9 +17,9 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader, PluginSettingsError
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader, PluginSettingsError
 
 RECORDER = """
 from pydantic_clai2.commands import Command
@@ -530,6 +530,47 @@ async def test_remove_restores_a_project_plugin_that_names_a_file(tmp_path: Path
     assert harness.store.plugins() == [] and harness.loader.entries()[0].state == 'disabled'
 
 
+@pytest.mark.parametrize(
+    'plugin_id',
+    [
+        'ask_user',
+        'repo_context',
+        'compaction',
+        'persistence',
+        'logfire',
+        'notifications',
+        'github',
+        'slack',
+        'posthog',
+        'grain',
+        'linear',
+    ],
+)
+def test_saved_builtin_factory_paths_upgrade_without_losing_toggles(tmp_path: Path, plugin_id: str) -> None:
+    """Previously saved built-ins follow their new import paths; user replacements do not."""
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == plugin_id)
+    old_factory = (
+        'pydantic_clai2.sessions'
+        if plugin_id == 'persistence'
+        else builtin.factory.replace('pydantic_clai2.builtin_plugins.', 'pydantic_clai2.')
+    )
+    harness = Harness(tmp_path, builtin=(builtin,))
+    harness.store.save_plugin(builtin.model_copy(update={'factory': old_factory, 'enabled': False}))
+    entry = harness.loader.entries()[0]
+    assert entry.builtin and entry.declaration.factory == builtin.factory and not entry.declaration.enabled
+
+    harness.store.save_plugin(builtin.model_copy(update={'factory': old_factory, 'settings': {'custom': True}}))
+    entry = harness.loader.entries()[0]
+    assert not entry.builtin and entry.declaration.factory == builtin.factory
+    assert entry.declaration.settings == {'custom': True}
+
+    # An independently named plugin can also have used the old import string.
+    harness.store.save_plugin(PluginSettings(id='plain', factory=old_factory))
+    assert (
+        next(item for item in harness.loader.entries() if item.name == 'plain').declaration.factory == builtin.factory
+    )
+
+
 async def test_repo_context_builtin_loads_the_workspace_instructions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -554,7 +595,12 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
     assert await harness.loader.command(['disable', 'repo_context']) == 'Disabled repo_context.'
     assert harness.loader.capabilities() == []
 
-    knobs = ['add', 'repo_context', 'pydantic_clai2.repo_context', '{"inventory_tool": true, "walk_up": true}']
+    knobs = [
+        'add',
+        'repo_context',
+        'pydantic_clai2.builtin_plugins.repo_context',
+        '{"inventory_tool": true, "walk_up": true}',
+    ]
     assert await harness.loader.command(knobs) == 'Replaced built-in repo_context.'
     model = TestModel(call_tools=[])
     await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
@@ -564,7 +610,9 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
     assert [tool.name for tool in model.last_model_request_parameters.function_tools] == ['inventory_agent_context']
     assert (await harness.loader.command(['remove', 'repo_context'])).startswith('repo_context is built in')
     with pytest.raises(PluginError, match='extra_forbidden'):
-        await harness.loader.command(['add', 'repo_context', 'pydantic_clai2.repo_context', '{"filenames": []}'])
+        await harness.loader.command(
+            ['add', 'repo_context', 'pydantic_clai2.builtin_plugins.repo_context', '{"filenames": []}']
+        )
 
 
 @pytest.mark.parametrize('error', ['RuntimeError', 'CancelledError'])

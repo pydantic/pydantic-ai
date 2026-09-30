@@ -17,13 +17,14 @@ from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2 import chat, theme
+from pydantic_clai2 import chat
 from pydantic_clai2.commands import config_command, config_completions, set_completions
 from pydantic_clai2.config import Settings
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.set_menu import open_settings_menu
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.theme_picker import build_theme_picker, theme_command
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.set_menu import open_settings_menu
+from pydantic_clai2.ui.menus.theme_picker import build_theme_picker, theme_command
+from pydantic_clai2.ui.rendering import theme
 from tests.clai2.menu_script import Script, make_context, pick
 
 
@@ -84,7 +85,7 @@ def test_picker_keyboard_and_preview(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setenv('COLUMNS', str(width))
     monkeypatch.setenv('LINES', '30')
     keys = iter([*'github', key])
-    monkeypatch.setattr('pydantic_clai2.theme_picker.menu_key', lambda: next(keys))
+    monkeypatch.setattr('pydantic_clai2.ui.menus.theme_picker.menu_key', lambda: next(keys))
     result = build_theme_picker(context).run()
     if key == 'enter':
         assert result.item == MenuItem('github_light', value='github_light')

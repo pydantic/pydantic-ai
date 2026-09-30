@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.model_menu import ModelSettingsSource
-from pydantic_clai2.model_options import model_options, validate_model_options
-from pydantic_clai2.model_settings import ModelSettingsForm
+from pydantic_clai2.models.model_options import model_options, validate_model_options
+from pydantic_clai2.models.model_settings import ModelSettingsForm
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource
 from tests.clai2.menu_script import make_context
 
 

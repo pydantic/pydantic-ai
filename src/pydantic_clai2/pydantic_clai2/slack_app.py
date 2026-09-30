@@ -10,7 +10,7 @@ plugin settings; the tokens live in the credential store under `ACCOUNT`.
 import json
 from urllib.parse import quote
 
-from .pkce import PKCESignIn, PublicClient
+from pydantic_clai2.pkce import PKCESignIn, PublicClient
 
 ACCOUNT = 'slack-oauth'
 REDIRECT_URI = 'http://localhost:53118/slack/callback'

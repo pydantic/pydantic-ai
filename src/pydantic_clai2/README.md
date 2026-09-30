@@ -54,6 +54,15 @@ Use `/set display.tool_output true` to show detailed output again, or
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
 
+## Source layout
+
+The shell entry point lives in `_app.py`. Related implementations live in
+`cli/`, `config/`, `runtime/`, `models/`, `plugins/`, and `ui/` (`prompt/`,
+`menus/`, and `rendering/`). Built-in plugins live in `builtin_plugins/`; MCP has its own
+`mcp/` package. Plugin authors can still import `pydantic_clai2.plugins` and
+`pydantic_clai2.commands` directly. See [the plugin guide](PLUGINS.md) for
+examples.
+
 ## Startup
 
 `clai2 --help` parses arguments without loading the agent or plugins. Interactive
@@ -691,7 +700,7 @@ repository.
   "request_limit": 50,
   "plugins": [
     {"id": "exa", "factory": "pydantic_ai_harness.exa:ExaSearch", "settings": {"num_results": 8}},
-    {"id": "repo_context", "factory": "pydantic_clai2.repo_context", "settings": {"inventory_tool": true}}
+    {"id": "repo_context", "factory": "pydantic_clai2.builtin_plugins.repo_context", "settings": {"inventory_tool": true}}
   ]
 }
 ```
@@ -988,7 +997,7 @@ redeclare the plugin with your own settings; `/plugins disable compaction`
 turns it off, `/compact` included:
 
 ```text
-/plugins add compaction pydantic_clai2.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
+/plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
 ```
 
 | Key | Default | Does |
@@ -1467,7 +1476,7 @@ credentials. Keep tokens out of plugin settings, which are saved as plaintext.
 /plugins disable logfire
 /plugins enable logfire
 /plugins reload logfire
-/plugins add logfire pydantic_clai2.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
 The last command replaces the built-in configuration. Its options are

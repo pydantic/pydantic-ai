@@ -15,11 +15,10 @@ from termflow.tui.completion import (
 )
 
 from pydantic_ai.models import known_model_names
-
-from .config import SETTING_FIELDS, STRING_SETTINGS, PluginSettings
-from .settings_store import SettingsStore
-from .spinners import BUILTIN_SPINNERS
-from .theme import names as theme_names
+from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, PluginSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
+from pydantic_clai2.ui.rendering.theme import names as theme_names
 
 
 def is_command_input(text: str) -> bool:
@@ -199,7 +198,7 @@ def set_completions(args: list[str]) -> Iterable[str]:
     if len(args) == 2 and args[0] == 'display.spinner':
         return tuple(BUILTIN_SPINNERS)
     if len(args) == 2 and args[0] == 'model':
-        from .model_catalog import CODEX_MODELS
+        from pydantic_clai2.models.model_catalog import CODEX_MODELS
 
         names = known_model_names()
         providers = sorted({name.partition(':')[0] + ':' for name in names} | {'openai-codex:'})
