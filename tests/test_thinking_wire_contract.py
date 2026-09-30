@@ -265,7 +265,7 @@ CASES = [
         provider='google',
         model_name='gemini-3.1-flash-image',
         thinking='low',
-        # Documented levels are `minimal, high` only; the API 400s on `LOW`.
+        # Documented levels are `minimal, high` only; the Developer API 400s on `LOW`.
         present={'generationConfig.thinkingConfig.thinking_level': 'MINIMAL'},
         match_body=True,
     ),
@@ -274,7 +274,7 @@ CASES = [
         provider='google',
         model_name='gemini-3.1-flash-image',
         thinking='medium',
-        # The API 400s on `MEDIUM`; it snaps up to `high`.
+        # The Developer API 400s on `MEDIUM`; it snaps up to `high`.
         present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
         match_body=True,
     ),

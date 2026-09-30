@@ -268,9 +268,8 @@ def test_model_profile_image_model():
         ('gemini-3.8-flash', False),
         ('gemini-3-pro-preview', False),
         ('gemini-3.1-pro-preview', False),
-        # The 3.1 image models do accept `MINIMAL` — their levels are `minimal, high`.
+        # `gemini-3.1-flash-lite-image` does accept `MINIMAL` — its levels are `minimal, high`.
         ('gemini-3.1-flash-lite-image', True),
-        ('gemini-3.1-flash-image', True),
         ('gemini-3-flash-preview', True),
     ],
 )
