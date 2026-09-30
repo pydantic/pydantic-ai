@@ -43,6 +43,14 @@ def test_ambiguous_send_only_excuses_its_own_duplicate() -> None:
         truth.inputs.append(replace(t2))
         with pytest.raises(InvariantViolation, match=r"\[wire\.duplicate\] the server received 't2' 2 times"):
             sim.checker.check_at_rest()
+        truth.inputs.remove(truth.inputs[-1])
+        t1 = truth.input('t1')
+        assert t1 is not None
+        truth.inputs.append(replace(t1))
+        sim.checker.check_at_rest()
+        truth.inputs.append(replace(t1))
+        with pytest.raises(InvariantViolation, match=r"\[wire\.duplicate\] the server received 't1' 3 times"):
+            sim.checker.check_at_rest()
 
 
 def test_reconnect_without_replay_loses_the_history() -> None:

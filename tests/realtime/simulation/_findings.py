@@ -752,6 +752,20 @@ BARGE_IN_ON_A_TOOL_ROUND = Finding(
     ),
 )
 
+
+def _refusal_around_a_reconnect(sim: Simulation) -> bool:
+    """A refusal the next connection loss followed with no response started in between: nothing released its request."""
+    truth = sim.truth
+    for input_ in truth.inputs:
+        if input_.refused_at is None:
+            continue
+        refused = input_.refused_at
+        loss = next((loss for loss in truth.connection_losses if loss > refused), None)
+        if loss is not None and not any(refused < response.seq_start < loss for response in truth.responses.values()):
+            return True
+    return False
+
+
 LOST_REFUSAL = Finding(
     id='SIM-21',
     title=(
@@ -762,9 +776,7 @@ LOST_REFUSAL = Finding(
     evidence='simulated',
     codes=frozenset({'wait.hang'}),
     providers=OPENAI_PROTOCOL,
-    matches=lambda sim, violation: (
-        bool(sim.truth.connection_losses) and any(input_.refused_at is not None for input_ in sim.truth.inputs)
-    ),
+    matches=lambda sim, violation: _refusal_around_a_reconnect(sim),
 )
 
 
@@ -808,7 +820,8 @@ def _barged_in_without_a_vad_reply(sim: Simulation) -> bool:
             or any(input_.kind == 'tool_output' and input_.answered_by is None for input_ in sim.truth.inputs)
         )
         and any(response.status == 'cancelled' for response in sim.truth.responses.values())
-        and bool(sim.truth.speech_started)
+        # The user's turn is still there for VAD to answer (a cleared one is SIM-16's).
+        and any(sim.truth.input(key) is not None for key in sim.truth.speech_started)
     )
 
 

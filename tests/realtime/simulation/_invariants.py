@@ -159,10 +159,20 @@ def conversation_fingerprints(messages: list[ModelMessage]) -> set[str]:
     fingerprints: set[str] = set()
     for message in messages:
         for part in message.parts:
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str):
-                fingerprints.add(f'user:{" ".join(part.content.split())}')
+            if isinstance(part, UserPromptPart):
+                # The server keys a user message by its first part, when that is text.
+                first = part.content if isinstance(part.content, str) else next(iter(part.content), None)
+                if isinstance(first, str):
+                    fingerprints.add(f'user:{" ".join(first.split())}')
             elif isinstance(part, ToolReturnPart):
                 fingerprints.add(f'function_call_output:{part.tool_call_id}')
+            elif isinstance(part, RetryPromptPart):
+                # Replayed as the call's output, or (not about a tool call) as a user message.
+                fingerprints.add(
+                    f'function_call_output:{part.tool_call_id}'
+                    if part.tool_name is not None
+                    else f'user:{" ".join(part.model_response().split())}'
+                )
             elif isinstance(part, ToolCallPart):
                 fingerprints.add(f'function_call:{part.tool_call_id}')
         said = [part.content for part in message.parts if isinstance(part, TextPart)]
@@ -805,7 +815,8 @@ class Checker:
             [
                 (f'the server received {key!r} {len(seqs)} times', {'input': key})
                 for key, seqs in arrivals.items()
-                if len(seqs) > 1 and key not in sim.truth.ambiguous_inputs
+                # An ambiguous send may be sent once more, not again after that.
+                if len(seqs) > (2 if key in sim.truth.ambiguous_inputs else 1)
             ],
         )
         callers: dict[str, list[tuple[int, int, str]]] = {}
