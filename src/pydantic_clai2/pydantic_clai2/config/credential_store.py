@@ -1,25 +1,29 @@
-"""Size-bounded keyring storage for OAuth token bundles, with a private file when no keyring exists."""
+"""Credentials encrypted with one OS keyring key, with a private plaintext file when no keyring exists.
+
+macOS asks before an app reads each keychain item, so one item per account (and per chunk of a large
+bundle) meant one password prompt per credential at startup. The keyring now holds a single key, read at
+most once per process; each account's secret is an encrypted file next to its lock file.
+"""
 
 import os
 import re
 import sqlite3
 from collections.abc import Generator
 from contextlib import closing, contextmanager
+from functools import cache
 from pathlib import Path
 from uuid import uuid4
 
 import keyring
+from cryptography.fernet import Fernet, InvalidToken
 from keyring.errors import InitError, NoKeyringError, PasswordDeleteError
 
 from pydantic_ai.exceptions import UserError
 
 _SERVICE = 'pydantic-clai2'
 _ACCOUNT = 'openai-codex'
+_KEY_ACCOUNT = 'encryption-key'
 _PREFIX = 'clai-chunks-v1:'
-# Windows allows 2560 bytes per credential. Keyring writes UTF-16, so a
-# 600-character chunk fits even if every character uses a surrogate pair.
-_CHUNK_SIZE = 600
-_MAX_BYTES = 2560
 # A locked or failing keyring is not "no keyring": only these mean nothing is configured.
 _NO_KEYRING = (NoKeyringError, InitError)
 
@@ -51,39 +55,13 @@ def credential_lock(*, account: str, busy: str) -> Generator[None]:
         raise UserError(busy) from None
 
 
-def _chunk_services(*, value: str, account: str = _ACCOUNT) -> list[str]:
-    if not value.startswith(_PREFIX):
-        return []
-    match = re.fullmatch(r'clai-chunks-v1:([0-9a-f]{32}):([1-9][0-9]{0,3})', value)
-    if match is None:
-        raise UserError(
-            'Stored credentials are invalid. Reconnect through /add_model; for Codex run /login openai-codex.'
-        )
-    generation, count = match.groups()
-    # Separate services avoid Windows keyring's multi-account collision handling.
-    return [f'{_SERVICE}.{account}.{generation}.{index}' for index in range(int(count))]
-
-
-def _write(*, service: str, value: str, account: str = _ACCOUNT) -> None:
-    keyring.set_password(service, account, value)
-    if keyring.get_password(service, account) != value:
-        raise UserError('The credential backend did not retain the login. Configure an OS keyring backend.')
-
-
-def _delete(*, services: list[str], account: str = _ACCOUNT) -> None:
-    for service in services:
-        try:
-            keyring.delete_password(service, account)
-        except PasswordDeleteError:
-            pass  # A failed write may not have created the entry.
-
-
-def write_private(*, path: Path, value: str) -> None:
-    """Replace the file atomically, without ever writing through something already there.
+def write_private(*, path: Path, value: str, replace: bool = True) -> None:
+    """Publish the file atomically, without ever writing through something already there.
 
     A unique staging name plus `O_EXCL` means a symlink planted where the staging file
     would go is refused rather than followed, concurrent saves cannot collide, and the
     `0600` mode applies to a file this call created rather than an attacker's choice.
+    `replace=False` raises `FileExistsError` instead of replacing a file another process wrote first.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     for stale in path.parent.glob(f'{path.name}.*.tmp'):
@@ -93,60 +71,130 @@ def write_private(*, path: Path, value: str) -> None:
     try:
         with os.fdopen(descriptor, 'w', encoding='utf-8') as file:
             file.write(value)
-        os.replace(staging, path)
+        if replace:
+            os.replace(staging, path)
+        else:
+            os.link(staging, path)
     finally:
         staging.unlink(missing_ok=True)  # No-op once the replace succeeded.
 
 
-def _fallback_file(*, account: str, fallback: Path | None) -> Path:
-    return fallback if fallback is not None else credentials_path(account=account)
+@cache
+def _stored_key() -> str | None:
+    """The one keyring read a session needs. Cached, so the OS asks for permission at most once."""
+    return keyring.get_password(_SERVICE, _KEY_ACCOUNT)
+
+
+def _cipher() -> Fernet | None:
+    """`None` also for a malformed key: loads then ask to reconnect, and the next save replaces it."""
+    if (key := _stored_key()) is None:
+        return None
+    try:
+        return Fernet(key)
+    except ValueError:
+        return None
+
+
+def _create_cipher() -> Fernet:
+    if (cipher := _cipher()) is not None:
+        return cipher
+    with credential_lock(account=_KEY_ACCOUNT, busy='Cannot lock the credential key. Close other CLAI sessions.'):
+        _stored_key.cache_clear()  # Another process may have created it while this one waited.
+        if (cipher := _cipher()) is not None:
+            return cipher
+        key = Fernet.generate_key().decode()
+        keyring.set_password(_SERVICE, _KEY_ACCOUNT, key)
+        _stored_key.cache_clear()
+        if _stored_key() != key:
+            raise UserError('The credential backend did not retain the key. Configure an OS keyring backend.')
+        return Fernet(key)
+
+
+def _files(*, account: str, fallback: Path | None) -> tuple[Path, Path]:
+    """The encrypted file used with a keyring, and the plaintext file used without one."""
+    plaintext = fallback if fallback is not None else credentials_path(account=account)
+    return plaintext.with_suffix('.enc'), plaintext
+
+
+def _decrypt(path: Path) -> str:
+    if (cipher := _cipher()) is not None:
+        try:
+            return cipher.decrypt(path.read_bytes()).decode()
+        except InvalidToken:
+            pass
+    raise UserError(
+        'Stored credentials cannot be decrypted: the keyring lost their key. Reconnect through /add_model, '
+        'or /keys for saved API keys; for Codex run /login openai-codex.'
+    )
 
 
 def load_codex_credentials(*, account: str = _ACCOUNT, fallback: Path | None = None) -> str | None:
-    """Read from keyring, or from the fallback file when keyring is empty or absent."""
+    """Read the encrypted file, a login saved per keyring entry by an older CLAI, or the plaintext fallback."""
+    encrypted, plaintext = _files(account=account, fallback=fallback)
     try:
-        value = _load_keyring(account=account)
+        if encrypted.is_file():
+            return _decrypt(encrypted)
+        root = keyring.get_password(_SERVICE, account)
     except _NO_KEYRING:
-        value = None
-    if value is not None:
-        return value
-    path = _fallback_file(account=account, fallback=fallback)
-    return path.read_text(encoding='utf-8') if path.is_file() else None
+        root = None
+    if root is not None:
+        return _migrate(root=root, account=account, encrypted=encrypted)
+    return plaintext.read_text(encoding='utf-8') if plaintext.is_file() else None
 
 
 def save_codex_credentials(*, value: str, account: str = _ACCOUNT, fallback: Path | None = None) -> None:
-    """Write to keyring and drop any plaintext copy; write the file only when no keyring exists."""
+    """Encrypt to a file and drop any other copy; write the plaintext file only when no keyring exists."""
+    encrypted, plaintext = _files(account=account, fallback=fallback)
     try:
-        _save_keyring(value=value, account=account)
+        cipher = _create_cipher()
     except _NO_KEYRING:
-        write_private(path=_fallback_file(account=account, fallback=fallback), value=value)
+        write_private(path=plaintext, value=value)
         return
-    _fallback_file(account=account, fallback=fallback).unlink(missing_ok=True)
+    write_private(path=encrypted, value=cipher.encrypt(value.encode()).decode())
+    _delete_keyring(account=account)
+    plaintext.unlink(missing_ok=True)
 
 
 def delete_credentials(*, account: str = _ACCOUNT, fallback: Path | None = None) -> None:
-    """Forget a login everywhere it may be: keyring entry, its chunks, and the fallback file."""
+    """Forget a login everywhere it may be: encrypted file, older keyring entries, and the plaintext file."""
+    encrypted, plaintext = _files(account=account, fallback=fallback)
+    encrypted.unlink(missing_ok=True)
     try:
-        value = keyring.get_password(_SERVICE, account)
+        _delete_keyring(account=account)
     except _NO_KEYRING:
-        value = None
-    if value is not None:
-        try:
-            services = _chunk_services(value=value, account=account)
-        except UserError:
-            services = []
-        _delete(services=[*services, _SERVICE], account=account)
-    _fallback_file(account=account, fallback=fallback).unlink(missing_ok=True)
+        pass
+    plaintext.unlink(missing_ok=True)
 
 
-def _load_keyring(*, account: str = _ACCOUNT) -> str | None:
-    """Read either a legacy single entry or a complete chunked token bundle."""
-    value = keyring.get_password(_SERVICE, account)
-    if value is None:
-        return None
-    services = _chunk_services(value=value, account=account)
+def _migrate(*, root: str, account: str, encrypted: Path) -> str:
+    """Move an older per-entry login into its encrypted file, so the next session reads no entry but the key."""
+    value = _join_chunks(root=root, account=account)
+    try:
+        write_private(path=encrypted, value=_create_cipher().encrypt(value.encode()).decode(), replace=False)
+    except (FileExistsError, FileNotFoundError):
+        # Another process saved or moved it first; its stale-file sweep may even have taken this staging file.
+        return _decrypt(encrypted) if encrypted.is_file() else value
+    _delete_entries(root=root, account=account)
+    return value
+
+
+def _chunk_services(*, value: str, account: str) -> list[str]:
+    if not value.startswith(_PREFIX):
+        return []
+    match = re.fullmatch(r'clai-chunks-v1:([0-9a-f]{32}):([1-9][0-9]{0,3})', value)
+    if match is None:
+        raise UserError(
+            'Stored credentials are invalid. Reconnect through /add_model; for Codex run /login openai-codex.'
+        )
+    generation, count = match.groups()
+    return [f'{_SERVICE}.{account}.{generation}.{index}' for index in range(int(count))]
+
+
+def _join_chunks(*, root: str, account: str) -> str:
+    """An older CLAI's login: the root entry itself, or a bundle chunked for Windows' per-entry size limit."""
+    services = _chunk_services(value=root, account=account)
     if not services:
-        return value
+        return root
     chunks: list[str] = []
     for service in services:
         chunk = keyring.get_password(service, account)
@@ -158,26 +206,19 @@ def _load_keyring(*, account: str = _ACCOUNT) -> str | None:
     return ''.join(chunks)
 
 
-def _save_keyring(*, value: str, account: str = _ACCOUNT) -> None:
-    """Publish verified chunks before replacing the current login's entry."""
-    previous = keyring.get_password(_SERVICE, account)
-    # A new login must also be able to replace a corrupt manifest.
+def _delete_keyring(*, account: str) -> None:
+    if (root := keyring.get_password(_SERVICE, account)) is not None:
+        _delete_entries(root=root, account=account)
+
+
+def _delete_entries(*, root: str, account: str) -> None:
+    """Drop an older CLAI's entry and its chunks, including a corrupt manifest's own entry."""
     try:
-        old_services = _chunk_services(value=previous or '', account=account)
+        services = _chunk_services(value=root, account=account)
     except UserError:
-        old_services = []
-    if len(value.encode('utf-16-le')) > _MAX_BYTES:
-        chunks = [value[index : index + _CHUNK_SIZE] for index in range(0, len(value), _CHUNK_SIZE)]
-        manifest = f'{_PREFIX}{uuid4().hex}:{len(chunks)}'
-        services = _chunk_services(value=manifest, account=account)
+        services = []
+    for service in [*services, _SERVICE]:
         try:
-            for service, chunk in zip(services, chunks, strict=True):
-                _write(service=service, value=chunk, account=account)
-        except Exception:
-            _delete(services=services, account=account)
-            raise
-        value = manifest
-    # Do not delete new chunks on an uncertain root write: the backend may have
-    # committed it before reporting an error. The previous bundle stays intact.
-    _write(service=_SERVICE, value=value, account=account)
-    _delete(services=old_services, account=account)
+            keyring.delete_password(service, account)
+        except PasswordDeleteError:
+            pass  # A chunk may already be gone.

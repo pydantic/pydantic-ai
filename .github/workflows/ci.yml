@@ -571,6 +571,21 @@ jobs:
       BLOCKBUSTER_ENABLED: false
       # `tests/test_examples.py` type-checks the docs examples with pyright; once per run is enough.
       TYPECHECK_EXAMPLES: ${{ matrix.python-version == '3.14' }}
+      # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
+      ABSURD_REQUIRE_LIVE: "1"
+      ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    services:
+      postgres:
+        image: postgres:16
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

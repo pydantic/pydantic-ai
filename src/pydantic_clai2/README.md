@@ -398,12 +398,15 @@ address bar and paste it at the prompt CLAI shows under the login link; the bare
 before exchanging the code. Whichever arrives first, the callback or the paste,
 completes the login.
 
-Tokens live in the configured Python `keyring` backend under service `pydantic-clai2`,
-not in SQLite or `~/.codex/auth.json`. Large token bundles are split across keyring
-entries to fit Windows Credential Manager's per-entry size limit. Existing
-single-entry logins remain readable. Choose an OS-backed credential store: CLAI
+Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
+(`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
+that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
+backend (service `pydantic-clai2`, account `encryption-key`). CLAI reads that entry
+at most once per session, so macOS asks for keychain access at most once, instead of
+once per saved credential. Logins that older versions saved as keyring entries are
+moved into encrypted files the first time they are read. Choose an OS-backed credential store: CLAI
 uses the configured backend and does not enforce its encryption or storage policy.
-Installing or selecting a plaintext backend can store tokens in plaintext. Core owns
+Installing or selecting a plaintext backend can store the key in plaintext. Core owns
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 
@@ -419,7 +422,7 @@ default) instead, named for the account: Codex uses `credentials-openai-codex.js
 and the GitHub Copilot, vllm and openrouter connections use their own files. Like keyring entries,
 these files are per user, so `--database PATH` does not move them. `/login` says so in its confirmation. A locked keyring is not treated as
 missing; unlock it instead. Once a keyring becomes available, the next login or
-token refresh moves the credentials there and deletes the file.
+token refresh encrypts the credentials and deletes the plaintext file.
 
 The default Coder shell runs under your OS identity, without a sandbox. Commands
 can read files and access credential backends available to that identity, including
