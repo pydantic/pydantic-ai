@@ -3887,12 +3887,15 @@ class TextPartDelta:
         """
         if not isinstance(part, TextPart):
             raise ValueError('Cannot apply TextPartDeltas to non-TextParts')  # pragma: no cover
+        citations = part.citations
+        if self.citations_delta:
+            citations = [*(citations or []), *self.citations_delta]
         return replace(
             part,
             content=part.content + self.content_delta,
             provider_name=self.provider_name or part.provider_name,
             provider_details={**(part.provider_details or {}), **(self.provider_details or {})} or None,
-            citations=[*(part.citations or []), *(self.citations_delta or [])] or None,
+            citations=citations,
         )
 
     __repr__ = _utils.dataclasses_no_defaults_repr
