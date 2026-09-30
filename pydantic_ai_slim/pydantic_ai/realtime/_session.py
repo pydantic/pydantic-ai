@@ -1153,9 +1153,7 @@ class RealtimeSession:
                 async for report in self._connection.end_session():
                     if report.context_window_used is not None:
                         self._reported_context_window_used = report.context_window_used
-                    self.usage.incr(
-                        report.usage
-                    )  # usage-attribution: the session owns its spans; `wrap_run` opens none
+                    self.usage.incr(report.usage)  # usage-attribution: the session owns its spans
                     recorded = True
         except self._connection.transport_errors:
             pass
