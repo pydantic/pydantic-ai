@@ -798,6 +798,11 @@ class RealtimeSession:
         # would mean `for_run_step`, which is async and can't run here.
         if (ctx := self._tool_manager.ctx) is not None:
             ctx.usage = self.usage
+        # What the session span reports: only the token usage this session's own responses recorded.
+        # `self.usage` can start from a total carried in with `usage=` (or a `Conversation`), and a run
+        # a tool starts with `usage=ctx.usage` accumulates into it too; reporting that on the span would
+        # count both again against the spans they came from. Credited where `self.usage` records it.
+        self._span_usage = RunUsage()
 
         # History: `_seeded` is the conversation the session was opened with (surfaced by
         # `all_messages` only); `_history` is what happened during this session (surfaced by both).
@@ -1111,7 +1116,7 @@ class RealtimeSession:
 
         self._traceparent_value = self._session_instrumentation.end_session_span(
             error,
-            usage=self.usage,
+            usage=self._span_usage,
             messages=self.all_messages(),
             new_message_index=len(self._seeded) if self._seeded else None,
             final_result=self._final_result_text(),
@@ -3529,6 +3534,7 @@ class RealtimeSession:
                 # one past the limit ends the session below, once it is.
                 self.usage.requests += 1  # usage-attribution: the session owns its spans; `wrap_run` opens none
         self.usage.incr(event.usage)  # usage-attribution: the session owns its spans; `wrap_run` opens none
+        self._span_usage.incr(event.usage)  # usage-attribution: what the session span reports
         if event.response_scoped:
             # Measured before accumulating: a tool-call response is finalized by the accumulation
             # itself, which resets the accumulator.

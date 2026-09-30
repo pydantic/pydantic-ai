@@ -53,6 +53,7 @@ from ..messages import (
     CompactionPart,
     DocumentUrl,
     FilePart,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -77,13 +78,15 @@ from ..messages import (
     UploadedFile,
     UserPromptPart,
     VideoUrl,
+    _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
-from ..models import ModelRequestParameters
+from ..models import ModelRequestParameters, download_item
 
 # Reuse the classic `GoogleModel`'s native tool mappers so a realtime turn's grounding / code-execution
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
 # mapping and risking drift.
 from ..models.google import (
+    _FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
     _map_api_error,  # pyright: ignore[reportPrivateUsage]
     _map_code_execution_result,  # pyright: ignore[reportPrivateUsage]
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
@@ -367,6 +370,19 @@ class GoogleRealtimeModelProfile(RealtimeModelProfile, total=False):
     session and then close it with the same error on the first send.
     """
 
+    google_supported_mime_types_in_tool_returns: tuple[str, ...]
+    """Media types a tool result can carry inside its function response. Default: `()`.
+
+    The realtime counterpart of
+    [`google_supported_mime_types_in_tool_returns`][pydantic_ai.profiles.google.GoogleModelProfile.google_supported_mime_types_in_tool_returns]
+    on a standard model: content of these types attached to a tool return (a
+    [`BinaryContent`][pydantic_ai.messages.BinaryContent] or a downloaded
+    [`ImageUrl`][pydantic_ai.messages.ImageUrl]) goes in `FunctionResponse.parts`, and any other media
+    raises [`UserError`][pydantic_ai.exceptions.UserError] with the result unsent. PNG, JPEG, WebP, and
+    plain text on the Gemini 3.x Live models, which read them; `gemini-2.5-flash-native-audio-*`
+    doesn't, and the 3.x models close the session on a PDF.
+    """
+
     google_supports_seeding_function_parts: bool
     """Whether seeded tool calls and results go in as native function parts. Default: `False`.
 
@@ -423,6 +439,47 @@ _TURN_COVERAGE = {
     'all_input': genai_types.TurnCoverage.TURN_INCLUDES_ALL_INPUT,
     'all_video': genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO,
 }
+
+# Live's refusals of prohibited input or unsafe generated content, which end the turn the way a content
+# filter ends a standard response. The names Live shares with a standard response's finish reason (a
+# malformed function call, a blocklist match) are looked up in `GoogleModel`'s table instead.
+_CONTENT_FILTER_TURN_COMPLETE_REASONS = frozenset(
+    {
+        genai_types.TurnCompleteReason.PROHIBITED_INPUT_CONTENT,
+        genai_types.TurnCompleteReason.IMAGE_PROHIBITED_INPUT_CONTENT,
+        genai_types.TurnCompleteReason.INPUT_TEXT_CONTAIN_PROMINENT_PERSON_PROHIBITED,
+        genai_types.TurnCompleteReason.INPUT_IMAGE_CELEBRITY,
+        genai_types.TurnCompleteReason.INPUT_IMAGE_PHOTO_REALISTIC_CHILD_PROHIBITED,
+        genai_types.TurnCompleteReason.INPUT_TEXT_NCII_PROHIBITED,
+        genai_types.TurnCompleteReason.INPUT_IP_PROHIBITED,
+        genai_types.TurnCompleteReason.UNSAFE_PROMPT_FOR_IMAGE_GENERATION,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_CONTENT_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_AUDIO_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_VIDEO_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_CONTENT_PROHIBITED,
+        genai_types.TurnCompleteReason.GENERATED_CONTENT_BLOCKLIST,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_PROHIBITED,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_CELEBRITY,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_PROMINENT_PEOPLE_DETECTED_BY_REWRITER,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_IDENTIFIABLE_PEOPLE,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_MINORS,
+        genai_types.TurnCompleteReason.OUTPUT_IMAGE_IP_PROHIBITED,
+    }
+)
+
+
+def _turn_complete_finish_reason(reason: genai_types.TurnCompleteReason) -> FinishReason | None:
+    """Map why Gemini Live ended a turn to a [`FinishReason`][pydantic_ai.messages.FinishReason].
+
+    A reason with no clear counterpart (`NEED_MORE_INPUT`, `RESPONSE_REJECTED`, the `*_OTHER` catch-alls)
+    maps to `None`, as `OTHER` does on a standard response; its raw value is still kept in
+    `provider_details`.
+    """
+    if reason.value in _FINISH_REASON_MAP:
+        return _FINISH_REASON_MAP[reason.value]
+    return 'content_filter' if reason in _CONTENT_FILTER_TURN_COMPLETE_REASONS else None
+
 
 _WS_CONNECT_LOCK: RunVar[Lock] = RunVar('gemini_live_ws_connect_lock')
 
@@ -1472,6 +1529,9 @@ class GoogleRealtimeConnection(RealtimeConnection):
         self._text_turns_see_video_frames = cast('GoogleRealtimeModelProfile', self._profile).get(
             'google_text_turns_see_video_frames', True
         )
+        self._tool_return_mime_types = cast('GoogleRealtimeModelProfile', self._profile).get(
+            'google_supported_mime_types_in_tool_returns', ()
+        )
         self._recent_image: tuple[BinaryImage, float] | None = None
         # Whether the turn's latest output is a tool-call frame, with nothing said since. A model that
         # `google_closes_tool_call_turn_separately` closes that turn with its own `turn_complete` when the
@@ -1567,22 +1627,31 @@ class GoogleRealtimeConnection(RealtimeConnection):
             if not self._text_turns_see_video_frames:
                 self._recent_image = (content, time.monotonic())
         elif isinstance(content, ToolResult):
-            # Forgotten once sent, or once refused below. A send that fails on a dropped connection leaves
-            # the call for the reconnect, which cancels it and answers the resumed session for it.
-            name, gemini_id = self._tool_calls.get(content.tool_call_id, ('', None))
-            # `FunctionResponse.response` is JSON-only, so text attachments are folded into the
-            # output and binary attachments raise — loudly, with the tool result unsent, never a
-            # silent placeholder. Every live delivery channel was probed and fails: content in a
-            # `send_client_content(turn_complete=False)` turn or a `send_realtime_input` frame is
-            # invisible to the generation `send_tool_response` triggers (the model guesses), a
-            # `turn_complete=True` turn is seen but first triggers a spurious extra spoken response,
-            # and `FunctionResponse.parts` — the true analog of the classic Gemini 3 multimodal
-            # function-response path — doesn't serialize in the SDK's live path yet. Tracked in
-            # https://github.com/pydantic/pydantic-ai/issues/7362.
-            output = content.output
-            if content.content:
-                text_content: list[str] = []
-                for item in content.content:
+            await self._send_tool_result(content)
+        else:
+            raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
+
+    async def _send_tool_result(self, content: ToolResult) -> None:
+        # Forgotten once sent, or once refused below. A send that fails on a dropped connection leaves
+        # the call for the reconnect, which cancels it and answers the resumed session for it.
+        name, gemini_id = self._tool_calls.get(content.tool_call_id, ('', None))
+        # Text attachments are folded into the JSON `response`. Media goes in `FunctionResponse.parts`
+        # on a model that reads it there, the analog of the standard Gemini 3 multimodal function
+        # response; any other media raises, with the tool result unsent, never a silent
+        # placeholder. Every other live channel was probed and fails: content in a
+        # `send_client_content(turn_complete=False)` turn or a `send_realtime_input` frame is
+        # invisible to the generation `send_tool_response` triggers (the model guesses), and a
+        # `turn_complete=True` turn is seen but first triggers a spurious extra spoken response.
+        output = content.output
+        media: list[genai_types.FunctionResponsePart] = []
+        if content.content:
+            text_content: list[str] = []
+            items = content.content
+            dropped_tags: set[int] = set()
+            try:
+                for index, item in enumerate(items):
+                    if index in dropped_tags:
+                        continue
                     if isinstance(item, str):
                         text_content.append(item)
                     elif isinstance(item, TextContent):
@@ -1590,35 +1659,77 @@ class GoogleRealtimeConnection(RealtimeConnection):
                     elif isinstance(item, CachePoint):
                         continue
                     elif isinstance(item, (ImageUrl, AudioUrl, DocumentUrl, VideoUrl, BinaryContent, UploadedFile)):
-                        self._tool_calls.pop(content.tool_call_id, None)
-                        raise UserError(
-                            f'{self._provider_label} tool results are JSON-only, so `{type(item).__name__}` '
-                            'content attached to a tool return cannot be delivered. Return text instead, or '
-                            'use a realtime provider that supports tool-result media. '
-                            'See https://github.com/pydantic/pydantic-ai/issues/7362.'
-                        )
+                        media.append(await self._tool_result_media(item))
+                        # A file the tool returned comes framed in provenance tags for the user channel.
+                        # Inside the function response it is the tool's by construction, as on a
+                        # standard Gemini request, so the tags, which would frame nothing, are dropped.
+                        open_tag, close_tag = _tool_result_provenance_tags(name, content.tool_call_id, item.identifier)
+                        if text_content[-1:] == [open_tag] and index + 1 < len(items) and items[index + 1] == close_tag:
+                            text_content.pop()
+                            dropped_tags.add(index + 1)
                     else:
                         assert_never(item)
-                output = '\n\n'.join(part for part in (output, *text_content) if part)
-            await self._session.send_tool_response(
-                function_responses=genai_types.FunctionResponse(
-                    id=gemini_id,
-                    name=name,
-                    response={'output': output},
-                    # `INTERRUPT`, not `WHEN_IDLE`: a non-blocking model keeps talking while the
-                    # tool runs, and `WHEN_IDLE` holds the result until it stops — by which point it
-                    # has usually answered from its own knowledge, so the tool's answer contradicts
-                    # what was already said. (Recorded live: a tool returning "foggy and 12 degrees"
-                    # while the model said "15 degrees with clouds".) A model calls a tool because it
-                    # needs the result, so cut in with it.
-                    scheduling=genai_types.FunctionResponseScheduling.INTERRUPT
-                    if self._async_tool_calls_enabled and self._async_tool_call_scheduling_enabled
-                    else None,
-                )
+            except BaseException:
+                # Refused, or its media couldn't be fetched: the result is never sent, so the call is
+                # forgotten as a sent one would be.
+                self._tool_calls.pop(content.tool_call_id, None)
+                raise
+            output = '\n\n'.join(part for part in (output, *text_content) if part)
+        function_response = genai_types.FunctionResponse(
+            id=gemini_id,
+            name=name,
+            response={'output': output},
+            parts=media or None,
+            # `INTERRUPT`, not `WHEN_IDLE`: a non-blocking model keeps talking while the
+            # tool runs, and `WHEN_IDLE` holds the result until it stops — by which point it
+            # has usually answered from its own knowledge, so the tool's answer contradicts
+            # what was already said. (Recorded live: a tool returning "foggy and 12 degrees"
+            # while the model said "15 degrees with clouds".) A model calls a tool because it
+            # needs the result, so cut in with it.
+            scheduling=genai_types.FunctionResponseScheduling.INTERRUPT
+            if self._async_tool_calls_enabled and self._async_tool_call_scheduling_enabled
+            else None,
+        )
+        if media:
+            # `google-genai`'s `send_tool_response` (as of 2.25) hands the parts' raw bytes to
+            # `json.dumps`, which can't encode them, so the message is serialized with the SDK's own
+            # types, which base64-encode bytes, and sent over the session's socket as it would be.
+            # https://github.com/googleapis/python-genai/issues/3022
+            message = genai_types.LiveClientMessage(
+                tool_response=genai_types.LiveClientToolResponse(function_responses=[function_response])
             )
-            self._tool_calls.pop(content.tool_call_id, None)
+            # `_ws` is typed as a union with the legacy `websockets` client the SDK falls back to on
+            # older versions, whose `send` pyright can't resolve; both take a text frame.
+            await self._session._ws.send(  # pyright: ignore[reportPrivateUsage, reportUnknownMemberType, reportAttributeAccessIssue]
+                message.model_dump_json(by_alias=True, exclude_none=True)
+            )
         else:
-            raise UserError(f'{self._provider_label} does not support {type(content).__name__} input.')
+            await self._session.send_tool_response(function_responses=function_response)
+        self._tool_calls.pop(content.tool_call_id, None)
+
+    async def _tool_result_media(
+        self, item: ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile
+    ) -> genai_types.FunctionResponsePart:
+        """Map media attached to a tool return to a function-response part, or raise if this model can't carry it."""
+        supported = self._tool_return_mime_types
+        data: bytes | None = None
+        media_type: str | None = None
+        if isinstance(item, BinaryContent):
+            data, media_type = item.data, item.media_type
+        elif isinstance(item, ImageUrl) and any(mime_type.startswith('image/') for mime_type in supported):
+            downloaded = await download_item(item, data_format='bytes')
+            data, media_type = downloaded['data'], downloaded['data_type']
+        if data is None or media_type not in supported:
+            carries = f'{", ".join(supported)} content, inline or from an `ImageUrl`' if supported else 'only text'
+            raise UserError(
+                f'{self._provider_label} tool results on this model carry {carries}, so `{type(item).__name__}` '
+                + (f'content of type {media_type!r} ' if media_type is not None else 'content ')
+                + 'attached to a tool return cannot be delivered. Return text instead, or use a model or '
+                'realtime provider that supports this tool-result media.'
+            )
+        return genai_types.FunctionResponsePart(
+            inline_data=genai_types.FunctionResponseBlob(data=data, mime_type=media_type)
+        )
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         # `session.receive()` yields a single model turn and then returns, so loop to keep serving
@@ -1921,7 +2032,17 @@ class GoogleRealtimeConnection(RealtimeConnection):
             if closes_answered_tool_call_turn:
                 self._turn_open = True
             else:
-                events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
+                # When Gemini says why it ended a turn (a malformed function call, refused input or output),
+                # it's reported like a standard response's `finish_reason`, with the raw reason kept alongside.
+                reason = message.server_content.turn_complete_reason
+                events.append(
+                    ResponseDone(
+                        interrupted=interrupted,
+                        more_expected=more_expected,
+                        finish_reason=_turn_complete_finish_reason(reason) if reason is not None else None,
+                        provider_details={'finish_reason': reason.value} if reason is not None else None,
+                    )
+                )
                 if not more_expected:
                     self._mark_oldest_typed_turn_answered()
                 self._turn_interrupted = False
