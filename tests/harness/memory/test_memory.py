@@ -1485,8 +1485,10 @@ class TestTelemetryAndComposition:
         run_memory = await memory.for_run(_ctx())
         assert run_memory.get_toolset() is registered
 
-    async def test_durability_runs_registered_tools_against_run_scope(self) -> None:
+    @pytest.mark.parametrize('prefix', [None, 'org'])
+    async def test_durability_runs_registered_tools_against_run_scope(self, prefix: str | None) -> None:
         stores: list[InMemoryStore] = []
+        tool_prefix = f'{prefix}_' if prefix else ''
 
         def resolver(ctx: RunContext[object]) -> MemoryStore:
             stores.append(InMemoryStore())
@@ -1494,16 +1496,21 @@ class TestTelemetryAndComposition:
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
-                return ModelResponse(parts=[ToolCallPart('write_memory', {'content': '- fact'}, tool_call_id='write')])
+                return ModelResponse(
+                    parts=[ToolCallPart(f'{tool_prefix}write_memory', {'content': '- fact'}, tool_call_id='write')]
+                )
             if len(messages) == 3:
-                return ModelResponse(parts=[ToolCallPart('read_memory', {'file': 'MEMORY.md'}, tool_call_id='read')])
+                return ModelResponse(
+                    parts=[ToolCallPart(f'{tool_prefix}read_memory', {'file': 'MEMORY.md'}, tool_call_id='read')]
+                )
             return ModelResponse(parts=[TextPart('done')])
 
+        memory = Memory[object](store_resolver=resolver, inject_memory=False)
         agent = Agent(
             FunctionModel(model),
             name='memory-agent',
             capabilities=[
-                Memory[object](store_resolver=resolver, inject_memory=False),
+                memory.prefix_tools(prefix) if prefix else memory,
                 FunctionToolsetRejectingDurability(),
             ],
         )
@@ -1519,6 +1526,6 @@ class TestTelemetryAndComposition:
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, ToolReturnPart) and part.tool_name == 'read_memory'
+            if isinstance(part, ToolReturnPart) and part.tool_name == f'{tool_prefix}read_memory'
         ]
         assert read_returns == ['- fact\n']

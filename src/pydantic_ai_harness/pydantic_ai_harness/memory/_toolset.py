@@ -11,7 +11,7 @@ from opentelemetry.trace import Span
 from typing_extensions import TypedDict
 
 from pydantic_ai import ModelRetry
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset, ToolsetTool
 from pydantic_ai.workspaces import WorkspaceError
@@ -301,13 +301,18 @@ class MemoryToolset(FunctionToolset[AgentDepsT]):
         """
         from pydantic_ai_harness.memory._capability import Memory
 
-        capabilities: list[AbstractCapability[AgentDepsT]] = []
+        run_capability = self._capability
+
+        def select(capability: AbstractCapability[AgentDepsT]) -> None:
+            nonlocal run_capability
+            # A wrapper such as `prefix_tools()` may be visited in place of the `Memory` it wraps.
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if isinstance(capability, Memory) and capability.get_toolset() is self:
+                run_capability = capability
+
         if ctx.root_capability is not None:
-            ctx.root_capability.apply(capabilities.append)
-        run_capability = next(
-            (c for c in capabilities if isinstance(c, Memory) and c.get_toolset() is self),
-            self._capability,
-        )
+            ctx.root_capability.apply(select)
         return run_capability.resolve_scope(ctx)
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
