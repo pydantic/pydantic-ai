@@ -16,6 +16,7 @@ from pydantic import TypeAdapter
 from typing_extensions import assert_never
 
 from .. import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._decode_errors import _map_decode_errors, _MapStreamDecodeErrors  # pyright: ignore[reportPrivateUsage]
 from .._http import to_httpx2_timeout
 from .._run_context import RunContext
 from .._tool_search import _NO_MATCHES_MESSAGE  # pyright: ignore[reportPrivateUsage]
@@ -1071,6 +1072,14 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             response = await self._messages_create(messages, False, model_settings, model_request_parameters)
             if isinstance(response, BetaMessage):
                 return self._process_response(response, model_request_parameters, model_settings)
+            if not isinstance(response, _utils.PeekableAsyncStream):
+                # The SDK returns the raw body as a `str` when the content type is not JSON (e.g. a plain-text
+                # 200 from a gateway), breaking the `BetaMessage | _AnthropicEventStream` return contract. A
+                # streamed request answered the same way yields an empty stream instead, which
+                # `_process_streamed_response` already reports as `UnexpectedModelBehavior`.
+                raise ModelAPIError(
+                    model_name=self.model_name, message=f'Response body is not JSON: {str(response)[:100]!r}'
+                )
             # The request was streamed behind the scenes, see `_messages_create`.
             async with response.source:
                 streamed_response = await self._process_streamed_response(
@@ -1355,7 +1364,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 return await open_stream()
 
         retry_container = container
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), _map_decode_errors(self.model_name):
             try:
                 return await create(container, initial_thinking, initial_betas, initial_thinking_override)
             except APIStatusError as error:
@@ -1702,7 +1711,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 extra_body=extra_body,
             )
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), _map_decode_errors(self.model_name):
             try:
                 return await count(initial_thinking, initial_betas, initial_thinking_override)
             except APIStatusError as error:
@@ -3372,7 +3381,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             ignored_server_tool_use_indices: set[int] = set()
 
             builtin_tool_calls: dict[str, NativeToolCallPart] = {}
-            async for event in self._response:
+            async for event in _MapStreamDecodeErrors(self._response, self._model_name):
                 if isinstance(event, BetaRawMessageStartEvent):
                     if event.message is None:  # pyright: ignore[reportUnnecessaryComparison]
                         # See `_map_usage`: Bedrock emits type-less chunks the SDK constructs

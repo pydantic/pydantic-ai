@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
+from pydantic_ai._decode_errors import _map_decode_errors  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.exceptions import ModelHTTPError, UnexpectedModelBehavior
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.providers import Provider, infer_provider
@@ -282,7 +283,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
 
         contents: ContentListUnion = [Content(parts=[Part(text=text)]) for text in texts]
 
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name), _map_decode_errors(self._model_name, errors.UnknownApiResponseError):
             response = await self._client.aio.models.embed_content(
                 model=self._model_name,
                 contents=contents,
@@ -306,7 +307,7 @@ class GoogleEmbeddingModel(EmbeddingModel):
     async def count_tokens(self, text: str) -> int:
         check_allow_model_requests()
 
-        with _map_api_errors(self._model_name):
+        with _map_api_errors(self._model_name), _map_decode_errors(self._model_name, errors.UnknownApiResponseError):
             response = await self._client.aio.models.count_tokens(
                 model=self._model_name,
                 contents=text,

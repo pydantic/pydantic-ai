@@ -7499,3 +7499,54 @@ def test_bedrock_anthropic_5_no_sampling_settings_pass_through_silently(
 
     assert prepared == snapshot({'max_tokens': 16})
     assert not [w for w in recwarn if 'Sampling parameters' in str(w.message)]
+
+
+class _EmptyBodyStubClient:
+    """Minimal Bedrock client that always answers with what botocore makes of an empty 200 body: `{}`.
+
+    A stub client stands in for a cassette because no real Bedrock endpoint returns an empty 200 body on demand.
+    """
+
+    meta = SimpleNamespace(endpoint_url='https://bedrock.stub', events=HierarchicalEmitter())
+
+    def converse(self, **_: Any) -> dict[str, Any]:
+        return {}
+
+    def converse_stream(self, **_: Any) -> dict[str, Any]:
+        return {}
+
+
+def _empty_body_model() -> BedrockConverseModel:
+    return BedrockConverseModel(
+        'us.anthropic.claude-sonnet-4-20250514-v1:0',
+        provider=BedrockProvider(bedrock_client=cast(BaseClient, _EmptyBodyStubClient())),
+    )
+
+
+async def test_empty_response_body_raises_model_api_error(allow_model_requests: None) -> None:
+    """A 200 with an empty body, which botocore deserializes to `{}`, surfaces as `ModelAPIError` instead of a `KeyError`.
+
+    A stub client stands in for a cassette because no real Bedrock endpoint returns an empty 200 body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+    model = _empty_body_model()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.request([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters())
+
+    assert exc_info.value.message == 'Response body is missing the "output" member'
+
+
+async def test_empty_stream_response_body_raises_model_api_error(allow_model_requests: None) -> None:
+    """A streamed 200 with an empty body surfaces as `ModelAPIError` instead of a `KeyError` on the `stream` member.
+
+    A stub client stands in for a cassette because no real Bedrock endpoint returns an empty 200 body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+    model = _empty_body_model()
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with model.request_stream([ModelRequest.user_text_prompt('Hello')], None, ModelRequestParameters()):
+            pass
+
+    assert exc_info.value.message == 'Response body is missing the "stream" member'

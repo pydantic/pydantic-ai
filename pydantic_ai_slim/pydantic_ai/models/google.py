@@ -14,6 +14,7 @@ from uuid import uuid4
 from typing_extensions import assert_never
 
 from .. import UnexpectedModelBehavior, _utils, usage
+from .._decode_errors import _map_decode_errors, _MapStreamDecodeErrors  # pyright: ignore[reportPrivateUsage]
 from .._run_context import RunContext
 from ..exceptions import ModelAPIError, ModelHTTPError, UserError
 from ..messages import (
@@ -689,11 +690,12 @@ class GoogleModel(Model[Client]):
             )
 
         try:
-            response = await self.client.aio.models.count_tokens(
-                model=self._model_name,
-                contents=contents,
-                config=config,
-            )
+            with _map_decode_errors(self._model_name, errors.UnknownApiResponseError):
+                response = await self.client.aio.models.count_tokens(
+                    model=self._model_name,
+                    contents=contents,
+                    config=config,
+                )
         except errors.APIError as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if response.total_tokens is None:
@@ -924,7 +926,8 @@ class GoogleModel(Model[Client]):
         )
         func = self.client.aio.models.generate_content_stream if stream else self.client.aio.models.generate_content
         try:
-            return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
+            with _map_decode_errors(self._model_name, errors.UnknownApiResponseError):
+                return await func(model=self._model_name, contents=contents, config=config)  # pyright: ignore[reportReturnType]
         except errors.APIError as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
 
@@ -1143,7 +1146,8 @@ class GoogleModel(Model[Client]):
         # iterator is first advanced, so API errors surface here rather than in
         # `_generate_content`'s try/except and need the same mapping.
         try:
-            first_chunk = await peekable_response.peek()
+            with _map_decode_errors(self._model_name, errors.UnknownApiResponseError):
+                first_chunk = await peekable_response.peek()
         except errors.APIError as e:
             raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if isinstance(first_chunk, _utils.Unset):
@@ -1456,7 +1460,7 @@ class GeminiStreamedResponse(StreamedResponse):
         if self._provider_timestamp is not None:
             self.provider_details = {'timestamp': self._provider_timestamp}
         try:
-            async for chunk in self._response:
+            async for chunk in _MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
 
                 if (

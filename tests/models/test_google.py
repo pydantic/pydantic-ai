@@ -7541,3 +7541,84 @@ high: Needs attention today.\
             },
         }
     )
+
+
+_GOOGLE_FIRST_CHUNK_SSE = (
+    b'data: {"candidates":[{"content":{"parts":[{"text":"Hi"}],"role":"model"}}],'
+    b'"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2},'
+    b'"modelVersion":"gemini-2.5-flash"}\r\n\r\n'
+)
+
+
+def _google_model_with_transport(handler: Callable[[HTTPX2Request], HTTPX2Response]) -> GoogleModel:
+    """A `GoogleModel` whose HTTP transport is `handler`, for bodies a cassette can't produce on demand."""
+    return GoogleModel(
+        'gemini-2.5-flash',
+        provider=GoogleProvider(
+            api_key='test',
+            http_client=HTTPX2AsyncClient(transport=HTTPX2MockTransport(handler)),
+            base_url='http://localhost',
+        ),
+    )
+
+
+async def test_non_json_response_body_raises_model_api_error(allow_model_requests: None) -> None:
+    """A 200 response body that can't be decoded as JSON surfaces as `ModelAPIError`, not a raw `json.JSONDecodeError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    agent = Agent(_google_model_with_transport(handler))
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await agent.run('Hello')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+async def test_count_tokens_non_json_response_body_raises_model_api_error(allow_model_requests: None) -> None:
+    """A `count_tokens` 200 body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    model = _google_model_with_transport(handler)
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.count_tokens([ModelRequest(parts=[UserPromptPart('Hello')])], None, ModelRequestParameters())
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+async def test_non_json_stream_chunk_raises_model_api_error(allow_model_requests: None) -> None:
+    """A streamed event the SDK can't decode as JSON surfaces as `ModelAPIError`, not google-genai's `UnknownApiResponseError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a stream on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    async def handler(request: HTTPX2Request) -> HTTPX2Response:
+        return HTTPX2Response(
+            200,
+            content=_GOOGLE_FIRST_CHUNK_SSE + b'data: {not json\r\n\r\n',
+            headers={'content-type': 'text/event-stream'},
+        )
+
+    agent = Agent(_google_model_with_transport(handler))
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('Hello') as result:
+            await result.get_output()
+
+    assert isinstance(exc_info.value.__cause__, errors.UnknownApiResponseError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

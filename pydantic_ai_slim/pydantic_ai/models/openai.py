@@ -18,14 +18,15 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
+from typing import Any, Literal, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, Protocol, Self, TypedDict, assert_never
+from typing_extensions import Never, Protocol, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._decode_errors import _map_decode_errors, _MapStreamDecodeErrors  # pyright: ignore[reportPrivateUsage]
 from .._http import to_httpx2_timeout
 from .._instrumentation import get_instructions
 from .._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -251,40 +252,6 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
 def _response_error(model_name: str, code: str | None, message: str) -> ModelAPIError:
     """Build the error for a Responses API failure reported in a 200 body or stream, which has no HTTP status."""
     return ModelAPIError(model_name=model_name, message=f'{code}: {message}' if code else message)
-
-
-@contextmanager
-def _map_decode_errors(model_name: str) -> Generator[None]:
-    """Map a response body the SDK could not decode as JSON to `ModelAPIError`.
-
-    Wrap only the SDK's own work: our processing of a response parses JSON too, and those errors stay unmapped.
-    """
-    try:
-        yield
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as JSON: {e}') from e
-
-
-_ChunkT = TypeVar('_ChunkT')
-
-
-class _MapStreamDecodeErrors(Generic[_ChunkT]):
-    """Apply `_map_decode_errors` to the SDK decoding each chunk, but not to the code consuming it.
-
-    A plain iterator rather than an async generator, so it adds no generator for the event loop to finalize when a stream
-    is abandoned.
-    """
-
-    def __init__(self, stream: AsyncIterable[_ChunkT], model_name: str):
-        self._iterator = aiter(stream)
-        self._model_name = model_name
-
-    def __aiter__(self) -> Self:
-        return self
-
-    async def __anext__(self) -> _ChunkT:
-        with _map_decode_errors(self._model_name):
-            return await anext(self._iterator)
 
 
 __all__ = (

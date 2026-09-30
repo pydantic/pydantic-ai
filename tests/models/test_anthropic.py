@@ -15555,3 +15555,106 @@ async def test_anthropic_enum_member_docstrings_reach_the_wire(
             },
         }
     )
+
+
+_ANTHROPIC_MESSAGE_START_SSE = (
+    b'event: message_start\n'
+    b'data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant",'
+    b'"model":"claude-haiku-4-5","content":[],"stop_reason":null,"stop_sequence":null,'
+    b'"usage":{"input_tokens":1,"output_tokens":1}}}\n\n'
+)
+
+
+def _anthropic_model_with_transport(handler: Callable[[httpx2.Request], httpx2.Response]) -> AnthropicModel:
+    """An `AnthropicModel` whose HTTP transport is `handler`, for bodies a cassette can't produce on demand."""
+    return AnthropicModel(
+        'claude-haiku-4-5',
+        provider=AnthropicProvider(
+            anthropic_client=AsyncAnthropic(
+                api_key='test',
+                base_url='https://api.anthropic.com',
+                http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+            )
+        ),
+    )
+
+
+@pytest.mark.vcr(ignore_hosts=['api.anthropic.com'])
+@pytest.mark.parametrize(
+    ('content', 'content_type', 'cause'),
+    [
+        pytest.param(b'   ', 'application/json', json.JSONDecodeError, id='non-json'),
+        pytest.param(b'{"a":"\xe2\x82', 'application/json', UnicodeDecodeError, id='non-utf8'),
+        pytest.param(b'hello', 'text/plain', None, id='text-plain'),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, content: bytes, content_type: str, cause: type[ValueError] | None
+) -> None:
+    """A 200 response body the SDK can't decode as JSON, or returns as plain text, surfaces as `ModelAPIError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    `max_tokens` keeps the request on the true non-streaming path, where the SDK decodes the body itself.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': content_type})
+
+    agent = Agent(_anthropic_model_with_transport(handler))
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await agent.run('Hello', model_settings={'max_tokens': 1024})
+
+    if cause is not None:
+        assert isinstance(exc_info.value.__cause__, cause)
+        assert exc_info.value.message.startswith('Failed to decode response as JSON')
+    else:
+        # The SDK returns the raw body as a `str` for a non-JSON content type, so there is no decode
+        # error to chain in that case.
+        assert exc_info.value.message.startswith('Response body is not JSON')
+
+
+@pytest.mark.vcr(ignore_hosts=['api.anthropic.com'])
+async def test_non_json_sse_chunk_raises_model_api_error(allow_model_requests: None) -> None:
+    """A streamed event the SDK can't decode as JSON surfaces as `ModelAPIError`, not a raw `json.JSONDecodeError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a stream on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            content=_ANTHROPIC_MESSAGE_START_SSE + b'event: content_block_start\ndata: {not json\n\n',
+            headers={'content-type': 'text/event-stream'},
+        )
+
+    agent = Agent(_anthropic_model_with_transport(handler))
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        async with agent.run_stream('Hello') as result:
+            await result.get_output()
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.vcr(ignore_hosts=['api.anthropic.com'])
+async def test_count_tokens_non_json_response_body_raises_model_api_error(allow_model_requests: None) -> None:
+    """A `count_tokens` 200 body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=b'   ', headers={'content-type': 'application/json'})
+
+    model = _anthropic_model_with_transport(handler)
+
+    with pytest.raises(ModelAPIError) as exc_info:
+        await model.count_tokens([ModelRequest(parts=[UserPromptPart('Hello')])], None, ModelRequestParameters())
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

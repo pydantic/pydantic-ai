@@ -911,11 +911,14 @@ class BedrockConverseModel(Model[BaseClient]):
         )
         settings = cast(BedrockModelSettings, model_settings or {})
         response = await self._messages_create(messages, True, settings, model_request_parameters)
+        if (event_stream := response.get('stream')) is None:  # pyright: ignore[reportUnnecessaryComparison]
+            # An empty 200 body deserializes to `{}`, so the required `stream` member can be absent.
+            raise ModelAPIError(model_name=self.model_name, message='Response body is missing the "stream" member')
         yield BedrockStreamedResponse(
             model_request_parameters=model_request_parameters,
             _model_name=self.model_name,
             _model_profile=cast(BedrockModelProfile, self.profile),
-            _event_stream=response['stream'],
+            _event_stream=event_stream,
             _provider_name=self._provider.name,
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self.base_url,
@@ -924,7 +927,10 @@ class BedrockConverseModel(Model[BaseClient]):
 
     async def _process_response(self, response: ConverseResponseTypeDef) -> ModelResponse:
         items: list[ModelResponsePart] = []
-        if message := response['output'].get('message'):  # pragma: no branch
+        if (output := response.get('output')) is None:  # pyright: ignore[reportUnnecessaryComparison]
+            # An empty 200 body deserializes to `{}`, so the required `output` member can be absent.
+            raise ModelAPIError(model_name=self.model_name, message='Response body is missing the "output" member')
+        if message := output.get('message'):  # pragma: no branch
             for item in message['content']:
                 if reasoning_content := item.get('reasoningContent'):
                     if redacted_content := reasoning_content.get('redactedContent'):

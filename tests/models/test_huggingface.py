@@ -1,13 +1,14 @@
 from __future__ import annotations as _annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import cached_property
 from typing import Any, Literal, cast
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import httpx
 import pytest
@@ -1146,3 +1147,61 @@ async def test_map_user_prompt_with_text_content():
 
     assert msg.content[0].text == snapshot('hello')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
     assert msg.content[1].text == snapshot('there')  # pyright: ignore[reportAttributeAccessIssue, reportOptionalSubscript, reportUnknownMemberType]
+
+
+def _hf_session_patch(handler: Callable[[httpx.Request], httpx.Response]) -> AbstractContextManager[object]:
+    """Patch huggingface_hub's shared async session so requests go through a mock transport.
+
+    The client builds its httpx session lazily on first use, so the patch must stay active for the request itself.
+    """
+    import huggingface_hub.inference._generated._async_client as hf_async_client
+
+    @asynccontextmanager
+    async def fake_session() -> AsyncIterator[httpx.AsyncClient]:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            yield client
+
+    return patch.object(hf_async_client, 'get_async_session', fake_session)
+
+
+@pytest.mark.parametrize(
+    ('stream', 'content', 'content_type'),
+    [
+        pytest.param(False, b'   ', 'application/json', id='response'),
+        pytest.param(
+            True,
+            b'data: {"id":"1","model":"hf-model","created":0,"object":"chat.completion.chunk",'
+            b'"choices":[{"index":0,"delta":{"role":"assistant","content":"hi"},"finish_reason":null}]}\n\n'
+            b'data: {not json\n\n',
+            'text/event-stream',
+            id='stream',
+        ),
+    ],
+)
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, stream: bool, content: bytes, content_type: str
+) -> None:
+    """A 200 response body, or a streamed chunk, that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock session stands in for a cassette because no real provider returns such a body on demand, and
+    `AsyncInferenceClient` exposes no `http_client` argument to mock more directly.
+    https://github.com/pydantic/pydantic-ai/issues/9340
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=content, headers={'content-type': content_type})
+
+    with _hf_session_patch(handler):
+        client = AsyncInferenceClient(base_url='https://router.huggingface.co/v1', token='test')
+        model = HuggingFaceModel('hf-model', provider=HuggingFaceProvider(hf_client=client, api_key='x'))
+        agent = Agent(model)
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await agent.run('Hello')
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')

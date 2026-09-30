@@ -9,6 +9,7 @@ from typing import Any, Literal, cast, overload
 from typing_extensions import assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
+from .._decode_errors import _map_decode_errors, _MapStreamDecodeErrors  # pyright: ignore[reportPrivateUsage]
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -266,7 +267,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
         hf_messages = await self._map_messages(messages, model_request_parameters)
 
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name), _map_decode_errors(self.model_name):
             return await self.client.chat.completions.create(  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType, reportCallIssue]
                 model=self._model_name,
                 messages=hf_messages,  # pyright: ignore[reportArgumentType]
@@ -326,7 +327,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
         peekable_response: _utils.PeekableAsyncStream[
             ChatCompletionStreamOutput, AsyncIterable[ChatCompletionStreamOutput]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name):
+        with _map_api_errors(self.model_name), _map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -563,7 +564,7 @@ class HuggingFaceStreamedResponse(StreamedResponse):
         with _map_api_errors(self._model_name):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
-            async for chunk in self._response:
+            async for chunk in _MapStreamDecodeErrors(self._response, self._model_name):
                 self._usage += _map_usage(chunk)
 
                 if chunk.id:  # pragma: no branch
