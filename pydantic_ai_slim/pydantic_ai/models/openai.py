@@ -2267,7 +2267,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                 return model_response
             if e.status_code >= 400:
-                raise _map_status_error(e, self.model_name) from e
+                raise _map_status_error(e, self.model_name, self._provider.model_id_namespace) from e
             raise
         except APIConnectionError as e:  # pragma: lax no cover
             raise _map_connection_error(e, self.model_name) from e
