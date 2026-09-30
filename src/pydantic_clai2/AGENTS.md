@@ -73,16 +73,19 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   new source. Plugins must explicitly initialize their state on activation.
 - **Instruction order is capability order.** Placement is a core
   `CapabilityOrdering` (`position`, `wraps`, `wrapped_by`), not a CLAI list.
-- **Registration is idempotent per name.** A capability is bound per run
-  (`agent.run(capabilities=...)`), so "active for the next prompt" is the
-  natural unit; nothing rebuilds the agent.
+- **Registration is idempotent per name.** "Active for the next prompt" is the
+  natural unit. Stock agents are rebuilt when the capability snapshot changes,
+  with plugins bound at construction so self-delegation carries their tools,
+  instructions, and guardrails. Supplied agents still receive plugins per run
+  (`agent.run(capabilities=...)`) and are never rebuilt.
 - **Shipped plugins register first, in declared order.** The menu's alphabetical
   order is for scanning only. Registration order is the order instructions,
   renderers, and status segments are consulted in, so `coder`'s guidance leads
   the prompt. `customization_guide()` orders itself after the guidance plugins
   contribute and before harness `RepoContext`, so the CLAI hint never leads.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `_app.py` lists what CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
+  `_app.py` lists the library's built-ins; `STOCK_PLUGINS` opts the CLI-owned
+  agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `logfire`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
   persists an override, `remove` resets it. Do not special-case `Coder`
@@ -216,7 +219,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `cli/_cli.py` | argument parsing, startup, `--agent` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `_app.py` | the prompt loop and built-in `/commands` |
-| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, per-run plugins |
+| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, plugin snapshots and stock-agent rebuilding |
 | `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
 | `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |

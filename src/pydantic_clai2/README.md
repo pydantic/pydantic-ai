@@ -1040,6 +1040,18 @@ Custom agents are unchanged. To offer the same guide, add
 `customization_guide()` from `pydantic_clai2.customization` to their capabilities.
 See [PLUGINS.md](PLUGINS.md) for the plugin contract.
 
+## Task delegation
+
+The stock `coder` plugin exposes `delegate_task`, which starts a fresh conversation
+with the same active plugin tools, instructions, and guardrails. CLAI rebuilds its
+stock agent before the next prompt when that capability snapshot changes; session
+history is preserved and running tasks keep their original snapshot.
+
+Saved Coder declarations that omit `sub_agents` still default to `false`. Enable
+`sub_agents` in `/plugins configure coder` to opt in, or use `/plugins remove coder`
+to restore the stock declaration. Explicit `false` remains an opt-out. Custom agents
+are not rebuilt and must bind delegation and its accompanying capabilities themselves.
+
 ## Bring an agent
 
 ```python

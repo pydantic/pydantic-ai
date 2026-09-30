@@ -623,7 +623,7 @@ settings using the former import paths are redirected to the new modules.
 
 | Id | Backed by | Settings | Does |
 |---|---|---|---|
-| `coder` | `pydantic_ai_harness.coder:Coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": false}` | the file and shell tools |
+| `coder` | `pydantic_ai_harness.coder:Coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true}` | the file and shell tools, plus task delegation |
 | `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu:activate` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
@@ -684,10 +684,19 @@ the same name and it takes the built-in's place:
 
 Keep `"repo_context": false` on a replacement `coder`: `Coder` bundles its own
 `RepoContext`, and with the `repo_context` plugin also on, the instruction file
-would reach the model twice. CLAI adds `"sub_agents": false` to any `Coder`
-declaration that does not set it: `Coder`'s delegation runs the agent again,
-which only brings along what is bound to the agent, and CLAI passes its plugins
-to each run instead, so `Coder` refuses to start with delegation on.
+would reach the model twice. The stock `coder` enables `delegate_task`: a task
+can run in a fresh conversation with the same active plugin tools, instructions,
+and guardrails. CLAI rebuilds its stock agent before the next prompt when the
+active capability snapshot changes, binding those capabilities to the new agent.
+Conversation history stays in the session; an existing run keeps its own snapshot.
+The exported `DEFAULT_PLUGINS` keeps delegation off for custom-agent launchers;
+the CLI uses `STOCK_PLUGINS`, which opts its own rebuildable agent in.
+
+Saved `Coder` declarations that omit `sub_agents` still default to `false` for
+compatibility. Set `"sub_agents": true` in `/plugins configure coder` to opt in;
+explicit `false` remains an opt-out. Supplied agents are not rebuilt: their plugins
+are still run-level capabilities, so self-delegation requires binding `Coder` and
+the capabilities it should carry when constructing that agent.
 
 `repo_context` wraps harness `RepoContext` with the launch directory as the
 workspace and its default filenames. Its settings:

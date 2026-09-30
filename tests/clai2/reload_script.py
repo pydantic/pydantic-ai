@@ -3,6 +3,7 @@
 import asyncio
 import io
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -19,9 +20,11 @@ from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
+from pydantic_clai2._app import STOCK_PLUGINS
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime._session import StockAgent
 from pydantic_clai2.ui.rendering import theme
 
 models.ALLOW_MODEL_REQUESTS = False
@@ -143,10 +146,18 @@ async def main(root: Path, mode: str) -> None:
                 if isinstance(part, UserPromptPart)
             ]
         )
+        if mode == 'stock':
+            assert 'delegate_task' in {tool.name for tool in request_context.model_request_parameters.function_tools}
+            return replace(request_context, model=TestModel(call_tools=[], custom_output_text='hello'))
         return request_context
 
     output = io.StringIO()
-    agent = Agent(TestModel(call_tools=[], custom_output_text='hello'), deps_type=object)
+    model = TestModel(call_tools=[], custom_output_text='hello')
+    agent = (
+        StockAgent(model, deps_type=object, output_type=str, capabilities=[])
+        if mode == 'stock'
+        else Agent(model, deps_type=object)
+    )
     with (
         pytest.MonkeyPatch.context() as patch,
         agent.override(model=TestModel(call_tools=[], custom_output_text='hello')),
@@ -159,7 +170,11 @@ async def main(root: Path, mode: str) -> None:
             plugins=[hooks],
             store=store,
             console=Console(file=output, width=200),
-            builtin_plugins=(declaration,) if mode == 'custom' else DEFAULT_PLUGINS,
+            builtin_plugins=(declaration,)
+            if mode == 'custom'
+            else STOCK_PLUGINS
+            if mode == 'stock'
+            else DEFAULT_PLUGINS,
             project=ProjectSettings(plugins=(PluginSettings(id='unapproved', factory='unapproved', enabled=False),)),
         )
     conversations = SqliteConversationStore(database=root / 'sessions.db')
@@ -186,12 +201,15 @@ async def main(root: Path, mode: str) -> None:
     if mode == 'custom':
         assert 'example: reload_plugin (built-in) (enabled, loaded)' in text, text
     assert seen[0] == ['first'], seen
-    assert seen[1] == ['first', 'second updated' if mode in ('success', 'custom', 'new_imports') else 'second'], seen
+    assert seen[1] == [
+        'first',
+        'second updated' if mode in ('success', 'custom', 'new_imports', 'stock') else 'second',
+    ], seen
     assert seen[2] == [*seen[1], 'third' if mode == 'unchanged' else 'third updated'], seen
     assert labels[-1] == ('> ' if mode == 'unchanged' else 'updated> ')
     assert store.load().model == 'test' and not store.load().thinking
     assert store.load().theme == 'github_light'
-    if mode in ('unchanged', 'success', 'custom', 'new_imports'):
+    if mode in ('unchanged', 'success', 'custom', 'new_imports', 'stock'):
         assert text.count('CLAI2 reloaded. Conversation preserved.') == 2, text
         assert ('Use /help.' if mode == 'unchanged' else 'Use updated /help.') in text, text
     else:

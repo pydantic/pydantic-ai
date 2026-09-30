@@ -103,10 +103,16 @@ with the same name and different JSON; that replaces the built-in. Keep
 "repo_context": false in that JSON: the second built-in, repo_context
 (pydantic_clai2.builtin_plugins.repo_context), already reads AGENTS.md or CLAUDE.md from the
 launch directory, and Coder's bundled RepoContext would load it again. CLAI
-turns Coder's delegation off ("sub_agents": false) unless the JSON sets it:
-delegation needs Coder bound to the agent, and CLAI passes plugins to each run. To run
-without coding tools, /plugins disable coder; to stop reading the instruction
-file, /plugins disable repo_context. /plugins remove coder resets the
+enables task delegation in the stock Coder plugin. When the active plugin
+capabilities change, CLAI rebuilds its stock agent before the next prompt with
+those capabilities bound to it. A delegated task gets a fresh conversation with
+the same plugin tools, instructions, and guardrails. Supplied agents are unchanged
+and still receive plugins per run; self-delegation on them requires capabilities
+bound at agent construction. Saved Coder declarations that omit "sub_agents"
+still default to false; set "sub_agents": true in /plugins configure coder to
+opt in. An explicit false remains an opt-out. To run without coding tools,
+/plugins disable coder; to stop reading the instruction file,
+/plugins disable repo_context. /plugins remove coder resets the
 built-in to its defaults rather than removing it. A repository's
 .clai/settings.json can declare plugins too; they show as (project), rank
 just above the built-ins, and start off until the user runs /plugins enable

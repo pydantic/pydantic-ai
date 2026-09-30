@@ -53,7 +53,7 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime._session import Session, StockAgent
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
@@ -125,10 +125,24 @@ Other harness capabilities are not listed here: a user adds one on purpose with 
 `coder` leaves out its own `RepoContext` because `repo_context` binds one, so instruction files load once.
 """
 
+STOCK_PLUGINS: tuple[PluginSettings, ...] = tuple(
+    plugin.model_copy(update={'settings': {**plugin.settings, 'sub_agents': True}}) if plugin.id == 'coder' else plugin
+    for plugin in DEFAULT_PLUGINS
+)
+"""CLI-owned agents bind plugins at construction, so Coder can delegate safely.
+
+`DEFAULT_PLUGINS` keeps its run-level delegation opt-out for caller-supplied agents.
+"""
+
 
 def create_agent(model: str | None = None) -> Agent[None, str]:
     """Build the base CLAI agent. The coding tools come from the built-in `coder` plugin, not from here."""
     return Agent(model, deps_type=type(None), capabilities=[customization_guide()])
+
+
+def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str]:
+    """Build the CLI-owned template; caller-supplied agents are never reconstructed."""
+    return StockAgent(model, deps_type=type(None), output_type=str, capabilities=[customization_guide()])
 
 
 async def chat(
@@ -154,6 +168,7 @@ async def chat(
     session only; saved plugin preferences are untouched.
     """
     console = console or Console()
+    rebuild_stock = agent.with_plugins if isinstance(agent, StockAgent) else None
     transcript = TranscriptBuffer()
     with theme.use(lambda: settings.theme if settings is not None else 'default'), transcript.capture(console):
         console.print()
@@ -165,6 +180,7 @@ async def chat(
         project = project or ProjectSettings()
         _report_project(project, console)
         use_defaults = builtin_plugins is DEFAULT_PLUGINS
+        use_stock_defaults = builtin_plugins is STOCK_PLUGINS
         shell = create_shell(
             agent,
             deps=deps,
@@ -215,14 +231,20 @@ async def chat(
             try:
                 shell = reload_clai(
                     lambda shell=shell: create_shell(
-                        agent,
+                        rebuild_stock(()) if rebuild_stock is not None else agent,
                         deps=deps,
                         plugins=plugins,
                         usage_limits=shell.session.usage_limits,
                         console=console,
                         settings=shell.context.settings,
                         store=SettingsStore(shell.context.store.path),
-                        builtin_plugins=DEFAULT_PLUGINS if use_defaults else builtin_plugins,
+                        builtin_plugins=(
+                            STOCK_PLUGINS
+                            if use_stock_defaults
+                            else DEFAULT_PLUGINS
+                            if use_defaults
+                            else builtin_plugins
+                        ),
                         project=project,
                         message_history=shell.session.messages,
                         summary=shell.session.summary,

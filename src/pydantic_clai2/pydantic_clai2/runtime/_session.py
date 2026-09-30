@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from anyio import get_cancelled_exc_class, move_on_after
 
-from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
+from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -24,6 +24,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
 from pydantic_ai.models import Model
+from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import WorkspaceRef
@@ -113,11 +114,35 @@ def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> 
     return ref is not None and ref.provider == 'local' and ref != WorkspaceRef(provider='local', id=workspace)
 
 
+class StockAgent(Agent[DepsT, OutputT]):
+    """A CLAI-owned agent whose configuration can be rebuilt with active plugins."""
+
+    def __init__(
+        self,
+        model: Model | str | None,
+        *,
+        deps_type: type[DepsT],
+        output_type: OutputSpec[OutputT],
+        capabilities: Sequence[AgentCapability[DepsT]],
+    ) -> None:
+        super().__init__(model, deps_type=deps_type, output_type=output_type, capabilities=capabilities)
+        self._stock_deps_type = deps_type
+
+    def with_plugins(self, plugins: Sequence[AgentCapability[DepsT]]) -> 'StockAgent[DepsT, OutputT]':
+        """Bind a snapshot without mutating the agent used by another conversation."""
+        return StockAgent(
+            self.model,
+            deps_type=self._stock_deps_type,
+            output_type=self.output_type,
+            capabilities=[self.root_capability, *plugins],
+        )
+
+
 class Session(Generic[DepsT, OutputT]):
     """Run prompts to completion, retaining successful and interrupted turns in memory.
 
-    Plugins are capabilities (or capability functions) bound per run, not to
-    the agent itself, so the set can change between prompts.
+    Stock agents are rebuilt when the plugin snapshot changes, so delegates carry
+    the same capabilities. Supplied agents keep their existing run-level plugins.
     """
 
     def __init__(
@@ -143,6 +168,8 @@ class Session(Generic[DepsT, OutputT]):
         self.tool_retries: int | None = None
         self.resolve_model: Callable[[str], Model | str | Awaitable[Model | str]] = lambda name: name
         self.agent = agent
+        self._base_agent = agent
+        self._bound_plugins: tuple[AgentCapability[DepsT], ...] = ()
         self.deps = deps
         self.plugins: Sequence[AgentCapability[DepsT]] = tuple(plugins)
         self.usage_limits = usage_limits
@@ -269,6 +296,14 @@ class Session(Generic[DepsT, OutputT]):
                 try:
                     model = await self.resolved_model()
                     capabilities = list(self.plugins)
+                    if isinstance(self._base_agent, StockAgent):
+                        if len(self.plugins) != len(self._bound_plugins) or any(
+                            new is not old for new, old in zip(self.plugins, self._bound_plugins)
+                        ):
+                            self.agent = self._base_agent.with_plugins(self.plugins)
+                            self._bound_plugins = tuple(self.plugins)
+                        # Already bound to the stock agent, including delegation and guardrails.
+                        capabilities = []
                     workspace: Literal['new'] | None = None
                     if _supports_local_workspace() and not _supplies_workspace(
                         [*_agent_capabilities(self.agent), *self.plugins]
