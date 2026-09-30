@@ -32,11 +32,9 @@ of the return value — plus, where the provider supports it, multimodal content
 [`ToolReturn`][pydantic_ai.messages.ToolReturn]'s `content` — while local history keeps the full
 structured [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] with its `return_value`,
 `content`, and `metadata`. Attached content is delivered for real or refused loudly — never
-silently degraded: OpenAI and Azure OpenAI deliver text and images as a follow-up user message;
-Gemini Live's tool results are JSON-only, so text is folded into the result and any binary
-attachment raises [`UserError`][pydantic_ai.exceptions.UserError]
-([#7362](https://github.com/pydantic/pydantic-ai/issues/7362)); media a provider can't carry
-(audio and documents everywhere; images also on xAI) likewise raises before anything is sent.
+silently degraded: OpenAI and Azure OpenAI deliver text and images as a follow-up user message,
+and Gemini Live inside the tool result, as a standard Gemini 3 request does. Media the model can't
+carry raises [`UserError`][pydantic_ai.exceptions.UserError] before anything is sent.
 If the provider cancels an in-flight call, Pydantic AI cancels the task
 and records a synthetic cancellation result locally without sending that result back to the
 provider.
@@ -140,8 +138,7 @@ async def main():
 
 An unsupported native tool with a configured local fallback is replaced before connection. Without
 a fallback, opening the session raises [`UserError`][pydantic_ai.exceptions.UserError]. Provider and
-model-specific combinations—including Gemini grounding, URL context, and function-tool
-restrictions—are canonical on the [Gemini provider page](gemini.md#native-tools).
+model-specific combinations—including Gemini grounding and URL context—are canonical on the [Gemini provider page](gemini.md#native-tools).
 
 ## Deferred and approval-required tools
 
@@ -200,24 +197,29 @@ This applies to both ways a call is deferred — raising
 tool is still advertised to the model, exactly as in a standard run; calling it opens the approval
 flow rather than running the tool.
 
-!!! warning "The handler answers from policy, not from a person"
-    The handler must return a decision promptly — it is a programmatic policy resolver, not an approval
-    UI. It runs as a background task like the tool itself, so it never blocks the session's events, but
-    what the *conversation* does while it thinks is provider-specific in exactly the way
-    [concurrent tool execution](#concurrent-tool-execution) describes: OpenAI and Azure carry on, while
-    Gemini holds the model's turn until the result arrives. On Gemini a slow handler therefore reads as
-    assistant silence, and if the user speaks into that gap the provider cancels the pending call
-    outright (recorded as [a synthetic cancellation](#function-tools)).
+!!! warning "A slow handler is a pending tool call"
+    The handler runs as a background task like the tool itself, so it never blocks the session's
+    events, and it can take as long as it needs, for example awaiting an answer from a person through
+    your own UI. What the *conversation* does in the meantime depends on the model's
+    [async tool call mode](#concurrent-tool-execution). A model that keeps talking carries on, and may
+    tell the user the action is done before it is, so tell it in the instructions to wait for the
+    result before confirming. A model that waits holds its turn, so a slow handler reads as assistant
+    silence, and on Gemini the user speaking into that gap cancels the pending call outright (recorded
+    as [a synthetic cancellation](#function-tools)).
 
-Asking a human mid-call and resuming on their answer is not supported yet: a realtime session cannot
-pause and return a `DeferredToolRequests` output for an out-of-band result. Resolve the request
-during the call, or move that workflow to a standard agent run.
+As in a standard run, a deferred call emits a
+[`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] *before* the handler
+runs, and a [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] once it has
+resolved the call. A consumer can therefore relay the pending request, for example to the person a
+handler is waiting on, while the handler is still deciding. If nothing resolves the call — no
+handler is installed, or it declines — no results event follows and the call is refused as
+described above.
 
-[`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] on a session is
-informational for the same reason: it is emitted when the handler *has* resolved the calls, so a
-consumer can observe what was asked and decided. It is not a hook to respond to — unlike the same
-event in a standard run, nothing waits for the consumer, and no event is emitted when no handler is
-installed and the call is refused.
+What a session can't do is pause and return a `DeferredToolRequests` output for an out-of-band
+result, as a standard run does
+([#7301](https://github.com/pydantic/pydantic-ai/issues/7301)). Resolve the request during the call,
+from policy or by asking a person from inside the handler, or move that workflow to a standard agent
+run.
 
 Tools registered with `defer_loading=True` are rejected in a realtime session for a related reason;
 see [Deferred capability loading](capabilities.md#deferred-capability-loading).
@@ -274,8 +276,9 @@ and may reply, call a tool, or move on. To add context without prompting a turn,
 response is in progress. Reach for `enqueue()` for a follow-up that should wait its turn, and for
 `send()` to interject into a gap.
 
-Multimodal content and model responses are rejected because the realtime live-input channel cannot
-preserve their standard-run semantics.
+Model responses are rejected because the realtime live-input channel can't preserve their
+standard-run semantics; multimodal content isn't routed yet
+([#7300](https://github.com/pydantic/pydantic-ai/issues/7300)).
 
 ## Ending the session from a tool
 

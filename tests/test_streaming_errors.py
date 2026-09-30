@@ -319,9 +319,10 @@ async def test_anthropic_peek_non_http_error(
 
 @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
 async def test_anthropic_midstream_sse_error_status_200(allow_model_requests: None):
-    """Anthropic SSE error event arrives as APIStatusError with status_code=200 and is wrapped as ModelAPIError.
+    """Anthropic SSE error event arrives as APIStatusError with status_code=200 and is wrapped as ModelHTTPError.
 
-    This is the specific bug from #4729: mid-stream overloaded_error comes as HTTP 200 + SSE error event.
+    This is the specific bug from #4729: mid-stream overloaded_error comes as HTTP 200 + SSE error event. Its
+    `type` identifies the 529 the same error has on a non-streaming request.
     """
     error = AnthropicStatusError(
         message='Overloaded',
@@ -333,13 +334,13 @@ async def test_anthropic_midstream_sse_error_status_200(allow_model_requests: No
     m = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m)
 
-    with pytest.raises(ModelAPIError) as exc_info:
+    with pytest.raises(ModelHTTPError) as exc_info:
         async with agent.run_stream('hello') as result:
             async for _ in result.stream_text():
                 pass
 
     assert exc_info.value.model_name == 'claude-haiku-4-5'
-    assert 'Overloaded' in exc_info.value.message
+    assert exc_info.value.status_code == 529
 
 
 # ---------------------------------------------------------------------------

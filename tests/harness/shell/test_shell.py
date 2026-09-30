@@ -1670,7 +1670,9 @@ class TestSignalling:
         target = f'-{job.pgid}' if job.pgid is not None else str(job.pid)
         stop_file = posixpath.join(job.directory, 'stop')
         assert signals[0] == ['sh', '-c', _KILL_SCRIPT, 'kill', 'TERM', target, stop_file]
-        assert all(argv[-3:] == ['0', target, stop_file] for argv in signals[1:])
+        # The group is probed until it is empty; a member still in it once the wrapper has published
+        # its status (the wrapper itself on its way out, or its unreaped zombie) is sent `SIGKILL`.
+        assert all(argv[-3:] in (['0', target, stop_file], ['KILL', target, stop_file]) for argv in signals[1:])
         assert all(argv[0] != 'kill' for argv in backend.argv)
         await _wait_for_exit(job.pid)
 
@@ -1842,6 +1844,22 @@ class TestLaunch:
         )
 
 
+class _RemovesFileOnReadCheck(LocalWorkspaceBackend):
+    """A local backend whose shell removes a file just as `test -r` checks it, as a concurrent command can."""
+
+    async def run(
+        self,
+        command: WorkspaceCommand,
+        *,
+        shell: bool = False,
+        env: Mapping[str, str] | None = None,
+        timeout: float | None = None,
+    ) -> CommandResult:
+        assert isinstance(command, str)
+        command = 'test() { if [ "$1" = -r ]; then rm -f "$2"; fi; command test "$@"; }\n' + command
+        return await super().run(command, shell=shell, env=env, timeout=timeout)
+
+
 class TestReadBgOutputEdgeCases:
     async def test_missing_logs_read_as_empty(self, shell_dir: Path) -> None:
         """A log removed from the workspace reads as empty rather than failing the check."""
@@ -1873,6 +1891,18 @@ class TestReadBgOutputEdgeCases:
         finally:
             stdout_log.chmod(0o600)
             await ts.stop_command(_ctx(shell_dir), command_id)
+
+    async def test_log_removed_between_the_read_checks_reads_as_empty(self, shell_dir: Path) -> None:
+        """A log removed after its existence check but before its readability check reads as empty."""
+        ts = _shell_toolset(shell_dir)
+        ctx = _run_context(Workspace(_RemovesFileOnReadCheck(shell_dir)))
+        command_id = _parse_command_id(await ts.start_command(ctx, 'printf removed'))
+        job = await _job(ts, ctx, command_id)
+        # A running wrapper can still open, and so recreate, its log after the check removes it.
+        with anyio.fail_after(5):
+            while (await job.status())[0]:
+                await anyio.sleep(0.05)  # pragma: lax no cover
+        assert await ts.check_command(ctx, command_id) == '(no output yet)\n[status: finished]\n[exit code: 0]'
 
 
 class _NoStatSizes(LocalWorkspaceBackend):

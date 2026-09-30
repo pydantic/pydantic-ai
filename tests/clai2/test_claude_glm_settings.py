@@ -96,7 +96,8 @@ def test_classic_thinking_keeps_its_budget_and_room_to_answer() -> None:
         'budget_tokens': 2000,
         'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
     }
-    assert settings['max_tokens'] == 2000 + 4096
+    # Pydantic AI's own default `max_tokens` leaves room to answer beyond the budget.
+    assert 'max_tokens' not in settings
 
 
 def test_interleaved_thinking_asks_for_its_beta() -> None:

@@ -229,6 +229,9 @@ class PluginHost(Generic[DepsT]):
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
+        `persist` writes changed settings back to the plugin's declaration; without it they
+        last until the plugin unloads.
+
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
         """
@@ -308,8 +311,8 @@ class PluginHost(Generic[DepsT]):
                 f'{type(settings).__name__} cannot be saved as plugin settings: they must dump to a JSON'
                 ' object that validates back into the model.'
             ) from exc
-        self._settings = saved
         self._persist(saved)
+        self._settings = saved
 
     @property
     def configurer(self) -> Callable[[], Awaitable[str]] | None:

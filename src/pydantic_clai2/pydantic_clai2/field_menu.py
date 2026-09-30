@@ -1,8 +1,9 @@
-"""A full-screen editor for a set of named, validated fields. `/set` and `/add_model` both use it."""
+"""A full-screen editor for a set of named, validated fields. `/set`, `/add_model`, and plugin settings use it."""
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Protocol
 
 from pydantic import JsonValue, ValidationError
@@ -12,7 +13,7 @@ from termflow.tui.textinput import TextInput, TextInputResult
 
 from . import theme
 from ._rendering import markdown_style
-from .menu_worker import menu_key
+from .menu_worker import menu_key, run_worker
 
 CUSTOM = 'Type a value...'
 KEEP = 'Keep current'
@@ -271,26 +272,69 @@ def run_flow(
     messages: list[str] = []
     cursor = 0
     while True:
-        item = picked(runners.run_list(menu.build(cursor)))
-        if item is None:
+        step = _next_step(menu, runners, cursor, messages)
+        if step is None:
             return messages
-        value = item.value
-        if isinstance(value, _Reset):
-            row = menu.row_for(value.key)
-            if row is not None:
-                cursor = menu.rows.index(row)
-                messages.append(menu.reset(row))
-            continue
-        row = menu.row_for(value)
+        row, cursor = step
         if row is None:
-            return messages
-        cursor = menu.rows.index(row)
+            continue
         if submenus and row.key in submenus:
             messages.extend(submenus[row.key]())
             continue
         message = _edit(menu, row, runners)
         if message is not None:
             messages.append(message)
+
+
+async def run_flow_async(
+    menu: FieldMenu,
+    runners: Runners = TERMINAL,
+    *,
+    submenus: Mapping[str, Callable[[], Awaitable[list[str]]]] | None = None,
+) -> list[str]:
+    """`run_flow` driven from the event loop, for submenus that are themselves async, such as `prompt_api_key`.
+
+    Each widget runs in its own `run_worker`, so a submenu can open its own worker without nesting one
+    terminal owner inside another.
+    """
+    messages: list[str] = []
+    cursor = 0
+    while True:
+        step = await run_worker(partial(_next_step, menu, runners, cursor, messages))
+        if step is None:
+            return messages
+        row, cursor = step
+        if row is None:
+            continue
+        if submenus and row.key in submenus:
+            messages.extend(await submenus[row.key]())
+            continue
+        message = await run_worker(partial(_edit, menu, row, runners))
+        if message is not None:
+            messages.append(message)
+
+
+def _next_step(
+    menu: FieldMenu, runners: Runners, cursor: int, messages: list[str]
+) -> tuple[FieldRow | None, int] | None:
+    """Show the list and act on the pick in one step, so sources that touch the keyring stay off the event loop."""
+    return _selected(menu, runners.run_list(menu.build(cursor)), messages)
+
+
+def _selected(menu: FieldMenu, result: MenuResult, messages: list[str]) -> tuple[FieldRow | None, int] | None:
+    """`None` when the list closed; else the row to edit (or `None` after a reset) and the cursor to return to."""
+    item = picked(result)
+    if item is None:
+        return None
+    value = item.value
+    reset = isinstance(value, _Reset)
+    row = menu.row_for(value.key if isinstance(value, _Reset) else value)
+    if row is None:
+        return (None, 0) if reset else None
+    if reset:
+        messages.append(menu.reset(row))
+        return None, menu.rows.index(row)
+    return row, menu.rows.index(row)
 
 
 def _edit(menu: FieldMenu, row: FieldRow, runners: Runners) -> str | None:

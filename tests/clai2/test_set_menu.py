@@ -8,7 +8,14 @@ from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
 from pydantic_clai2 import field_menu
-from pydantic_clai2.field_menu import SAVE_AND_CLOSE, FieldMenu, is_save_and_close, run_flow, save_and_close_item
+from pydantic_clai2.field_menu import (
+    SAVE_AND_CLOSE,
+    FieldMenu,
+    is_save_and_close,
+    run_flow,
+    run_flow_async,
+    save_and_close_item,
+)
 from pydantic_clai2.project_settings import ProjectSettings
 from pydantic_clai2.set_menu import SettingsSource, open_settings_menu
 from tests.clai2.menu_script import Script, make_context, pick, typed
@@ -115,6 +122,15 @@ def test_save_and_close_is_the_last_row_and_leaves_with_edits_saved(
     assert run_flow(menu, script.runners) == ['Saved display.thinking. Applied.']
     assert context.store.overrides() == {'display.thinking': False}
     assert script.opened == ['list', 'choice', 'list']
+
+
+async def test_async_flow_matches_the_sync_one_without_submenus(tmp_path: Path) -> None:
+    context, _ = make_context(tmp_path)
+    script = Script(
+        lists=[pick('run.request_limit'), MenuResult(item=None)], choices=[], texts=[TextInputResult(cancelled=True)]
+    )
+    assert await run_flow_async(FieldMenu(SettingsSource(context)), script.runners) == []
+    assert script.opened == ['list', 'text', 'list']
 
 
 async def test_open_menu_runs_in_a_thread(tmp_path: Path) -> None:

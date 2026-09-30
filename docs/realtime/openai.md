@@ -35,9 +35,9 @@ Authentication and base URL come from `provider`, mirroring
 [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel]. The default `provider='openai'`
 reads the environment; pass an [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] for a
 custom key or base URL. The realtime WebSocket opens separately, so a custom provider `httpx` client
-is not used for it. Sessions run over a server-side WebSocket by default; for browser voice on
-gpt-realtime, the browser can exchange media directly over [WebRTC](#browser-webrtc) while your
-backend runs the agent (see [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)).
+is not used for it. Sessions run over a server-side WebSocket by default; for browser voice, the
+browser can exchange media directly over [WebRTC](#browser-webrtc) while your backend runs the agent
+(see [Connecting a frontend](deployment.md#browser-webrtc-server-sideband)).
 
 ## Model names
 
@@ -244,7 +244,7 @@ only happens once audio is flowing.
 
 Seeding is text-only in the same spirit: [`message_history=`](history.md#seeding-a-session) replays
 text, transcripts, and thinking text, with tool rounds rendered as readable text because the protocol
-has nowhere to put function parts (as on [Gemini Live](gemini.md)). Audio and images in seeded history
+has nowhere to put function parts. Audio and images in seeded history
 raise [`UserError`][pydantic_ai.exceptions.UserError] rather than being dropped. Live accepts up to 128
 seeded messages and 8,192 tokens in total, so seed a long conversation with its recent end. Within a
 session, Live manages its own context: once it nears the limit, it continues from a summary of the
@@ -342,9 +342,10 @@ model = OpenAILiveModel('gpt-live-1', settings=settings)
 | --- | --- |
 | `openai_voice` | The Live voice, e.g. `marin` (the provider default). Immutable once the session has started |
 | `openai_live_instructions` | How the Live model speaks: pacing, style, and when to delegate |
-| `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier` |
+| `openai_live_delegation` | The backend the session delegates to. [`OpenAILiveResponsesDelegation`][pydantic_ai.realtime.openai_live.OpenAILiveResponsesDelegation] carries `model`, extra `instructions`, `reasoning_effort`, `verbosity`, `max_output_tokens`, `parallel_tool_calls`, and `service_tier`. `reasoning_effort` and `parallel_tool_calls` default to the shared `thinking` and `parallel_tool_calls` settings |
 | `openai_live_turn_silence_ms` | How long the model must stay quiet before the [turn boundary](#the-turn-boundary-is-inferred) is reported. Defaults to 2000 |
 | `openai_live_store` | Whether OpenAI stores the session for later retrieval. Defaults to `False` |
+| `openai_live_data_channel` | Which events a [WebRTC](#browser-webrtc) browser may send and receive over its data channel. Defaults to none, since the sideband runs the session |
 
 Voice, audio format, and the starting instructions are fixed for the life of the session, which is
 why these are session-start settings rather than things to change mid-call. (The Live API can append
@@ -393,9 +394,11 @@ Input transcription defaults to `'auto'`; set a supported transcription model ID
 
 ## Reasoning {#reasoning}
 
-GPT-Live reasons on its delegated backend: set the effort with
-`openai_live_delegation={'reasoning_effort': ...}`. The profile reports `supports_thinking=False`, so
-the shared [`thinking`](../capabilities/thinking.md) setting does not apply.
+GPT-Live reasons on its delegated backend, so the shared
+[`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting (see
+[Thinking](../capabilities/thinking.md)) sets the [backend model](#backend-model)'s reasoning effort,
+just as it would on a direct request to that model. `openai_live_delegation={'reasoning_effort': ...}`
+takes precedence when set.
 
 On gpt-realtime, the shared [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting
 (see [Thinking](../capabilities/thinking.md)) applies to models whose profile reports
@@ -408,22 +411,23 @@ the Realtime API exposes effort as input only, and Live's reasoning happens on t
 
 ## Browser WebRTC
 
-Browser WebRTC is available on gpt-realtime only; for GPT-Live, bridge media through your backend
-(see [Connecting a frontend](deployment.md)).
-
 For browser voice agents, OpenAI recommends WebRTC: the audio flows browser ↔ OpenAI directly, while
 your backend attaches a control-plane **sideband** to run the agent.
 [`AgentRealtime`][pydantic_ai.agent.AgentRealtime] exposes two signaling helpers, both resolving and
 binding the agent's session configuration (instructions, tools, voice, VAD) server-side:
 
 - [`answer_webrtc_offer`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer] — the **secure** path:
-  relay the browser's SDP offer to `POST /v1/realtime/calls`, returning the SDP answer and a
+  relay the browser's SDP offer to OpenAI from your server, returning the SDP answer and a
   [`WebRTCSession`][pydantic_ai.realtime.WebRTCSession] to attach a sideband to with
   [`agent.realtime(model).session(provider_session=…)`][pydantic_ai.agent.AgentRealtime.session]. The browser
   never sees a token.
 - [`create_client_secret`][pydantic_ai.agent.AgentRealtime.create_client_secret] — mint a short-lived
   [`RealtimeClientSecret`][pydantic_ai.realtime.RealtimeClientSecret] (ephemeral token) for a browser
   that negotiates the WebRTC call itself, when you don't relay the SDP through your backend.
+  gpt-realtime only: GPT-Live has no client secrets.
+
+A GPT-Live session is configured once, by the offer, so a sideband attaching to it can't seed
+`message_history`; the browser's data channel stays closed unless `openai_live_data_channel` opens it.
 
 See [Connecting a frontend](deployment.md#browser-webrtc-server-sideband) for the topology, the
 secure offer-relay flow, and the sideband trust model, and the
@@ -448,9 +452,7 @@ the provider-agnostic workflows.
 | Manual turns and interruption | Unsupported | Live owns turn-taking and handles barge-in itself, but reports nothing when it does, so a reply the user cut off is recorded as complete, not interrupted. The [turn boundary is inferred](#the-turn-boundary-is-inferred) from silence |
 | Input transcription | Full feature support | Always on in both directions; no [model to choose](audio.md#input-transcription) and no way to disable it |
 | Input speech events | Unsupported | No speech start/end frames, so a "listening" indicator should read the profile rather than wait for events |
-| Thinking | Unsupported | Set the backend's effort instead; see [Reasoning](#reasoning) |
 | Usage | Limited parameter support | [Seconds, not tokens](#usage-is-measured-in-seconds); no duration-based `UsageLimits` field |
-| Browser WebRTC | Unsupported | Bridge media through your backend |
 | Reconnection | Unsupported | Automatic [reconnection](lifecycle.md#reconnecting) is not implemented for Live, so the [`reconnect`][pydantic_ai.realtime.RealtimeModelSettings.reconnect] policy is ignored and a dropped connection ends the session. Open a new one, seeding it with the previous session's history |
 
 #### What raises
@@ -477,7 +479,7 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
 
 | Feature | Support | Notes |
 | --- | --- | --- |
-| Audio format | Full feature support | Mono PCM16, 24 kHz input and output |
+| Audio format | Limited parameter support | Mono PCM16, 24 kHz input and output; the API also offers 8 kHz G.711, which Pydantic AI does not expose |
 | Text output | Full feature support | Select with `output_modality='text'` |
 | Image input | Full feature support | [Images](audio.md#images) provide context for the next turn |
 | Manual turns and interruption | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk); [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
