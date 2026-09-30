@@ -24,15 +24,18 @@ from absurd_sdk import (
 )
 from fastmcp import FastMCP
 from inline_snapshot import snapshot
+from pydantic import TypeAdapter
 
 from pydantic_ai import Agent, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.durable_exec._toolset import CallToolResult
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.mcp import MCPToolset
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
@@ -45,6 +48,10 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolset, FunctionToolset
 from pydantic_ai_harness.absurd import AbsurdDurability
+from pydantic_ai_harness.absurd._operation_backend import (
+    _CONTROL_FLOW_KINDS,  # pyright: ignore[reportPrivateUsage]
+    _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._task import checkpoints, reenter_running_task, running_task_context
 
@@ -155,6 +162,39 @@ class TestDurability:
         with pytest.raises(UserError, match='same `id`'):
             Agent(_make_model(), name='a', toolsets=toolsets, capabilities=[AbsurdDurability()])
 
+    async def test_name_from_capability(self) -> None:
+        agent = Agent(_make_model(), capabilities=[AbsurdDurability(name='custom')])
+        bound = AbsurdDurability.from_agent(agent)
+        assert bound is not None
+        assert bound.name == 'custom'
+
+    async def test_from_agent_without_capability_returns_none(self) -> None:
+        assert AbsurdDurability.from_agent(Agent(_make_model(), name='a')) is None
+
+    async def test_from_agent_multiple_raises(self) -> None:
+        agent = Agent(_make_model(), name='a', capabilities=[AbsurdDurability(), AbsurdDurability()])
+        with pytest.raises(UserError, match='at most one'):
+            AbsurdDurability.from_agent(agent)
+
+    async def test_run_outside_task_is_transparent(self) -> None:
+        counter = {'calls': 0}
+        agent = Agent(_make_model(counter), name='a', capabilities=[AbsurdDurability()])
+        result = await agent.run('hi')
+        assert result.output == 'ok'
+        assert counter['calls'] == 1
+
+    async def test_replay_serves_cached_model_response(self, absurd: AsyncAbsurd) -> None:
+        counter = {'calls': 0}
+        agent = Agent(_make_model(counter), name='crash', capabilities=[AbsurdDurability()])
+
+        async with running_task_context(absurd, 'crash') as ctx:
+            first = await agent.run('hi')
+        async with reenter_running_task(absurd, ctx.task_id):
+            replayed = await agent.run('hi')
+
+        assert counter['calls'] == 1
+        assert replayed.output == first.output == 'ok'
+
     async def test_replay_does_not_rerun_function_tool(self, absurd: AsyncAbsurd) -> None:
         tool_calls = {'calls': 0}
         toolset = FunctionToolset[object](id='tools')
@@ -234,6 +274,51 @@ class TestDurability:
             result = await agent.run('hi')
         assert result.output == 'done'
         assert calls['calls'] == 1
+
+    async def test_override_tools_rejected_inside_task(self, absurd: AsyncAbsurd) -> None:
+        calls = {'calls': 0}
+
+        def late() -> str:  # pragma: no cover - rejected before it can run
+            calls['calls'] += 1
+            return 'late result'
+
+        agent: Agent[object, str] = Agent(
+            _tool_calling_model(ToolCallPart('late')), name='a', capabilities=[AbsurdDurability()]
+        )
+        async with running_task_context(absurd):
+            with agent.override(tools=[late]):
+                with pytest.raises(UserError, match=_RUNTIME_TOOLSET_ERROR):
+                    await agent.run('hi')
+        assert calls['calls'] == 0
+
+    async def test_override_tools_respected_outside_task(self) -> None:
+        # The overriding toolset shares the agent's own toolset id, and must not be swapped for its wrapper.
+        calls = {'calls': 0}
+
+        def late() -> str:
+            calls['calls'] += 1
+            return 'late result'
+
+        agent: Agent[object, str] = Agent(
+            _tool_calling_model(ToolCallPart('late')), name='a', capabilities=[AbsurdDurability()]
+        )
+        with agent.override(tools=[late]):
+            result = await agent.run('hi')
+        assert result.output == 'done'
+        assert calls['calls'] == 1
+
+    async def test_runtime_toolset_still_rejected_alongside_capability_toolset(self, absurd: AsyncAbsurd) -> None:
+        # Skipping capability-owned wrappers must not let a genuine runtime toolset through.
+        owned = FunctionToolset[object](id='owned')
+
+        class DemoCapability(AbstractCapability[object]):
+            def get_toolset(self) -> FunctionToolset[object]:
+                return owned
+
+        agent: Agent[object, str] = Agent(_make_model(), name='a', capabilities=[DemoCapability(), AbsurdDurability()])
+        async with running_task_context(absurd):
+            with pytest.raises(UserError, match=_RUNTIME_TOOLSET_ERROR):
+                await agent.run('hi', toolsets=[_late_toolset({'calls': 0})])
 
     async def test_capability_owned_toolset_is_durable(self, absurd: AsyncAbsurd) -> None:
         tool_calls = {'calls': 0}
@@ -320,6 +405,27 @@ class TestDurability:
         assert replayed == events
         assert counter['calls'] == 1
 
+    async def test_run_stream_inside_task_replays_buffered_stream(self, absurd: AsyncAbsurd) -> None:
+        counter = {'calls': 0}
+        agent = Agent(_make_model(counter), name='a', capabilities=[AbsurdDurability()])
+        async with running_task_context(absurd) as ctx:
+            async with agent.run_stream('hi') as result:
+                assert await result.get_output() == 'ok'
+        async with reenter_running_task(absurd, ctx.task_id):
+            async with agent.run_stream('hi') as result:
+                assert await result.get_output() == 'ok'
+        assert counter['calls'] == 1
+
+    async def test_iter_inside_task(self, absurd: AsyncAbsurd) -> None:
+        agent = Agent(_make_model(), name='a', capabilities=[AbsurdDurability()])
+        async with running_task_context(absurd) as ctx:
+            async with agent.iter('hi') as run:
+                async for _ in run:
+                    pass
+        assert run.result is not None
+        assert run.result.output == 'ok'
+        assert list(await checkpoints(absurd, ctx.task_id)) == ['a__model.request']
+
     async def test_cancel_suspended_response_is_checkpointed(self, absurd: AsyncAbsurd) -> None:
         # The model returns a `'suspended'` response, the continuation fails, and the graph tears the
         # suspended job down via `cancel_suspended_response`.
@@ -380,6 +486,11 @@ class TestCapabilityOperation:
 
 
 class TestToolResults:
+    def test_every_core_result_kind_is_classified(self) -> None:
+        # A result kind core adds must be sorted into checkpointed or not before it can reach a task.
+        kinds = set(TypeAdapter(CallToolResult).json_schema()['discriminator']['mapping'])
+        assert kinds == _RAW_RESULT_KINDS | _CONTROL_FLOW_KINDS
+
     async def test_model_retry_is_not_checkpointed_and_the_tool_reruns_on_replay(self, absurd: AsyncAbsurd) -> None:
         model_calls = {'calls': 0}
         tool_calls = {'calls': 0}
@@ -604,6 +715,9 @@ class TestMcpSessions:
 
         assert result.output == 'done'
         assert counts == after_first_run
+        # The replayed run gets the server's instructions from their checkpoint.
+        requests = [m for m in result.all_messages() if isinstance(m, ModelRequest)]
+        assert requests[0].instructions is not None and 'Echo things.' in requests[0].instructions
 
 
 class TestCheckpointFormat:

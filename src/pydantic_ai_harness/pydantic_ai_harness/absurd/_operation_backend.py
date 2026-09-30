@@ -16,6 +16,10 @@ from ._context import current_async_task_context
 # A tool-call checkpoint holds the raw return value; a `ToolReturn` has no raw form, so it goes under this key.
 _ENVELOPE_KEY = '__pydantic_ai_harness_absurd_tool_result__'
 _RAW_RESULT_KINDS = frozenset({'tool_return', 'tool_content_result'})
+# Control flow (`ModelRetry`, `CallDeferred`, ...) is not checkpointed, so the call runs again on replay.
+_CONTROL_FLOW_KINDS = frozenset(
+    {'approval_required', 'call_deferred', 'model_retry', 'validation_error', 'tool_failed'}
+)
 
 # Absurd steps take no per-operation options.
 _NO_CONFIG = RoleBasedOperationConfig[None](model=None, event=None, capability=None, tool=None)
@@ -75,7 +79,9 @@ class AbsurdOperationBackend(JournalCallableOperationBackend[None]):
             return _from_checkpoint(handle.state)
         payload = await body()
         assert is_str_dict(payload)
-        if payload.get('kind') not in _RAW_RESULT_KINDS:
-            # Control flow (`ModelRetry`, `CallDeferred`, ...) is not checkpointed, so the call runs again on replay.
+        kind = payload.get('kind')
+        if kind in _CONTROL_FLOW_KINDS:
             return payload
+        # Fail on a result kind this backend doesn't know, rather than silently not checkpointing it.
+        assert kind in _RAW_RESULT_KINDS, kind
         return _from_checkpoint(await task_ctx.complete_step(handle, _to_checkpoint(payload)))
