@@ -82,7 +82,9 @@ Only the direct generator can apply `dimensions`, and only it can apply the aspe
 share, so pass `native=False` when you need either to be guaranteed: with the default `native=True` a model that
 generates images natively takes the native path, which has no equivalent for them, and the request warns that the
 settings went unapplied. Under a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each of its models takes
-the path its own profile selects, and each of them that would drop a setting gets a warning naming it.
+the path its own profile selects, and each of them that would drop a setting gets a warning naming it. Under a
+[`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] whose current model is a `FallbackModel`, no
+warning is given, since nothing public says which model the agent has selected.
 Native-tool-only settings such as
 `quality` and `output_format` do not apply to a direct fallback, whether they are set on the capability or on a
 static `native=ImageGenerationTool(...)` instance; configure their
