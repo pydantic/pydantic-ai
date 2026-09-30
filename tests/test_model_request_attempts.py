@@ -362,9 +362,8 @@ async def test_primed_stream_the_consumer_never_iterates_is_closed():
 
     agent = Agent(FunctionModel(stream_function=fn), deps_type=type(None), capabilities=[hooks])
     async with agent.iter('x') as run:
-        node = run.next_node
-        while not Agent.is_model_request_node(node):
-            node = await run.next(node)
+        node = await run.next(run.next_node)
+        assert Agent.is_model_request_node(node)
         async with node.stream(run.ctx):
             pass
     assert closed == [True]
