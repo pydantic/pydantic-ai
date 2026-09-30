@@ -17,7 +17,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
+from pydantic_clai2.plugin_loader import PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.settings_store import SettingsStore
 
@@ -157,6 +157,57 @@ async def test_folder_discovery_and_load_order(tmp_path: Path) -> None:
     assert harness.text.index('beta stopped eof') < harness.text.index('alpha stopped eof')
     assert {command.name for command in harness.commands} == {'help'}
     assert harness.loader.capabilities() == []
+
+
+async def test_add_saves_settings_only_once_activation_accepts_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / 'site' / 'clai_strict'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text(
+        'from pydantic import BaseModel, ConfigDict\n'
+        'from pydantic_clai2.plugins import PluginHost, SessionStart\n'
+        'class Settings(BaseModel):\n'
+        "    model_config = ConfigDict(extra='forbid')\n"
+        '    fail_on_start: bool = False\n'
+        'def activate(host: PluginHost) -> None:\n'
+        '    settings = host.settings(Settings)\n'
+        "    @host.on('session_start')\n"
+        '    async def started(event: SessionStart) -> None:\n'
+        '        if settings.fail_on_start:\n'
+        "            Settings.model_validate({'unexpected': 1})\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
+    harness = Harness(tmp_path)
+    with pytest.raises(PluginSettingsError):
+        await harness.loader.command(['add', 'strict', 'clai_strict', '{"secret": "s3cr3t"}'])
+    assert harness.store.plugins() == []
+    assert b's3cr3t' not in (tmp_path / 'config.db').read_bytes()
+    with pytest.raises(PluginError) as raised:
+        await harness.loader.command(['add', 'strict', 'clai_strict', '{"fail_on_start": true}'])
+    assert not isinstance(raised.value, PluginSettingsError), 'a ValidationError after activation is not about settings'
+    assert [plugin.settings for plugin in harness.store.plugins()] == [{'fail_on_start': True}]
+
+
+async def test_add_keeps_settings_the_plugin_saves_while_activating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / 'site' / 'clai_migrating'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text(
+        'from pydantic import BaseModel\n'
+        'from pydantic_clai2.plugins import PluginHost\n'
+        'class Settings(BaseModel):\n'
+        '    version: int = 1\n'
+        'def activate(host: PluginHost) -> None:\n'
+        '    host.save_settings(host.settings(Settings).model_copy(update={"version": 2}))\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
+    harness = Harness(tmp_path)
+    assert await harness.loader.command(['add', 'migrating', 'clai_migrating', '{"version": 1}']) == (
+        'Added and loaded migrating.'
+    )
+    assert [plugin.settings for plugin in harness.store.plugins()] == [{'version': 2}]
 
 
 async def test_declared_capability_class_and_activate_function(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

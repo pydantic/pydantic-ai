@@ -159,6 +159,7 @@ _KEY_CONSUMERS = {
     'ordinal': '/ordinal',
     'notion': '/plugins configure notion',
     'slack': '/plugins configure slack',
+    'posthog': '/plugins configure posthog',
 }
 """Credential-store accounts that may reference a saved key, and the command that reconfigures each."""
 
