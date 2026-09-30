@@ -8,6 +8,7 @@ from types import ModuleType
 
 import anyio
 import pytest
+from pydantic import BaseModel
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -16,7 +17,7 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
+from pydantic_clai2.plugin_loader import PluginError, PluginLoader, PluginSettingsError
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
 from pydantic_clai2.settings_store import SettingsStore
 
@@ -158,6 +159,57 @@ async def test_folder_discovery_and_load_order(tmp_path: Path) -> None:
     assert harness.loader.capabilities() == []
 
 
+async def test_add_saves_settings_only_once_activation_accepts_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / 'site' / 'clai_strict'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text(
+        'from pydantic import BaseModel, ConfigDict\n'
+        'from pydantic_clai2.plugins import PluginHost, SessionStart\n'
+        'class Settings(BaseModel):\n'
+        "    model_config = ConfigDict(extra='forbid')\n"
+        '    fail_on_start: bool = False\n'
+        'def activate(host: PluginHost) -> None:\n'
+        '    settings = host.settings(Settings)\n'
+        "    @host.on('session_start')\n"
+        '    async def started(event: SessionStart) -> None:\n'
+        '        if settings.fail_on_start:\n'
+        "            Settings.model_validate({'unexpected': 1})\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
+    harness = Harness(tmp_path)
+    with pytest.raises(PluginSettingsError):
+        await harness.loader.command(['add', 'strict', 'clai_strict', '{"secret": "s3cr3t"}'])
+    assert harness.store.plugins() == []
+    assert b's3cr3t' not in (tmp_path / 'config.db').read_bytes()
+    with pytest.raises(PluginError) as raised:
+        await harness.loader.command(['add', 'strict', 'clai_strict', '{"fail_on_start": true}'])
+    assert not isinstance(raised.value, PluginSettingsError), 'a ValidationError after activation is not about settings'
+    assert [plugin.settings for plugin in harness.store.plugins()] == [{'fail_on_start': True}]
+
+
+async def test_add_keeps_settings_the_plugin_saves_while_activating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / 'site' / 'clai_migrating'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text(
+        'from pydantic import BaseModel\n'
+        'from pydantic_clai2.plugins import PluginHost\n'
+        'class Settings(BaseModel):\n'
+        '    version: int = 1\n'
+        'def activate(host: PluginHost) -> None:\n'
+        '    host.save_settings(host.settings(Settings).model_copy(update={"version": 2}))\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
+    harness = Harness(tmp_path)
+    assert await harness.loader.command(['add', 'migrating', 'clai_migrating', '{"version": 1}']) == (
+        'Added and loaded migrating.'
+    )
+    assert [plugin.settings for plugin in harness.store.plugins()] == [{'version': 2}]
+
+
 async def test_declared_capability_class_and_activate_function(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     package = tmp_path / 'site' / 'clai_extras'
     package.mkdir(parents=True)
@@ -206,17 +258,17 @@ async def test_load_all_skips_missing_plugin_modules_quietly(tmp_path: Path, mon
     (package / 'plugin.py').write_text('import clai_missing_dependency\n')
     monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
     harness = Harness(tmp_path)
-    # Saved by a CLAI version that shipped a `slack` built-in; this one does not.
-    harness.store.save_plugin(PluginSettings(id='slack', factory='pydantic_clai2.slack'))
+    # Saved by a CLAI version that shipped a `retired` built-in; this one does not.
+    harness.store.save_plugin(PluginSettings(id='retired', factory='pydantic_clai2.retired'))
     harness.store.save_plugin(PluginSettings(id='gone', factory='clai_gone.plugin:activate'))
     harness.store.save_plugin(PluginSettings(id='broken', factory='clai_broken.plugin'))
     await harness.loader.load_all()
     states = {entry.name: entry.state for entry in harness.loader.entries()}
-    assert states['slack'] == "enabled, failed: ModuleNotFoundError: No module named 'pydantic_clai2.slack'"
+    assert states['retired'] == "enabled, failed: ModuleNotFoundError: No module named 'pydantic_clai2.retired'"
     assert states['gone'] == "enabled, failed: ModuleNotFoundError: No module named 'clai_gone'"
     assert harness.text == ("Plugin 'broken': ModuleNotFoundError: No module named 'clai_missing_dependency'\n")
-    with pytest.raises(PluginError, match=r"No module named 'pydantic_clai2\.slack'"):
-        await harness.loader.command(['enable', 'slack'])
+    with pytest.raises(PluginError, match=r"No module named 'pydantic_clai2\.retired'"):
+        await harness.loader.command(['enable', 'retired'])
 
 
 async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
@@ -295,6 +347,23 @@ async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) 
     assert message.startswith('Disabled counter. Delete ')
     assert not harness.store.plugins()[0].enabled
     assert harness.loader.entries()[0].state == 'disabled'
+
+
+async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path) -> None:
+    """Another CLAI process may replace the declaration while this one has the plugin loaded."""
+
+    class Chosen(BaseModel):
+        level: int
+
+    harness = Harness(tmp_path)
+    path = harness.write('counter')
+    await harness.loader.load('counter')
+    newer = PluginSettings(id='counter', factory='counter:activate', path=str(path), settings={'level': 1})
+    harness.store.save_plugin(newer)
+    host = harness.loader.entries()[0].host
+    assert host is not None
+    host.save_settings(Chosen(level=2))
+    assert harness.store.plugins() == [newer.model_copy(update={'settings': {'level': 2}})]
 
 
 async def test_fire_reports_observers_and_fails_closed_on_turn_start(tmp_path: Path) -> None:
