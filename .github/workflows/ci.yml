@@ -1002,7 +1002,7 @@ jobs:
         run: |
           mkdir .coverage
           export COVERAGE_PROCESS_START="$PWD/pyproject.toml"
-          uv run --all-extras --no-extra mcp-tasks --group lint coverage run -p -m pytest \
+          uv run --all-packages --all-extras --no-extra mcp-tasks --group lint coverage run -p -m pytest \
             tests/test_examples.py -n logical --dist=loadgroup
           uv run --no-sync coverage combine
         env:
