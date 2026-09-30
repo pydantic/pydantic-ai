@@ -1838,6 +1838,7 @@ def test_url_media_type_under_dump_arguments(
 def test_url_media_type_under_nested_include_and_exclude() -> None:
     """`include` and `exclude` nested down to a URL item treat an uninferable `media_type` like any other."""
 
+    # An `include` nested through a history's part union makes pydantic-core 2.41, the lowest supported, warn.
     class Stored(BaseModel):
         files: list[ImageUrl]
 
