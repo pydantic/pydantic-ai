@@ -156,8 +156,8 @@ class SubAgent(Generic[AgentDepsT]):
     """Steering text the parent gets when this delegate degrades (timeout, usage
     budget reached, call budget exhausted, child failure), in place of the
     built-in default. It only sets the text: for a child failure it follows the
-    `Sub-agent '<name>' failed: ...` line, so the cause stays visible, and
-    `child_failure` decides whether that is raised as a retry or returned."""
+    `Sub-agent '<name>' failed: ...` line, so the child exception message stays
+    visible, and `child_failure` decides whether that is raised as a retry or returned."""
 
     contain_errors: bool | None = None
     """Whether an unexpected sub-agent crash is contained instead of aborting the
