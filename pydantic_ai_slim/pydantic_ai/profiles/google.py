@@ -187,13 +187,7 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
     # listed support the full `GOOGLE_THINKING_LEVELS` scale.
     # https://ai.google.dev/gemini-api/docs/thinking
-    # 3.1 Flash image models: `minimal, high` only, per the image-generation docs and the Vertex
-    # thinking table below. Verified live 2026-09-30 on `gemini-3.1-flash-image`: the Developer API
-    # 400s `LOW` and `MEDIUM`, while Vertex (`global`) accepts them.
-    # https://ai.google.dev/gemini-api/docs/image-generation
-    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
     ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
-    ('gemini-3.1-flash-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
     ('gemini-3.8-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
     ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
