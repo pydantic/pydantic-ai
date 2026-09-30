@@ -69,7 +69,7 @@ returned action ID. The final output depends on the linked provider and its data
 
 ## Choose the API key per run
 
-`auth` decides which StackOne API key each run uses:
+For the default connection or a URL passed as `client`, `auth` chooses the API key for each run:
 
 | `auth` | API key used |
 | --- | --- |
@@ -77,8 +77,11 @@ returned action ID. The final output depends on the linked provider and its data
 | An API key | That key, for every run. |
 | A function | Called at the start of each run. The key it returns is used for that run. If it returns `None` or `''`, that run has no StackOne tools. A function never uses `STACKONE_API_KEY`. |
 
-When one agent serves several tenants, each with its own StackOne project, the key cannot be fixed when the agent is
-created. Pass a function that reads the current tenant's key from the run's deps:
+For a non-URL `client`, authentication and account selection belong to that client; `auth` does not override them.
+A function returning `None` or `''` still disables tools for that run.
+
+`account_id` remains fixed for each capability. Tenants with different linked accounts need their corresponding
+account-specific capabilities. To choose a key for one linked account, read it from the run's deps:
 
 ```python
 from dataclasses import dataclass

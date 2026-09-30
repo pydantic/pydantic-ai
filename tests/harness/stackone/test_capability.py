@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 from fastmcp.client.transports import StreamableHttpTransport
@@ -14,7 +14,7 @@ from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ToolCallPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import HarnessDeprecationWarning
@@ -28,14 +28,14 @@ def tool_call_names(messages: list[ModelMessage]) -> set[str]:
     return {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolCallPart)}
 
 
-def transport(toolset: AbstractToolset[Any]) -> StreamableHttpTransport:
+def transport(toolset: AbstractToolset[AgentDepsT]) -> StreamableHttpTransport:
     assert isinstance(toolset, StackOneToolset)
     result = toolset.client.transport
     assert isinstance(result, StreamableHttpTransport)
     return result
 
 
-def http_transport(capability: StackOne[Any]) -> StreamableHttpTransport:
+def http_transport(capability: StackOne[AgentDepsT]) -> StreamableHttpTransport:
     return transport(capability.get_toolset())
 
 
@@ -97,7 +97,10 @@ class TestStackOne:
     def test_agent_spec_forwards_deprecated_api_key(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.delenv('STACKONE_API_KEY', raising=False)
         spec = {'capabilities': [{'StackOne': {'account_id': '45320', 'api_key': 'key'}}]}
-        with pytest.warns(HarnessDeprecationWarning, match=r'`StackOne\(api_key=...\)` has been renamed'):
+        with pytest.warns(
+            HarnessDeprecationWarning,
+            match=r'`StackOne\(api_key=\.\.\.\)` has been renamed to `StackOne\(auth=\.\.\.\)`',
+        ):
             Agent.from_spec(spec, custom_capability_types=[StackOne], model=TestModel())
 
     @pytest.mark.parametrize(
@@ -151,49 +154,49 @@ def per_user_key(ctx: RunContext[str | None]) -> str | None:
     return ctx.deps
 
 
-async def connections_for(capability: StackOne[str | None], deps: str | None) -> list[StackOneToolset[str | None]]:
+async def connections_for(toolset: AbstractToolset[str | None], deps: str | None) -> list[StackOneToolset[str | None]]:
     """The StackOne connections a run with `deps` would open."""
     ctx = RunContext[str | None](deps=deps, model=TestModel(), usage=RunUsage())
-    toolset = await capability.get_toolset().for_run(ctx)
+    run_toolset = await toolset.for_run(ctx)
     connections: list[StackOneToolset[str | None]] = []
 
     def collect(leaf: AbstractToolset[str | None]) -> None:
         if isinstance(leaf, StackOneToolset):
             connections.append(leaf)
 
-    toolset.apply(collect)
+    run_toolset.apply(collect)
     return connections
 
 
 class TestAuth:
-    async def test_each_run_connects_with_its_own_key(self):
-        capability = StackOne[str | None](account_id='45320', auth=per_user_key)
-        [alice] = await connections_for(capability, 'alice-key')
-        [bob] = await connections_for(capability, 'bob-key')
+    @pytest.mark.parametrize('missing', [None, ''])
+    async def test_each_run_connects_with_its_own_key(self, missing: str | None, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv('STACKONE_API_KEY', 'deployment-key')
+        toolset = StackOne[str | None](account_id='45320', auth=per_user_key).get_toolset()
+        [alice] = await connections_for(toolset, 'alice-key')
+        [bob] = await connections_for(toolset, 'bob-key')
         assert (transport(alice).headers['Authorization'], transport(bob).headers['Authorization']) == (
             basic_auth('alice-key'),
             basic_auth('bob-key'),
         )
+        # Neither a previous run's key nor the environment may authenticate a run without a key.
+        assert await connections_for(toolset, missing) == []
 
     async def test_function_keeps_the_derived_id(self):
-        capability = StackOne[str | None](account_id='45320', auth=per_user_key)
-        assert capability.get_toolset().id == 'stackone-45320'
-        [connection] = await connections_for(capability, 'alice-key')
+        toolset = StackOne[str | None](account_id='45320', auth=per_user_key).get_toolset()
+        assert toolset.id == 'stackone-45320'
+        [connection] = await connections_for(toolset, 'alice-key')
         assert connection.id == 'stackone-45320'
-
-    @pytest.mark.parametrize('missing', [None, ''])
-    async def test_no_key_means_no_tools(self, missing: str | None, monkeypatch: pytest.MonkeyPatch):
-        # The environment key is set to show a function never falls back to it.
-        monkeypatch.setenv('STACKONE_API_KEY', 'deployment-key')
-        capability = StackOne[str | None](account_id='45320', auth=per_user_key)
-        assert await connections_for(capability, missing) == []
 
     def test_unset_auth_uses_the_environment(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv('STACKONE_API_KEY', 'env-key')
         assert http_transport(StackOne[None](account_id='45320')).headers['Authorization'] == basic_auth('env-key')
 
     def test_api_key_is_a_deprecated_alias(self):
-        with pytest.warns(HarnessDeprecationWarning, match=r'`StackOne\(api_key=...\)` has been renamed'):
+        with pytest.warns(
+            HarnessDeprecationWarning,
+            match=r'`StackOne\(api_key=\.\.\.\)` has been renamed to `StackOne\(auth=\.\.\.\)`',
+        ):
             capability = StackOne[None](account_id='45320', api_key='key')
         assert (capability.auth, capability.api_key) == ('key', None)
         assert http_transport(capability).headers['Authorization'] == basic_auth('key')
