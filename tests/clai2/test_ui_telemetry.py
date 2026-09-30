@@ -226,6 +226,8 @@ async def test_settings_and_keys_record_names_not_secrets(
     )
     context.set_setting(['display.thinking', 'false'])
     context.reset_setting('sessions.naming_model')
+    context.set_setting(['display.spinner', 'puppy'])
+    context.set_setting(['display.spinner', 'sk-pasted-secret'])
     save_key(name='OPENAI_API_KEY', value='first-secret')
     save_key(name='OPENAI_API_KEY', value='second-secret')
     rename_key(name='OPENAI_API_KEY', new_name='RENAMED')
@@ -245,6 +247,8 @@ async def test_settings_and_keys_record_names_not_secrets(
     assert recorded(exporter) == [
         ('setting display.thinking changed', {'setting': 'display.thinking', 'value': False}),
         ('setting sessions.naming_model changed', {'setting': 'sessions.naming_model', 'value': 'null'}),
+        ('setting display.spinner changed', {'setting': 'display.spinner', 'value': 'puppy'}),
+        ('setting display.spinner changed', {'setting': 'display.spinner', 'value': 'custom'}),
         ('key saved', {'key_name': 'OPENAI_API_KEY', 'replaced': False}),
         ('key saved', {'key_name': 'OPENAI_API_KEY', 'replaced': True}),
         ('key renamed', {'key_name': 'OPENAI_API_KEY', 'new_key_name': 'RENAMED'}),

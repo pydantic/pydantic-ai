@@ -124,13 +124,15 @@ def _record_ui_events(host: PluginHost[None], instance: logfire.Logfire) -> None
     async def stop(event: SessionEnd) -> None:
         unsubscribe()
 
+    # Only to this plugin's own instance: every enabled copy of the plugin hears these events.
     @host.on('session_start')
     async def started(event: SessionStart) -> None:
-        telemetry.record('session started', model=event.settings.model or 'agent default')
+        model = event.settings.model or 'agent default'
+        instance.log('info', 'session started', attributes={'model': model}, tags=[telemetry.TAG])
 
     @host.on('turn_end')
     async def ended(event: TurnEnd) -> None:
-        telemetry.record('turn {outcome}', outcome=event.outcome)
+        instance.log('info', 'turn {outcome}', attributes={'outcome': event.outcome}, tags=[telemetry.TAG])
 
 
 def _shutdown(instance: logfire.Logfire) -> bool:
