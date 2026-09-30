@@ -7505,15 +7505,24 @@ def test_bedrock_anthropic_5_no_sampling_settings_pass_through_silently(
 
 
 @pytest.mark.parametrize(
-    ('call', 'body'),
+    ('call', 'body', 'message'),
     [
-        pytest.param('request', b'', id='request'),
-        pytest.param('request', b'not json', id='request-not-json'),
-        pytest.param('count_tokens', b'', id='count_tokens'),
+        pytest.param('request', b'', "Response has no 'output' field", id='request'),
+        pytest.param('request', b'not json', "Response has no 'output' field", id='request-not-json'),
+        pytest.param(
+            'stream',
+            # botocore parses no events at all from a body shorter than its 12-byte event stream prelude.
+            b' ' * 32,
+            'Failed to decode response as an event stream: Checksum mismatch: expected 0x20202020, calculated 0xa3114325',
+            id='stream',
+        ),
+        pytest.param('count_tokens', b'', "Response has no 'inputTokens' field", id='count_tokens'),
     ],
 )
-async def test_non_json_response_body_raises_model_api_error(allow_model_requests: None, call: str, body: bytes):
-    """A 200 response body that's empty or not JSON surfaces as `ModelAPIError`, not a `KeyError`.
+async def test_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, call: str, body: bytes, message: str
+):
+    """An empty or non-JSON 200 response body surfaces as `ModelAPIError`, not a `KeyError` or a botocore error.
 
     The response is injected at `before-send` so botocore's own parser handles it, because no real endpoint returns such
     a body on demand. https://github.com/pydantic/pydantic-ai/issues/9340
@@ -7535,8 +7544,10 @@ async def test_non_json_response_body_raises_model_api_error(allow_model_request
     with pytest.raises(ModelAPIError) as exc_info:
         if call == 'count_tokens':
             await model.count_tokens(messages, None, ModelRequestParameters())
+        elif call == 'stream':
+            async with Agent(model).run_stream('Hello'):
+                pass
         else:
             await model.request(messages, None, ModelRequestParameters())
 
-    field = 'inputTokens' if call == 'count_tokens' else 'output'
-    assert exc_info.value.message == f'Response has no {field!r} field'
+    assert exc_info.value.message == message

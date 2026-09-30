@@ -19,6 +19,7 @@ from typing_extensions import ParamSpec, TypedDict, assert_never
 
 try:
     from botocore.client import BaseClient
+    from botocore.eventstream import ParserError as EventStreamParserError
     from botocore.exceptions import (
         BotoCoreError,
         ClientError,
@@ -168,6 +169,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
     except (HTTPClientError, BotocoreConnectionError) as e:
         # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except EventStreamParserError as e:
+        # botocore's event stream parser raises its own `ParserError`, not a `BotoCoreError`, for a streamed 200 whose
+        # body isn't an event stream, e.g. keep-alive whitespace before an upstream failure.
+        raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as an event stream: {e}') from e
 
 
 class _BotocoreRequestParams(TypedDict):
