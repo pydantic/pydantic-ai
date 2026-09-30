@@ -924,7 +924,7 @@ async def test_a_merge_takes_the_later_of_two_models_differing_only_in_settings(
     )
     await agent.run('go')
 
-    assert subagent_settings == snapshot([{'temperature': 1.0}])
+    assert subagent_settings == [{'temperature': 1.0}]
 
 
 def test_a_fallback_model_set_through_the_deprecated_alias_is_stated_configuration() -> None:
