@@ -6,10 +6,15 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
+from pydantic import JsonValue
+
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
+
+_OBJECT_KEYWORDS = ('properties', 'additionalProperties', 'patternProperties')
+_ARRAY_KEYWORDS = ('items', 'prefixItems')
 
 
 class UseEnumMemberDocstrings:
@@ -136,18 +141,18 @@ class JsonSchemaTransformer(ABC):
             # `properties`, `items` etc. apply without an explicit `type`, and `walk()` drops `$defs`
             # when inlining, so an object- or array-shaped typeless node must be walked or its `$ref`s dangle.
             if self.prefer_inlined_defs:
-                if any(k in schema for k in ('properties', 'additionalProperties', 'patternProperties')):
+                if self._has_inlinable_refs(schema, _OBJECT_KEYWORDS):
                     schema = self._handle_object(schema)
-                if any(k in schema for k in ('items', 'prefixItems')):
+                if self._has_inlinable_refs(schema, _ARRAY_KEYWORDS):
                     schema = self._handle_array(schema)
             schema = self._handle_union(schema, 'allOf')
             schema = self._handle_union(schema, 'anyOf')
             schema = self._handle_union(schema, 'oneOf')
         elif self.prefer_inlined_defs and isinstance(type_, list):
             # Same for a `type` list that admits objects or arrays, like `['object', 'null']`.
-            if 'object' in type_:
+            if 'object' in type_ and self._has_inlinable_refs(schema, _OBJECT_KEYWORDS):
                 schema = self._handle_object(schema)
-            if 'array' in type_:
+            if 'array' in type_ and self._has_inlinable_refs(schema, _ARRAY_KEYWORDS):
                 schema = self._handle_array(schema)
 
         if type_ is not None:
@@ -156,6 +161,30 @@ class JsonSchemaTransformer(ABC):
                     schema[union_kind] = [self._handle(member) for member in members]
         # Apply the base transform
         return self.transform(schema)
+
+    def _has_inlinable_refs(self, schema: JsonSchema, keywords: tuple[str, ...]) -> bool:
+        """Whether to walk `keywords`, which the node's `type` doesn't name.
+
+        Only a `$ref` into `$defs`, which `walk()` drops, needs it. Otherwise they're left exactly as written,
+        since walking reshapes a subtree (single-member unions collapse, `transform()` runs). So are they when
+        a `$ref` under them, or in a definition one points at, can't be resolved, since walking raises on it.
+        """
+        pending: list[JsonValue] = [schema[keyword] for keyword in keywords if keyword in schema]
+        seen: set[str] = set()
+        while pending:
+            node = pending.pop()
+            if isinstance(node, list):
+                pending.extend(node)
+            elif isinstance(node, dict):
+                if isinstance(ref := node.get('$ref'), str):
+                    key = re.sub(r'^#/\$defs/', '', ref)
+                    if key not in self.defs:
+                        return False
+                    if key not in seen:
+                        seen.add(key)
+                        pending.append(self.defs[key])
+                pending.extend(node.values())
+        return bool(seen)
 
     def _walked_def(self, key: str) -> JsonSchema:
         """The definition `key` refers to, walked once per transformer and cached.

@@ -613,6 +613,11 @@ TITLED: dict[str, Any] = {'type': 'string', 'title': 'A'}
             id='array-in-type-list',
         ),
         pytest.param({'items': [PAYLOAD_REF]}, {'items': [PAYLOAD]}, id='tuple-items'),
+        pytest.param(
+            {'properties': {'a': PAYLOAD_REF, 'b': PAYLOAD_REF}},
+            {'properties': {'a': PAYLOAD, 'b': PAYLOAD}},
+            id='repeated-ref',
+        ),
     ],
 )
 def test_inline_defs_untyped_keywords_are_inlined(keywords: dict[str, Any], expected: dict[str, Any]):
@@ -631,10 +636,12 @@ def test_inline_defs_untyped_keywords_are_inlined(keywords: dict[str, Any], expe
 @pytest.mark.parametrize(
     'schema',
     [
-        pytest.param({'properties': {'a': TITLED}}, id='typeless-object'),
-        pytest.param({'type': ['object', 'null'], 'properties': {'a': TITLED}}, id='object-in-type-list'),
-        pytest.param({'items': TITLED}, id='typeless-array'),
-        pytest.param({'type': ['array', 'null'], 'items': TITLED}, id='array-in-type-list'),
+        pytest.param({'properties': {'a': TITLED, 'p': PAYLOAD_REF}}, id='typeless-object'),
+        pytest.param(
+            {'type': ['object', 'null'], 'properties': {'a': TITLED, 'p': PAYLOAD_REF}}, id='object-in-type-list'
+        ),
+        pytest.param({'prefixItems': [TITLED, PAYLOAD_REF]}, id='typeless-array'),
+        pytest.param({'type': ['array', 'null'], 'prefixItems': [TITLED, PAYLOAD_REF]}, id='array-in-type-list'),
     ],
 )
 def test_only_inlining_transformers_walk_untyped_keywords(schema: dict[str, Any]):
@@ -644,6 +651,7 @@ def test_only_inlining_transformers_walk_untyped_keywords(schema: dict[str, Any]
     its `transform()` produces. A recording transformer isolates the gate: asserting on a provider's
     request would also pin that provider's `transform()` output for these nodes.
     """
+    schema = {'$defs': {'Payload': PAYLOAD}, **schema}
     inlining = _TitleRecordingTransformer(deepcopy(schema))
     keeping = _TitleRecordingTransformer(deepcopy(schema), prefer_inlined_defs=False)
 
@@ -652,6 +660,49 @@ def test_only_inlining_transformers_walk_untyped_keywords(schema: dict[str, Any]
 
     assert inlining.titles == ['A']
     assert keeping.titles == []
+
+
+INTEGER: dict[str, Any] = {'type': 'integer'}
+
+
+@pytest.mark.parametrize(
+    'schema',
+    [
+        pytest.param(
+            {
+                'properties': {
+                    'range': {
+                        'properties': {'min': INTEGER},
+                        'allOf': [{'properties': {'max': INTEGER}, 'required': ['max']}],
+                    }
+                }
+            },
+            id='no-ref',
+        ),
+        pytest.param({'properties': {'parent': {'$ref': '#'}}}, id='root-ref'),
+        pytest.param({'type': ['array', 'null'], 'items': {'$ref': '#'}}, id='root-ref-in-type-list'),
+        pytest.param(
+            {'definitions': {'Name': {'type': 'string'}}, 'items': {'$ref': '#/definitions/Name'}}, id='draft-7-ref'
+        ),
+        pytest.param({'properties': {'a': {'type': 'string'}, 'b': {'$ref': '#/properties/a'}}}, id='pointer-ref'),
+        pytest.param(
+            {
+                '$defs': {'Node': {'type': 'object', 'properties': {'root': {'$ref': '#'}}}},
+                'properties': {'node': {'$ref': '#/$defs/Node'}},
+            },
+            id='root-ref-in-referenced-def',
+        ),
+    ],
+)
+def test_inline_defs_leaves_untyped_keywords_it_cannot_or_need_not_inline(schema: dict[str, Any]):
+    """Keywords the node's `type` doesn't name go out as written unless they hold a `$ref` into `$defs`, all resolvable.
+
+    Walking them would reshape what needs no inlining (a single-member `allOf` collapses into its parent,
+    whose `properties` win, dropping `max`), and would raise on a `$ref` the walk can't resolve, which
+    the provider may resolve itself. Not a VCR test: cassettes match on method and URI, so a reshaped
+    request body would still replay.
+    """
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == {k: v for k, v in schema.items() if k != '$defs'}
 
 
 @pytest.mark.parametrize('prefer_inlined_defs', [True, False])
