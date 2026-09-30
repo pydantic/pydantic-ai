@@ -71,26 +71,26 @@ def _routed_profiles(model: AbstractModel | None) -> Iterator[tuple[str, ModelPr
     models is read instead. A wrapper's profile is the one its requests are prepared against --
     `TemporalModel`'s is whichever model `using_model()` selected, not `wrapped` -- so it is read
     too; when it raises because that model is a `FallbackModel`, only a plain forwarding wrapper's
-    `wrapped` is walked. Only a regular `Model` has a profile.
+    `wrapped` is walked. Any other model whose profile raises routes by rules this can't see, so it
+    yields nothing.
     """
     if isinstance(model, FallbackModel):
         for inner in model.models:
             yield from _routed_profiles(inner)
-    elif isinstance(model, WrapperModel):
+    elif isinstance(model, Model):
         try:
             profile = model.profile
         except NotImplementedError:
-            # Forwarded to a model with no profile. Only `WrapperModel`'s own `profile` is known to
-            # forward to `wrapped`; an override may select another model for this run
+            # No profile of its own. Only `WrapperModel`'s own `profile` is known to forward to
+            # `wrapped`; an override may select another model for this run
             # (`TemporalModel.using_model()` does), and nothing public says which, not even
-            # `model_id`, which two differently routed `FallbackModel`s can share. So an override
-            # says nothing rather than letting `wrapped` stand in for the model that runs.
-            if type(model).profile is WrapperModel.profile:
+            # `model_id`, which two differently routed `FallbackModel`s can share. A model that
+            # routes each request itself, as `FallbackModel` does, is as opaque. Both say nothing
+            # rather than letting a stand-in speak for the model that runs.
+            if isinstance(model, WrapperModel) and type(model).profile is WrapperModel.profile:
                 yield from _routed_profiles(model.wrapped)
         else:
             yield model.model_name, profile
-    elif isinstance(model, Model):
-        yield model.model_name, model.profile
 
 
 @dataclass(kw_only=True)
@@ -852,8 +852,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             # Read through `__dict__` because a run context rehydrated across a durable boundary
             # (`TemporalRunContext` inside an activity, where a `DynamicCapability` re-resolves this
             # toolset) deliberately doesn't carry the live model and raises on attribute access.
-            # `ctx.model` is an `AbstractModel`, and only a regular `Model` carries the profile that
-            # says whether the native tool supersedes the generator.
             model: AbstractModel | None = ctx.__dict__.get('model')
             # Which side of the swap runs is the request's to know, and each side drops what only
             # the other can express. Each model the request can reach decides by its own profile, so

@@ -10,6 +10,7 @@ import inspect
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import replace
+from functools import cached_property
 from typing import Any, Literal
 
 import httpx2
@@ -49,6 +50,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -58,6 +60,7 @@ from pydantic_ai.native_tools import (
     ImageGenerationTool,
 )
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import Tool
 from pydantic_ai.usage import RequestUsage
 
@@ -70,6 +73,44 @@ _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
 def _custom_local_tool(prompt: str) -> str:
     """A local tool of the user's own, for cases that only need `local` to be stated."""
     return 'image_url'  # pragma: no cover
+
+
+class _RouterModel(Model):
+    """Routes every request to another model and, like `FallbackModel`, has no profile of its own."""
+
+    def __init__(self, routed: Model):
+        super().__init__()
+        self.routed = routed
+
+    @property
+    def model_name(self) -> str:
+        return 'router'
+
+    @property
+    def system(self) -> str:
+        return 'router'
+
+    @cached_property
+    def profile(self) -> ModelProfile:
+        raise NotImplementedError('_RouterModel does not have its own model profile.')
+
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        return model_settings, model_request_parameters
+
+    def prepare_messages(
+        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+    ) -> list[ModelMessage]:
+        return messages
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        return await self.routed.request(messages, model_settings, model_request_parameters)
 
 
 with try_import() as openai_imports:
@@ -1125,12 +1166,21 @@ class TestImageGenerationCapability:
                 None,
                 id='wrapped-direct-only',
             ),
+        ]
+        + [
+            pytest.param(
+                agent_model,
+                ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high'),
+                None,
+                id=f'{agent_model}-native-only',
+            )
+            for agent_model in ('router', 'wrapped-router')
         ],
     )
     async def test_image_generation_dropped_settings_notice_reads_each_routed_model(
         self,
         allow_model_requests: None,
-        agent_model: Literal['fallback', 'wrapped-fallback', 'wrapped'],
+        agent_model: Literal['fallback', 'wrapped-fallback', 'wrapped', 'router', 'wrapped-router'],
         capability: ImageGeneration[object],
         notice: str | None,
     ):
@@ -1139,6 +1189,8 @@ class TestImageGenerationCapability:
         A `FallbackModel` has no profile, so each of its models is named for the setting it would drop,
         whether the `FallbackModel` is the agent's model or sits inside a wrapper; a wrapper over a
         regular model is read through its own profile, which drops `quality` but applies `dimensions`.
+        Any other model without a profile routes by rules the notice can't see, so it says nothing for
+        it, bare or wrapped, and the run goes ahead even though the model it routes to drops `quality`.
         The notice fires while the toolset is prepared, before any request, so this is not a VCR test.
         """
 
@@ -1158,6 +1210,8 @@ class TestImageGenerationCapability:
             'fallback': fallback_model,
             'wrapped-fallback': WrapperModel(fallback_model),
             'wrapped': WrapperModel(no_native),
+            'router': _RouterModel(no_native),
+            'wrapped-router': WrapperModel(_RouterModel(no_native)),
         }
         agent = Agent(models[agent_model], capabilities=[capability])
 

@@ -83,8 +83,9 @@ share, so pass `native=False` when you need either to be guaranteed: with the de
 generates images natively takes the native path, which has no equivalent for them, and the request warns that the
 settings went unapplied. Under a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each of its models takes
 the path its own profile selects, and each of them that would drop a setting gets a warning naming it. Under a
-[`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] whose current model is a `FallbackModel`, no
-warning is given, since nothing public says which model the agent has selected.
+[`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] whose current model is a `FallbackModel`, or
+under a model of your own that routes requests without a profile of its own, no warning is given, since nothing
+public says which model a request reaches.
 Native-tool-only settings such as
 `quality` and `output_format` do not apply to a direct fallback; configure their
 provider-prefixed equivalents on the generator. `action='edit'` and `image_model` do not apply either: the direct
