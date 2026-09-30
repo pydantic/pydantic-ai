@@ -89,12 +89,15 @@ class TestConcurrencyLimiter:
         limiter.release()
         assert limiter.running_count == 0
 
-    async def test_cancel_right_after_taking_a_freed_slot(self):
+    async def test_cancel_right_after_taking_a_freed_slot(self, anyio_backend: str):
         """A task cancelled right after taking a slot that was freed while it queued gives the slot back.
 
         Uses native `Task.cancel()`, which reaches the acquire's post-grant checkpoint that an anyio
         cancel scope's shielding would not.
         """
+        if anyio_backend != 'asyncio':
+            pytest.skip('This test exercises native asyncio task cancellation')
+
         limiter = ConcurrencyLimiter(max_running=1)
         await limiter.acquire('holder')
 
@@ -585,6 +588,34 @@ class TestAgentWithSharedLimiter:
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             with pytest.raises(UserError, match='same concurrency limiter'):
                 await agent.run('test', usage_limits=UsageLimits(count_tokens_before_request=True))
+
+        assert limiter.running_count == 0
+
+    @pytest.mark.parametrize('stream', [False, True])
+    @pytest.mark.parametrize('fallback', [False, True])
+    async def test_agent_rejects_nested_model_wrappers_with_shared_limiter(self, stream: bool, fallback: bool):
+        limiter = ConcurrencyLimiter(max_running=1)
+        inner = ConcurrencyLimitedModel(TestModel(), limiter=limiter)
+        wrapped = FallbackModel(inner, TestModel()) if fallback else inner
+        agent = Agent(ConcurrencyLimitedModel(wrapped, limiter=limiter))
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            with pytest.raises(UserError, match='same concurrency limiter'):
+                if stream:
+                    async with agent.run_stream('test') as result:
+                        await result.get_output()
+                else:
+                    await agent.run('test')
+
+        assert limiter.running_count == 0
+
+    async def test_agent_allows_unused_nested_model_limiter_in_fallback(self):
+        limiter = ConcurrencyLimiter(max_running=1)
+        fallback = FallbackModel(TestModel(), ConcurrencyLimitedModel(TestModel(), limiter=limiter))
+        agent = Agent(ConcurrencyLimitedModel(fallback, limiter=limiter))
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await agent.run('test')
 
         assert limiter.running_count == 0
 
