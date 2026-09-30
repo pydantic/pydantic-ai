@@ -262,7 +262,8 @@ async def test_blocks_injection_past_large_array_threshold() -> None:
 # --- Through the public Agent surface -------------------------------------
 
 
-async def test_agent_blocks_injected_tool_result() -> None:
+@pytest.mark.usefixtures('instrument_all_agents')
+async def test_agent_blocks_injected_tool_result(capfire: CaptureLogfire) -> None:
     agent: Agent[None, str] = Agent(
         TestModel(call_tools=['fetch']), capabilities=[PromptInjectionDefender(block_high_risk=True)]
     )
@@ -276,6 +277,9 @@ async def test_agent_blocks_injected_tool_result() -> None:
     assert len(returns) == 1
     assert isinstance(returns[0].content, str)
     assert 'withheld' in returns[0].content
+    spans = _detection_spans(capfire)
+    assert len(spans) == 1
+    assert spans[0]['attributes']['prompt_injection.blocked'] is True
 
 
 async def test_agent_passes_clean_result_through() -> None:
