@@ -193,7 +193,9 @@ Gotchas:
 ## PromptInjectionDefender
 
 Classifies results of locally executed tools with StackOne `defender` after the tool returns.
-Report-only by default; `block_high_risk=True` replaces a rejected result with a notice.
+Report-only by default: each flagged verdict emits a `prompt_injection_detected` span (verdict
+fields only, never tool content) on instrumented runs. `block_high_risk=True` replaces a rejected
+result with a notice.
 
 ```bash
 uv add "pydantic-ai-harness[prompt-injection-defender]"     # Python 3.11+

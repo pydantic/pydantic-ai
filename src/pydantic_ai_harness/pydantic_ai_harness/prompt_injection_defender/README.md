@@ -5,9 +5,10 @@ prompt injection using [defender](https://github.com/StackOneHQ/defender-py) by
 StackOne. Use it when tools return untrusted text such as emails, tickets,
 documents, or web content.
 
-Results pass through unchanged by default. Set `block_high_risk=True` to replace a
-result that the built-in defense rejects with a short notice. Use `on_detection`
-to observe flagged verdicts.
+Results pass through unchanged by default, and every flagged verdict is recorded
+as a `prompt_injection_detected` span on instrumented runs. Set
+`block_high_risk=True` to replace a result that the built-in defense rejects with
+a short notice. Use `on_detection` to act on flagged verdicts in code.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/prompt_injection_defender/)
 
@@ -113,6 +114,15 @@ def log_detection(ctx: RunContext[None], call: ToolCallPart, verdict: DefenseRes
 
 agent = Agent(capabilities=[PromptInjectionDefender(on_detection=log_detection)])
 ```
+
+The callback runs inside a `prompt_injection_detected` span, which is emitted for
+every flagged verdict whether or not `on_detection` is set. On runs with
+[instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) enabled, the span records the tool name and call ID
+(`gen_ai.tool.name`, `gen_ai.tool.call.id`) and the verdict: `prompt_injection.blocked`,
+`prompt_injection.risk_level`, `prompt_injection.detections` (matched pattern names),
+`prompt_injection.fields_sanitized` (field paths), and `prompt_injection.tier2_score`
+when semantic detection ran. The tool result itself is never recorded. Without
+instrumentation, no span is emitted.
 
 When a result is rejected, the replacement `ToolReturn` also carries a diagnostic
 summary in metadata under `prompt_injection`. Metadata is available to the

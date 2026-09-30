@@ -8,6 +8,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any
 
 import anyio.to_thread
+from opentelemetry.util.types import AttributeValue
 from pydantic_core import to_jsonable_python
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering
@@ -35,6 +36,9 @@ _METADATA_KEY = 'prompt_injection'
 
 _ESCALATED_RISKS = ('high', 'critical')
 """Risk levels that indicate the defender escalated beyond its `'medium'` starting level."""
+
+_SPAN_NAME = 'prompt_injection_detected'
+"""Static, low-cardinality span name emitted for every flagged verdict."""
 
 
 OnDetection = Callable[[RunContext[AgentDepsT], ToolCallPart, DefenseResult], None | Awaitable[None]]
@@ -71,6 +75,21 @@ def _diagnostics(verdict: DefenseResult) -> dict[str, object]:
     }
 
 
+def _span_attributes(call: ToolCallPart, verdict: DefenseResult) -> dict[str, AttributeValue]:
+    """Verdict fields for the detection span. Tool content (`sanitized`, `max_sentence`) is never recorded."""
+    attributes: dict[str, AttributeValue] = {
+        'gen_ai.tool.name': call.tool_name,
+        'gen_ai.tool.call.id': call.tool_call_id,
+        'prompt_injection.blocked': not verdict.allowed,
+        'prompt_injection.risk_level': verdict.risk_level,
+        'prompt_injection.detections': list(verdict.detections),
+        'prompt_injection.fields_sanitized': list(verdict.fields_sanitized),
+    }
+    if verdict.tier2_score is not None:
+        attributes['prompt_injection.tier2_score'] = verdict.tier2_score
+    return attributes
+
+
 def _payload(value: object) -> object:
     """Put a bare string under Defender's standard `content` field."""
     return {'content': value} if isinstance(value, str) else to_jsonable_python(value, fallback=str)
@@ -86,7 +105,8 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     `stackone-defender` after the tool returns. A result passes through unchanged unless
     the defense rejects it. With `block_high_risk=True`, the built-in defense rejects
     detected high or critical risk results, which are replaced with `blocked_message` so
-    their content never reaches the model. Every flagged verdict is reported through
+    their content never reaches the model. Every flagged verdict is recorded as a
+    `prompt_injection_detected` span on instrumented runs and reported through
     `on_detection`, and a withheld result carries a diagnostics summary on
     `ToolReturn.metadata` (not visible to the model).
 
@@ -137,7 +157,11 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     """Which tools this capability classifies. Non-matching tools always pass through."""
 
     on_detection: OnDetection[AgentDepsT] | None = None
-    """Called for each verdict with detections, sanitization, rejection, or escalated risk."""
+    """Called for each verdict with detections, sanitization, rejection, or escalated risk.
+
+    Runs inside the `prompt_injection_detected` span, which is emitted for every flagged verdict
+    whether or not this is set.
+    """
 
     blocked_message: str = _DEFAULT_BLOCKED_MESSAGE
     """Replacement text the model sees for a withheld result.
@@ -233,8 +257,10 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         return unchanged if blocked is None else blocked
 
     async def _notify(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, verdict: DefenseResult) -> None:
-        if self.on_detection is None:
-            return
-        outcome = self.on_detection(ctx, call, verdict)
-        if isinstance(outcome, Awaitable):
-            await outcome
+        # `ctx.tracer` is a no-op tracer on non-instrumented runs, so this costs nothing there.
+        with ctx.tracer.start_as_current_span(_SPAN_NAME, attributes=_span_attributes(call, verdict)):
+            if self.on_detection is None:
+                return
+            outcome = self.on_detection(ctx, call, verdict)
+            if isinstance(outcome, Awaitable):
+                await outcome

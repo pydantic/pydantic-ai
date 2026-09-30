@@ -6,6 +6,9 @@ import importlib.util
 from typing import Any
 
 import pytest
+from dirty_equals import IsStr
+from inline_snapshot import snapshot
+from logfire.testing import CaptureLogfire
 from stackone_defender import DefenseResult, PromptDefense
 
 from pydantic_ai import Agent
@@ -284,3 +287,69 @@ async def test_agent_passes_clean_result_through() -> None:
     result = await agent.run('go')
     returns = [p for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
     assert returns[0].content == {'body': 'quarterly numbers'}
+
+
+# --- Telemetry --------------------------------------------------------------
+
+
+def _detection_spans(capfire: CaptureLogfire) -> list[dict[str, Any]]:
+    return [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'prompt_injection_detected']
+
+
+def _fetch_agent(body: str) -> Agent[None, str]:
+    """A bare `PromptInjectionDefender()` on an instrumented agent whose tool returns `body`."""
+    agent: Agent[None, str] = Agent(TestModel(call_tools=['fetch']), capabilities=[PromptInjectionDefender()])
+
+    @agent.tool_plain
+    def fetch() -> dict[str, str]:
+        return {'body': body}
+
+    return agent
+
+
+@pytest.mark.usefixtures('instrument_all_agents')
+async def test_default_defender_records_detection_span(capfire: CaptureLogfire) -> None:
+    await _fetch_agent(INJECTION).run('go')
+    spans = _detection_spans(capfire)
+    assert len(spans) == 1
+    attributes = spans[0]['attributes']
+    assert {
+        key: value for key, value in attributes.items() if key.startswith(('gen_ai.tool.', 'prompt_injection.'))
+    } == snapshot(
+        {
+            'gen_ai.tool.name': 'fetch',
+            'gen_ai.tool.call.id': IsStr(),
+            'prompt_injection.blocked': False,
+            'prompt_injection.risk_level': 'high',
+            'prompt_injection.detections': ('ignore_previous',),
+            'prompt_injection.fields_sanitized': ('body',),
+        }
+    )
+    # The flagged tool content itself is never recorded.
+    assert INJECTION not in str(attributes)
+
+
+@pytest.mark.usefixtures('instrument_all_agents')
+async def test_clean_result_records_no_detection_span(capfire: CaptureLogfire) -> None:
+    await _fetch_agent('quarterly numbers').run('go')
+    assert _detection_spans(capfire) == []
+
+
+@pytest.mark.usefixtures('instrument_all_agents')
+async def test_detection_span_records_tier2_score(capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def semantic_verdict(self: PromptDefense, value: object, tool_name: str) -> DefenseResult:
+        return DefenseResult(
+            allowed=True,
+            risk_level='high',
+            sanitized=value,
+            detections=[],
+            fields_sanitized=[],
+            patterns_by_field={},
+            tier2_score=0.93,
+        )
+
+    monkeypatch.setattr(PromptDefense, 'defend_tool_result_async', semantic_verdict)
+    await _fetch_agent('quarterly numbers').run('go')
+    spans = _detection_spans(capfire)
+    assert len(spans) == 1
+    assert spans[0]['attributes']['prompt_injection.tier2_score'] == 0.93
