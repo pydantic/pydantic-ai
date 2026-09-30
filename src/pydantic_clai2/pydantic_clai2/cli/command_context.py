@@ -11,6 +11,7 @@ from pydantic_clai2.commands import Command
 from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui import telemetry
 
 
 @runtime_checkable
@@ -92,6 +93,10 @@ class CommandContext:
     def _apply(self, key: str, settings: Settings) -> None:
         self.settings = settings
         self.apply_setting(key, settings)
+        # Every setting is a model name, a display choice, a flag, or a number: nothing secret.
+        value: object = getattr(settings, SETTING_FIELDS[key])
+        shown = value if isinstance(value, str | int | float | bool) else 'null'
+        telemetry.record('setting {setting} changed', setting=key, value=shown)
 
     def _when(self, key: str) -> str:
         when = 'Applies at next startup.' if key == 'display.splash' else 'Applied.'

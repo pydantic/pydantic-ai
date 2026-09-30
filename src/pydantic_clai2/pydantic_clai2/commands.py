@@ -17,6 +17,7 @@ from termflow.tui.completion import (
 from pydantic_ai.models import known_model_names
 from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_clai2.ui.rendering.theme import names as theme_names
 
@@ -119,9 +120,14 @@ class Commands(Completer):
         return command is not None and command.during_turn
 
     async def execute_async(self, text: str) -> str:
-        """Await asynchronous plugin commands without blocking the event loop."""
-        result = self.execute(text)
-        return result if isinstance(result, str) else await result
+        """Await asynchronous plugin commands without blocking the event loop.
+
+        The UI telemetry span names the command and counts its arguments; the arguments stay out.
+        """
+        name, *arguments = text.removeprefix('/').split() or ['help']
+        with telemetry.span('command /{command}', command=name, arguments=len(arguments)):
+            result = self.execute(text)
+            return result if isinstance(result, str) else await result
 
     def get_completions(self, document: Document, complete_event: CompleteEvent) -> Iterator[Completion]:
         """Complete slash commands, contextual arguments, and @file paths."""

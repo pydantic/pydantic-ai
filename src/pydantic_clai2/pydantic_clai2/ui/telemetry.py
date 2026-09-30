@@ -1,0 +1,110 @@
+"""UI interaction telemetry: shared UI helpers say what the user did, and a subscribed Logfire instance exports it.
+
+Nothing is recorded until a sink subscribes. The built-in `logfire` plugin subscribes its own instance when
+its `ui_events` setting is on, and unsubscribes before it shuts that instance down. Every span and log is
+tagged `clai2-ui`.
+
+Instrument the shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the plugin loader,
+`/keys`, the prompt editor) rather than individual menus, so a new menu is covered without extra code.
+Attributes name what was chosen (a command, a menu, a setting, a plugin, a key's name), never what was typed:
+prompt text, secrets, and free-text values stay out.
+"""
+
+from collections.abc import Callable, Generator
+from contextlib import ExitStack, contextmanager
+from functools import partial
+
+import logfire
+from opentelemetry.trace import SpanKind
+
+Attribute = str | int | float | bool
+TAG = 'clai2-ui'
+"""The tag on every UI span and log, for filtering them apart from agent traces."""
+
+NAMES = frozenset({'command', 'menu', 'field', 'choice', 'setting', 'plugin', 'label', 'key_name', 'new_key_name'})
+"""Attributes that only ever hold names and listed choices, which `keep_names` exempts from scrubbing."""
+
+_sinks: list[logfire.Logfire] = []
+
+
+def subscribe(sink: logfire.Logfire) -> Callable[[], None]:
+    """Send UI telemetry to `sink` until the returned function is called; calling it again does nothing."""
+    _sinks.append(sink)
+
+    def unsubscribe() -> None:
+        if sink in _sinks:
+            _sinks.remove(sink)
+
+    return unsubscribe
+
+
+def record(msg_template: str, /, **attributes: Attribute) -> None:
+    """Log one UI interaction, such as a setting change or a key saved, to every sink."""
+    for sink in list(_sinks):
+        sink.log('info', msg_template, attributes=dict(attributes), tags=[TAG])
+
+
+class UiSpan:
+    """The open span in every sink; `set` adds what is only known at the end, such as whether it was cancelled."""
+
+    def __init__(self, spans: list[logfire.LogfireSpan]) -> None:
+        """Wrap one span per sink; none when nothing is subscribed."""
+        self._spans = spans
+
+    def set(self, key: str, value: Attribute) -> None:
+        """Set `key` on every sink's span."""
+        for span in self._spans:
+            span.set_attribute(key, value)
+
+
+@contextmanager
+def span(msg_template: str, /, **attributes: Attribute) -> Generator[UiSpan]:
+    """Time a UI interaction that contains others, such as a command that opens a menu.
+
+    Spans nest: a menu opened by a command, and the setting it changes, land under that command's span.
+    An exception is recorded on the span and propagates.
+    """
+    with ExitStack() as stack:
+        yield UiSpan([stack.enter_context(_open(sink, msg_template, attributes)) for sink in list(_sinks)])
+
+
+def _open(sink: logfire.Logfire, msg_template: str, attributes: dict[str, Attribute]) -> logfire.LogfireSpan:
+    # Every underscored option is spelled out, so no attribute can be mistaken for one.
+    return sink.span(
+        msg_template,
+        _tags=[TAG],
+        _span_name=None,
+        _level=None,
+        _links=(),
+        _span_kind=SpanKind.INTERNAL,
+        **attributes,
+    )
+
+
+def operation_name(operation: object) -> str:
+    """A stable, readable id for the callable behind a menu, such as `ui.menus.model_picker:model_command`.
+
+    Menus are opened through lambdas and partials, so the id is where that callable was written:
+    `<locals>` and `<lambda>` are dropped, and so is the `pydantic_clai2.` prefix.
+    """
+    while isinstance(operation, partial):
+        operation = operation.func
+    module: object = getattr(operation, '__module__', None)
+    qualname: object = getattr(operation, '__qualname__', None)
+    if not isinstance(qualname, str):
+        qualname = type(operation).__qualname__
+    path = '.'.join(part for part in qualname.split('.') if part not in ('<locals>', '<lambda>'))
+    prefix = module.removeprefix('pydantic_clai2.') if isinstance(module, str) else ''
+    return f'{prefix}:{path}' if prefix else path
+
+
+def keep_names(match: logfire.ScrubMatch) -> object:
+    """A Logfire scrubbing callback that keeps UI telemetry's names, which can look like secrets but are not.
+
+    A setting such as `sessions.naming`, a key's name such as `OPENAI_API_KEY`, or a field such as `auth` trips
+    Logfire's default patterns. Only the top-level `NAMES` attributes, and the message placeholders filled from
+    them, are kept; everything else, including every agent span's content, is scrubbed as usual.
+    """
+    if len(match.path) == 2 and match.path[0] in ('attributes', 'message') and match.path[1] in NAMES:
+        return match.value
+    return None
