@@ -361,10 +361,13 @@ WAIT_BEFORE_REPLY_CONTENT = Finding(
 
 
 def _reply_taken_by_earlier_response(sim: Simulation, violation: InvariantViolation) -> bool:
-    """A response already under way when the input arrived ended the wait for the input's own reply."""
+    """A response already under way when the input arrived ended the wait for the input's own reply.
+
+    Or, for a wait on a tool round: a response the provider started on its own ended it before the round's answer.
+    """
     input_ = sim.truth.input(violation.context.get('input', ''))
     if input_ is None:
-        return False
+        return _tool_round_reply_taken(sim, violation)
     # Under way as far as the client could see: it hadn't read the response's end when the input went out.
     return any(
         response.seq_start < input_.seq
@@ -378,11 +381,27 @@ def _reply_taken_by_earlier_response(sim: Simulation, violation: InvariantViolat
     )
 
 
+def _tool_round_reply_taken(sim: Simulation, violation: InvariantViolation) -> bool:
+    responses = sim.truth.responses.values()
+    round_ = sim.truth.responses.get(violation.context.get('response', ''))
+    if round_ is None or not round_.tool_calls:
+        return False
+    answer = next((response for response in responses if set(round_.tool_calls) & set(response.answers)), None)
+    return any(
+        response.trigger == 'auto'
+        and response.seq_start > round_.seq_start
+        and response is not answer
+        and (answer is None or (response.seq_end is not None and response.seq_end < answer.seq_start))
+        for response in responses
+    )
+
+
 RESERVATION_TAKEN_BY_OTHER_RESPONSE = Finding(
     id='8763c #3',
     title=(
         "a response already under way when a turn was sent (server VAD, a GPT-Live delegation) takes that turn's "
-        "reservation, so `wait_for_reply()` returns when it ends, before the turn's own reply"
+        "reservation, so `wait_for_reply()` returns when it ends, before the turn's own reply (likewise a response "
+        'the provider starts on its own while a tool round is owed its answer)'
     ),
     tracked_by='reply obligations resolved only by the response that answers them',
     evidence='recorded',
@@ -777,14 +796,17 @@ TERMINAL_DISCARDED_WITH_THE_CONNECTION = Finding(
 
 
 def _barged_in_without_a_vad_reply(sim: Simulation) -> bool:
-    """Server VAD, set not to answer, cut off a response while a request was deferred behind it."""
+    """Server VAD, set not to answer, cut off a response while a request was deferred behind it (or a tool result awaited its reply)."""
     options = getattr(sim, 'openai', None)
     return (
         options is not None
         and options.turn_detection == 'server_vad'
         and options.vad_interrupts
         and not options.vad_responds
-        and getattr(sim, 'deferred_requests', 0) > 0
+        and (
+            getattr(sim, 'deferred_requests', 0) > 0
+            or any(input_.kind == 'tool_output' and input_.answered_by is None for input_ in sim.truth.inputs)
+        )
         and any(response.status == 'cancelled' for response in sim.truth.responses.values())
         and bool(sim.truth.speech_started)
     )
@@ -793,8 +815,9 @@ def _barged_in_without_a_vad_reply(sim: Simulation) -> bool:
 BARGE_IN_WITHOUT_A_VAD_REPLY = Finding(
     id='SIM-23',
     title=(
-        "with server VAD's `create_response` off, a request deferred behind a response the user barged in on is "
-        'dropped as if VAD would answer the turn, but nothing does, so `wait_for_reply()` hangs'
+        "with server VAD's `create_response` off, a request deferred behind a response the user barged in on (or the "
+        "reply to that response's tool results) is dropped as if VAD would answer the turn, but nothing does, so "
+        '`wait_for_reply()` hangs'
     ),
     tracked_by='a request dropped for a barge-in only when server VAD answers the turn; found by this simulator',
     evidence='simulated',
@@ -900,17 +923,33 @@ INPUT_HELD_BEHIND_A_LOST_REPLY = Finding(
     matches=_sent_during_a_lost_reply,
 )
 
+
+def _send_failed_across_reconnect(sim: Simulation, violation: InvariantViolation) -> bool:
+    from pydantic_ai.realtime import RealtimeError
+
+    if violation.code == 'send.failed_across_reconnect':
+        return violation.context.get('operation') != 'send_audio'
+    error = sim.consumer_error
+    return (
+        isinstance(error, RealtimeError)
+        and error.message.startswith('Realtime connection failed while sending')
+        and sim.truth.connections > 1
+    )
+
+
 NON_AUDIO_SEND_DURING_RECONNECT = Finding(
     id='G3b',
     title=(
         'a send other than audio (a typed turn, context, an image, `clear_audio`) that hits the dropped socket raises '
-        '`RealtimeError` although the reconnect succeeds: #8806 drops audio sent mid-reconnect, but nothing else'
+        '`RealtimeError` although the reconnect succeeds: #8806 drops audio sent mid-reconnect, but nothing else. '
+        'When it is a tool result the session sends, the error ends the event stream over a re-dialed connection, '
+        'and a reply asked for afterwards is waited on forever'
     ),
     tracked_by='an ordered outbox that holds sends across a re-dial (#8806 covered audio only)',
     evidence='live-stress',
-    codes=frozenset({'send.failed_across_reconnect'}),
+    codes=frozenset({'send.failed_across_reconnect', 'wait.hang'}),
     providers=OPENAI_PROTOCOL | GEMINI,
-    matches=lambda sim, violation: violation.context.get('operation') != 'send_audio',
+    matches=_send_failed_across_reconnect,
 )
 
 

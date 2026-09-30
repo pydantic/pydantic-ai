@@ -1236,6 +1236,50 @@ def test_scenario_gemini_async_speech_in_flight_at_the_result_is_accepted() -> N
         assert '8760-accepted' in {finding_id for finding_id, _ in s.checker.known_hits}
 
 
+def test_scenario_tool_result_awaiting_its_reply_when_barged_in_on_without_a_vad_reply() -> None:
+    """SIM-23 also drops the reply a cancelled response's tool results were waiting for."""
+    sim = OpenAISimulation(
+        strict=False,
+        openai=OpenAIOptions(dialect='azure', transcription=False, vad_interrupts=True, vad_responds=False),
+    )
+    with sim as s:
+        s.send_image(respond=True)
+        s.call_tool()
+        s.tick(ticks=0)
+        s.tick(ticks=0)
+        s.speech_start(deliver=False)
+        s.settle()
+        assert ('SIM-23', 'wait.hang') in s.checker.known_hits
+
+
+def test_scenario_gemini_tool_result_sent_on_a_dropped_connection() -> None:
+    """G3b: the tool result the session sends hits the dropped socket, which ends the event stream over the re-dial."""
+    with GeminiSimulation(strict=False) as s:
+        s.send_text()
+        s.speak(deliver=False)
+        s.call_tools(deliver=False)
+        s.deliver()
+        s.drop()
+        s.settle()
+        s.send_text()
+        s.settle()
+        assert ('G3b', 'wait.hang') in s.checker.known_hits
+
+
+def test_scenario_live_delegation_ends_the_wait_on_a_tool_round() -> None:
+    """8763c #3: a delegation the model starts on its own ends a wait owed the tool round's answer."""
+    with LiveSimulation(strict=False) as s:
+        s.delegate(deliver=False)
+        s.backend_call(deliver=False)
+        s.wait_for_reply()
+        s.advance_time(0.1)
+        s.wait_for_reply()
+        s.backend_finish(deliver=False)
+        s.delegate(deliver=False)
+        s.settle()
+        assert ('8763c #3', 'wait.early') in s.checker.known_hits
+
+
 def test_every_finding_is_pinned() -> None:
     """Every known bug has a scenario that fails with it until the fix lands; accepted limitations have none."""
     assert {finding.id for finding in KNOWN_FINDINGS if not finding.accepted} == PINNED
