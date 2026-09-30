@@ -25,7 +25,7 @@ env:
   GIT_CONFIG_VALUE_0: https://github.com/
   # Pin the testmon coverage cache while its upstream integration is evaluated.
   # Install it into the synced environment; uv --with rebuilds workspace packages in a temporary overlay.
-  TESTMON_PACKAGE: "git+https://github.com/Kludex/pytest-testmon@9bb34b0ccbccbca4d38d760720c29f8a8678d84d"
+  TESTMON_PACKAGE: "git+https://github.com/Kludex/pytest-testmon@67624c7d1a013a3c56e9c4c8813cb3befc07d7e7"
 
 permissions:
   contents: read
