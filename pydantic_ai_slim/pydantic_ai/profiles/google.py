@@ -188,6 +188,9 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # listed support the full `GOOGLE_THINKING_LEVELS` scale.
     # https://ai.google.dev/gemini-api/docs/thinking
     ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
+    # https://ai.google.dev/gemini-api/docs/image-generation documents `minimal, high` for both
+    # 3.1 image models.
+    ('gemini-3.1-flash-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
     ('gemini-3.8-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
     ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),

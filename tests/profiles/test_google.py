@@ -268,8 +268,9 @@ def test_model_profile_image_model():
         ('gemini-3.8-flash', False),
         ('gemini-3-pro-preview', False),
         ('gemini-3.1-pro-preview', False),
-        # `gemini-3.1-flash-lite-image` does accept `MINIMAL` — its levels are `minimal, high`.
+        # The 3.1 image models do accept `MINIMAL` — their levels are `minimal, high`.
         ('gemini-3.1-flash-lite-image', True),
+        ('gemini-3.1-flash-image', True),
         ('gemini-3-flash-preview', True),
     ],
 )
@@ -289,6 +290,8 @@ def test_model_profile_minimal_thinking_level_matches_model_prefix():
     ('model_name', 'expected'),
     [
         ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
+        ('gemini-3.1-flash-image', frozenset(('MINIMAL', 'HIGH'))),
+        ('gemini-3.1-flash-image-preview', frozenset(('MINIMAL', 'HIGH'))),
         ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
         ('gemini-3.8-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
         ('gemini-3.1-pro-preview', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
