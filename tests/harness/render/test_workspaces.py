@@ -10,14 +10,11 @@ from render import TaskContext, Workflows
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceReadOnlyError
 from pydantic_ai_harness import RenderWorkflows
-from pydantic_ai_harness.memory import FileStore, Memory
 
 from .conftest import RecordingTaskContext
-from .test_memory_and_tracing import memory_model
 
 
 @pytest.mark.parametrize('durable', [False, True])
@@ -80,23 +77,3 @@ async def test_worker_preserves_read_only_workspace_policy(tmp_path: Path) -> No
     assert inspect.isawaitable(pending)
     assert 'refused' in await pending
     assert not (tmp_path / 'blocked.txt').exists()
-
-
-async def test_memory_file_store_uses_worker_workspace(tmp_path: Path) -> None:
-    runtime = RenderWorkflows[None](Workflows())
-    agent = Agent[None, str](
-        FunctionModel(memory_model),
-        deps_type=type(None),
-        name='workspace-memory',
-        capabilities=[LocalWorkspace(tmp_path), Memory(store=FileStore('memory'), inject_memory=False), runtime],
-    )
-
-    @runtime.task
-    async def entry(ctx: TaskContext) -> str:
-        del ctx
-        return (await agent.run('remember')).output
-
-    pending = entry.func(RecordingTaskContext())
-    assert inspect.isawaitable(pending)
-    assert 'remembered' in await pending
-    assert list(tmp_path.rglob('MEMORY.md'))

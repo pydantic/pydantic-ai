@@ -20,7 +20,6 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import RenderWorkflows
-from pydantic_ai_harness.memory import Memory, SqliteMemoryStore
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 
 
@@ -29,15 +28,9 @@ class RuntimeDeps(TypedDict):
     controller_pid: int
 
 
-class MemoryRuntimeDeps(TypedDict):
-    database: str
-    tenant: str
-
-
-class MemoryTaskResult(BaseModel):
+class TracingTaskResult(BaseModel):
     root_pid: int
     tool_pid: int
-    content: str
     span_exported: bool
 
 
@@ -271,58 +264,46 @@ async def run_local_runtime_agent(ctx: TaskContext, prompt: str, deps: RuntimeDe
     return TypeAdapter(dict[str, object]).validate_python(dumped)
 
 
-def memory_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    """Write and read memory in separate tasks, then exercise the public tracer."""
+def tracing_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Exercise the public tracer in a separate tool worker."""
     del info
     returned = _tool_returns(messages)
-    if trace := returned.get('trace_memory'):
+    if trace := returned.get('trace_worker'):
         return ModelResponse(parts=[TextPart(str(trace.content))])
-    if read := returned.get('read_memory'):
-        return ModelResponse(parts=[ToolCallPart('trace_memory', {'content': str(read.content)})])
-    if 'write_memory' in returned:
-        return ModelResponse(parts=[ToolCallPart('read_memory', {'file': 'MEMORY.md'})])
-    return ModelResponse(parts=[ToolCallPart('write_memory', {'content': 'process-shared memory'})])
+    return ModelResponse(parts=[ToolCallPart('trace_worker', {})])
 
 
-memory_exporter = InMemorySpanExporter()
-memory_provider = TracerProvider()
-memory_provider.add_span_processor(SimpleSpanProcessor(memory_exporter))
-memory_runtime = RenderWorkflows[MemoryRuntimeDeps](workflows, deps_type=MemoryRuntimeDeps)
-memory_agent = Agent(
-    FunctionModel(memory_model, model_name='runtime-memory-model'),
-    name='runtime-memory',
-    deps_type=MemoryRuntimeDeps,
-    capabilities=[
-        Memory(
-            store_resolver=lambda ctx: SqliteMemoryStore(database=ctx.deps['database']),
-            namespace=lambda ctx: ctx.deps['tenant'],
-        ),
-        memory_runtime,
-    ],
+tracing_exporter = InMemorySpanExporter()
+tracing_provider = TracerProvider()
+tracing_provider.add_span_processor(SimpleSpanProcessor(tracing_exporter))
+tracing_runtime = RenderWorkflows[None](workflows)
+tracing_agent = Agent[None, str](
+    FunctionModel(tracing_model, model_name='runtime-tracing-model'),
+    name='runtime-tracing',
+    deps_type=type(None),
+    capabilities=[tracing_runtime],
 )
-memory_agent.instrument = InstrumentationSettings(tracer_provider=memory_provider, include_content=False)
+tracing_agent.instrument = InstrumentationSettings(tracer_provider=tracing_provider, include_content=False)
 
 
-@memory_agent.tool
-async def trace_memory(ctx: RunContext[MemoryRuntimeDeps], content: str) -> str:
+@tracing_agent.tool
+async def trace_worker(ctx: RunContext[None]) -> str:
     """Return evidence that a worker-local span reached its configured exporter."""
-    with ctx.tracer.start_as_current_span('memory.worker') as span:
+    with ctx.tracer.start_as_current_span('render.worker') as span:
         span.set_attribute('worker.pid', os.getpid())
-    return MemoryTaskResult(
+    return TracingTaskResult(
         root_pid=0,
         tool_pid=os.getpid(),
-        content=content,
-        span_exported=any(span.name == 'memory.worker' for span in memory_exporter.get_finished_spans()),
+        span_exported=any(span.name == 'render.worker' for span in tracing_exporter.get_finished_spans()),
     ).model_dump_json()
 
 
-@memory_runtime.task(name='run-local-memory-agent')
-async def run_local_memory_agent(ctx: TaskContext, deps: MemoryRuntimeDeps) -> dict[str, object]:
-    """Exercise memory and tracing with a shared SQLite file in the local runtime."""
+@tracing_runtime.task(name='run-local-tracing-agent')
+async def run_local_tracing_agent(ctx: TaskContext) -> dict[str, object]:
+    """Exercise tracing in a tool task that runs outside the entry process."""
     del ctx
-    validated_deps = TypeAdapter(MemoryRuntimeDeps).validate_python(deps)
-    result = await memory_agent.run('remember and read', deps=validated_deps)
-    evidence = MemoryTaskResult.model_validate_json(result.output)
+    result = await tracing_agent.run('trace the worker')
+    evidence = TracingTaskResult.model_validate_json(result.output)
     evidence.root_pid = os.getpid()
     return evidence.model_dump(mode='json')
 

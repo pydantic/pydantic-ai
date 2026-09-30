@@ -1,4 +1,4 @@
-"""Memory and public tool tracing across the Render JSON boundary."""
+"""Public tool tracing across the Render JSON boundary."""
 
 from __future__ import annotations
 
@@ -11,75 +11,11 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from render.workflows import TaskContext, Workflows
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.memory import Memory, MemoryToolset
 from pydantic_ai_harness.render import RenderWorkflows
 
 from .conftest import RecordingTaskContext
-
-
-def memory_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    del info
-    returned = {
-        part.tool_name: part.content
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolReturnPart)
-    }
-    if 'read_memory' in returned:
-        return ModelResponse(parts=[TextPart(str(returned['read_memory']))])
-    if 'write_memory' in returned:
-        return ModelResponse(parts=[ToolCallPart('read_memory', {'file': 'MEMORY.md'}, tool_call_id='read')])
-    return ModelResponse(parts=[ToolCallPart('write_memory', {'content': 'remembered'}, tool_call_id='write')])
-
-
-@pytest.mark.parametrize('inject_memory', [True, False])
-async def test_constructor_memory_runs_with_remote_tools_and_snapshots(inject_memory: bool) -> None:
-    runtime = RenderWorkflows[None](Workflows())
-    agent = Agent(
-        FunctionModel(memory_model),
-        name='memory-agent',
-        deps_type=type(None),
-        capabilities=[Memory(inject_memory=inject_memory), runtime],
-    )
-
-    @runtime.task
-    async def run_agent(ctx: TaskContext) -> str:
-        del ctx
-        return (await agent.run('remember')).output
-
-    context = RecordingTaskContext()
-    pending = run_agent.func(context)
-    assert inspect.isawaitable(pending)
-    assert 'remembered' in await pending
-    assert context.task_names.count('memory-agent__function_toolset__memory.call_tool') == 2
-    assert sum(name.endswith('.load_snapshot') for name in context.task_names) == (3 if inject_memory else 0)
-
-
-async def test_matching_memory_id_does_not_admit_a_runtime_toolset() -> None:
-    runtime = RenderWorkflows[None](Workflows())
-    agent = Agent(
-        TestModel(call_tools=[]),
-        name='static-memory',
-        deps_type=type(None),
-        capabilities=[Memory(), runtime],
-    )
-
-    @runtime.task
-    async def run_agent(ctx: TaskContext) -> str:
-        del ctx
-        return (await agent.run('read', toolsets=[MemoryToolset(Memory())])).output
-
-    context = RecordingTaskContext()
-    pending = run_agent.func(context)
-    assert inspect.isawaitable(pending)
-    with pytest.raises(UserError, match='cannot be added at runtime'):
-        await pending
-    assert context.task_names == []
 
 
 @pytest.mark.parametrize('instrumentation', ['disabled', 'agent', 'global', 'model'])

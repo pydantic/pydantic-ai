@@ -292,3 +292,29 @@ def test_explicit_names_are_process_stable_and_shared_capabilities_stay_inline()
         'support__function_toolset__explicit-tools.call_tool',
         'support__function_toolset__explicit-tools.validate_args',
     ]
+
+
+async def test_matching_id_does_not_admit_a_runtime_toolset() -> None:
+    def lookup() -> str:
+        return 'registered'
+
+    runtime = RenderWorkflows[None](Workflows())
+    agent = Agent(
+        TestModel(call_tools=[]),
+        name='static-toolset',
+        deps_type=type(None),
+        toolsets=[FunctionToolset([lookup], id='lookup')],
+        capabilities=[runtime],
+    )
+
+    @runtime.task
+    async def run_agent(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('read', toolsets=[FunctionToolset([lookup], id='lookup')])).output
+
+    context = RecordingTaskContext()
+    pending = run_agent.func(context)
+    assert inspect.isawaitable(pending)
+    with pytest.raises(UserError, match='cannot be added at runtime'):
+        await pending
+    assert context.task_names == []

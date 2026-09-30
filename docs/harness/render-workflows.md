@@ -336,9 +336,7 @@ For large artifacts, return bounded JSON containing a key into object storage, a
 
 ## Memory
 
-Pass `Memory(...)` alongside `RenderWorkflows` in the agent constructor so its static toolset registers before execution. Each run resolves its own memory scope, with snapshot loading and memory tool calls executing in child tasks.
-
-Use a `MemoryStore` backed by a shared external service that every task instance can reach. The default `InMemoryStore` is process-local; a local file or SQLite database is not shared across hosted task instances. A `store_resolver` and callable `namespace` must reconstruct the same scope from JSON dependencies in each worker.
+The `Memory` capability is not supported by this integration yet. Hosted task instances also do not share local memory or files, so tools that persist data need a shared external backend.
 
 ## Task options and tool opt-out
 
@@ -411,7 +409,7 @@ PYDANTIC_AI_HARNESS_RENDER_LOCAL_RUNTIME=1 uv run pytest tests/harness/render/te
 
 The nested-agent test registers entry, parent, child, and grandchild operations on a local Render server, then checks that one root run produces 12 completed operation runs parented to that root. It verifies JSON dependency transport, usage accounting, ordered event delivery within the run, and a `ModelRetry` across a grandchild tool boundary. The eight distinct process IDs include the test controller and the entry task.
 
-A second case tests constructor-supplied Memory, reads and writes through separate task processes using a shared local SQLite fixture, and a custom `ctx.tracer` span reaching the tool worker's exporter. These tests cover the local runtime; they do not establish hosted storage sharing, failure recovery, or performance.
+A second case checks that a custom `ctx.tracer` span reaches the tool worker's exporter from a separate process. These tests cover the local runtime; they do not establish hosted storage sharing, failure recovery, or performance.
 
 ## Streaming and cancellation
 

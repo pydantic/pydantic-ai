@@ -84,6 +84,8 @@ keep large artifacts in external durable storage, returning a key the read side 
 
 ## Other design constraints
 
+- The `Memory` capability is not supported by this integration yet. Do not include it in Render Workflows examples.
+
 - Task options (retry, timeout, plan) are fixed at registration. A resolver can assign different options to
   statically known function tools in one named `FunctionToolset`; each eligible tool then receives its own
   task definitions. Returning `False` keeps that function tool inline. Dynamic and MCP tools stay per-toolset.

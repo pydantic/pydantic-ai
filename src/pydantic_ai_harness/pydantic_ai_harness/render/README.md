@@ -299,7 +299,7 @@ to trigger the deployed task.
 - **Task access:** Render API callers can submit generated operations directly, bypassing checks that exist only in the entry task. Treat those callers as trusted; see the [task access boundary](https://github.com/pydantic/pydantic-ai/blob/main/docs/harness/render-workflows.md#task-access-boundary).
 - **Toolsets:** Explicit IDs must be stable and unique. Unnamed capability-owned tools can remain inline without a child-task record.
 - **Task inputs:** Dependencies, messages, arguments, and results must be JSON serializable, and Render limits a task run's arguments to 4 MB. Pass resource IDs across the boundary and reconstruct clients inside workers.
-- **Storage:** Hosted task instances do not share local memory or files, so agent memory and large artifacts need a shared external backend. Read credentials from worker environment variables rather than passing them through task inputs or results.
+- **Memory and storage:** The `Memory` capability is not supported by this integration yet. Hosted task instances do not share local memory or files, so tools that persist data need a shared external backend. Read credentials from worker environment variables rather than passing them through task inputs or results.
 - **Streaming and cancellation:** Model responses are buffered until their child task finishes, so live tokens do not stream across the task boundary. Pydantic AI cancellation tokens are unsupported in a workflow; use Render's native task cancellation instead.
 - **Compatibility:** The adapter uses private Pydantic AI APIs, so test the integration before upgrading its dependencies. The local quickstart verifies task dispatch, but does not establish hosted failure recovery or performance.
 
