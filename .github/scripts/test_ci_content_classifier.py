@@ -334,7 +334,15 @@ def test_docs_checks_cover_harness_readmes():
     assert len(snippet_steps) == 1
     command = snippet_steps[0].get('run')
     assert isinstance(command, str)
-    assert 'tests/harness/test_docs_installation.py' in command
+    for test_path in (
+        'tests/test_examples.py',
+        'tests/harness/test_docs_installation.py',
+        'tests/test_docs_parity.py',
+        'tests/harness/test_docs_parity.py',
+        'tests/harness/test_doc_snippets.py',
+        'tests/harness/test_workspace_quickstarts.py',
+    ):
+        assert test_path in command
 
 
 def test_aggregate_requires_the_selected_lightweight_job():

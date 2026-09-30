@@ -445,7 +445,15 @@ jobs:
           UV_NO_SYNC: "1"
 
       - name: Test documentation snippets
-        run: uv run --no-sync pytest tests/test_examples.py tests/harness/test_docs_installation.py -n logical --dist=loadgroup
+        run: >-
+          uv run --no-sync pytest
+          tests/test_examples.py
+          tests/harness/test_docs_installation.py
+          tests/test_docs_parity.py
+          tests/harness/test_docs_parity.py
+          tests/harness/test_doc_snippets.py
+          tests/harness/test_workspace_quickstarts.py
+          -n logical --dist=loadgroup
 
   content-checks:
     name: content checks
