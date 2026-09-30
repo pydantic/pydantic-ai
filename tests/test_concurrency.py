@@ -757,8 +757,8 @@ async def _break_debounced(agent: Agent[None, str]) -> None:
 async def _aclose(agent: Agent[None, str]) -> None:
     async with agent.run_stream('hi') as result:
         stream = result.stream_text(debounce_by=None)
-        assert isinstance(stream, AsyncGenerator)
         await anext(stream)
+        assert isinstance(stream, AsyncGenerator)
         await stream.aclose()
 
 
