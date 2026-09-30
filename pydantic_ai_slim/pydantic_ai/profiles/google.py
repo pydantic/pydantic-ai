@@ -191,6 +191,7 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # Verified live 2026-09-30 on `gemini-3.1-flash-image`: the Developer API 400s `LOW` and `MEDIUM`,
     # while Vertex (`global`) accepts them.
     # https://ai.google.dev/gemini-api/docs/image-generation
+    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
     ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.1-flash-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
