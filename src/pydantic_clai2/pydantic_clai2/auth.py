@@ -2,7 +2,7 @@
 
 import asyncio
 import webbrowser
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from urllib.parse import parse_qs, urlparse
 
 from anyio import fail_after
@@ -20,7 +20,8 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexProvider,
 )
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
-from pydantic_clai2.models import github_copilot
+from pydantic_clai2.models import LOGIN_ALIASES, github_copilot, login_names
+from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.ui.rendering import theme
 
 _CREDENTIALS = TypeAdapter(OpenAICodexCredentials)
@@ -29,13 +30,25 @@ _PASTE_PROMPT = 'Paste the URL the browser lands on (or finish there): '
 ReadLine = Callable[[str], Awaitable[str]]
 
 
-async def login_command(args: list[str], *, codex: 'CodexAuth') -> str:
-    """Keep bare `/login` compatible with Codex while accepting an explicit subscription provider."""
-    if args == ['github-copilot']:
+async def login_command(
+    args: list[str], *, codex: 'CodexAuth', plugins: Mapping[str, PluginLogin] | None = None
+) -> str:
+    """`/login NAME` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` stays Codex."""
+    plugins = plugins or {}
+    if len(args) > 1:
+        raise ValueError(_login_usage(plugins))
+    name = LOGIN_ALIASES.get(args[0], args[0]) if args else 'codex'
+    if name == 'codex':
+        return await codex.login([])
+    if name == 'copilot':
         return await github_copilot.login(console=codex.console)
-    if args not in ([], ['openai-codex']):
-        raise ValueError('Usage: /login [openai-codex|github-copilot]')
-    return await codex.login(args)
+    if (login := plugins.get(name)) is not None:
+        return await login.handler()
+    raise ValueError(_login_usage(plugins))
+
+
+def _login_usage(plugins: Mapping[str, PluginLogin]) -> str:
+    return f'Usage: /login [{"|".join(login_names(plugins))}]'
 
 
 async def read_line(message: str) -> str:
@@ -53,7 +66,7 @@ def code_from_paste(*, text: str, state: str) -> str:
     if 'code' not in params and 'error' not in params:
         return text
     if params.get('state') != state:
-        raise UserError('That URL belongs to a different login attempt. Run /login openai-codex again.')
+        raise UserError('That URL belongs to a different login attempt. Run /login codex again.')
     if error := params.get('error'):
         raise UserError(f'Authorization failed: {error}')
     return params['code']
@@ -66,11 +79,11 @@ class CodexCredentials(OpenAICodexCredentialSource):
         """Load credentials without falling back to another application's tokens."""
         value = await asyncio.to_thread(load_codex_credentials)
         if value is None:
-            raise UserError('Codex is not connected. Run /login openai-codex.')
+            raise UserError('Codex is not connected. Run /login codex.')
         try:
             return _CREDENTIALS.validate_json(value)
         except ValidationError:
-            raise UserError('Stored Codex credentials are invalid. Run /login openai-codex.') from None
+            raise UserError('Stored Codex credentials are invalid. Run /login codex.') from None
 
     async def save(self, credentials: OpenAICodexCredentials) -> None:
         """Persist login or refresh results using the configured OS credential backend."""
@@ -92,7 +105,7 @@ class CodexAuth:
     async def login(self, args: list[str]) -> str:
         """Run core's authorization-code + PKCE flow with a five-minute timeout."""
         if args not in ([], ['openai-codex']):
-            raise ValueError('Usage: /login openai-codex')
+            raise ValueError('Usage: /login codex')
         flow = OpenAICodexOAuthFlow()
         self.console.print(
             'Sign in to ChatGPT/Codex in your browser. Waiting up to five minutes.', style=theme.color(theme.INFO)
@@ -114,7 +127,7 @@ class CodexAuth:
             await self.source.save(credentials)
             self.provider = None
         except TimeoutError:
-            raise UserError('Codex login timed out. Run /login openai-codex to try again.') from None
+            raise UserError('Codex login timed out. Run /login codex to try again.') from None
         finally:
             browser.cancel()
             await asyncio.gather(browser, return_exceptions=True)
