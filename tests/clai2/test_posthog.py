@@ -20,17 +20,19 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.posthog import PostHog
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys, posthog
-from pydantic_clai2.api_keys import KeyReference
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins import posthog
+from pydantic_clai2.builtin_plugins.posthog import EU_URL, EVERY_GROUP, US_URL, PostHogSource, SavedKeyAuth
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
-from pydantic_clai2.field_menu import CUSTOM, is_save_and_close, save_and_close_item
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.api_keys import KeyReference
+from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader, PluginSettingsError
-from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
 from pydantic_clai2.plugins import PluginHost, SessionStart
-from pydantic_clai2.posthog import EU_URL, EVERY_GROUP, US_URL, PostHogSource, SavedKeyAuth
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader, PluginSettingsError
+from pydantic_clai2.ui.menus.field_menu import CUSTOM, is_save_and_close, save_and_close_item
+from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import Script, pick, typed
 
 pytestmark = pytest.mark.anyio
@@ -111,7 +113,7 @@ async def async_bearer() -> str:
 
 
 def test_declared_disabled_with_no_settings() -> None:
-    assert BUILTIN.factory == 'pydantic_clai2.posthog'
+    assert BUILTIN.factory == 'pydantic_clai2.builtin_plugins.posthog'
     assert not BUILTIN.enabled
     assert BUILTIN.settings == {}
 
@@ -491,14 +493,18 @@ async def test_settings_cannot_hold_a_secret_or_invalid_options(tmp_path: Path, 
 async def test_add_with_rejected_settings_keeps_no_trace_of_them(tmp_path: Path) -> None:
     shell = Shell(tmp_path, terminal=False)
     with pytest.raises(PluginSettingsError) as raised:
-        await shell.loader.command(['add', 'analytics', 'pydantic_clai2.posthog', '{"api_key": "phx_pasted"}'])
+        await shell.loader.command(
+            ['add', 'analytics', 'pydantic_clai2.builtin_plugins.posthog', '{"api_key": "phx_pasted"}']
+        )
     assert 'phx_pasted' not in str(raised.value), 'errors never echo a rejected value'
     assert [plugin.id for plugin in shell.store.plugins()] == []
     assert b'phx_pasted' not in shell.path.read_bytes(), 'rejected settings are never written, so no page holds them'
     await shell.loader.command(['enable', 'posthog'])
     before = shell.saved()
     with pytest.raises(PluginSettingsError):
-        await shell.loader.command(['add', 'posthog', 'pydantic_clai2.posthog', '{"token": "phx_pasted"}'])
+        await shell.loader.command(
+            ['add', 'posthog', 'pydantic_clai2.builtin_plugins.posthog', '{"token": "phx_pasted"}']
+        )
     assert shell.saved() == before, 'replacing with rejected settings restores the previous declaration'
     assert b'phx_pasted' not in shell.path.read_bytes()
     assert len(shell.loader.capabilities()) == 1, 'and the previous plugin is loaded again'
@@ -507,9 +513,9 @@ async def test_add_with_rejected_settings_keeps_no_trace_of_them(tmp_path: Path)
 async def test_add_replacing_the_builtin_opens_the_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     shell = Shell(tmp_path)
     script(monkeypatch, lists=[pick('read_only')], choices=[pick('true')])
-    assert await shell.loader.command(['add', 'posthog', 'pydantic_clai2.posthog', '{"read_only": false}']) == (
-        'Replaced built-in posthog.\nSaved Tools.'
-    )
+    assert await shell.loader.command(
+        ['add', 'posthog', 'pydantic_clai2.builtin_plugins.posthog', '{"read_only": false}']
+    ) == ('Replaced built-in posthog.\nSaved Tools.')
     assert transport(shell.capability()).headers == {'x-posthog-read-only': 'true'}
 
 
