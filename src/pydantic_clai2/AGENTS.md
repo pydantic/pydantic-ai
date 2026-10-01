@@ -228,6 +228,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 |---|---|
 | `cli/_cli.py` | argument parsing, startup, `--agent` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
+| `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the newest CLAI commit on `main` (`bleeding`, an HTTPS source archive with `--overrides`, no git), reinstalled with `uv tool install --force` |
 | `_app.py` | the prompt loop and built-in `/commands` |
 | `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, plugin snapshots and stock-agent rebuilding |
 | `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |

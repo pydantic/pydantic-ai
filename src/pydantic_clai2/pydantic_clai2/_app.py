@@ -27,6 +27,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
+from pydantic_clai2.cli.self_update import Updates
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -495,6 +496,14 @@ def create_shell(
         )
     )
     commands.register(Command(name='exit', description='Quit CLAI', handler=lambda _: 'Goodbye.'))
+    updates = Updates(channel=lambda: context.settings.update_channel)
+    commands.register(
+        Command(
+            name='update',
+            description='Install the newest CLAI from the updates.channel setting (stable or bleeding)',
+            handler=updates.command,
+        )
+    )
     commands.register(
         Command(
             name='config',
@@ -580,6 +589,7 @@ def create_shell(
         speculation=Speculation(context=context, console=console),
         session_settings=session_settings,
         spinners=spinners,
+        updates=updates,
     )
     if prompt is not None:
         prompt.key_bindings = images.bindings()
@@ -627,6 +637,7 @@ class _Shell(Generic[DepsT, OutputT]):
     speculation: Speculation
     session_settings: SessionSettings[DepsT, OutputT]
     spinners: Spinners
+    updates: Updates
     transcript: TranscriptBuffer = field(default_factory=TranscriptBuffer)
     images: ImageInput = field(default_factory=ImageInput)
     reload_requested: bool = False
@@ -807,7 +818,7 @@ class _Shell(Generic[DepsT, OutputT]):
             try:
                 self.status.model = self.session.model or _model_label(self.agent)
                 self.status.workspace = self.session.workspace
-                self.status.status_segments = tuple(self.loader.status_segments())
+                self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
                 if self.editor is not None:
                     text = await self.editor.read()
                 else:
@@ -861,7 +872,12 @@ class _Shell(Generic[DepsT, OutputT]):
             return False
         async with self.forks.busy(), self._released():
             await self.interrupts.run(_execute_command(self.commands, text, console=self.console, status=self.status))
-        return text == '/exit' or self.interrupts.exit_requested or self.reload_requested
+        return (
+            text == '/exit'
+            or self.interrupts.exit_requested
+            or self.reload_requested
+            or self.updates.restart_required
+        )
 
     async def _turn(self, text: str | None) -> bool:
         automated = text is None

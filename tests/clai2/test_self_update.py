@@ -1,0 +1,316 @@
+"""`/update`: release lookup, install commands, the footer notice, and the shell exit after an install."""
+
+import json
+import shlex
+import sys
+import threading
+from collections.abc import Callable, Sequence
+from io import StringIO
+from pathlib import Path
+
+import httpx
+import pytest
+from rich.console import Console
+
+from pydantic_ai import Agent
+from pydantic_ai.models.test import TestModel
+from pydantic_clai2 import _app, chat
+from pydantic_clai2.cli import self_update
+from pydantic_clai2.cli.self_update import (
+    COMMITS_URL,
+    PYPI_URL,
+    Installed,
+    Update,
+    Updates,
+    _in_thread,  # pyright: ignore[reportPrivateUsage]
+    _run_uv,  # pyright: ignore[reportPrivateUsage]
+    find_update,
+    installed,
+    latest,
+)
+from pydantic_clai2.commands import set_completions
+from pydantic_clai2.config import Settings, UpdateChannel
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.set_menu import SettingsSource
+from tests.clai2.menu_script import make_context
+from tests.clai2.test_app_edges import inputs
+
+SHA = '4bd401a5539aa96b9b67753092fd7f8b90e4dc8a'
+NEWER = '9e08a34ee0000000000000000000000000000000'
+TOOL = Installed(version='0.52.1.dev54+4bd401a55', commit=SHA, tool=True)
+
+
+def test_channel_setting(tmp_path: Path) -> None:
+    context, _ = make_context(tmp_path)
+    assert context.settings.update_channel == 'stable'
+    assert set_completions(['updates.channel', '']) == ('stable', 'bleeding')
+    row = next(row for row in FieldMenu(SettingsSource(context)).rows if row.key == 'updates.channel')
+    assert row.choices == ('stable', 'bleeding')
+    assert context.set_setting(['updates.channel', 'bleeding']) == 'Saved updates.channel. Applied.'
+    assert SettingsStore(context.store.path).load().update_channel == 'bleeding'
+    with pytest.raises(ValueError, match='stable'):
+        context.set_setting(['updates.channel', 'nightly'])
+    assert SettingsStore(context.store.path).load().update_channel == 'bleeding'
+
+
+class _Distribution:
+    def __init__(self, direct_url: str | None) -> None:
+        self.version = '0.52.0'
+        self._direct_url = direct_url
+
+    def read_text(self, filename: str) -> str | None:
+        assert filename == 'direct_url.json'
+        return self._direct_url
+
+
+@pytest.mark.parametrize(
+    ('direct_url', 'commit'),
+    [
+        (None, None),
+        ('{"url":"file:///src","dir_info":{"editable":true}}', None),
+        (
+            json.dumps(
+                {'url': 'https://github.com/pydantic/pydantic-ai', 'vcs_info': {'vcs': 'git', 'commit_id': SHA}}
+            ),
+            SHA,
+        ),
+        (
+            json.dumps(
+                {
+                    'url': f'https://github.com/pydantic/pydantic-ai/archive/{SHA}.tar.gz',
+                    'archive_info': {},
+                    'subdirectory': 'src/pydantic_clai2',
+                }
+            ),
+            SHA,
+        ),
+        ('{"url":"https://example.com/archive/x.tar.gz","archive_info":{}}', None),
+    ],
+)
+def test_installed_reads_metadata_and_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, direct_url: str | None, commit: str | None
+) -> None:
+    def distribution(name: str) -> _Distribution:
+        assert name == 'pydantic-clai2'
+        return _Distribution(direct_url)
+
+    monkeypatch.setattr(self_update.metadata, 'distribution', distribution)
+    monkeypatch.setattr(sys, 'prefix', str(tmp_path))
+    assert installed() == Installed(version='0.52.0', commit=commit, tool=False)
+    (tmp_path / 'uv-receipt.toml').write_text('[tool]\n')
+    assert installed().tool
+
+
+def test_labels() -> None:
+    assert TOOL.label == '4bd401a55'
+    assert Installed(version='0.52.0').label == '0.52.0'
+    assert Update(channel='bleeding', target=SHA).label == '4bd401a55'
+    assert Update(channel='stable', target='0.53.0').label == '0.53.0'
+
+
+def test_latest_reads_pypi_and_github() -> None:
+    seen: list[httpx.URL] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url)
+        if str(request.url) == PYPI_URL:
+            return httpx.Response(200, json={'info': {'version': '0.53.0', 'summary': 'ignored'}})
+        return httpx.Response(200, json=[{'sha': NEWER, 'commit': {}}])
+
+    transport = httpx.MockTransport(respond)
+    assert latest('stable', transport=transport) == '0.53.0'
+    assert latest('bleeding', transport=transport) == NEWER
+    bleeding = seen[1]
+    assert str(bleeding.copy_with(query=None)) == COMMITS_URL
+    assert dict(bleeding.params) == {'sha': 'main', 'path': 'src/pydantic_clai2', 'per_page': '1'}
+
+
+def test_latest_reports_failures() -> None:
+    with pytest.raises(ValueError, match='no CLAI commits'):
+        latest('bleeding', transport=httpx.MockTransport(lambda request: httpx.Response(200, json=[])))
+    with pytest.raises(httpx.HTTPStatusError):
+        latest('stable', transport=httpx.MockTransport(lambda request: httpx.Response(403)))
+
+
+def test_find_update() -> None:
+    release = Installed(version='0.52.0')
+    assert find_update('stable', release, '0.52.0') is None
+    assert find_update('stable', release, '0.53.0') == Update(channel='stable', target='0.53.0')
+    # A bleeding install switching back to stable is offered the release, even at the same base version.
+    assert find_update('stable', Installed(version='0.52.0', commit=SHA), '0.52.0') is not None
+    assert find_update('bleeding', TOOL, SHA) is None
+    assert find_update('bleeding', release, SHA) == Update(channel='bleeding', target=SHA)
+
+
+def test_install_commands(tmp_path: Path) -> None:
+    stable = Update(channel='stable', target='0.53.0')
+    assert stable.command(uv='uv', overrides=None) == ['uv', 'tool', 'install', '--force', 'pydantic-clai2==0.53.0']
+    assert stable.environment() == {}
+    archive = f'https://github.com/pydantic/pydantic-ai/archive/{NEWER}.tar.gz#subdirectory='
+    bleeding = Update(channel='bleeding', target=NEWER)
+    overrides = tmp_path / 'overrides.txt'
+    assert bleeding.command(uv='/bin/uv', overrides=overrides) == [
+        '/bin/uv',
+        'tool',
+        'install',
+        '--force',
+        '--overrides',
+        str(overrides),
+        f'pydantic-clai2 @ {archive}src/pydantic_clai2',
+    ]
+    assert bleeding.overrides() == (
+        f'pydantic-ai-harness @ {archive}src/pydantic_ai_harness\n'
+        f'pydantic-ai-slim @ {archive}pydantic_ai_slim\n'
+        f'pydantic-graph @ {archive}pydantic_graph\n'
+    )
+    assert bleeding.environment() == {'UV_DYNAMIC_VERSIONING_BYPASS': '0.0.0+9e08a34ee'}
+
+
+def _updates(
+    channel: list[UpdateChannel],
+    *,
+    current: Installed = TOOL,
+    fetch: Callable[[UpdateChannel], str] = lambda channel: NEWER if channel == 'bleeding' else '0.53.0',
+    codes: list[int] | None = None,
+    uv: str | None = '/bin/uv',
+) -> tuple[Updates, list[Sequence[str]]]:
+    ran: list[Sequence[str]] = []
+
+    async def run(command: Sequence[str], environment: dict[str, str]) -> int:
+        ran.append(command)
+        if '--overrides' in command:
+            # The overrides file exists while uv runs and names the other packages.
+            text = Path(command[command.index('--overrides') + 1]).read_text(encoding='utf-8')
+            assert 'pydantic-ai-harness @ ' in text
+            assert environment == {'UV_DYNAMIC_VERSIONING_BYPASS': '0.0.0+9e08a34ee'}
+        return (codes or [0]).pop(0)
+
+    updates = Updates(
+        channel=lambda: channel[0],
+        current=current,
+        fetch=fetch,
+        spawn=lambda work: work(),
+        run=run,
+        which=lambda name: uv,
+    )
+    return updates, ran
+
+
+def test_segment_checks_once_per_channel() -> None:
+    fetched: list[UpdateChannel] = []
+
+    def fetch(channel: UpdateChannel) -> str:
+        fetched.append(channel)
+        return NEWER if channel == 'bleeding' else '0.52.1.dev54+4bd401a55'
+
+    channel: list[UpdateChannel] = ['bleeding']
+    updates, _ = _updates(channel, current=TOOL, fetch=fetch)
+    assert updates.segment() == 'update 9e08a34ee: /update'
+    assert updates.segment() == 'update 9e08a34ee: /update'
+    channel[0] = 'stable'
+    assert updates.segment() == 'update 0.52.1.dev54+4bd401a55: /update'
+    assert fetched == ['bleeding', 'stable']
+
+
+def test_segment_is_quiet_offline_and_outside_uv_tool() -> None:
+    def offline(channel: UpdateChannel) -> str:
+        raise httpx.ConnectError('offline')
+
+    updates, _ = _updates(['bleeding'], fetch=offline)
+    assert updates.segment() == ''
+    source, _ = _updates(['bleeding'], current=Installed(version='0.52.0'), fetch=offline)
+    assert source.segment() == ''
+
+
+def test_segment_ignores_a_result_for_another_channel() -> None:
+    pending: list[Callable[[], None]] = []
+    channel: list[UpdateChannel] = ['bleeding']
+    updates = Updates(channel=lambda: channel[0], current=TOOL, fetch=lambda channel: NEWER, spawn=pending.append)
+    assert updates.segment() == ''
+    channel[0] = 'stable'
+    assert updates.segment() == ''
+    pending[0]()  # The bleeding check lands after the switch to stable.
+    assert updates.segment() == ''
+
+
+async def test_command_installs_and_requires_restart() -> None:
+    updates, ran = _updates(['bleeding'])
+    assert await updates.command([]) == 'Updated CLAI to 9e08a34ee (bleeding). Exiting; start clai2 again to use it.'
+    assert updates.restart_required
+    [command] = ran
+    overrides = Path(command[5])
+    assert command == Update(channel='bleeding', target=NEWER).command(uv='/bin/uv', overrides=overrides)
+    assert not overrides.exists()
+
+
+async def test_command_reports_current_failure_and_manual_installs() -> None:
+    current, ran = _updates(['bleeding'], fetch=lambda channel: SHA)
+    assert await current.command([]) == 'CLAI 4bd401a55 is the newest on the bleeding channel.'
+    failed, _ = _updates(['stable'], codes=[2])
+    assert await failed.command([]) == 'uv exited with status 2; see its output above.'
+    assert not failed.restart_required
+    no_uv, _ = _updates(['stable'], uv=None)
+    assert (await no_uv.command([])).endswith('To update by hand, run:\nuv tool install --force pydantic-clai2==0.53.0')
+    source, _ = _updates(['stable'], current=Installed(version='0.52.0'))
+    assert 'only when installed with `uv tool install`' in await source.command([])
+    manual, _ = _updates(['bleeding'], uv=None)
+    printed = (await manual.command([])).splitlines()[-1]
+    assert printed.startswith('UV_DYNAMIC_VERSIONING_BYPASS=0.0.0+9e08a34ee uv tool install --force --overrides ')
+    # The printed command still needs its overrides file.
+    overrides = Path(shlex.split(printed)[6])
+    assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
+    overrides.unlink()
+    assert ran == []
+    with pytest.raises(ValueError, match='Usage: /update'):
+        await current.command(['now'])
+
+
+async def test_run_uv_passes_the_environment_and_returns_the_exit_status() -> None:
+    script = 'import os; raise SystemExit(int(os.environ["CLAI_TEST_CODE"]))'
+    assert await _run_uv([sys.executable, '-c', script], {'CLAI_TEST_CODE': '3'}) == 3
+
+
+async def test_failed_install_removes_the_overrides_file() -> None:
+    seen: list[Path] = []
+
+    async def run(command: Sequence[str], environment: dict[str, str]) -> int:
+        seen.append(Path(command[5]))
+        raise OSError('uv vanished')
+
+    updates, _ = _updates(['bleeding'])
+    updates.run = run
+    with pytest.raises(OSError):
+        await updates.command([])
+    assert not seen[0].exists()
+
+
+def test_in_thread_runs_the_work() -> None:
+    done = threading.Event()
+    _in_thread(done.set)
+    assert done.wait(5)
+
+
+async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    updates, ran = _updates(['stable'])
+    channels: list[UpdateChannel] = []
+
+    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+        channels.append(channel())
+        return updates
+
+    monkeypatch.setattr(_app, 'Updates', build)
+    inputs(monkeypatch, ['/update', '/exit'])
+    output = StringIO()
+    await chat(
+        Agent(TestModel()),
+        deps=None,
+        settings=Settings(model='test', update_channel='bleeding'),
+        console=Console(file=output, width=200),
+        store=SettingsStore(tmp_path / 'config.db'),
+    )
+    text = output.getvalue()
+    assert channels == ['bleeding']
+    assert 'Updated CLAI to 0.53.0 (stable). Exiting; start clai2 again to use it.' in text
+    assert 'Goodbye.' not in text
+    assert len(ran) == 1

@@ -285,6 +285,29 @@ Without installing, run `uvx pydantic-clai2`. The package also installs a
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
+## Updating
+
+Install with `uv tool install pydantic-clai2` and CLAI can update itself.
+`updates.channel` picks where it looks:
+
+- `stable` (default): the newest release on PyPI.
+- `bleeding`: the newest commit on `main` that changes CLAI. It downloads that
+  commit's source over HTTPS and installs CLAI, harness, and core from it, so it
+  needs no release and no `git`. These builds report version `0.0.0+<commit>`.
+
+```text
+/set updates.channel bleeding
+/update
+```
+
+When a newer build exists, the status row shows `update <version or commit>: /update`.
+CLAI checks once at startup and again when you change the channel, and only for
+`uv tool` installs. Offline, it shows nothing. `/update` runs `uv tool install --force`,
+shows uv's output, then exits; start `clai2` again to use the new build. Switching
+back to `stable` offers the latest release. The reinstall keeps only CLAI's own
+packages, so add any extra `--with` packages again afterwards. Without uv on `PATH`,
+or outside a `uv tool` install, `/update` prints the command to run yourself.
+
 For API-key providers, set the provider's API key environment variable before starting.
 Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
 can read and modify files and execute commands with your user permissions. Run it
@@ -757,7 +780,7 @@ every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
 Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/add_model`, `/model_settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
+`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
 matching applies to the filename within the typed directory. Path completion inserts
