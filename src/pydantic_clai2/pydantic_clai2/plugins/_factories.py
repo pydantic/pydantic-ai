@@ -48,10 +48,10 @@ class _CapabilityPlugin(Plugin[NoSettings, DepsT]):
 
     def __init__(self, host: PluginHost[DepsT], capability: AbstractCapability[DepsT]) -> None:
         super().__init__(host, NoSettings())
-        self._capability = capability
+        self.capability = capability
 
     def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
-        return (self._capability,)
+        return (self.capability,)
 
 
 def build(module: ModuleType, declaration: PluginSettings, host: PluginHost[DepsT]) -> Plugin[BaseModel, DepsT]:
@@ -88,3 +88,8 @@ def _declares_plugin(module: ModuleType, name: str, value: object) -> bool:
         and issubclass(value, Plugin)
         and value.__module__ == module.__name__
     )
+
+
+def settings_capability(plugin: Plugin[BaseModel, DepsT]) -> AbstractCapability[DepsT] | None:
+    """The capability built directly from a declaration settings, not a plugin contribution."""
+    return plugin.capability if isinstance(plugin, _CapabilityPlugin) else None
