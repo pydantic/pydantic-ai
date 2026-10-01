@@ -175,7 +175,7 @@ OpenRouterProviderName = str | KnownOpenRouterProviders
 
 Since OpenRouter is constantly updating their list of providers, we explicitly list some known providers but
 allow any name in the type hints.
-See [the OpenRouter API](https://openrouter.ai/docs/api-reference/list-available-providers) for a full list.
+See [the OpenRouter API](https://openrouter.ai/docs/api/api-reference/providers/list-all-providers) for a full list.
 """
 
 OpenRouterTransforms = Literal['middle-out']

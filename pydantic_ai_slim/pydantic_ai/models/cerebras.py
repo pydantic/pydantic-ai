@@ -170,6 +170,6 @@ def _cerebras_settings_to_openai_settings(
     openai_settings = OpenAIChatModelSettings(**settings)  # pyright: ignore[reportCallIssue]
     if disable_reasoning:
         # Cerebras deprecated `extra_body['disable_reasoning']` on 2026-03-24 in favor of the standard
-        # `reasoning_effort='none'`. https://inference-docs.cerebras.ai/resources/glm-47-migration
+        # `reasoning_effort='none'`. https://inference-docs.cerebras.ai/support/deprecation
         openai_settings['openai_reasoning_effort'] = 'none'
     return openai_settings

@@ -110,7 +110,7 @@ CASES = [
         model_name='zai-glm-4.7',
         thinking=False,
         # GLM disables via the standard `reasoning_effort='none'`, not the upstream-deprecated
-        # `extra_body['disable_reasoning']` (https://inference-docs.cerebras.ai/resources/glm-47-migration).
+        # `extra_body['disable_reasoning']` (https://inference-docs.cerebras.ai/support/deprecation).
         # `clear_thinking=false` is injected by default for the `zai` `<think>`-replay path so Cerebras
         # doesn't strip replayed reasoning — no user setting needed.
         present={'reasoning_effort': 'none', 'clear_thinking': False},
