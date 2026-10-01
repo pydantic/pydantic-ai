@@ -72,6 +72,22 @@ def test_settings_source_validates_saves_and_resets() -> None:
     assert saved.instructions == 'Keep this guidance.'
     assert source.reset(folders) == 'Reset Agent folders.'
     assert host.settings(CoderSettings).agent_folders == []
+    assert source.reset(folders) == 'Reset Agent folders.'
+
+
+def test_menu_edits_save_only_chosen_settings() -> None:
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[object](
+        name='coder',
+        console=Console(file=io.StringIO()),
+        settings={'unrestricted_filesystem': True, 'sub_agents': True},
+        save_settings=saved.append,
+    )
+    source = CoderSource(host)
+    source.apply(source.rows()[0], 'false')
+    assert saved[-1] == {'unrestricted_filesystem': True, 'sub_agents': False}
+    source.reset(source.rows()[0])
+    assert saved[-1] == {'unrestricted_filesystem': True}
 
 
 async def test_configure_outside_a_terminal_explains_how(monkeypatch: pytest.MonkeyPatch) -> None:

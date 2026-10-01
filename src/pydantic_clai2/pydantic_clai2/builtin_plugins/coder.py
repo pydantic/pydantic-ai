@@ -6,7 +6,16 @@ import json
 import re
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    SerializerFunctionWrapHandler,
+    TypeAdapter,
+    field_validator,
+    model_serializer,
+)
 
 from pydantic_ai_harness.coder import Coder
 from pydantic_clai2.plugins import PluginHost
@@ -41,6 +50,12 @@ class CoderSettings(BaseModel):
             if not value.strip() or value != value.strip() or '\x00' in value:
                 raise ValueError('Agent folders must be nonempty names or paths without surrounding whitespace or NUL.')
         return values
+
+    @model_serializer(mode='wrap')
+    def _only_chosen(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
+        """Save only the settings someone chose, so menu edits never pin the other defaults."""
+        dumped: dict[str, JsonValue] = handler(self)
+        return {key: value for key, value in dumped.items() if key in self.model_fields_set}
 
     def folders(self, *, home: Path) -> list[str]:
         """Explicit selections and project names precede automatic personal counterparts."""
@@ -88,7 +103,7 @@ class CoderSource:
         return json.dumps(settings.agent_folders if row.key == 'agent_folders' else settings.sub_agents)
 
     def _updated(self, row: FieldRow, raw: str) -> CoderSettings:
-        data = self.host.settings(CoderSettings).model_dump(mode='json')
+        data: dict[str, JsonValue] = self.host.settings(CoderSettings).model_dump(mode='json')
         data[row.key] = TypeAdapter(JsonValue).validate_json(raw)
         return CoderSettings.model_validate(data)
 
@@ -104,8 +119,8 @@ class CoderSource:
         return f'Saved {row.label}.'
 
     def reset(self, row: FieldRow) -> str:
-        data = self.host.settings(CoderSettings).model_dump(mode='json')
-        del data[row.key]
+        data: dict[str, JsonValue] = self.host.settings(CoderSettings).model_dump(mode='json')
+        data.pop(row.key, None)
         self.host.save_settings(CoderSettings.model_validate(data))
         return f'Reset {row.label}.'
 
