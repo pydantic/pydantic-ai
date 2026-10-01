@@ -389,8 +389,12 @@ model = OpenAIRealtimeModel('gpt-realtime', settings=settings)
 cacheable prefix as the session grows. OpenAI realtime does not expose `temperature` through
 Pydantic AI.
 
-Input transcription defaults to `'auto'`; set a supported transcription model ID to pin it or
-`None` to disable it. See [Input transcription](audio.md#input-transcription).
+Input transcription defaults to `'auto'`, which uses `gpt-live-transcribe`; set a supported
+transcription model ID to pin it or `None` to disable it. `gpt-live-transcribe` streams the
+transcript as the user speaks, but its final transcript can arrive after the reply's
+[turn is complete](events.md#the-turn-boundary). It is still recorded with the user turn it
+describes, so keep iterating the session if you need it before closing. See
+[Input transcription](audio.md#input-transcription).
 
 ## Reasoning {#reasoning}
 

@@ -81,6 +81,15 @@ def _gemini_realtime_audio(frame: dict[str, Any]) -> dict[str, Any] | None:
     return cast('dict[str, Any]', audio) if isinstance(audio, dict) else None
 
 
+def _transcription_model(frame: dict[str, Any]) -> object:
+    """The input transcription model an OpenAI GA `session.update` frame sets, if any."""
+    session = frame.get('session')
+    audio = session.get('audio') if isinstance(session, dict) else None
+    audio_input = audio.get('input') if isinstance(audio, dict) else None
+    transcription = audio_input.get('transcription') if isinstance(audio_input, dict) else None
+    return transcription.get('model') if isinstance(transcription, dict) else None
+
+
 def _is_audio_send(frame: dict[str, Any]) -> bool:
     """Whether an outbound frame is microphone audio, on the OpenAI, GPT-Live, or Gemini protocol."""
     return frame.get('type') in _AUDIO_APPEND_TYPES or _gemini_realtime_audio(frame) is not None
@@ -411,6 +420,11 @@ class ReplayWebSocket:
             # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.
             if (response := actual.get('response')) is not None and set(response) == {'metadata'}:
                 del actual['response']
+        if actual.get('type') == 'session.update' and _transcription_model(expected) == 'gpt-realtime-whisper':
+            # Recorded before OpenAI's `input_transcription_model='auto'` resolved to `gpt-live-transcribe`;
+            # only that model is let through, and the rest of the frame is still pinned.
+            if _transcription_model(actual) == 'gpt-live-transcribe':
+                actual['session']['audio']['input']['transcription']['model'] = 'gpt-realtime-whisper'
         assert actual == expected, (
             f'Outbound WebSocket frame did not match cassette at position {self._position - 1}.\n'
             f'expected={expected!r}\nactual={actual!r}'

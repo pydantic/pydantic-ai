@@ -715,6 +715,46 @@ async def test_audio_in_server_vad_turn(
 
 
 @pytest.mark.realtime_ws_hold_open
+async def test_auto_input_transcription_uses_gpt_live_transcribe(
+    openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
+) -> None:
+    """`input_transcription_model='auto'` transcribes a spoken turn with `gpt-live-transcribe` on OpenAI.
+
+    Its final transcript can arrive after the reply's turn is complete (as in this recording), and still lands
+    in the user turn it describes.
+    """
+    provider, cassette = openai_ws_cassette
+    model = OpenAIRealtimeModel('gpt-realtime-2.1-mini', provider=provider)
+    agent = Agent(instructions='Reply in a few words.')
+    pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
+
+    turn_complete = user_transcribed = False
+    async with agent.realtime(model).session() as session:
+        for start in range(0, len(pcm), 4800):
+            await session.send_audio(pcm[start : start + 4800])
+        with anyio.fail_after(45):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    turn_complete = True
+                elif isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
+                    user_transcribed = user_transcribed or event.part.speaker == 'user'
+                if turn_complete and user_transcribed:
+                    break
+
+    [session_update] = [
+        frame
+        for frame in sent_frames_containing(cassette, 'Reply in a few words.')
+        if frame['type'] == 'session.update'
+    ]
+    assert session_update['session']['audio']['input']['transcription'] == {'model': 'gpt-live-transcribe'}
+    user_turn = session.all_messages()[0]
+    assert isinstance(user_turn, ModelRequest)
+    assert [part.transcript for part in user_turn.parts if isinstance(part, SpeechPart)] == snapshot(
+        ['Hello, my name is Marcelo.']
+    )
+
+
+@pytest.mark.realtime_ws_hold_open
 async def test_input_audio_retention_segments_three_server_vad_turns(
     openai_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path
 ) -> None:
