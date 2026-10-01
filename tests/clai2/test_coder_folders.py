@@ -358,6 +358,18 @@ def test_full_browser_page_keeps_title_and_footer_on_screen(
     assert all(len(line) < 50 for line in frame)
 
 
+def test_entry_actions_keep_title_on_screen_with_long_path(
+    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    long_path = folders.project.joinpath(*[f'segment-{index:02d}' for index in range(40)])
+    folders.source.host.save_settings(CoderSettings(agent_folders=[str(long_path)]))
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (80, 24))
+    frame = render_frame(folders.actions(0))
+    assert frame[0] == 'Manage agent folder'
+    assert 'Esc back' in frame[-1]
+    assert len(frame) < 24
+
+
 def test_notices_rewrap_when_terminal_shrinks(folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch) -> None:
     size = (140, 24)
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: size)

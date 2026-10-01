@@ -286,21 +286,18 @@ class FolderMenu(Generic[DepsT]):
         return MenuResult(item=MenuItem('', value=FolderAction(kind=kind, index=item.value)))
 
     def actions(self, index: int) -> Menu:
-        return (
+        return _responsive_menu(
             MenuBuilder('Manage agent folder')
             .style(markdown_style())
-            .items(
-                [
-                    MenuItem('Edit name or path...', value=FolderAction(kind='edit', index=index)),
-                    MenuItem('Replace by browsing...', value=FolderAction(kind='browse', index=index)),
-                    MenuItem('Remove from search (keep files)', value=FolderAction(kind='remove', index=index)),
-                    MenuItem('Back', value=None),
-                ]
-            )
             .preview(lambda _: self.details(MenuItem('', value=index)))
             .footer_hint('Enter select - Esc back')
-            .key_source(menu_key)
-            .build()
+            .key_source(menu_key),
+            [
+                MenuItem('Edit name or path...', value=FolderAction(kind='edit', index=index)),
+                MenuItem('Replace by browsing...', value=FolderAction(kind='browse', index=index)),
+                MenuItem('Remove from search (keep files)', value=FolderAction(kind='remove', index=index)),
+                MenuItem('Back', value=None),
+            ],
         )
 
     def value(self, text: str, *, named: bool) -> str:
