@@ -82,6 +82,7 @@ class OpenAIChatGPTCredentials:
     refresh_token: str = field(repr=False)
     id_token: str = field(repr=False)
     email: str | None = None
+    nonce: str | None = None
     earliest_refresh_at: datetime | None = None
 
 
@@ -167,6 +168,7 @@ async def _verify_identity(
     nonce: str | None,
     subject: str | None,
     http_client: httpx2.AsyncClient | None,
+    nonce_optional: bool = False,
 ) -> _Identity:
     discovery_response = await _request('GET', f'{_ISSUER}/.well-known/openid-configuration', http_client=http_client)
     if discovery_response.status_code != 200:
@@ -198,7 +200,8 @@ async def _verify_identity(
             options={'require': ['sub', 'exp', 'iat', 'iss', 'aud']},
         )
         identity = _IDENTITY_ADAPTER.validate_python(claims)
-        if (nonce is not None and identity.nonce != nonce) or (identity.azp is not None and identity.azp != client_id):
+        check_nonce = nonce is not None and (not nonce_optional or identity.nonce is not None)
+        if (check_nonce and identity.nonce != nonce) or (identity.azp is not None and identity.azp != client_id):
             raise ValueError('Identity does not match authorization')
         if isinstance(identity.aud, list) and len(identity.aud) > 1 and identity.azp != client_id:
             raise ValueError('Missing authorized party for multiple audiences')
@@ -228,7 +231,12 @@ async def _credentials(
     else:
         id_token = tokens.id_token
         identity = await _verify_identity(
-            id_token, client_id=client_id, nonce=nonce, subject=subject, http_client=http_client
+            id_token,
+            client_id=client_id,
+            nonce=nonce,
+            subject=subject,
+            http_client=http_client,
+            nonce_optional=previous is not None,
         )
     if tokens.scope is None:
         if previous is None:
@@ -256,6 +264,7 @@ async def _credentials(
         refresh_token=tokens.refresh_token,
         id_token=id_token,
         email=identity.email,
+        nonce=nonce,
         earliest_refresh_at=earliest,
     )
 
@@ -440,7 +449,7 @@ async def refresh_credentials(
         client_id=credentials.client_id,
         host_id=credentials.ext_agent_host_id,
         redirect_uri=credentials.redirect_uri,
-        nonce=None,
+        nonce=credentials.nonce,
         subject=credentials.subject,
         http_client=http_client,
         previous=credentials,

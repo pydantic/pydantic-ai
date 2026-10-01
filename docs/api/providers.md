@@ -16,6 +16,10 @@
 
 ::: pydantic_ai.providers.openai
 
+::: pydantic_ai.providers.openai_chatgpt
+    options:
+      inherited_members: true
+
 ::: pydantic_ai.providers.openai_codex
     options:
       inherited_members: true

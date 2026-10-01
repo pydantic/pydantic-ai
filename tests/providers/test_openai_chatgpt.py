@@ -549,3 +549,127 @@ async def test_cancelled_refresh_is_not_spent_twice(signing_key: rsa.RSAPrivateK
         with pytest.raises(ModelAPIError, match='outcome is unknown'):
             await client.get(RESOURCE + '/models')
         assert len(issuer.forms) == 1
+
+
+@pytest.mark.parametrize('nonce', [None, 'original', 'wrong'])
+async def test_refresh_nonce(signing_key: rsa.RSAPrivateKey, nonce: str | None):
+    """OIDC permits omission on refresh, but a returned nonce must match the original sign-in."""
+    issuer = Issuer(signing_key)
+    if nonce is not None:
+        issuer.claims['nonce'] = nonce
+    old = replace(credentials(-1), nonce='original')
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(issuer)) as client:
+        provider = OpenAIChatGPTProvider(old, http_client=client)
+        if nonce == 'wrong':
+            with pytest.raises(ModelAPIError, match='ID token could not be verified'):
+                await client.get(RESOURCE + '/models')
+        else:
+            await client.get(RESOURCE + '/models')
+            assert provider.credentials.nonce == 'original'
+
+
+@pytest.mark.parametrize('missing', ['id_token', 'scope'])
+async def test_initial_grant_requires_identity_and_scopes(signing_key: rsa.RSAPrivateKey, missing: str):
+    issuer = Issuer(signing_key)
+    issuer.omit.add(missing)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(issuer)) as client:
+        flow = OpenAIChatGPTOAuthFlow(ext_agent_host_id='host', agent_name='App', http_client=client)
+        issuer.nonce = flow.nonce
+        with pytest.raises(ModelAPIError, match='did not return'):
+            await flow.exchange_callback(callback(flow))
+
+
+@pytest.mark.parametrize('client_id', [None, 'oaiapp_test', 'other'])
+async def test_returning_callback_client_id(signing_key: rsa.RSAPrivateKey, client_id: str | None):
+    issuer = Issuer(signing_key)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(issuer)) as client:
+        flow = OpenAIChatGPTOAuthFlow(
+            ext_agent_host_id='host', agent_name='App', credentials=credentials(), http_client=client
+        )
+        issuer.nonce = flow.nonce
+        if client_id is None:
+            result = await flow.exchange_code('code')
+        elif client_id == 'other':
+            with pytest.raises(UserError, match='changed the selected'):
+                await flow.exchange_callback(callback(flow, client_id=client_id))
+            assert not issuer.forms
+            return
+        else:
+            result = await flow.exchange_callback(callback(flow, client_id=client_id))
+        assert result.client_id == 'oaiapp_test'
+        assert result.nonce == flow.nonce
+
+
+@pytest.mark.parametrize('field', ['ext_agent_host_id', 'agent_name'])
+def test_empty_registration_config(field: str):
+    with pytest.raises(UserError, match='must not be empty'):
+        OpenAIChatGPTOAuthFlow(
+            ext_agent_host_id='' if field == 'ext_agent_host_id' else 'host',
+            agent_name='' if field == 'agent_name' else 'App',
+        )
+
+
+@pytest.mark.parametrize(
+    'config',
+    [
+        {'client_id': ''},
+        {'client_id': 'dynamic_agent_client'},
+        {'redirect_uri': 'http://app.example/callback'},
+        {'redirect_uri': 'https://user@app.example/callback'},
+        {'redirect_uri': 'https://app.example/callback#fragment'},
+        {'client_secret': 'secret'},
+        {'token_endpoint_auth_method': 'client_secret_basic'},
+    ],
+)
+def test_invalid_provisioned_config(config: dict[str, Any]):
+    values: dict[str, Any] = {'client_id': 'oaiapp_test', 'redirect_uri': 'https://app.example/callback', **config}
+    with pytest.raises(UserError):
+        OpenAIChatGPTClient(**values)
+
+
+async def test_callback_target_and_expiry():
+    flow = OpenAIChatGPTOAuthFlow(ext_agent_host_id='host', agent_name='App')
+    with pytest.raises(UserError, match='does not match'):
+        await flow.exchange_callback(callback(flow).replace('127.0.0.1', 'localhost'))
+    flow._expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(UserError, match='expired'):
+        await flow.exchange_callback(callback(flow))
+
+
+async def test_provider_rejects_invalid_grant_and_client():
+    config = OpenAIChatGPTClient(client_id='other', redirect_uri='https://app.example/callback')
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda _: httpx2.Response(200))) as client:
+        OpenAIChatGPTProvider(credentials(), client=config, http_client=client)
+        with pytest.raises(UserError, match='another ChatGPT client'):
+            await client.get(RESOURCE + '/models')
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda _: httpx2.Response(200))) as client:
+        OpenAIChatGPTProvider(replace(credentials(), scopes=('openid',)), http_client=client)
+        with pytest.raises(UserError, match='do not grant plan usage'):
+            await client.get(RESOURCE + '/models')
+    with pytest.raises(UserError, match='another ChatGPT client'):
+        OpenAIChatGPTOAuthFlow(ext_agent_host_id='host', agent_name='App', credentials=credentials(), client=config)
+
+
+async def test_dedicated_async_client_required():
+    async with httpx2.AsyncClient(auth=httpx2.BasicAuth('user', 'password')) as client:
+        with pytest.raises(UserError, match='without existing auth'):
+            OpenAIChatGPTProvider(credentials(), http_client=client)
+    provider = OpenAIChatGPTProvider(credentials())
+    async with provider:
+        auth = provider.client._client.auth  # pyright: ignore[reportPrivateUsage]
+        assert isinstance(auth, httpx2.Auth)
+        with pytest.raises(UserError, match='async HTTP client'):
+            next(auth.sync_auth_flow(httpx2.Request('GET', RESOURCE + '/models')))
+
+
+async def test_source_cannot_switch_registration(signing_key: rsa.RSAPrivateKey):
+    issuer = Issuer(signing_key)
+    source = MemorySource(credentials(-1))
+    source.value = replace(source.value, subject='other')
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(issuer)) as client:
+        provider = OpenAIChatGPTProvider(credential_source=source, http_client=client)
+        # Simulate a second process replacing the selected account while rotation is pending.
+        provider._credentials = credentials(-1)  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(UserError, match='changed the selected registration'):
+            await client.get(RESOURCE + '/models')
+        assert not issuer.forms

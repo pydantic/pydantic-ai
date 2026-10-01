@@ -28,24 +28,24 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-pydantic-monty-runtime = false
-pydantic-handlebars = false
-pydantic-extra-types = false
-pydantic = false
-pydantic-core = false
-pydantic-ai-harness = false
-logfire-api = false
+anthropic = "2026-09-28T18:04:04Z"
 cassetter = false
+genai-prices = false
+google-genai = "2026-09-22T17:23:02Z"
 listentome = false
 logfire = false
-pydantic-settings = false
-pydantic-monty-client = false
-genai-prices = false
-pydantic-monty = false
-termflow-md = "2026-09-30T15:58:29Z"
-anthropic = "2026-09-28T18:04:04Z"
+logfire-api = false
 openai = "2026-09-23T00:08:49Z"
-google-genai = "2026-09-22T17:23:02Z"
+pydantic = false
+pydantic-ai-harness = false
+pydantic-core = false
+pydantic-extra-types = false
+pydantic-handlebars = false
+pydantic-monty = false
+pydantic-monty-client = false
+pydantic-monty-runtime = false
+pydantic-settings = false
+termflow-md = "2026-09-30T15:58:29Z"
 
 [manifest]
 members = [
