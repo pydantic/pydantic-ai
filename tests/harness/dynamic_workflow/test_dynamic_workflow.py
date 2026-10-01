@@ -7,6 +7,7 @@ import functools
 import re
 from typing import Any
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, ConfigDict, Field, GetCoreSchemaHandler
@@ -1228,7 +1229,7 @@ async def test_awaiting_sub_agents_does_not_count_against_duration_cap() -> None
     # Here three sub-agents each sleep 0.2s on the host under a 0.1s cap; the workflow still
     # completes. Guards the documented behavior that the timer excludes sub-agent latency.
     async def slow_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        await asyncio.sleep(0.2)
+        await anyio.sleep(0.2)
         return ModelResponse(parts=[TextPart('done')])
 
     sub: Agent[object, str] = Agent(FunctionModel(slow_model), name='sub')

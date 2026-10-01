@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import warnings
 from collections.abc import Callable
 from typing import Any, NoReturn
 
+import anyio
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -326,7 +326,7 @@ class TestHumanInTheLoop:
 
         async def ask_the_operator(call: ToolCallInfo) -> GuardrailResult:
             asked.append(call.name)
-            await asyncio.sleep(0)  # stands in for a prompt, a websocket, a queue
+            await anyio.sleep(0)  # stands in for a prompt, a websocket, a queue
             return GuardrailResult.block('operator said no')
 
         agent, seen = _agent_with(

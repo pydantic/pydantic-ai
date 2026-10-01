@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, cast
 
+import anyio
 import pytest
 
 from ..conftest import try_import
@@ -221,7 +222,7 @@ async def test_replay_waits_for_send_and_replays_close() -> None:
     replay = ReplayWebSocket(cassette)
 
     receive_task = asyncio.create_task(replay.recv())
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     assert not receive_task.done()
     await replay.send(json.dumps({'id': '0123456789abcdef01234567', 'type': 'client.event'}))
     assert await receive_task == json.dumps({'type': 'server.event'})
@@ -247,7 +248,7 @@ async def test_replay_can_hold_open_after_last_frame_until_client_closes() -> No
     replay = ReplayWebSocket(RealtimeCassette(), hold_open=True)
 
     receive_task = asyncio.create_task(replay.recv())
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     assert not receive_task.done()
 
     await replay.close()
@@ -358,9 +359,9 @@ async def test_audio_waits_for_its_recorded_turn() -> None:
     )
     replay = ReplayWebSocket(cassette)
     waiting = asyncio.ensure_future(cassette.before_audio_send())
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     assert json.loads(await replay.recv()) == {'type': 'server.event'}
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     assert not waiting.done()
     await replay.send(json.dumps(_TOOL_RESULT))
     await waiting
@@ -456,7 +457,7 @@ async def test_replay_waits_for_a_direct_recv_reader() -> None:
     )
     replay = ReplayWebSocket(cassette)
     send = asyncio.ensure_future(replay.send(json.dumps({'type': 'client.event'})))
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     assert json.loads(await replay.recv()) == {'type': 'server.event'}
     await send
 
@@ -487,7 +488,7 @@ async def test_recording_stamps_when_each_interaction_happened(tmp_path: Path) -
     cassette = RealtimeCassette()
     recording = RecordingWebSocket(fake_ws, cassette)
     await recording.send(json.dumps({'type': 'client.event'}))
-    await asyncio.sleep(0.01)
+    await anyio.sleep(0.01)
     await recording.recv()
     with pytest.raises(ConnectionClosedOK):
         await recording.recv()
@@ -562,7 +563,7 @@ async def test_replay_clock_ignores_sends_that_overtake_the_frame_being_handled(
         )
     )
     send = asyncio.ensure_future(replay.send(json.dumps({'type': 'client.event'})))
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     await replay.recv()
     await send  # the waiting send goes out before the frame it waited on is handled
     replay.begin_handling_frame()

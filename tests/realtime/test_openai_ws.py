@@ -298,7 +298,7 @@ async def test_text_context_waits_for_next_turn(openai_ws_cassette: tuple[Provid
 
     async with agent.realtime(model).session() as session:
         await session.send('The visitor is called Ada.', respond=False)
-        await asyncio.sleep(1)
+        await anyio.sleep(1)
         assert not [message for message in session.new_messages() if isinstance(message, ModelResponse)]
         await session.send('What is the visitor called?')
         with anyio.fail_after(30):
@@ -446,7 +446,7 @@ async def test_media_views_subscribe_before_iteration(
         audio_task = asyncio.create_task(consume_audio())
         transcript_task = asyncio.create_task(consume_transcripts())
         for _ in range(5):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
     audio_chunks = await audio_task
     transcript_parts = await transcript_task
@@ -478,7 +478,7 @@ async def test_wait_for_playback_drains_audio_before_close(
 
         async def play_audio() -> None:
             async for chunk in audio:
-                await asyncio.sleep(0.005)
+                await anyio.sleep(0.005)
                 played.append(chunk)
 
         playback = asyncio.create_task(play_audio())

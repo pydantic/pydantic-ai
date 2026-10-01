@@ -94,7 +94,7 @@ class _Reporter:
 
     async def watch(self) -> None:
         while True:
-            await asyncio.sleep(2)
+            await anyio.sleep(2)
             await self.refresh()
 
     async def stop(self, event: SessionEnd) -> None:

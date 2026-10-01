@@ -1355,7 +1355,7 @@ class TestHooksCapability:
 
         @hooks.on.before_model_request(timeout=0.01)
         async def slow_hook(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
             return request_context  # pragma: no cover
 
         agent = Agent(FunctionModel(simple_model_function), capabilities=[hooks])

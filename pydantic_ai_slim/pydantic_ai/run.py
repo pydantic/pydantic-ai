@@ -1,12 +1,12 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import dataclasses
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from copy import deepcopy
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Generic, Literal, cast, overload
 
+import anyio
 from pydantic import model_serializer, model_validator
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 from typing_extensions import NotRequired, TypedDict
@@ -310,7 +310,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # has no awaited step to carry the pending `task.cancel()`: yield to the event loop so
             # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
             # 3.11+, and neither path awaits).
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         _utils.raise_if_cancelling()
 
         if previous is None:

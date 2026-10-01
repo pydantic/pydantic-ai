@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import anyio
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
@@ -14,7 +14,7 @@ def build_agent() -> Agent[None, str]:
 
     @agent.tool_plain
     async def slow() -> str:
-        await asyncio.sleep(30)
+        await anyio.sleep(30)
         return 'done'
 
     return agent

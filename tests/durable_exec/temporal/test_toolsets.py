@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import re
 import sys
 import uuid
@@ -12,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import patch
 
+import anyio
 import pytest
 from pydantic_core import PydanticSerializationError
 
@@ -1618,11 +1618,11 @@ async def test_heartbeating_beats_and_stops(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr('temporalio.activity.heartbeat', lambda: beats.append(None))
 
     async with heartbeating():
-        await asyncio.sleep(0.05)
+        await anyio.sleep(0.05)
 
     assert beats  # at least the immediate first beat, then every ~10ms
     count_after_exit = len(beats)
-    await asyncio.sleep(0.05)
+    await anyio.sleep(0.05)
     assert len(beats) == count_after_exit  # the beater was cancelled on exit
 
 
@@ -1637,7 +1637,7 @@ async def test_heartbeating_beat_crash_surfaces_after_body(monkeypatch: pytest.M
 
     with pytest.raises(RuntimeError, match='heartbeat exploded'):
         async with heartbeating():
-            await asyncio.sleep(0.01)
+            await anyio.sleep(0.01)
 
 
 async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.MonkeyPatch):
@@ -1651,7 +1651,7 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
 
     with pytest.raises(ValueError, match='request failed'):
         async with heartbeating():
-            await asyncio.sleep(0.01)
+            await anyio.sleep(0.01)
             raise ValueError('request failed')
 
 
@@ -1660,18 +1660,18 @@ async def test_heartbeating_body_error_wins_over_beat_crash(monkeypatch: pytest.
 
 async def heartbeat_probe_tool() -> str:
     """A tool that yields to the event loop, giving the heartbeat task a chance to run."""
-    await asyncio.sleep(0.01)
+    await anyio.sleep(0.01)
     return 'probe tool ran'
 
 
 async def heartbeat_probe_agent_tool() -> str:
     """The same, for the agent's own implicit toolset, which registers its own activity."""
-    await asyncio.sleep(0.01)
+    await anyio.sleep(0.01)
     return 'probe agent tool ran'
 
 
 async def _heartbeat_probe_args_validator(ctx: RunContext[None]) -> None:
-    await asyncio.sleep(0.01)
+    await anyio.sleep(0.01)
 
 
 _heartbeat_function_toolset = FunctionToolset[None](
@@ -1689,7 +1689,7 @@ _heartbeat_mcp_toolset = MCPToolset(
 
 
 async def _heartbeat_dynamic_toolset(ctx: RunContext[None]) -> AbstractToolset[None]:
-    await asyncio.sleep(0.01)
+    await anyio.sleep(0.01)
     return FunctionToolset[None](
         tools=[Tool(heartbeat_probe_tool, args_validator=_heartbeat_probe_args_validator)], id='hb_dynamic_inner'
     )
@@ -1697,27 +1697,27 @@ async def _heartbeat_dynamic_toolset(ctx: RunContext[None]) -> AbstractToolset[N
 
 async def _heartbeat_event_stream_handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
     async for _ in stream:
-        await asyncio.sleep(0.01)
+        await anyio.sleep(0.01)
 
 
 async def _heartbeat_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    await asyncio.sleep(0.01)
+    await anyio.sleep(0.01)
     return ModelResponse(parts=[TextPart('probe model response')])
 
 
 async def _heartbeat_stream_model_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
-    await asyncio.sleep(0.01)
+    await anyio.sleep(0.01)
     yield 'probe model response'
 
 
 class _HeartbeatProbeModel(FunctionModel):
     async def cancel_suspended_response(self, response: ModelResponse) -> None:
-        await asyncio.sleep(0.01)
+        await anyio.sleep(0.01)
 
     async def compact_messages(
         self, request_context: ModelRequestContext, *, instructions: str | None = None
     ) -> ModelResponse:
-        await asyncio.sleep(0.01)
+        await anyio.sleep(0.01)
         return ModelResponse(parts=[TextPart('compacted')])
 
 
@@ -1911,7 +1911,7 @@ def test_tool_activities_get_no_default_heartbeat_timeout():
 
 async def slow_heartbeat_tool() -> str:
     """Outlive the `heartbeat_timeout` the agent below configures for all of its activities."""
-    await asyncio.sleep(2)
+    await anyio.sleep(2)
     return 'slow tool finished'
 
 

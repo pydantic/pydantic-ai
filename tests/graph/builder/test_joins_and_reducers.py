@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
+import anyio
+
 from pydantic_graph import GraphBuilder, StepContext
 from pydantic_graph.join import (
     ReduceFirstValue,
@@ -341,10 +343,10 @@ async def test_reduce_first_value():
     async def slow_process(ctx: StepContext[StateWithResults, None, int]) -> str:
         # First task finishes quickly
         if ctx.inputs == 1:
-            await asyncio.sleep(0.001)
+            await anyio.sleep(0.001)
         else:
             # Others take longer (should be cancelled)
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
         ctx.state.results.append(f'completed-{ctx.inputs}')
         return f'result-{ctx.inputs}'
 

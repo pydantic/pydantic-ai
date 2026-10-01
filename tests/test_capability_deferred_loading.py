@@ -5,11 +5,11 @@ Split out of `test_capabilities.py` per #7304.
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
+import anyio
 import pytest
 
 from pydantic_ai._run_context import RunContext
@@ -1655,12 +1655,12 @@ async def test_parallel_tool_returns_keep_each_availability_delta_adjacent() -> 
 
     @agent.tool_plain
     async def reveal_a() -> ToolReturn[str]:
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         return ToolReturn(return_value='a', tools=['tool_a'])
 
     @agent.tool_plain
     async def reveal_b() -> ToolReturn[str]:
-        await asyncio.sleep(0.01)
+        await anyio.sleep(0.01)
         return ToolReturn(return_value='b', tools=['tool_b'])
 
     result = await agent.run('reveal both')
@@ -1703,7 +1703,7 @@ async def test_parallel_tool_returns_dedupe_same_reveal_in_history_order() -> No
 
     @agent.tool_plain
     async def slow_first() -> ToolReturn[str]:
-        await asyncio.sleep(0.01)
+        await anyio.sleep(0.01)
         return ToolReturn(return_value='slow', tools=['revealed'])
 
     @agent.tool_plain

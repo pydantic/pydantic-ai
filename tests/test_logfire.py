@@ -1,11 +1,11 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import anyio
 import pytest
 from dirty_equals import IsJson, IsList
 
@@ -4356,7 +4356,7 @@ async def _run_delegating_agent(*, share_usage: bool, sequential: bool, instrume
 
     async def delegate_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         # Force the two delegate runs to overlap, so a sibling's usage lands inside this run's window.
-        await asyncio.sleep(0.05)
+        await anyio.sleep(0.05)
         return ModelResponse(parts=[TextPart('joke')], usage=RequestUsage(input_tokens=10, output_tokens=1))
 
     delegate = Agent(

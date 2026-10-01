@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
-
+import anyio
 import pytest
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -120,7 +119,7 @@ class TestOutputGuardrail:
 
     async def test_async_guard_awaited(self):
         async def guard(output: object) -> bool:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return 'bad' not in str(output)
 
         agent = Agent(TestModel(custom_output_text='ok reply'), capabilities=[OutputGuardrail(guard=guard)])

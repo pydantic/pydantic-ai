@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 from unittest import mock
 
+import anyio
 import websockets
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 from websockets.frames import Close
@@ -100,7 +101,7 @@ class FakeWebSocket:
         handshake = frame.get('type') in _HANDSHAKE_FRAME_TYPES
         if not handshake:
             for _ in range(self.network.latency()):
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
         if not self.alive:
             raise ConnectionClosedError(None, Close(1006, 'simulated drop'))
         fault = None if handshake else self.network.take_send_fault()

@@ -6,6 +6,7 @@ import asyncio
 import time
 from collections.abc import Iterator
 
+import anyio
 import pytest
 
 from . import _loop
@@ -20,7 +21,7 @@ def loop() -> Iterator[SimulatedLoop]:
 
 
 def test_sleeping_moves_the_virtual_clock(loop: SimulatedLoop) -> None:
-    loop.run(asyncio.sleep(30))
+    loop.run(anyio.sleep(30))
     assert loop.time() == pytest.approx(30)
 
 
@@ -39,7 +40,7 @@ def test_run_ticks_leaves_tasks_mid_flight(loop: SimulatedLoop) -> None:
     async def count() -> None:
         for i in range(10):
             progress.append(i)
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
     task = loop.create_task(count())
     loop.run_ticks(3)
@@ -62,7 +63,7 @@ def test_a_loop_nothing_can_wake_is_stuck(loop: SimulatedLoop, monkeypatch: pyte
 def test_a_loop_that_never_idles_is_stuck(loop: SimulatedLoop) -> None:
     async def spin() -> None:
         while True:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
     task = loop.create_task(spin())
     with pytest.raises(SimulationStuck, match='still busy'):

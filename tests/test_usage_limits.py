@@ -1,4 +1,3 @@
-import asyncio
 import functools
 import operator
 import re
@@ -8,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import anyio
 import pytest
 from genai_prices import Usage as GenaiPricesUsage, calc_price
 from pydantic import BaseModel, TypeAdapter
@@ -1132,19 +1132,19 @@ async def test_parallel_tool_calls_limit_enforced():
 
     @agent.tool_plain
     async def tool_a() -> str:
-        await asyncio.sleep(0.01)
+        await anyio.sleep(0.01)
         executed_tools.append('a')
         return 'result a'
 
     @agent.tool_plain
     async def tool_b() -> str:
-        await asyncio.sleep(0.01)
+        await anyio.sleep(0.01)
         executed_tools.append('b')
         return 'result b'
 
     @agent.tool_plain
     async def tool_c() -> str:
-        await asyncio.sleep(0.01)
+        await anyio.sleep(0.01)
         executed_tools.append('c')
         return 'result c'
 

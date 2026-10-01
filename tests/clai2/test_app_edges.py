@@ -1,12 +1,12 @@
 """Interactive application error, cancellation, and input boundaries."""
 
-import asyncio
 import io
 import signal
 import threading
 from pathlib import Path
 from typing import Generic, TypeVar
 
+import anyio
 import pytest
 from prompt_toolkit.styles import BaseStyle
 from rich.color import Color
@@ -69,7 +69,7 @@ async def test_chat_boundaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, 
                 signal.raise_signal(signal.SIGINT)
                 if mode == 'double':
                     signal.raise_signal(signal.SIGINT)
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
             return request_context  # pragma: lax no cover
 
     inputs(monkeypatch, values)

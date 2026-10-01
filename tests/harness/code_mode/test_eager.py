@@ -9,6 +9,7 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext, Tool, ToolReturn
@@ -124,7 +125,7 @@ class TestEagerCodeMode:
             yield {1: DeltaToolCall(name='run_code')}
             for chunk in chunks[:-1]:
                 yield {1: DeltaToolCall(json_args=chunk)}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
             await asyncio.wait_for(first_call.wait(), timeout=5)
             yield {1: DeltaToolCall(json_args=chunks[-1])}
 
@@ -174,7 +175,7 @@ class TestEagerCodeMode:
             yield {1: DeltaToolCall(name='run_code')}
             for chunk in chunks[:-1]:
                 yield {1: DeltaToolCall(json_args=chunk)}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
             # The first statement is complete by now: `search` must run before the stream ends.
             # A hang guard, not a timing assertion: without eager execution `search` would never start.
             await asyncio.wait_for(search_started.wait(), timeout=30)
@@ -257,7 +258,7 @@ class TestEagerCodeMode:
             yield {1: DeltaToolCall(name='run_code')}
             for chunk in stream_json_args(code):
                 yield {1: DeltaToolCall(json_args=chunk)}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
 
         agent: Agent[None, str] = Agent(
             FunctionModel(stream_function=stream_attempts),
@@ -309,7 +310,7 @@ class TestEagerCodeMode:
             yield {1: DeltaToolCall(name='run_code')}
             for offset in range(0, len(args), 16):
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 16])}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
 
         agent: Agent[None, str] = Agent(
             FunctionModel(stream_function=stream_code),
@@ -369,7 +370,7 @@ class TestEagerCodeMode:
             yield {1: DeltaToolCall(name='run_code')}
             for chunk in stream_json_args(code):
                 yield {1: DeltaToolCall(json_args=chunk)}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
 
         agent: Agent[None, str] = Agent(
             FunctionModel(stream_function=stream_code),
@@ -446,7 +447,7 @@ class TestEagerCodeMode:
             }
             for chunk in stream_json_args(code):
                 yield {1: DeltaToolCall(json_args=chunk)}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
             stream_finished.set()
 
         agent: Agent[None, str] = Agent(
@@ -487,7 +488,7 @@ class TestEagerCodeMode:
                     ),
                 ],
             )
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
         assert calls == []
 
@@ -595,7 +596,7 @@ class TestEagerCodeMode:
                     )
                 ],
             )
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             assert calls == []
 
             await observe(
@@ -774,7 +775,7 @@ class TestEagerCodeMode:
                 yield {1: DeltaToolCall(name='run_code')}
                 for chunk in chunks[:-1]:
                     yield {1: DeltaToolCall(json_args=chunk)}
-                    await asyncio.sleep(0)
+                    await anyio.sleep(0)
                 await asyncio.wait_for(valid_call_started.wait(), timeout=5)
                 yield {1: DeltaToolCall(json_args=chunks[-1])}
             else:
@@ -872,7 +873,7 @@ class TestEagerCodeMode:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
                 # Swallow the cancellation and keep working past the cleanup budget.
-                await asyncio.sleep(1.2)
+                await anyio.sleep(1.2)
             calls.append('done')
             done.set()
             return 'late'
@@ -1144,7 +1145,7 @@ class TestEagerCodeMode:
             yield {1: DeltaToolCall(name='run_code')}
             for chunk in stream_json_args(code):
                 yield {1: DeltaToolCall(json_args=chunk)}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
             stream_finished.set()
 
         agent: Agent[None, str] = Agent(

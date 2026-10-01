@@ -645,7 +645,7 @@ You can also raise `ModelRetry` or `ToolFailed` from tool validation and executi
 You can set a timeout for tool execution to prevent tools from running indefinitely. If a tool exceeds its timeout, it is treated as a retryable failure and a retry prompt is sent to the model (counting towards the retry limit).
 
 ```python
-import asyncio
+import anyio
 
 from pydantic_ai import Agent
 
@@ -656,14 +656,14 @@ agent = Agent('test', tool_timeout=30)
 @agent.tool_plain
 async def slow_tool() -> str:
     """This tool will use the agent's default timeout (30 seconds)."""
-    await asyncio.sleep(10)
+    await anyio.sleep(10)
     return 'Done'
 
 
 @agent.tool_plain(timeout=5)
 async def fast_tool() -> str:
     """This tool has its own timeout (5 seconds) that overrides the agent default."""
-    await asyncio.sleep(1)
+    await anyio.sleep(1)
     return 'Done'
 ```
 

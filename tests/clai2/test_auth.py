@@ -3,6 +3,7 @@
 import asyncio
 import io
 
+import anyio
 import keyring
 import pytest
 from prompt_toolkit.application import create_app_session
@@ -139,7 +140,7 @@ async def test_paste_survives_a_failed_callback(monkeypatch: pytest.MonkeyPatch,
 
     async def paste(message: str) -> str:
         while not same_tick and 'Address already in use' not in output.getvalue():
-            await asyncio.sleep(0)  # the listener fails, and is reported, before anything is pasted
+            await anyio.sleep(0)  # the listener fails, and is reported, before anything is pasted
         return 'the-code'
 
     monkeypatch.setattr(

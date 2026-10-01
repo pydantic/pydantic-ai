@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 from datetime import timedelta
 
+import anyio
 import pytest
 
 try:
@@ -59,7 +59,7 @@ def _model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> Mod
 async def research() -> str:
     global _tool_calls
     _tool_calls += 1
-    await asyncio.sleep(0.05)
+    await anyio.sleep(0.05)
     return 'durable result'
 
 

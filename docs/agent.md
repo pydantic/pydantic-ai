@@ -749,6 +749,7 @@ A run in flight can be cancelled entirely -- e.g. when a user hits a "stop" butt
 
 ```python {title="run_cancel.py"}
 import asyncio
+import anyio
 
 from pydantic_ai import Agent, CancellationToken, RunCancelled
 
@@ -759,7 +760,7 @@ tool_started = asyncio.Event()
 @agent.tool_plain
 async def slow_lookup() -> str:
     tool_started.set()
-    await asyncio.sleep(10)
+    await anyio.sleep(10)
     return 'result'
 
 
@@ -806,6 +807,7 @@ When the surrounding environment cancels the run -- for example through `asyncio
 
 ```python {title="run_external_cancel.py"}
 import asyncio
+import anyio
 
 from pydantic_ai import Agent, RunCancelled
 
@@ -816,7 +818,7 @@ tool_started = asyncio.Event()
 @agent.tool_plain
 async def slow_lookup() -> str:
     tool_started.set()
-    await asyncio.sleep(10)
+    await anyio.sleep(10)
     return 'result'
 
 

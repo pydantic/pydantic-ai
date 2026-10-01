@@ -112,7 +112,7 @@ report = dataset.evaluate_sync(
 Here's an example showing the performance difference:
 
 ```python {title="concurrency_example.py"}
-import asyncio
+import anyio
 
 from pydantic_evals import Case, Dataset
 
@@ -132,7 +132,7 @@ dataset = Dataset(
 
 async def slow_task(input_value: int) -> int:
     """Simulates a slow operation (e.g., API call)."""
-    await asyncio.sleep(0.1)  # 100ms per case
+    await anyio.sleep(0.1)  # 100ms per case
     return input_value * 2
 
 

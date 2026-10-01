@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import anyio
 import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.input import create_pipe_input
@@ -64,9 +65,9 @@ async def test_one_widget_owns_the_screen_at_a_time() -> None:
 
     with screen.bound(take):
         one = asyncio.create_task(first())
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         two = asyncio.create_task(second())
-        await asyncio.sleep(0.05)
+        await anyio.sleep(0.05)
         assert log == ['taken', 'first in']
         release.set()
         await asyncio.gather(one, two)
@@ -106,7 +107,7 @@ async def test_pausing_does_not_swallow_the_callers_own_cancellation() -> None:
                 raise AssertionError('the screen must not be handed over')  # pragma: no cover
 
         pausing = asyncio.create_task(pause())
-        await asyncio.sleep(0)  # now waiting on the cancelled animation task
+        await anyio.sleep(0)  # now waiting on the cancelled animation task
         pausing.cancel()
         with pytest.raises(asyncio.CancelledError):
             await pausing

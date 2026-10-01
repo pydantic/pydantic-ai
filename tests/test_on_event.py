@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import dataclass, replace as dataclasses_replace
 from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
@@ -445,7 +445,7 @@ async def test_stream_consumers_observe_settled_immediate_events() -> None:
         async def cancel(self, ctx: RunContext[Any], event: ThingStartEvent) -> None:
             # Yield the event loop first so a concurrent stream consumer could drain the buffered
             # event mid-dispatch; without settlement it would observe `cancelled=False`.
-            await asyncio.sleep(0.02)
+            await anyio.sleep(0.02)
             event.cancel()
 
     observed: list[bool] = []

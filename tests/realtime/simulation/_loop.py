@@ -19,6 +19,8 @@ from collections import deque
 from collections.abc import Coroutine
 from typing import Any, TypeVar
 
+import anyio
+
 T = TypeVar('T')
 
 _MAX_IDLE_TICKS = 20_000
@@ -123,7 +125,7 @@ class SimulatedLoop(asyncio.SelectorEventLoop):
 
         async def tick() -> None:
             for _ in range(ticks):
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
 
         self.run(tick())
 
@@ -132,7 +134,7 @@ class SimulatedLoop(asyncio.SelectorEventLoop):
 
         async def settle() -> None:
             for _ in range(_MAX_IDLE_TICKS):
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
                 if not self.has_runnable_work():
                     return
             raise SimulationStuck(f'the event loop was still busy after {_MAX_IDLE_TICKS} iterations')

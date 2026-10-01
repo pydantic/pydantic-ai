@@ -117,6 +117,7 @@ The `.map()` operation also works with `AsyncIterable` values. When mapping over
 
 ```python {title="async_iterable_map.py"}
 import asyncio
+import anyio
 from dataclasses import dataclass
 
 from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
@@ -134,7 +135,7 @@ async def main():
     async def stream_numbers(ctx: StepContext[SimpleState, None, None]):
         """Stream numbers with delays to simulate real-time data."""
         for i in range(1, 4):
-            await asyncio.sleep(0.05)  # Simulate delay
+            await anyio.sleep(0.05)  # Simulate delay
             yield i
 
     @g.step

@@ -294,6 +294,7 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 
 ```python {title="first_value_reducer.py"}
 import asyncio
+import anyio
 from dataclasses import dataclass
 
 from pydantic_graph import GraphBuilder, ReduceFirstValue, StepContext
@@ -315,7 +316,7 @@ async def main():
     async def slow_process(ctx: StepContext[SimpleState, None, int]) -> str:
         """Simulate variable processing times."""
         # Simulate different delays
-        await asyncio.sleep(ctx.inputs * 0.1)
+        await anyio.sleep(ctx.inputs * 0.1)
         ctx.state.tasks_completed += 1
         return f'Result from task {ctx.inputs}'
 

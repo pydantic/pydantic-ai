@@ -134,7 +134,7 @@ class TestSpritesSandbox:
         task = asyncio.create_task(acquire())
         await transport.create_started.wait()
         task.cancel()
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert not task.done()
         transport.release_create.set()
 
@@ -701,7 +701,7 @@ class TestSpritesSandbox:
         task = asyncio.create_task(owned.aclose())
         await transport.close_started.wait()
         task.cancel()
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert not task.done()
         transport.release_close.set()
 
@@ -716,7 +716,7 @@ class TestSpritesSandbox:
         creating = asyncio.create_task(owned.get_sandbox())
         await transport.create_started.wait()
         closing = asyncio.create_task(owned.aclose())
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert transport.close_calls == 0
         transport.release_create.set()
         await creating
@@ -732,7 +732,7 @@ class TestSpritesSandbox:
         task = asyncio.create_task(backend.run(['true']))
         await transport.exec_close_started.wait()
         task.cancel()
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert not task.done()
         transport.release_exec_close.set()
 

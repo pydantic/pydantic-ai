@@ -3295,7 +3295,7 @@ def _reconnecting_session(first: _DroppableSession, dial: Any, runner: Any = Non
 
 async def _settle() -> None:
     for _ in range(20):
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
 
 
 async def test_a_lost_call_finishing_while_the_resumed_session_is_told_stays_cancelled() -> None:
@@ -4380,7 +4380,7 @@ async def test_parallel_tool_calls_are_one_response_answered_once() -> None:
         await session.send('Look both up.')
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(50):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done()
         release_slow.set()
         with anyio.fail_after(5):

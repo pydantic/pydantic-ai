@@ -385,7 +385,7 @@ class TestProcessEventStream:
 
         async def stalled_stream(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
             yield 'first'
-            await asyncio.sleep(30)
+            await anyio.sleep(30)
 
         agent = Agent(FunctionModel(stream_function=stalled_stream))
         # Held so refcounting can't finalize the abandoned generator for us: the parked prefetch has
@@ -582,7 +582,7 @@ class TestProcessEventStream:
 
         async def stalled_stream() -> AsyncIterator[AgentStreamEvent]:
             yield PartStartEvent(index=0, part=TextPart(content='hi'))
-            await asyncio.sleep(30)
+            await anyio.sleep(30)
 
         capability = ProcessEventStream[None](handler=observer)
         run_ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage())
@@ -611,7 +611,7 @@ class TestProcessEventStream:
 
             async def __anext__(self) -> AgentStreamEvent:
                 if self.sent:
-                    await asyncio.sleep(30)
+                    await anyio.sleep(30)
                 self.sent = True
                 return PartStartEvent(index=0, part=TextPart(content='hi'))
 

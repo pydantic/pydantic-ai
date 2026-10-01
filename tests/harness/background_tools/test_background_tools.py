@@ -337,7 +337,7 @@ class TestBackgroundTools:
         async def barrier() -> str:
             nonlocal sequential_active
             sequential_active = True
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             sequential_active = False
             return 'barrier result'
 
@@ -568,7 +568,7 @@ class TestBackgroundTools:
             await first_started.wait()
             await second_started.wait()
             ctx.cancel()
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return 'discarded'  # pragma: lax no cover -- cancellation is delivered at the await
 
         @agent.tool_plain(metadata={'background': True})
@@ -991,7 +991,7 @@ class TestBackgroundTools:
                 run_returned.set()
 
         async def release_after_a_while() -> None:
-            await asyncio.sleep(0.3)
+            await anyio.sleep(0.3)
             assert not run_returned.is_set()
             release.set()
 
@@ -1022,7 +1022,7 @@ class TestBackgroundTools:
         assert await asyncio.to_thread(started.wait, 5)
         run.cancel()
 
-        await asyncio.sleep(0.3)
+        await anyio.sleep(0.3)
         assert not run.done()
         release.set()
 
@@ -1040,7 +1040,7 @@ class TestBackgroundTools:
         async def slow() -> str:
             started.set()
             try:
-                await asyncio.sleep(60)
+                await anyio.sleep(60)
             except asyncio.CancelledError:
                 cancel_seen.set()
                 raise

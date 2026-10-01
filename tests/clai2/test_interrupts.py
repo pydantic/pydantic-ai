@@ -4,6 +4,7 @@ import asyncio
 import signal
 import sys
 
+import anyio
 import pytest
 
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
@@ -37,7 +38,7 @@ async def test_interrupt_cleans_up_and_preserves_parent(double: bool) -> None:
         finally:
             if double:
                 signal.raise_signal(signal.SIGINT)
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             cleaned.set()
 
     assert not await interrupts.run(operation())

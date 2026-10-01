@@ -21,6 +21,7 @@ from collections.abc import Callable, Coroutine, Mapping
 from contextlib import AbstractContextManager
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import anyio
 import httpx
 from anyio import CancelScope, fail_after
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
@@ -215,7 +216,7 @@ async def _until_listening(redirect_uri: str, callback: asyncio.Future[Tokens]) 
                 await http.get(redirect_uri)
                 return
             except httpx.TransportError:
-                await asyncio.sleep(0.02)
+                await anyio.sleep(0.02)
 
 
 async def _until_released(redirect_uri: str, *, limit: float = 2) -> None:
@@ -233,7 +234,7 @@ async def _until_released(redirect_uri: str, *, limit: float = 2) -> None:
             return
         writer.close()
         await writer.wait_closed()
-        await asyncio.sleep(0.05)
+        await anyio.sleep(0.05)
 
 
 class PKCESignIn:

@@ -132,7 +132,7 @@ class TestInputGuardrail:
 
     async def test_async_guard_awaited(self):
         async def guard(prompt: str) -> bool:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return 'safe' in prompt
 
         agent = Agent(TestModel(custom_output_text='ok'), capabilities=[InputGuardrail(guard=guard)])
@@ -337,7 +337,7 @@ class TestInputGuardrailParallel:
         async def slow_handler(_: Any) -> ModelResponse:
             handler_started.set()
             try:
-                await asyncio.sleep(10)
+                await anyio.sleep(10)
             except asyncio.CancelledError:
                 handler_cancelled.set()
                 raise
@@ -352,14 +352,14 @@ class TestInputGuardrailParallel:
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=slow_handler)
 
         assert exc_info.value.response.parts[0] == TextPart(content='blocked!')
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert handler_cancelled.is_set()
 
     async def test_guard_raises_propagates(self):
         run_ctx, req_ctx = _build_ctx_and_req()
 
         async def slow_handler(_: Any) -> ModelResponse:
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
             return ModelResponse(parts=[TextPart(content='never')])  # pragma: no cover
 
         async def guard(_: str) -> bool:
@@ -388,7 +388,7 @@ class TestInputGuardrailParallel:
 
         task = asyncio.create_task(runner())
         for _ in range(3):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         release_guard.set()
         assert await task is sentinel
 
@@ -410,7 +410,7 @@ class TestInputGuardrailParallel:
 
         task = asyncio.create_task(runner())
         for _ in range(3):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         release_guard.set()
         with pytest.raises(SkipModelRequest) as exc_info:
             await task
@@ -426,7 +426,7 @@ class TestInputGuardrailParallel:
 
         async def slow_guard(_: str) -> bool:
             try:
-                await asyncio.sleep(10)
+                await anyio.sleep(10)
             except asyncio.CancelledError:
                 guard_cancelled.set()
                 raise
@@ -435,7 +435,7 @@ class TestInputGuardrailParallel:
         ig = InputGuardrail(guard=slow_guard, parallel=True)
         with pytest.raises(RuntimeError, match='model boom'):
             await ig.wrap_model_request(run_ctx, request_context=req_ctx, handler=failing_handler)
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert guard_cancelled.is_set()
 
     async def test_skipped_when_prompt_missing(self):
@@ -490,7 +490,7 @@ class TestInputGuardrailParallel:
             raise RuntimeError('handler boom')
 
         async def slow_guard(_: str) -> bool:
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
             return True  # pragma: no cover
 
         current = asyncio.current_task()
@@ -515,11 +515,11 @@ class TestInputGuardrailParallel:
         run_ctx, req_ctx = _build_ctx_and_req()
 
         async def slow_handler(_: Any) -> ModelResponse:
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
             return ModelResponse(parts=[TextPart(content='never')])  # pragma: no cover
 
         async def slow_guard(_: str) -> bool:
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
             return True  # pragma: no cover
 
         current = asyncio.current_task()
@@ -532,12 +532,12 @@ class TestInputGuardrailParallel:
 
         runner_task = asyncio.create_task(runner())
         for _ in range(5):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         runner_task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await runner_task
         for _ in range(5):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
         leftover = {t for t in asyncio.all_tasks() if t is not current and not t.done()} - before
         assert leftover == set(), f'guard/handler tasks must be drained on outer cancel, got: {leftover}'
@@ -586,7 +586,7 @@ class TestInputGuardrailParallel:
         scope.cancel()
         await cancel_seen.wait()
         for _ in range(5):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not task.done(), 'the drain must wait for the guard to finish unwinding'
         release.set()
         await task

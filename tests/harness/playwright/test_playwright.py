@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import Protocol, get_args
 
+import anyio
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -142,7 +143,7 @@ class _FakeFrameContent:
     ) -> object:
         self.wait_states.append(state)
         if self._wait_delay:
-            await asyncio.sleep(self._wait_delay)
+            await anyio.sleep(self._wait_delay)
         if self._wait_for_error is not None:
             raise self._wait_for_error
         return None
@@ -440,8 +441,8 @@ class _FakePage:
         if self._popup_on_screenshot is not None:
             for handler in self.popup_handlers:
                 handler(self._popup_on_screenshot)
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
+            await anyio.sleep(0)
         return self._screenshot_bytes
 
     async def evaluate(self, expression: str) -> object:
@@ -977,7 +978,7 @@ class TestPlaywrightBrowserTools:
         await page.first_navigation_started.wait()
 
         second = asyncio.create_task(toolset.navigate('https://example.com/second'))
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert page.goto_calls == ['https://example.com/first']
 
         page.release_first_navigation.set()
@@ -1873,7 +1874,7 @@ class TestPlaywrightBrowserSession:
     async def test_concurrent_ensure_page_launches_once(self) -> None:
         # Two tool calls that race before the page exists must launch Chromium once.
         async def _launch(session: _ScriptedSession) -> None:
-            await asyncio.sleep(0)  # yield so the second caller blocks on the lock
+            await anyio.sleep(0)  # yield so the second caller blocks on the lock
             session.page = _FakePage()
 
         async with _ScriptedSession(_launch) as session:
@@ -1886,7 +1887,7 @@ class TestPlaywrightBrowserSession:
         # lazy-launch lock. The operation lock is outer and the launch lock inner,
         # so the launch runs once and both calls observe the same page state.
         async def _launch(session: _ScriptedSession) -> None:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             session.page = _FakePage(body='shared body')
 
         async with _ScriptedSession(_launch) as session:
@@ -1897,7 +1898,7 @@ class TestPlaywrightBrowserSession:
 
     async def test_concurrent_ensure_page_failed_launch_raises_once(self) -> None:
         async def _launch(session: _ScriptedSession) -> None:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             session.launch_error = 'Chromium is not installed.'
 
         async with _ScriptedSession(_launch) as session:
@@ -2437,7 +2438,7 @@ class TestPlaywrightBrowserLifecycle:
 
     async def test_cancelled_event_task_is_discarded(self) -> None:
         browser = PlaywrightBrowser[None]()
-        task = asyncio.create_task(asyncio.sleep(1))
+        task = asyncio.create_task(anyio.sleep(1))
         browser._session._event_tasks.add(task)  # pyright: ignore[reportPrivateUsage]
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
@@ -2614,7 +2615,7 @@ class TestPlaywrightBrowserLifecycle:
             return self
 
         monkeypatch.setattr(PlaywrightBrowser, 'for_run', _same_instance)
-        pending = asyncio.ensure_future(asyncio.sleep(3600))
+        pending = asyncio.ensure_future(anyio.sleep(3600))
         browser._session._event_tasks.add(pending)  # pyright: ignore[reportPrivateUsage]
         agent = Agent(TestModel(call_tools=['screenshot']), capabilities=[browser])
         await agent.run('screenshot the page')
@@ -2860,7 +2861,7 @@ class TestBrowserEvents:
         async with session:
             await session.ensure_page()
             page.emit('popup', _FakePage(url='https://example.com/popup'))
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert [event.describe() for event in session.events] == [
             '[info] popup_opened https://example.com/popup opened by the page'
         ]
@@ -3261,7 +3262,7 @@ class TestOperationDeadline:
     async def test_the_reported_budget_is_the_one_that_was_configured(self) -> None:
         class _SlowClickPage(_FakePage):
             async def click(self, selector: str, *, timeout: float | None = None) -> None:
-                await asyncio.sleep(0.03)
+                await anyio.sleep(0.03)
                 raise PlaywrightTimeoutError('Timeout 1000ms exceeded.')
 
         result = await _toolset(_SlowClickPage()).click('button#go', timeout_ms=1000)

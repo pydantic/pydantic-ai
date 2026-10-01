@@ -63,7 +63,7 @@ async def test_map_to_end_node_cancels_pending():
         if ctx.inputs == 1:
             return ctx.inputs
         # Others would take longer
-        await asyncio.sleep(1)
+        await anyio.sleep(1)
         return ctx.inputs  # pragma: no cover
 
     g.add(
@@ -167,7 +167,6 @@ async def test_nested_joins_with_different_fork_stacks():
 
 async def test_reduce_first_value_task_cancellation():
     """Test that ReduceFirstValue properly cancels sibling tasks"""
-    import asyncio
 
     g = GraphBuilder(state_type=ExecutionState, output_type=str)
 
@@ -179,10 +178,10 @@ async def test_reduce_first_value_task_cancellation():
     async def slow_process(ctx: StepContext[ExecutionState, None, int]) -> str:
         if ctx.inputs == 1:
             # First one completes quickly
-            await asyncio.sleep(0.01)
+            await anyio.sleep(0.01)
         else:
             # Others take longer (should be cancelled)
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
         ctx.state.log.append(f'completed-{ctx.inputs}')
         return f'result-{ctx.inputs}'
 

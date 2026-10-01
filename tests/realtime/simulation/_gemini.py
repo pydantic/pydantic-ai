@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 from unittest import mock
 
+import anyio
 from google.genai import types as gt
 from google.genai.live import ConnectionClosed
 from hypothesis import strategies as st
@@ -86,7 +87,7 @@ class FakeGeminiSession:
 
     async def _outbound(self, kind: str, receive: Callable[[_ServerSession], None]) -> None:
         for _ in range(self.server.latency()):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         if not self.alive:
             raise ConnectionClosed(None, Close(1006, 'simulated drop'))
         fault = self.server.send_faults.popleft() if self.server.send_faults else None

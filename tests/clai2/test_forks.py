@@ -211,8 +211,8 @@ async def test_output_waits_while_busy(tmp_path: Path) -> None:
             await forks.fork_command(['hello'])
             (record,) = forks.records
             while record.status == 'running':
-                await asyncio.sleep(0)
-        await asyncio.sleep(0)
+                await anyio.sleep(0)
+        await anyio.sleep(0)
         assert 'FORK #1 RESPONSE' not in output.getvalue()
         assert forks.cancel_running() == 0
     await record.task
@@ -247,11 +247,11 @@ async def test_announcements_own_the_terminal(tmp_path: Path) -> None:
         await forks.fork_command(['two'])
         first, second = forks.records
         while 'running' in (first.status, second.status):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
     # Idle wakes both forks, but a command claims the terminal before either takes the lock.
     async with forks.busy():
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
+        await anyio.sleep(0)
         assert 'FORK #' not in output.getvalue()
     await asyncio.gather(first.task, second.task)
     text = output.getvalue()
@@ -341,7 +341,7 @@ async def test_live_rows_follow_each_fork(tmp_path: Path) -> None:
         await model.started.wait()
         running, finished = forks.records
         while finished.status == 'running':
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         first, second = (Text.from_ansi(row).plain for row in forks.rows('*'))
         assert first.startswith(' FORK #1  agent default  * 00:0')
         assert first.endswith('starting')
@@ -350,7 +350,7 @@ async def test_live_rows_follow_each_fork(tmp_path: Path) -> None:
     # Announcing takes the terminal lock, and acquiring it is a checkpoint.
     with anyio.fail_after(5):
         while not finished.announced:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
     assert [Text.from_ansi(row).plain[:9] for row in forks.rows('*')] == [' FORK #1 ']
     for activity in ('thinking', 'tool: grep', 'running: grep', 'responding', 'working'):
         running.progress.activity = activity
@@ -493,7 +493,7 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
         # The fork finishes while the command owns the terminal; its output must wait.
         model.release.set()
         for _ in range(20):
-            await asyncio.sleep(0.01)
+            await anyio.sleep(0.01)
         assert 'FORK #1' not in output.getvalue()
         console.print(f'ran {command}')
 
@@ -504,7 +504,7 @@ async def test_shell_passthrough_holds_fork_output(tmp_path: Path, monkeypatch: 
         for _ in range(20):  # pragma: no branch
             if 'FORK #1' in output.getvalue():
                 break
-            await asyncio.sleep(0.01)
+            await anyio.sleep(0.01)
         return '/exit'
 
     Script(['/fork block', after_fork_started, after_command]).install(monkeypatch)

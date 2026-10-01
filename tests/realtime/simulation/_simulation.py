@@ -35,6 +35,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, ParamSpec, TypeVar
 
+import anyio
 from typing_extensions import Self
 
 from pydantic_ai import Agent, ModelRetry, RunContext
@@ -341,7 +342,7 @@ class Simulation(ABC):
         try:
             for task in asyncio.all_tasks(self.loop):
                 task.cancel()
-            self.loop.run_until_complete(asyncio.sleep(0))
+            self.loop.run_until_complete(anyio.sleep(0))
             if pending := [task for task in asyncio.all_tasks(self.loop) if not task.done()]:  # pragma: lax no cover
                 self.loop.run_until_complete(asyncio.wait(pending))
         finally:

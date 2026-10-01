@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Barrier
 
+import anyio
 import pytest
 from pytest_mock import MockerFixture
 
@@ -52,18 +53,18 @@ async def test_context_subtree_concurrent():
         with context_subtree() as tree:
             with logfire.span('task1'):
                 with logfire.span('task1_child1'):
-                    await asyncio.sleep(0.01)
+                    await anyio.sleep(0.01)
                 with logfire.span('task1_child2'):
-                    await asyncio.sleep(0.01)
+                    await anyio.sleep(0.01)
         return tree
 
     async def task2():
         with context_subtree() as tree:
             with logfire.span('task2'):
                 with logfire.span('task2_child1'):
-                    await asyncio.sleep(0.01)
+                    await anyio.sleep(0.01)
                     with logfire.span('task2_grandchild'):
-                        await asyncio.sleep(0.01)
+                        await anyio.sleep(0.01)
         return tree
 
     # Execute tasks concurrently

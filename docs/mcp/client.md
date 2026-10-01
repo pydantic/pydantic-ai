@@ -388,6 +388,7 @@ For [FastMCP 3](https://gofastmcp.com/v3/servers/tasks) servers, install the tas
 `task=TaskConfig(mode=...)`:
 
 ```python {title="background_task_server.py" dunder_name="not_main"}
+import anyio
 from fastmcp import FastMCP
 from fastmcp.server.tasks import TaskConfig
 
@@ -396,8 +397,7 @@ mcp = FastMCP('long_running_server')
 
 @mcp.tool(task=TaskConfig(mode='optional'))
 async def deep_research(topic: str) -> str:
-    import asyncio
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     return f'Researched {topic}'
 
 

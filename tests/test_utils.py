@@ -78,11 +78,11 @@ def test_get_first_param_type_annotation_type_error():
 async def test_group_by_temporal(interval: float | None, expected: list[list[int]]):
     async def yield_groups() -> AsyncIterator[int]:
         yield 1
-        await asyncio.sleep(0.02)
+        await anyio.sleep(0.02)
         yield 2
-        await asyncio.sleep(0.02)
+        await anyio.sleep(0.02)
         yield 3
-        await asyncio.sleep(0.02)
+        await anyio.sleep(0.02)
 
     async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
         groups: list[list[int]] = [g async for g in groups_iter]
@@ -101,9 +101,9 @@ async def test_group_by_temporal_first_window_starts_on_first_item():
     interval = 0.05
 
     async def yield_groups() -> AsyncIterator[int]:
-        await asyncio.sleep(interval * 3)  # first item arrives long after iteration started
+        await anyio.sleep(interval * 3)  # first item arrives long after iteration started
         yield 1
-        await asyncio.sleep(interval / 5)  # second item arrives well within the first item's window
+        await anyio.sleep(interval / 5)  # second item arrives well within the first item's window
         yield 2
 
     async with group_by_temporal(yield_groups(), soft_max_interval=interval) as groups_iter:
@@ -224,7 +224,7 @@ async def test_peekable_async_stream_aclose_cancels_in_flight_pull(peek_pull: bo
         try:
             yield 1
             pull_started.set()
-            await asyncio.sleep(30)
+            await anyio.sleep(30)
         finally:
             finalized.set()
 

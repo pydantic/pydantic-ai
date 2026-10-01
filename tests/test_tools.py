@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
+import anyio
 import pydantic_core
 import pytest
 from griffe import Docstring
@@ -3347,7 +3348,6 @@ def test_retry_tool_until_last_attempt():
 
 async def test_tool_timeout_triggers_retry():
     """Test that a slow tool triggers RetryPromptPart when timeout is exceeded."""
-    import asyncio
 
     call_count = 0
 
@@ -3364,7 +3364,7 @@ async def test_tool_timeout_triggers_retry():
 
     @agent.tool_plain(timeout=0.1)
     async def slow_tool() -> str:
-        await asyncio.sleep(1.0)  # 1 second, but timeout is 0.1s
+        await anyio.sleep(1.0)  # 1 second, but timeout is 0.1s
         return 'done'  # pragma: no cover
 
     result = await agent.run('call slow_tool')
@@ -3413,7 +3413,6 @@ async def test_sync_tool_timeout_triggers_retry():
 
 async def test_tool_with_timeout_completes_successfully():
     """Test that a tool completes successfully when within its timeout."""
-    import asyncio
 
     from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -3435,7 +3434,7 @@ async def test_tool_with_timeout_completes_successfully():
 
     @agent.tool_plain(timeout=5.0)  # 5s per-tool timeout
     async def slow_but_allowed_tool() -> str:
-        await asyncio.sleep(0.2)  # 200ms - within 5s timeout
+        await anyio.sleep(0.2)  # 200ms - within 5s timeout
         return 'completed successfully'
 
     result = await agent.run('call slow_but_allowed_tool')
@@ -3452,13 +3451,12 @@ async def test_tool_with_timeout_completes_successfully():
 
 async def test_no_timeout_by_default():
     """Test that tools run without timeout by default (backward compatible)."""
-    import asyncio
 
     agent = Agent(TestModel())  # No tool_timeout specified
 
     @agent.tool_plain
     async def normal_tool() -> str:
-        await asyncio.sleep(0.1)
+        await anyio.sleep(0.1)
         return 'completed'
 
     result = await agent.run('call normal_tool')
@@ -3469,7 +3467,6 @@ async def test_no_timeout_by_default():
 
 async def test_tool_timeout_retry_counts_as_failed():
     """Test that timeout counts toward tool retry limit."""
-    import asyncio
 
     agent = Agent(TestModel(), retries={'tools': 2, 'output': 2})
 
@@ -3480,7 +3477,7 @@ async def test_tool_timeout_retry_counts_as_failed():
         nonlocal call_count
         call_count += 1
         if call_count < 3:
-            await asyncio.sleep(1.0)  # Will timeout
+            await anyio.sleep(1.0)  # Will timeout
         return 'finally done'
 
     await agent.run('call flaky_tool')
@@ -3491,7 +3488,6 @@ async def test_tool_timeout_retry_counts_as_failed():
 
 async def test_tool_timeout_message_format():
     """Test the format of the retry prompt message on timeout."""
-    import asyncio
 
     call_count = 0
 
@@ -3506,7 +3502,7 @@ async def test_tool_timeout_message_format():
 
     @agent.tool_plain(timeout=0.1)
     async def my_slow_tool() -> str:
-        await asyncio.sleep(1.0)
+        await anyio.sleep(1.0)
         return 'done'  # pragma: no cover
 
     result = await agent.run('call my_slow_tool')
@@ -3551,7 +3547,6 @@ def test_tool_timeout_default_none():
 
 async def test_tool_timeout_exceeds_retry_limit():
     """Test that UnexpectedModelBehavior is raised when timeout exceeds retry limit."""
-    import asyncio
 
     from pydantic_ai.exceptions import UnexpectedModelBehavior
     from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
@@ -3565,7 +3560,7 @@ async def test_tool_timeout_exceeds_retry_limit():
 
     @agent.tool_plain(timeout=0.05)
     async def always_slow_tool() -> str:
-        await asyncio.sleep(1.0)  # Always timeout
+        await anyio.sleep(1.0)  # Always timeout
         return 'done'  # pragma: no cover
 
     with pytest.raises(UnexpectedModelBehavior, match='exceeded max retries'):
@@ -3574,7 +3569,6 @@ async def test_tool_timeout_exceeds_retry_limit():
 
 async def test_agent_level_tool_timeout():
     """Test that agent-level tool_timeout applies to all tools."""
-    import asyncio
 
     call_count = 0
 
@@ -3590,7 +3584,7 @@ async def test_agent_level_tool_timeout():
 
     @agent.tool_plain
     async def slow_tool() -> str:
-        await asyncio.sleep(1.0)  # 1 second, but agent timeout is 0.1s
+        await anyio.sleep(1.0)  # 1 second, but agent timeout is 0.1s
         return 'done'  # pragma: no cover
 
     result = await agent.run('call slow_tool')
@@ -3607,7 +3601,6 @@ async def test_agent_level_tool_timeout():
 
 async def test_per_tool_timeout_overrides_agent_timeout():
     """Test that per-tool timeout overrides agent-level timeout."""
-    import asyncio
 
     call_count = 0
 
@@ -3623,7 +3616,7 @@ async def test_per_tool_timeout_overrides_agent_timeout():
 
     @agent.tool_plain(timeout=0.1)  # Per-tool timeout overrides agent timeout
     async def fast_timeout_tool() -> str:
-        await asyncio.sleep(1.0)  # 1 second, per-tool timeout is 0.1s
+        await anyio.sleep(1.0)  # 1 second, per-tool timeout is 0.1s
         return 'done'  # pragma: no cover
 
     result = await agent.run('call fast_timeout_tool')

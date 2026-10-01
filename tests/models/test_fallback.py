@@ -10,6 +10,7 @@ from datetime import timezone
 from decimal import Decimal
 from typing import Any, Literal, cast
 
+import anyio
 import httpx2
 import pytest
 from dirty_equals import IsJson
@@ -2133,7 +2134,7 @@ async def test_fallback_model_concurrent_entry():
         """Wrapper that yields during __aenter__ to widen the race window."""
 
         async def __aenter__(self) -> SlowEnterModel:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             await self.wrapped.__aenter__()
             return self
 
@@ -2147,7 +2148,7 @@ async def test_fallback_model_concurrent_entry():
     async def enter_and_hold(event: asyncio.Event) -> None:
         async with fallback:
             event.set()
-            await asyncio.sleep(0.1)
+            await anyio.sleep(0.1)
 
     event1 = asyncio.Event()
     event2 = asyncio.Event()

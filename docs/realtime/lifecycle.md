@@ -155,6 +155,7 @@ For external policy such as an idle timeout or maximum call duration, run a watc
 
 ```python {test="skip - the watchdog sleeps for the whole call budget"}
 import asyncio
+import anyio
 
 from pydantic_ai import Agent
 from pydantic_ai.realtime import RealtimeSession
@@ -163,7 +164,7 @@ agent = Agent(instructions='You are a helpful voice assistant.')
 
 
 async def close_after(session: RealtimeSession, seconds: float) -> None:
-    await asyncio.sleep(seconds)
+    await anyio.sleep(seconds)
     await session.close()
 
 

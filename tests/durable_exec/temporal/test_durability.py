@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import re
 import sys
 import uuid
@@ -12,6 +11,7 @@ from decimal import Decimal
 from typing import Any, cast
 from unittest.mock import patch
 
+import anyio
 import pytest
 from pydantic import TypeAdapter
 
@@ -4454,7 +4454,7 @@ async def _prepare_sleepy_tool(ctx: RunContext[object], tool_def: ToolDefinition
 
 
 async def _sleepy_tool() -> str:
-    await asyncio.sleep(0.5)
+    await anyio.sleep(0.5)
     return 'slept'  # pragma: no cover
 
 

@@ -353,7 +353,7 @@ async def _speaking_browser(pcm: bytes) -> AsyncGenerator[_BrowserPeer]:  # prag
             if self._start is None:
                 self._start = time.monotonic()
             else:
-                await asyncio.sleep(max(0.0, self._start + self._timestamp / rate - time.monotonic()))
+                await anyio.sleep(max(0.0, self._start + self._timestamp / rate - time.monotonic()))
             chunk = b''
             if state['position'] >= 0:
                 chunk = pcm[state['position'] : state['position'] + frame_samples * 2]

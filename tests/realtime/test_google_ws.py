@@ -10,7 +10,6 @@ Recorded once against the live API with `--record-mode=rewrite`, then replayed o
 
 from __future__ import annotations as _annotations
 
-import asyncio
 import io
 import json
 import wave
@@ -333,7 +332,7 @@ async def test_text_context_waits_for_next_turn(gemini_ws_cassette: tuple[Provid
 
     async with agent.realtime(model).session() as session:
         await session.send('The visitor is called Ada.', respond=False)
-        await asyncio.sleep(1)
+        await anyio.sleep(1)
         assert not [message for message in session.new_messages() if isinstance(message, ModelResponse)]
         await session.send('What is the visitor called?')
         with anyio.fail_after(30):

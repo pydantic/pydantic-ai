@@ -3885,7 +3885,7 @@ class PushWebSocket:
 
 async def _settle() -> None:
     for _ in range(5):
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
 
 
 async def test_tool_result_deferred_until_active_response_done() -> None:
@@ -4759,7 +4759,7 @@ async def test_parallel_tool_calls_get_one_response_create() -> None:
         ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': calls}})
         release['fast'].set()
         for _ in range(50):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         # The fast result is out, but asks for nothing: its sibling is still running. The only
         # `response.create` so far is the one the user's turn asked for.
         await ws.wait_for_creates(1)
@@ -4836,14 +4836,14 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(stat
                 ws.sent_changed.clear()
                 await ws.sent_changed.wait()
         for _ in range(20):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         # The result is out while the calling response is still active; nothing more until it's done.
         assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']
 
         ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': status, 'output': [call]}})
         if status == 'cancelled':
             for _ in range(50):
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
             assert sent_types()[1:] == ['response.create', 'conversation.item.create/output']
             # Server VAD starts the response to the user's speech, which answers the result too.
             ws.push({'type': 'input_audio_buffer.speech_stopped', 'audio_end_ms': 1000, 'item_id': 'item-user-2'})
@@ -4902,7 +4902,7 @@ async def test_tool_batch_response_create_counts_as_one_request() -> None:
             )
         ws.push({'type': 'response.done', 'response': {'id': 'resp-1', 'status': 'completed', 'output': calls}})
         for _ in range(100):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         release.set()
         await ws.wait_for_creates(2)
         await session.send('And also Spain?')  # before the batch's answer starts: deferred behind it
@@ -4910,10 +4910,10 @@ async def test_tool_batch_response_create_counts_as_one_request() -> None:
             ws.push(frame)
         await ws.wait_for_creates(3)
         for _ in range(100):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(50):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done(), "returned before the second turn's answer started"
         for frame in _response_frames('resp-3', 'Madrid.'):
             ws.push(frame)

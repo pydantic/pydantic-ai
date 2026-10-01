@@ -617,7 +617,7 @@ async def test_audio_view_keeps_a_whole_reply_generated_ahead_of_playback(chunk_
 
         async def play() -> None:
             async for chunk in stream:
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
                 played.append(chunk)
 
         playback = asyncio.create_task(play())
@@ -721,7 +721,7 @@ async def test_send_only_session_still_runs_tools() -> None:
         with anyio.fail_after(5):
             await ran.wait()
             while len(conn.sent) < 2:
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
     assert [type(sent).__name__ for sent in conn.sent] == ['str', 'ToolResult']
 
 
@@ -736,7 +736,7 @@ async def test_close_discards_buffered_view_items() -> None:
         assert await anext(stream) == b'\x00'
         # Let the pump run so the rest of the chunks pile up behind the consumer.
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         await session.close()
         assert [chunk async for chunk in stream] == []
 
@@ -768,7 +768,7 @@ async def test_close_ends_views_and_is_idempotent() -> None:
         stream = session.stream_audio()
         assert await anext(stream) == b'audio'
         transcript_task = asyncio.create_task(aiter_to_list(session.stream_transcripts()))
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert session.closed is False
         await session.close()
         await session.close()
@@ -818,7 +818,7 @@ async def test_views_created_before_response_are_consumed_after_it() -> None:
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
         for _ in range(5):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
     assert RealtimeTurnCompleteEvent() in events
     assert await audio_task == [b'a1', b'a2']
@@ -830,7 +830,7 @@ async def test_view_consumer_can_await_before_iterating() -> None:
     got: list[bytes] = []
 
     async def play_audio(chunks: AsyncIterator[bytes]) -> None:
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         async for chunk in chunks:
             got.append(chunk)
 
@@ -840,7 +840,7 @@ async def test_view_consumer_can_await_before_iterating() -> None:
             if isinstance(event, RealtimeTurnCompleteEvent):
                 break
         for _ in range(5):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
     await task
     assert got == [b'audio']
@@ -2045,13 +2045,13 @@ async def test_wait_for_playback_waits_for_device_paced_consumer() -> None:
 
         async def play() -> None:
             async for chunk in stream:
-                await asyncio.sleep(0.005)
+                await anyio.sleep(0.005)
                 played.append(chunk)
 
         playback = asyncio.create_task(play())
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         waiting = asyncio.create_task(session.wait_for_playback())
-        await asyncio.sleep(0.005)
+        await anyio.sleep(0.005)
         assert not waiting.done()
         await waiting
         assert played == chunks
@@ -2090,7 +2090,7 @@ async def test_wait_for_playback_returns_when_session_closes() -> None:
     stream = session.stream_audio()
     assert await anext(stream) == b'audio'
     waiting = asyncio.create_task(session.wait_for_playback())
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     assert not waiting.done()
     await session.close()
     await waiting
@@ -2101,9 +2101,9 @@ async def test_wait_for_playback_drains_after_pump_finishes() -> None:
     session = RealtimeSession(FakeRealtimeConnection([AudioDelta(chunk) for chunk in chunks]), _noop_runner)
     async with session:
         stream = session.stream_audio()
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         waiting = asyncio.create_task(session.wait_for_playback())
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert not waiting.done()
         assert [chunk async for chunk in stream] == chunks
         await waiting
@@ -2113,9 +2113,9 @@ async def test_wait_for_playback_returns_when_view_is_closed() -> None:
     session = RealtimeSession(BlockingRealtimeConnection([AudioDelta(b'audio')]), _noop_runner)
     async with session:
         stream = session.stream_audio()
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         waiting = asyncio.create_task(session.wait_for_playback())
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert not waiting.done()
         assert isinstance(stream, _TapView)
         await stream.aclose()
@@ -2184,7 +2184,7 @@ async def test_handle_barge_in_does_nothing_on_a_quiet_turn() -> None:
     async with session:
         stream = session.stream_audio()
         pull = asyncio.ensure_future(anext(stream))  # subscribe the single tap
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         conn.release.set()
         _ = await drain_events(session)
 
@@ -3396,7 +3396,7 @@ async def test_barge_in_user_turn_is_recorded_when_the_interrupted_response_neve
     seen: list[list[str]] = []
 
     async def look_after_the_hold(session: _RealtimeSession) -> None:
-        await asyncio.sleep(0.05)
+        await anyio.sleep(0.05)
         seen.append(_user_transcripts(session))
 
     conn = _ContinuousMicrophoneConnection(
@@ -3432,7 +3432,7 @@ async def test_held_barge_in_user_turn_is_recorded_after_its_response_on_close()
         events_task = asyncio.create_task(drain_events(session))
         with anyio.fail_after(_LIVENESS_TIMEOUT):
             while not session._held_user_turns:  # pyright: ignore[reportPrivateUsage]
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
         await session.close()
         await events_task
 
@@ -3607,7 +3607,7 @@ class _RepeatedMalformedToolArgsConnection(FakeRealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='tc1', tool_name='noop', args='not json')
         while not self.sent:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         yield ResponseDone()
         yield ToolCall(tool_call_id='tc2', tool_name='noop', args='still not json')
 
@@ -3906,7 +3906,7 @@ class AwaitBetweenConnection(RealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         for event in self._events:
             yield event
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
 
 async def test_tool_completion_drained_between_events() -> None:
@@ -4099,7 +4099,7 @@ async def test_concurrent_close_calls_wait_for_the_teardown() -> None:
         first = asyncio.create_task(session.close())
         second = asyncio.create_task(session.close())
         await tool_cancelling.wait()
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
 
         assert not first.done()
         assert not second.done()
@@ -4319,7 +4319,7 @@ async def test_tool_error_leaves_views_open_for_an_iterating_consumer() -> None:
                     pass
 
         consumer = asyncio.create_task(consume_events())
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         with pytest.raises(asyncio.TimeoutError):
             await asyncio.wait_for(anext(audio), timeout=0.05)
         await consumer
@@ -4426,7 +4426,7 @@ async def test_delivered_pump_error_still_reports_an_in_flight_tool_result() -> 
                     seen.append(await anext(events))
 
         draining = asyncio.create_task(drain())
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert not draining.done(), 'the iterator ended while the tool was still running'
 
         release.set()
@@ -4452,7 +4452,7 @@ async def test_pending_message_error_is_delivered_once_to_every_consumer_shape(
     event_task: asyncio.Task[list[RealtimeEvent]] | None = None
     if consumer == 'iterating':
         event_task = asyncio.create_task(drain_events(session))
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
     elif consumer == 'iterated_then_taps':
         iterator = session.__aiter__()
         assert isinstance(await anext(iterator), RealtimeInputSpeechStartEvent)
@@ -4529,7 +4529,7 @@ async def test_upstream_error_does_not_wait_for_running_tool() -> None:
 
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='bg', tool_name='hang', args='{}')
-            await asyncio.sleep(0)  # let the tool start before the pump fails
+            await anyio.sleep(0)  # let the tool start before the pump fails
             raise RuntimeError('connection dropped')
 
     blocked = asyncio.Event()
@@ -5119,7 +5119,7 @@ async def test_image_respond_frames_cannot_be_interleaved() -> None:
     image_task = asyncio.create_task(session.send(BinaryImage(data=b'image', media_type='image/png'), respond=True))
     await image_started.wait()
     text_task = asyncio.create_task(session.send('later'))
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     release_image.set()
     await asyncio.gather(image_task, text_task)
 
@@ -5681,7 +5681,7 @@ class SlowSendConnection(FakeRealtimeConnection):
     """A connection that yields control inside `send`, so concurrent senders can interleave."""
 
     async def send(self, content: RealtimeInput) -> None:
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         await super().send(content)
 
 
@@ -5701,7 +5701,7 @@ async def test_concurrent_image_and_text_history_matches_wire_order() -> None:
     image_task = asyncio.create_task(session.send(BinaryImage(data=b'image', media_type='image/png')))
     await image_send_started.wait()
     text_task = asyncio.create_task(session.send('text'))
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     release_image.set()
     await asyncio.gather(image_task, text_task)
 
@@ -5770,7 +5770,7 @@ async def test_owns_media_default_allows_audio() -> None:
     conn = FakeRealtimeConnection([AudioDelta(data=b'\x01\x02')])
     async with RealtimeSession(conn, _noop_runner, profile=_profile()) as session:
         audio = asyncio.ensure_future(anext(session.stream_audio()))
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         await session.send_audio(b'\x00\x00')
         assert await audio == b'\x01\x02'
     assert conn.sent == [BinaryAudio(data=b'\x00\x00', media_type='audio/pcm')]
@@ -6523,7 +6523,7 @@ async def test_queued_message_flushes_when_reconnect_closes_orphaned_turn() -> N
         async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
             yield ToolCall(tool_call_id='tc', tool_name='queue_followup', args='{}')
             while not any(isinstance(item, ToolResult) for item in self.sent):
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
             yield AudioDelta(data=b'audio')  # the reply to the tool result begins...
             self.audio_started.set()
             await self.enqueued.wait()
@@ -7461,7 +7461,7 @@ class _ToolRoundConnection(FakeRealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='tc1', tool_name='double', args='{"x": 1}')
         while len(self.sent) < 1:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         yield ToolCall(tool_call_id='tc2', tool_name='double', args='{"x": 2}')
 
 
@@ -7476,10 +7476,10 @@ class _EnqueueConnection(FakeRealtimeConnection):
             response_usage_follows=True,
         )
         while not any(isinstance(item, ToolResult) for item in self.sent):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         # Let the pending-message task observe that response usage is still outstanding. The queued
         # prompt must remain deferred until the usage event finalizes the tool-call response.
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         yield SessionUsage(usage=RequestUsage(input_tokens=1, output_tokens=1))
         yield ResponseDone()
 
@@ -7496,11 +7496,11 @@ class _EnqueueDuringSpeechConnection(FakeRealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='tc', tool_name='queue_during_speech', args='{}')
         while not any(isinstance(item, ToolResult) for item in self.sent):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         self.audio_started.set()
         yield AudioDelta(data=b'audio')
         await self.enqueued.wait()
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         self.sent_before_response_complete = list(self.sent)
         yield OutputTranscript(text='still speaking')
         yield ResponseDone()
@@ -7520,7 +7520,7 @@ class _SessionEnqueueDuringSpeechConnection(FakeRealtimeConnection):
         self.audio_started.set()
         await self.enqueued.wait()
         for _ in range(3):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         self.sent_before_response_complete = list(self.sent)
         yield OutputTranscript(text='still speaking')
         yield ResponseDone()
@@ -7718,13 +7718,13 @@ class _ConcurrentEnqueueConnection(FakeRealtimeConnection):
         if content == 'first':
             self.first_send_started.set()
             while not self.second_enqueued.is_set():
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
 
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         yield ToolCall(tool_call_id='tc-1', tool_name='queue_concurrently', args='{"text": "first"}')
         yield ToolCall(tool_call_id='tc-2', tool_name='queue_concurrently', args='{"text": "second"}')
         while sum(isinstance(item, ToolResult) for item in self.sent) < 2:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         yield ResponseDone()
 
 
@@ -8006,7 +8006,7 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
     await session.__aenter__()
     event_task = asyncio.create_task(drain_events(session)) if consumer == 'iterating' else None
     transcripts = session.stream_transcripts()
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     session._asap_drain_deferred = True  # pyright: ignore[reportPrivateUsage]
     session._pending_messages.append(  # pyright: ignore[reportPrivateUsage]
         PendingMessage(messages=[ModelRequest(parts=[UserPromptPart(content='after tool')])], priority='asap')
@@ -8044,7 +8044,7 @@ async def test_deferred_asap_drain_failure_after_tool_is_forwarded(
     )
     task.add_done_callback(session._tool_task_done)  # pyright: ignore[reportPrivateUsage]
     await asyncio.gather(task, return_exceptions=True)
-    await asyncio.sleep(0)  # let the done-callback run
+    await anyio.sleep(0)  # let the done-callback run
 
     if event_task is not None:
         with pytest.raises(RuntimeError, match='drain send failed'):
@@ -8561,7 +8561,7 @@ def _ordered_events_agent() -> Agent[None, str]:
 
     @agent.tool_plain
     async def slow() -> str:
-        await asyncio.sleep(0.05)
+        await anyio.sleep(0.05)
         return 'slow'
 
     @agent.tool_plain
@@ -8738,7 +8738,7 @@ async def test_tool_can_close_realtime_session_without_iterating(loop_errors: li
             async for _chunk in session.stream_audio():
                 pass
         for _ in range(5):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
     task = state['task']
     assert session.closed
@@ -8769,7 +8769,7 @@ async def test_tool_close_ends_async_audio_sender_cleanly(
         microphone_started.set()
         while True:
             yield b'\x00\x00'
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
     conn = IdleAfterToolConnection(ToolCall(tool_call_id='tc', tool_name='hang_up', args='{}'))
     with anyio.fail_after(5):
@@ -9325,7 +9325,7 @@ async def test_when_idle_enqueue_after_pump_finishes_is_delivered() -> None:
         for _ in range(10):  # pragma: no branch - the queued drain lands within a few loop passes
             if conn.sent:
                 break
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
     assert conn.sent == ['late idle message']
 
@@ -9725,7 +9725,7 @@ async def test_agent_realtime_session_capability_recovers_tool_error_for_taps_on
         audio = asyncio.create_task(_collect(session.stream_audio()))
         with anyio.fail_after(_LIVENESS_TIMEOUT):
             while not conn.sent:
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
 
     assert conn.sent == [ToolResult(tool_call_id='t1', output='fallback result')]
     assert await audio == []
@@ -9913,7 +9913,7 @@ async def test_provider_output_reaches_a_view_subscribed_after_entry() -> None:
 
     async with RealtimeSession(conn) as session:
         for _ in range(10):  # a caller that takes a few loop turns to get to its first subscription
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         view = session.stream_audio()
 
         async def drain() -> None:
@@ -9988,7 +9988,7 @@ async def test_wait_for_reply_spans_a_tool_calling_turn() -> None:
 
         release_tool.set()
         for _ in range(20):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done(), 'returned before the model answered'
 
         answer_sent.set()
@@ -10097,7 +10097,7 @@ async def test_wait_for_reply_waits_for_every_requested_reply() -> None:
         await session.send('Two.')
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(20):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done(), 'returned at the first reply while a second was still requested'
 
         second_reply.set()
@@ -10131,10 +10131,10 @@ async def test_wait_for_reply_wakes_when_a_concurrent_send_fails() -> None:
     async with session:
         sending = asyncio.create_task(session.send('Say hello.'))
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done(), 'nothing was outstanding to wait on'
 
         fail_send.set()
@@ -10193,7 +10193,7 @@ async def test_refused_content_is_taken_out_of_history() -> None:
         await session.send('refused', respond=False)
         await session.send('kept', respond=False)
         for _ in range(20):  # let the pump read the refusal
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert session.all_messages() == snapshot(
             [ModelRequest(parts=[UserPromptPart(content='kept', timestamp=IsDatetime())], timestamp=IsDatetime())]
         )
@@ -10213,7 +10213,7 @@ async def test_refused_image_frees_its_place_under_the_retention_cap() -> None:
         await session.send(images[1])
         await session.send(refused)
         for _ in range(20):  # let the pump read the refusal
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         await session.send(images[2])
         assert session.all_messages() == [
             ModelRequest(parts=[UserPromptPart(content=[image], timestamp=IsDatetime())], timestamp=IsDatetime())
@@ -10230,7 +10230,7 @@ async def test_image_refused_while_still_sending_is_not_retained() -> None:
             await super().send(content)
             if content == refused:
                 for _ in range(20):  # the pump reads the refusal before this send returns
-                    await asyncio.sleep(0)
+                    await anyio.sleep(0)
 
     def answer(index: int, content: RealtimeInput) -> list[RealtimeCodecEvent]:
         return [InputRejected(index, refused='content'), _REFUSAL] if content == refused else []
@@ -10256,7 +10256,7 @@ async def test_refused_content_without_a_recorded_request_changes_nothing() -> N
         await session.create_response()
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(20):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         # The request for a response wasn't what was refused, so the reply is still owed.
         assert not waiting.done()
         await session.close()
@@ -10296,7 +10296,7 @@ async def test_refused_response_request_already_answered_releases_nothing() -> N
         await session.send('Again.')
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(20):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done(), 'the refusal released the reservation of the reply still owed'
         conn._events.put_nowait(ResponseDone())  # pyright: ignore[reportPrivateUsage]
         with anyio.fail_after(5):
@@ -10315,7 +10315,7 @@ async def test_error_naming_no_input_leaves_the_reply_owed() -> None:
         await session.send('Say hello.')
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(20):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done(), 'an unattributed error released the reply'
         conn._events.put_nowait(OutputTranscript(text='hello', is_final=True))  # pyright: ignore[reportPrivateUsage]
         conn._events.put_nowait(ResponseDone())  # pyright: ignore[reportPrivateUsage]
@@ -10363,10 +10363,10 @@ async def test_wait_for_reply_wakes_when_a_concurrent_image_send_fails() -> None
         image = BinaryImage(data=b'png', media_type='image/png')
         sending = asyncio.create_task(session.send(image, respond=True))
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done(), 'nothing was outstanding to wait on'
 
         fail_send.set()
@@ -10476,7 +10476,7 @@ async def test_wait_for_reply_holds_through_a_stalled_exchange() -> None:
         with anyio.fail_after(5):
             await filler_done.wait()
         for _ in range(20):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done(), 'returned at the filler instead of the answer'
 
         continue_exchange.set()
@@ -10648,7 +10648,7 @@ async def _until(condition: Callable[[], bool]) -> None:
     """Yield to the event loop until `condition()` holds, failing if it never does."""
     with anyio.fail_after(_LIVENESS_TIMEOUT):
         while not condition():
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
 
 
 def _slow_until(release: asyncio.Event) -> Callable[[str, dict[str, Any], str], Awaitable[str]]:
@@ -10707,7 +10707,7 @@ async def test_parallel_tool_calls_answer_is_waited_for_while_a_call_still_runs(
         await _until(lambda: bool(conn.results()))
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done()
         release_slow.set()
         with anyio.fail_after(_LIVENESS_TIMEOUT):
@@ -10747,7 +10747,7 @@ async def test_provider_cancelled_call_leaves_no_reply_owed() -> None:
         events = asyncio.create_task(drain_events(session))
         await _until(lambda: bool(conn.results()) and 'c2' not in session._pending_tool_calls)  # pyright: ignore[reportPrivateUsage]
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
         await session.close()
         events.cancel()
@@ -10778,7 +10778,7 @@ async def test_result_after_a_sibling_was_cancelled_is_sent_without_counting_a_r
         release_slow.set()
         await _until(lambda: bool(conn.results()))
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert conn.results() == [ToolResult(tool_call_id='c1', output='slow result')]
         assert session._pending_response_requests == 0  # pyright: ignore[reportPrivateUsage]
         await session.close()
@@ -10986,7 +10986,7 @@ async def test_wait_for_reply_after_a_failed_tool_still_waits_for_a_later_reply(
         await session.send('Try again.')
         later = asyncio.create_task(session.wait_for_reply())
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not later.done()
         answer.set()
         with anyio.fail_after(_LIVENESS_TIMEOUT):
@@ -11033,7 +11033,7 @@ async def test_tool_failure_leaves_a_reply_requested_before_it_owed() -> None:
         await _until(lambda: bool(errors))
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done(), "returned before B's answer"
         answer.set()
         with anyio.fail_after(_LIVENESS_TIMEOUT):
@@ -11077,7 +11077,7 @@ async def test_tool_failure_does_not_hide_a_later_server_started_reply() -> None
         await _until(lambda: session._response_active)  # pyright: ignore[reportPrivateUsage]
         waiting = asyncio.create_task(session.wait_for_reply())
         for _ in range(10):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not waiting.done()
         finish_reply.set()
         with anyio.fail_after(_LIVENESS_TIMEOUT):
@@ -11311,7 +11311,7 @@ async def test_user_turn_anchored_to_refused_content_is_still_recorded() -> None
     async with session:
         await session.send('refused', respond=False)
         for _ in range(20):  # let the pump read everything
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert session.all_messages() == snapshot(
             [ModelRequest(parts=[SpeechPart(speaker='user', transcript='hello')], timestamp=IsDatetime())]
         )

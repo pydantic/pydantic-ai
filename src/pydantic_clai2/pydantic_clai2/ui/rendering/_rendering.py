@@ -1,11 +1,11 @@
 """Incremental Markdown rendering for native Pydantic AI events."""
 
-import asyncio
 import io
 import re
 from collections.abc import Callable, Sequence
 from typing import IO
 
+import anyio
 from rich.console import Console, RenderableType
 from rich.style import Style
 from rich.syntax import Syntax
@@ -283,7 +283,7 @@ class StreamRenderer:
         self._reset()
         if writer is not None:
             writer.abort()
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
 
     def _reset(self) -> None:
         self._code_lines = []

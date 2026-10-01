@@ -150,7 +150,7 @@ async def test_consumed_cancellation_is_not_a_false_positive():
     @agent.tool_plain
     async def slow_lookup() -> str:
         with anyio.move_on_after(0.01):
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
         return 'timed out, moved on'
 
     result = await agent.run('hello')
@@ -219,13 +219,17 @@ async def test_one_token_cancels_two_runs():
 
 
 async def test_late_token_cancel_does_not_affect_finished_task():
+    async def unrelated() -> str:
+        await anyio.sleep(0)
+        return 'unrelated'
+
     token = CancellationToken()
     result = await Agent(TestModel()).run('hello', cancellation_token=token)
     assert result.output
 
     token.cancel()
-    await asyncio.sleep(0)
-    assert await asyncio.sleep(0, result='unrelated') == 'unrelated'
+    await anyio.sleep(0)
+    assert await unrelated() == 'unrelated'
 
 
 async def test_token_accepted_by_iter_and_stream_surfaces():
@@ -384,9 +388,9 @@ def _parallel_tools_agent() -> tuple[Agent, list[list[ModelMessage]]]:
 
     @agent.tool
     async def cancelling_tool(ctx: RunContext) -> str:
-        await asyncio.sleep(0.05)  # let the sibling finish first
+        await anyio.sleep(0.05)  # let the sibling finish first
         ctx.cancel()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
     return agent, seen_by_model
@@ -502,7 +506,7 @@ def _single_tool_agent() -> tuple[Agent, list[list[ModelMessage]], asyncio.Event
     @agent.tool_plain
     async def in_flight_tool() -> str:
         tool_started.set()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
     return agent, seen_by_model, tool_started
@@ -616,7 +620,7 @@ async def test_agent_run_cancel_from_another_task():
     @agent.tool_plain
     async def slow_tool() -> str:
         started.set()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     runs: list[AgentRun[None, str]] = []
@@ -706,7 +710,7 @@ async def test_iter_reasserts_swallowed_cancellation_before_next_node():
                 if len(model_calls) == 1:
                     agent_run.cancel()
                     try:
-                        await asyncio.sleep(0)
+                        await anyio.sleep(0)
                     except asyncio.CancelledError:
                         pass
 
@@ -735,7 +739,7 @@ async def test_external_cancel_uncancelled_by_caller_completes_run():
                 cancelled_once = True
                 task.cancel()
                 try:
-                    await asyncio.sleep(0)
+                    await anyio.sleep(0)
                 except asyncio.CancelledError:
                     _task_uncancel(task)
 
@@ -825,7 +829,7 @@ async def test_threadsafe_cancel_delivery_after_finish_is_noop():
     thread.start()
     thread.join()
     controller.finish()  # the run ends before the queued `_deliver` callback runs
-    await asyncio.sleep(0)  # drain the `call_soon_threadsafe` delivery
+    await anyio.sleep(0)  # drain the `call_soon_threadsafe` delivery
 
     assert _task_cancelling(task) == baseline
     assert controller.cancel_requested  # the request itself was recorded, just never delivered
@@ -905,7 +909,7 @@ async def test_swallowed_and_uncancelled_request_redelivers_on_rebind():
     uncancelled_task = asyncio.create_task(swallow_and_uncancel())
     await uncancelled_bound.wait()
     uncancelled_cancellation.cancel()
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     uncancelled_cancellation.bind(uncancelled_task)
     await uncancelled_redelivered.wait()
     keep_uncancelled_task_live.set()
@@ -940,7 +944,7 @@ async def test_external_cancellation_is_never_translated():
     @agent.tool_plain
     async def slow_tool() -> str:
         started.set()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     task = asyncio.create_task(agent.run('go'))
@@ -961,7 +965,7 @@ async def test_task_cancel_of_run_carries_run_cancelled():
     @agent.tool_plain
     async def slow_tool() -> str:
         started.set()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     task = asyncio.create_task(agent.run('go'))
@@ -1012,7 +1016,7 @@ async def test_direct_await_cancellation_carries_run_cancelled_on_all_versions()
     @agent.tool_plain
     async def slow_tool() -> str:
         started.set()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     async def run_and_record() -> None:
@@ -1048,7 +1052,7 @@ async def test_from_cancellation_through_asyncio_timeout():
         # Expire the enclosing timeout only now, so the model response is deterministically
         # recorded before the cancellation lands (a fixed small timeout raced run progress in CI).
         timeout_scope[0].reschedule(asyncio.get_running_loop().time())
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     with pytest.raises(TimeoutError) as exc_info:
@@ -1073,7 +1077,7 @@ async def test_first_party_cancel_inside_asyncio_timeout_leaves_scope_intact():
     @agent.tool
     async def cancelling_tool(ctx: RunContext) -> str:
         ctx.cancel()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
     task = asyncio.current_task()
@@ -1104,7 +1108,7 @@ async def test_first_party_cancel_inside_task_group_is_application_error():
     @agent.tool
     async def cancelling_tool(ctx: RunContext) -> str:
         ctx.cancel()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
     with pytest.raises(BaseExceptionGroup) as exc_info:
@@ -1147,7 +1151,7 @@ async def test_iter_external_cancel_carries_run_cancelled():
     @agent.tool_plain
     async def slow_tool() -> str:
         started.set()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     async def drive() -> None:
@@ -1178,7 +1182,7 @@ async def test_external_cancellation_wins_race_with_first_party_cancel():
     @agent.tool_plain
     async def slow_tool() -> str:
         started.set()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     runs: list[AgentRun[None, str]] = []
@@ -1208,7 +1212,7 @@ async def test_external_cancellation_wins_when_it_arrives_first():
     @agent.tool_plain
     async def slow_tool() -> str:
         started.set()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     runs: list[AgentRun[None, str]] = []
@@ -1237,7 +1241,7 @@ async def test_cancel_under_run_stream_events():
     @agent.tool
     async def cancelling_tool(ctx: RunContext) -> str:
         ctx.cancel()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'never reached'  # pragma: no cover
 
     events: list[str] = []
@@ -1371,7 +1375,7 @@ async def test_run_stream_events_external_cancel_before_iteration_attaches_nothi
             raise
 
     task = asyncio.create_task(consume())
-    await asyncio.sleep(0.01)
+    await anyio.sleep(0.01)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -1531,7 +1535,7 @@ async def test_run_stream_events_cancel_after_completion_is_noop():
 
     result = events.result
     events.cancel()
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     assert events.result is result
 
 
@@ -1770,7 +1774,7 @@ async def test_first_party_cancel_swallowed_by_after_run_is_typed():
         async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
             ctx.cancel()
             try:
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
             except asyncio.CancelledError:
                 pass
             return result
@@ -1806,7 +1810,7 @@ async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
     @agent.tool_plain
     async def slow_tool() -> str:
         started.set()
-        await asyncio.sleep(READINESS_WAIT_TIMEOUT)
+        await anyio.sleep(READINESS_WAIT_TIMEOUT)
         return 'slow'  # pragma: no cover
 
     runs: list[AgentRun[None, str]] = []
@@ -1845,7 +1849,7 @@ async def test_cancel_after_completion_is_a_noop():
 
     agent_run.cancel()
     agent_run.cancel()  # repeated calls are no-ops too
-    await asyncio.sleep(0)  # a cancellation would be delivered here
+    await anyio.sleep(0)  # a cancellation would be delivered here
     assert agent_run.result is not None
     assert agent_run.result.output == 'success (no tool calls)'
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import inspect
 import warnings
 from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
@@ -342,7 +341,7 @@ async def test_event_stream_close_finalizes_native_stream_without_protocol_trail
     async def event_generator() -> AsyncIterator[NativeEvent]:
         try:
             yield PartStartEvent(index=0, part=TextPart(content='Hello'))
-            await asyncio.sleep(30)  # pragma: no cover
+            await anyio.sleep(30)  # pragma: no cover
         finally:
             finalized.set()
 

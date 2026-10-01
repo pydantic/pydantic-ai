@@ -7,6 +7,7 @@ from dataclasses import is_dataclass
 from typing import Any
 from unittest.mock import MagicMock
 
+import anyio
 import pytest
 from pydantic import ValidationError
 
@@ -330,7 +331,7 @@ class TestSteering:
 
         async def wait_for_enqueue() -> None:
             while not ctx.enqueue.called:
-                await asyncio.sleep(0.01)
+                await anyio.sleep(0.01)
 
         await asyncio.wait_for(wait_for_enqueue(), timeout=_WAIT)
         ctx.enqueue.assert_called_once_with("Steering from trajectory judge 'trajectory-judge': back on task")
@@ -425,7 +426,7 @@ class TestCadence:
         request_context = _request_context(_hi_request())
 
         await run_cap.after_model_request(ctx, request_context=request_context, response=_text_response())
-        await asyncio.sleep(0)  # let the evaluation task start
+        await anyio.sleep(0)  # let the evaluation task start
         # Due again, but the first evaluation is still blocked on the gate: skipped.
         await run_cap.after_model_request(ctx, request_context=request_context, response=_text_response())
         gate.set()
@@ -474,7 +475,7 @@ class TestFailureHandling:
 
         async def tick_until_raise() -> None:
             while True:
-                await asyncio.sleep(0.01)
+                await anyio.sleep(0.01)
                 await run_cap.after_model_request(ctx, request_context=request_context, response=_text_response())
 
         with pytest.raises(RuntimeError, match='judge exploded'):
@@ -879,7 +880,7 @@ class TestUsageCoordination:
 
         async def wait_for_enqueue() -> None:
             while not ctx.enqueue.called:
-                await asyncio.sleep(0.01)
+                await anyio.sleep(0.01)
 
         await asyncio.wait_for(wait_for_enqueue(), timeout=_WAIT)
         assert ctx.usage.requests == 1  # the judge's real request; the launch claim was released

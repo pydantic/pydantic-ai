@@ -9,7 +9,6 @@ against an in-process FastMCP server.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 import re
@@ -2282,13 +2281,13 @@ class TestMCPToolsetBackgroundTasks:
         @server.tool(task=TaskConfig(mode='required'))
         async def task_required_tool() -> str:
             """A tool that requires task-augmented execution."""
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return 'task_required_completed'
 
         @server.tool(task=TaskConfig(mode='optional'))
         async def task_optional_tool(ctx: Context) -> str:
             """A tool that may run either as a task or synchronously."""
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             mode = 'task' if ctx.is_background_task else 'sync'
             return f'task_optional_{mode}'
 

@@ -16,6 +16,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Sequen
 from contextlib import asynccontextmanager
 from dataclasses import replace
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent
@@ -882,6 +883,11 @@ async def test_before_run_can_cancel_realtime_session() -> None:
 
 async def test_cancel_on_finished_realtime_context_is_noop() -> None:
     """A retained context cannot cancel the task that happened to own an already-finished session."""
+
+    async def unrelated() -> str:
+        await anyio.sleep(0)
+        return 'unrelated work'
+
     contexts: list[RunContext[None]] = []
 
     class RetainContext(AbstractCapability[None]):
@@ -894,7 +900,7 @@ async def test_cancel_on_finished_realtime_context_is_noop() -> None:
 
     (ctx,) = contexts
     ctx.cancel()
-    assert await asyncio.sleep(0, result='unrelated work') == 'unrelated work'
+    assert await unrelated() == 'unrelated work'
 
 
 async def test_nested_run_cancellation_in_before_run_uses_realtime_history() -> None:

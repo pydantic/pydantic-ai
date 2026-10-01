@@ -7223,7 +7223,7 @@ class TestMultipleToolCalls:
         async def track(name: str) -> str:
             nonlocal active
             active += 1
-            await asyncio.sleep(0.02)
+            await anyio.sleep(0.02)
             active -= 1
             return name
 
@@ -7241,7 +7241,7 @@ class TestMultipleToolCalls:
             # No other tool should be in-flight while the barrier runs.
             if active != 0:
                 barrier_ran_alone = False  # pragma: no cover
-            await asyncio.sleep(0.02)
+            await anyio.sleep(0.02)
             return 'barrier'
 
         @agent.tool_plain
@@ -7277,7 +7277,7 @@ class TestMultipleToolCalls:
 
         @agent.tool_plain
         async def tool_a() -> str:
-            await asyncio.sleep(0.02)
+            await anyio.sleep(0.02)
             events.append('tool_a')
             return 'a'
 
@@ -7555,7 +7555,7 @@ class TestMultipleToolCalls:
         async def slow_tool() -> str:
             pending_started.set()
             try:
-                await asyncio.sleep(10)
+                await anyio.sleep(10)
             except asyncio.CancelledError:
                 pending_cancelled.set()
                 raise
@@ -7586,7 +7586,7 @@ class TestMultipleToolCalls:
 
         @agent.tool_plain
         async def slow_first() -> str:
-            await asyncio.sleep(0.03)
+            await anyio.sleep(0.03)
             return 'slow'
 
         @agent.tool_plain
@@ -10174,14 +10174,14 @@ async def test_parallel_tool_exception_cancels_sibling_tasks():
     @agent.tool_plain
     async def fast_failing_tool() -> str:
         # Yield control so slow_tool can start, then raise.
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         raise RuntimeError('boom')
 
     @agent.tool_plain
     async def slow_tool() -> str:
         slow_tool_started.set()
         try:
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
         except asyncio.CancelledError:
             slow_tool_cancelled.set()
             raise
@@ -10192,7 +10192,7 @@ async def test_parallel_tool_exception_cancels_sibling_tasks():
         await agent.run('call tools')
 
     # Give the event loop a moment to process cancellations.
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
 
     # The slow tool must have started (confirming both tasks ran in parallel).
     assert slow_tool_started.is_set(), 'slow_tool never started — not running in parallel'
@@ -10232,7 +10232,7 @@ async def test_parallel_tool_outer_cancellation_only_cancels_pending_tool_tasks(
     async def pending_tool() -> str:
         pending_tool_started.set()
         try:
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
         except asyncio.CancelledError:
             pending_tool_cancelled.set()
             raise
@@ -10458,7 +10458,7 @@ async def test_parallel_tool_outer_cancellation_waits_for_tool_cleanup():
     async def slow_tool_a() -> str:
         started.set()
         try:
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
         finally:
             cleanup_started.set()
             await cleanup_can_finish.wait()
@@ -10467,7 +10467,7 @@ async def test_parallel_tool_outer_cancellation_waits_for_tool_cleanup():
 
     @agent.tool_plain
     async def slow_tool_b() -> str:
-        await asyncio.sleep(10)
+        await anyio.sleep(10)
         return 'done'  # pragma: no cover
 
     task = asyncio.create_task(agent.run('call tools'))
@@ -11756,7 +11756,7 @@ async def test_override_instructions_async_callable():
     agent = Agent('test')
 
     async def override_fn() -> str:
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         return 'ASYNC_FN'
 
     with agent.override(instructions=override_fn):
@@ -13726,7 +13726,7 @@ async def test_concurrent_runs_output_retry_isolation():
         retries_by_run[run_id].append(ctx.retry)
         if ctx.retry < 2:
             if run_id == 'slow':
-                await asyncio.sleep(0.05)
+                await anyio.sleep(0.05)
             raise ModelRetry(f'{run_id} retry {ctx.retry}')
         return o
 

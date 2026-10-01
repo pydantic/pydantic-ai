@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent
@@ -622,7 +622,7 @@ class TestRunControls:
 
     async def test_timeout_returns_soft_message(self) -> None:
         async def slow_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            await asyncio.sleep(1)
+            await anyio.sleep(1)
             return ModelResponse(parts=[TextPart('late')])  # pragma: no cover - cancelled by the timeout
 
         worker = Agent(FunctionModel(slow_fn), name='worker')

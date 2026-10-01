@@ -95,16 +95,16 @@ async def test_native_repeated_cancel_cannot_abandon_stop(anyio_backend: str) ->
 
         async def work() -> None:
             async with command_deadline(timeout, stop=stop):
-                await asyncio.sleep(100)
+                await anyio.sleep(100)
 
         task = asyncio.create_task(work())
         if timeout is None:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             task.cancel()
         await asyncio.wait_for(entered.wait(), 5)
         for _ in range(cancellations):
             task.cancel()
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         release.set()
         try:
             await asyncio.wait_for(task, 5)

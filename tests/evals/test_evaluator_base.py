@@ -1,10 +1,10 @@
 from __future__ import annotations as _annotations
 
-import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import anyio
 import pytest
 from pydantic import TypeAdapter
 
@@ -128,7 +128,7 @@ if TYPE_CHECKING or imports_successful():  # pragma: no branch
         delay: float = 0.1
 
         async def evaluate(self, ctx: EvaluatorContext) -> bool:
-            await asyncio.sleep(self.delay)
+            await anyio.sleep(self.delay)
             return self.value
 
     @dataclass

@@ -19,7 +19,7 @@ pip install "pydantic-ai-slim[openai]" pydantic-ai-harness
 ```
 
 ```python
-import asyncio
+import anyio
 
 from pydantic_ai import Agent
 from pydantic_ai_harness import BackgroundTools
@@ -29,7 +29,7 @@ agent = Agent('openai:gpt-5.6-sol', capabilities=[BackgroundTools()])
 @agent.tool_plain(metadata={'background': True})
 async def slow_research(query: str) -> str:
     """Research a topic thoroughly. Runs in the background."""
-    await asyncio.sleep(60)  # Replace with real work.
+    await anyio.sleep(60)  # Replace with real work.
     return f'Research findings for {query!r}'
 ```
 

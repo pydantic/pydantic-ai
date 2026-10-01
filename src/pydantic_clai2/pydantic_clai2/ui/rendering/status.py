@@ -10,6 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
+import anyio
 from rich.cells import set_cell_size
 from rich.console import Console
 from typing_extensions import Self
@@ -227,7 +228,7 @@ class StatusLine:
         while True:
             # Refresh live counts at least ten times a second, whatever the spinner's speed.
             self._draw()
-            await asyncio.sleep(min(0.1, self.spinner().interval))
+            await anyio.sleep(min(0.1, self.spinner().interval))
 
 
 def _short_path(path: str, limit: int = 40) -> str:

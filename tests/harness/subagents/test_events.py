@@ -9,6 +9,7 @@ import sys
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext
@@ -230,7 +231,7 @@ class TestOutcomes:
     async def test_timeout(self) -> None:
         # The timeout may fire before the child reaches its model, so no line here is a sure hit.
         async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: lax no cover
-            await asyncio.sleep(1)
+            await anyio.sleep(1)
             return ModelResponse(parts=[TextPart('late')])
 
         worker = Agent(FunctionModel(slow), name='worker')
@@ -356,7 +357,7 @@ class TestOutcomes:
 
         async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             child_requesting.set()
-            await asyncio.sleep(1)
+            await anyio.sleep(1)
             return ModelResponse(parts=[TextPart('late')])  # pragma: no cover - cancelled mid-delegation
 
         worker = Agent(FunctionModel(slow), name='worker')

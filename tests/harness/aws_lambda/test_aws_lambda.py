@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from typing import Any
 
+import anyio
 import pytest
 from aws_durable_execution_sdk_python import durable_execution  # pyright: ignore[reportUnknownVariableType]
 from aws_durable_execution_sdk_python.config import StepConfig, StepSemantics
@@ -608,7 +609,7 @@ class TestCoverageOfRemainingPaths:
         async def hold_run() -> str:
             run_started.set()
             while not release.is_set():
-                await asyncio.sleep(0.01)
+                await anyio.sleep(0.01)
             return 'done'
 
         def invoke() -> None:
@@ -638,10 +639,14 @@ class TestCoverageOfRemainingPaths:
         async def fail() -> None:
             raise RuntimeError('boom')
 
+        async def recover() -> str:
+            await anyio.sleep(0)
+            return 'recovered'
+
         with pytest.raises(RuntimeError, match='boom'):
             run_durable(fail, context=FakeDurableContext())
 
-        assert run_durable(lambda: asyncio.sleep(0, result='recovered'), context=FakeDurableContext()) == 'recovered'
+        assert run_durable(recover, context=FakeDurableContext()) == 'recovered'
 
     def test_toolsets_without_a_durable_wrapper_pass_through(self) -> None:
         external = ExternalToolset[object]([ToolDefinition(name='remote')], id='ext')
@@ -875,7 +880,7 @@ class TestBridgeFailureModes:
         monkeypatch.setattr(_bridge, '_LOOP_LIVENESS_POLL_SECONDS', 0.01)
 
         async def act() -> str:
-            await asyncio.sleep(0.05)
+            await anyio.sleep(0.05)
             return 'sunny'
 
         agent = build_agent(act)
@@ -939,7 +944,7 @@ class TestBridgeFailureModes:
                 # the grace deadline rather than letting this abandoned run continue indefinitely.
                 while True:
                     try:
-                        await asyncio.sleep(10)
+                        await anyio.sleep(10)
                     except asyncio.CancelledError:
                         continue  # pragma: lax no cover - usually the forced deadline closes the loop first
 
@@ -994,7 +999,7 @@ class TestBridgeFailureModes:
             try:
                 return await agent.run('go')  # type: ignore[return-value]
             finally:
-                await asyncio.sleep(0.02)
+                await anyio.sleep(0.02)
                 cleanup_finished.set()
 
         warm = loops.get()
@@ -1029,7 +1034,7 @@ class TestBridgeFailureModes:
                 raise Suspend('retry scheduled')
 
         async def delayed_cleanup() -> None:
-            await asyncio.sleep(0.02)
+            await anyio.sleep(0.02)
             cleanup_finished.set()
 
         agent = build_agent(act)
@@ -1038,7 +1043,7 @@ class TestBridgeFailureModes:
             try:
                 return await agent.run('go')  # type: ignore[return-value]
             finally:
-                await asyncio.sleep(0.03)
+                await anyio.sleep(0.03)
                 asyncio.create_task(delayed_cleanup())
 
         retired = loops.get()

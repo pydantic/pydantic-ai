@@ -74,7 +74,7 @@ class TokenEndpointMock:
         self, url: str, form: dict[str, Any], http_client: httpx2.AsyncClient | None = None
     ) -> _TokenResponse:
         self.forms.append(form)
-        await asyncio.sleep(0.001)  # widen race windows for single-flight assertions
+        await anyio.sleep(0.001)  # widen race windows for single-flight assertions
         result = self.results[min(len(self.forms), len(self.results)) - 1]
         if isinstance(result, Exception):
             raise result
@@ -826,7 +826,7 @@ async def _get_callback(url: str, params: dict[str, str]) -> httpx2.Response:
             try:
                 return await client.get(url, params=params)
             except httpx2.ConnectError:
-                await asyncio.sleep(0.05)
+                await anyio.sleep(0.05)
         raise AssertionError('callback server never came up')  # pragma: no cover
 
 

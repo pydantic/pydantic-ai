@@ -343,6 +343,7 @@ Here's an example that shows how to move a task that takes a while to complete t
 
 ```python {title="external_tool.py"}
 import asyncio
+import anyio
 from dataclasses import dataclass
 from typing import Any
 
@@ -363,7 +364,7 @@ class TaskResult:
 
 
 async def calculate_answer_task(task_id: str, question: str) -> TaskResult:
-    await asyncio.sleep(1)
+    await anyio.sleep(1)
     return TaskResult(task_id=task_id, result=42)
 
 

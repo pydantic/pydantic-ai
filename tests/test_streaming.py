@@ -498,7 +498,7 @@ def test_sync_stream_bridge_interrupt_without_pump_preserves_original_error():
     assert cleanup_complete
     assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
     # A leftover stop callback would stop this drive before `sleep(0)` completes and raise `RuntimeError`.
-    assert loop.run_until_complete(asyncio.sleep(0)) is None
+    assert loop.run_until_complete(anyio.sleep(0)) is None
 
 
 def test_sync_stream_bridge_task_drain_retries_multiple_early_stops(monkeypatch: pytest.MonkeyPatch):
@@ -507,7 +507,7 @@ def test_sync_stream_bridge_task_drain_retries_multiple_early_stops(monkeypatch:
     VCR cannot replace the local event-loop driver or inject stale stop callbacks.
     """
     loop = asyncio.new_event_loop()
-    task = loop.create_task(asyncio.sleep(0))
+    task = loop.create_task(anyio.sleep(0))
     original_run_until_complete = loop.run_until_complete
     calls = 0
 
@@ -533,7 +533,7 @@ def test_sync_stream_bridge_task_drain_propagates_error_after_completion(monkeyp
     VCR cannot replace the local event-loop driver or exercise this defensive cleanup branch.
     """
     loop = asyncio.new_event_loop()
-    task = loop.create_task(asyncio.sleep(0))
+    task = loop.create_task(anyio.sleep(0))
     original_run_until_complete = loop.run_until_complete
     error = RuntimeError('loop driver failed after completing the waiter')
 
@@ -557,7 +557,7 @@ def test_sync_stream_bridge_task_drain_propagates_error_while_loop_is_running(mo
     VCR cannot replace the local event-loop driver or simulate another thread driving its loop.
     """
     loop = asyncio.new_event_loop()
-    task = loop.create_task(asyncio.sleep(0))
+    task = loop.create_task(anyio.sleep(0))
     original_run_until_complete = loop.run_until_complete
     error = RuntimeError('event loop is already running')
 
@@ -601,8 +601,8 @@ def test_sync_stream_bridge_interrupt_drains_pump_before_owner_exit():
             await asyncio.Event().wait()
         finally:
             # Keep pump cleanup pending long enough for a stale stop callback to interrupt its first drain.
-            await asyncio.sleep(0)
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
+            await anyio.sleep(0)
             source_cleaned = True
 
     bridge = SyncStreamBridge(stream_context(), async_alternative='`async_method`')
@@ -688,8 +688,8 @@ def test_sync_stream_bridge_defers_iterator_close_from_another_thread():
 
     assert cleanup_thread_id is None
 
-    bridge.call(asyncio.sleep, 0)
-    bridge.call(asyncio.sleep, 0)
+    bridge.call(anyio.sleep, 0)
+    bridge.call(anyio.sleep, 0)
     assert cleanup_thread_id == owner_thread_id
     assert not bridge._pump_tasks  # pyright: ignore[reportPrivateUsage]
     bridge.shutdown()
@@ -781,8 +781,8 @@ def test_sync_stream_bridge_defers_iterator_gc_from_another_thread(monkeypatch: 
     assert not unraisable
     assert cleanup_thread_id is None
 
-    bridge.call(asyncio.sleep, 0)
-    bridge.call(asyncio.sleep, 0)
+    bridge.call(anyio.sleep, 0)
+    bridge.call(anyio.sleep, 0)
     assert cleanup_thread_id == owner_thread_id
     assert not bridge._pump_tasks  # pyright: ignore[reportPrivateUsage]
     bridge.shutdown()
@@ -877,7 +877,7 @@ def test_sync_stream_bridge_init_interrupt_cleans_owner():
     @asynccontextmanager
     async def stream_context() -> AsyncGenerator[object]:
         loop.call_soon(interrupt)
-        await asyncio.sleep(1)
+        await anyio.sleep(1)
         yield object()  # pragma: no cover
 
     with pytest.raises(KeyboardInterrupt):
@@ -909,7 +909,7 @@ def test_sync_stream_bridge_init_interrupt_after_entry_exits_context():
     try:
         with pytest.raises(KeyboardInterrupt):
             SyncStreamBridge(stream_context(), async_alternative='`async_method`')
-        assert loop.run_until_complete(asyncio.sleep(0)) is None
+        assert loop.run_until_complete(anyio.sleep(0)) is None
     finally:
         loop.close()
         asyncio.set_event_loop(original_loop)
@@ -986,7 +986,7 @@ def test_sync_stream_bridge_init_propagates_base_exception(
         watchdog.cancel()
         assert exc_info.value is error
         assert not watchdog.forced_stop
-        assert loop.run_until_complete(asyncio.sleep(0)) is None
+        assert loop.run_until_complete(anyio.sleep(0)) is None
     finally:
         loop.close()
         asyncio.set_event_loop(original_loop)
@@ -1075,7 +1075,7 @@ def test_sync_stream_bridge_finalizes_while_owner_loop_is_running():
     async def drop_result() -> None:
         holder.clear()
         gc.collect()
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
 
     loop.run_until_complete(drop_result())
     loop.run_until_complete(owner_task)
@@ -1366,7 +1366,7 @@ def test_sync_stream_bridge_pump_propagates_base_exception_without_hanging(
     assert exc_info.value is error
     assert not watchdog.forced_stop
     assert bridge._owner_task.done()  # pyright: ignore[reportPrivateUsage]
-    assert loop.run_until_complete(asyncio.sleep(0)) is None
+    assert loop.run_until_complete(anyio.sleep(0)) is None
 
 
 def test_run_stream_sync_preserves_capability_contextvars():
@@ -1448,7 +1448,7 @@ async def test_run_stream_early_break_during_debounce_closes_cleanly():
     async def stream_function(_messages: list[ModelMessage], _: AgentInfo) -> AsyncIterator[str]:
         while True:  # `while True` (not a bounded loop) so teardown mid-loop leaves no uncovered exit branch
             yield 'chunk '
-            await asyncio.sleep(0.2)  # keep a chunk in-flight (prefetched) when we break
+            await anyio.sleep(0.2)  # keep a chunk in-flight (prefetched) when we break
 
     agent = Agent(FunctionModel(stream_function=stream_function))
     # Consume one chunk (default debounce spawns the prefetch task), then abandon the still-suspended
@@ -4171,7 +4171,7 @@ class TestMultipleToolCalls:
         async def track() -> str:
             nonlocal active
             active += 1
-            await asyncio.sleep(0.02)
+            await anyio.sleep(0.02)
             active -= 1
             return 'ok'
 
@@ -4188,7 +4188,7 @@ class TestMultipleToolCalls:
             nonlocal barrier_ran_alone
             if active != 0:
                 barrier_ran_alone = False  # pragma: no cover
-            await asyncio.sleep(0.02)
+            await anyio.sleep(0.02)
             return 'barrier'
 
         @agent.tool_plain
@@ -4224,7 +4224,7 @@ class TestMultipleToolCalls:
         async def slow_tool() -> str:
             pending_started.set()
             try:
-                await asyncio.sleep(10)
+                await anyio.sleep(10)
             except asyncio.CancelledError:
                 pending_cancelled.set()
                 raise
@@ -4331,7 +4331,7 @@ class TestMultipleToolCalls:
 
         @agent.tool_plain
         async def tool_a() -> str:
-            await asyncio.sleep(0.02)
+            await anyio.sleep(0.02)
             events.append('tool_a')
             return 'a'
 
@@ -7147,20 +7147,20 @@ async def test_run_stream_events_unstarted_iterator_cleanup():
     # `sleep(0)` yields to the event loop while each context is open, so an eager-start regression would
     # get a chance to schedule its background task and set `producer_started` before we assert it didn't.
     async with agent.run_stream_events(''):
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
 
     empty_context = agent.run_stream_events('')
     await empty_context.__aexit__(None, None, None)
 
     context = agent.run_stream_events('')
     await context.__aenter__()
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     await context.__aexit__(None, None, None)
     await context.__aexit__(None, None, None)
 
     reentered_context = agent.run_stream_events('')
     await reentered_context.__aenter__()
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     with pytest.raises(RuntimeError, match='cannot be entered more than once'):
         await reentered_context.__aenter__()
     await reentered_context.__aexit__(None, None, None)
@@ -7207,11 +7207,11 @@ async def test_run_stream_events_break_on_final_result_retrieves_late_producer_e
                     # This mirrors the documented "stop once final result is known" pattern.
                     # The producer task can still finish with an exception before the CM exits.
                     await asyncio.wait_for(producer_finished.wait(), timeout=1.0)
-                    await asyncio.sleep(0)
+                    await anyio.sleep(0)
                     break
 
         gc.collect()
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
     finally:
         loop.set_exception_handler(previous_handler)
 
@@ -7234,7 +7234,7 @@ async def test_run_stream_events_external_task_cancellation():
                 pass
 
     task = asyncio.create_task(consume())
-    await asyncio.sleep(0.05)  # let the task start and block on the stream
+    await anyio.sleep(0.05)  # let the task start and block on the stream
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -7263,7 +7263,7 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
                 try:
                     yield stream
                 finally:
-                    await asyncio.sleep(0.2)
+                    await anyio.sleep(0.2)
                     cleanup_finished.set()
 
     agent = Agent(SlowCleanupTestModel(custom_output_text='hello'))
@@ -7272,7 +7272,7 @@ async def test_run_stream_events_managed_cancellation_waits_for_cleanup():
         async with agent.run_stream_events('Hello') as stream:
             await anext(stream)
             first_event_seen.set()
-            await asyncio.sleep(10)
+            await anyio.sleep(10)
 
     task = asyncio.create_task(consume())
     await first_event_seen.wait()

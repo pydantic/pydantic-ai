@@ -82,7 +82,7 @@ if TYPE_CHECKING or imports_successful():
         """Async evaluator for testing."""
 
         async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return True
 
     @dataclass
@@ -864,7 +864,7 @@ async def test_max_concurrency_respected():
             nonlocal active, max_active, completed
             active += 1
             max_active = max(max_active, active)
-            await asyncio.sleep(0.05)
+            await anyio.sleep(0.05)
             active -= 1
             completed += 1
             return True
@@ -1089,7 +1089,7 @@ async def test_on_max_concurrency_exception_suppressed_when_no_on_error():
     @dataclass
     class SlowEvaluator(Evaluator):
         async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            await asyncio.sleep(0.1)
+            await anyio.sleep(0.1)
             return True
 
     def bad_callback(ctx: EvaluatorContext[Any, Any, Any]) -> None:
@@ -1440,7 +1440,7 @@ async def test_on_max_concurrency_callback():
     @dataclass
     class SlowEvaluator(Evaluator):
         async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            await asyncio.sleep(0.1)
+            await anyio.sleep(0.1)
             return True
 
     collector = Collector()
@@ -1476,7 +1476,7 @@ async def test_on_max_concurrency_async_callback():
     @dataclass
     class SlowEvaluator(Evaluator):
         async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            await asyncio.sleep(0.1)
+            await anyio.sleep(0.1)
             return True
 
     async def on_drop(ctx: EvaluatorContext[Any, Any, Any]) -> None:
@@ -1513,7 +1513,7 @@ async def test_on_max_concurrency_config_default():
     @dataclass
     class SlowEvaluator(Evaluator):
         async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            await asyncio.sleep(0.1)
+            await anyio.sleep(0.1)
             return True
 
     collector = Collector()
@@ -1543,7 +1543,7 @@ async def test_on_max_concurrency_evaluator_overrides_config():
     @dataclass
     class SlowEvaluator(Evaluator):
         async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            await asyncio.sleep(0.1)
+            await anyio.sleep(0.1)
             return True
 
     collector = Collector()
@@ -1627,7 +1627,7 @@ async def test_on_error_on_max_concurrency_exception():
     @dataclass
     class SlowEvaluator(Evaluator):
         async def evaluate(self, ctx: EvaluatorContext) -> EvaluatorOutput:
-            await asyncio.sleep(0.1)
+            await anyio.sleep(0.1)
             return True
 
     collector = Collector()
@@ -1738,7 +1738,7 @@ async def test_on_error_async_callback():
         evaluator: Evaluator,
         location: OnErrorLocation,
     ) -> None:
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         errors.append(location)
 
     config = OnlineEvalConfig(on_error=async_on_error)

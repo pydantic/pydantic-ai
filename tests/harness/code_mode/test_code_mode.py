@@ -2908,7 +2908,7 @@ class TestCodeMode:
         scope.cancel()
         await cancel_seen.wait()
         for _ in range(5):
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         assert not task.done(), 'cleanup must wait for dispatched work to finish unwinding'
         release.set()
         await task
@@ -3967,7 +3967,7 @@ class TestCodeModeOSAccess:
 
     async def test_async_os_handler_is_awaited(self) -> None:
         async def os_handler(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> Any:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return f'{name}{args}'
 
         wrapper = CodeMode[object](os_access=os_handler).get_wrapper_toolset(_build_function_toolset(add))
@@ -4227,7 +4227,7 @@ class TestCodeModeOSAccessInTemporal:
 
     async def test_async_handler_is_awaited(self) -> None:
         async def handler(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> Any:
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return f'{name}:{args[0]}'
 
         assert await self._run('import os\nos.getenv("HOME")', handler) == 'os.getenv:HOME'

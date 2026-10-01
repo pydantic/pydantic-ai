@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai import Agent, RunContext, Tool
@@ -118,7 +119,7 @@ def build_agent(
             yield {1: DeltaToolCall(json_args=args[offset : offset + chunk_size])}
             # Yield to the event loop so launched speculation tasks actually make progress
             # mid-stream, the way tool latency overlaps decode against a real provider.
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
         log.streaming_done = True
 
     def call_code(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -139,7 +140,7 @@ def build_agent(
         if not log.streaming_done:
             log.started_during_stream += 1
         log.calls.append(('search', query))
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         return f'result:{query}'
 
     @agent.tool_plain
@@ -541,7 +542,7 @@ class TestSpeculationEdgeCases:
             yield {1: DeltaToolCall(name='run_code')}
             for offset in range(0, len(args), 16):
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 16])}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
 
         def search(query: str) -> str:
             """Return a canned result."""
@@ -880,7 +881,7 @@ class TestSpeculationEdgeCases:
         async def lookup(spec: dict[str, str] | list[int]) -> str:
             """Return a canned result."""
             seen.append(repr(spec))
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return 'r'
 
         log = ToolLog()
@@ -945,12 +946,12 @@ class TestSpeculationEdgeCases:
             yield {1: DeltaToolCall(name='run_code')}
             for offset in range(0, len(args), 16):
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 16])}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
 
         async def search(query: str) -> str:
             """Return a canned result."""
             log.calls.append(('search', query))
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return f'result:{query}'
 
         agent: Agent[None, str] = Agent(
@@ -1037,10 +1038,10 @@ class TestSpeculationEdgeCases:
             stubborn_started.set()
             while True:
                 try:
-                    await asyncio.sleep(3600)
+                    await anyio.sleep(3600)
                 except asyncio.CancelledError:
                     cancellation_seen.set()
-                    await asyncio.sleep(1.2)
+                    await anyio.sleep(1.2)
                     raise
 
         code = 'if False:\n    a = await search(query="never")\nb = 1\nb'
@@ -1278,7 +1279,7 @@ class TestDeclaredSpeculation:
         async def search(query: str) -> str:
             """Declared side-effect free."""
             starts.append(f'search:{"stream" if not streaming_done else "exec"}')
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return f'result:{query}'
 
         async def fetch(url: str) -> str:
@@ -1298,7 +1299,7 @@ class TestDeclaredSpeculation:
             yield {1: DeltaToolCall(name='run_code')}
             for offset in range(0, len(args), 16):
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 16])}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
             streaming_done = True
 
         capability = CodeMode[None](speculate='declared')
@@ -1332,7 +1333,7 @@ class TestDeclaredSpeculation:
             starts.append(query)
             if len(starts) >= 2:
                 both_started.set()
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return f'result:{query}'
 
         async def gate(x: int) -> str:
@@ -1357,7 +1358,7 @@ class TestDeclaredSpeculation:
             yield {1: DeltaToolCall(name='run_code')}
             for offset in range(0, len(args), 16):
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 16])}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
 
         capability = CodeMode[None](speculate=['search', 'gate'])
         agent: Agent[None, str] = Agent(
@@ -1414,7 +1415,7 @@ class TestTierComposition:
             starts.append(query)
             if len(starts) >= 2:
                 release_gate.set()
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return f'result:{query}'
 
         code = (
@@ -1436,7 +1437,7 @@ class TestTierComposition:
             yield {1: DeltaToolCall(name='run_code')}
             for chunk in chunks[:-1]:
                 yield {1: DeltaToolCall(json_args=chunk)}
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
             await asyncio.wait_for(gate_started.wait(), timeout=5)
             yield {1: DeltaToolCall(json_args=chunks[-1])}
 
@@ -1546,6 +1547,6 @@ class TestCallLevelLaunch:
                     PartDeltaEvent(index=0, delta=ToolCallPartDelta(args_delta={'code': code})),
                 ],
             )
-            await asyncio.sleep(0.05)
+            await anyio.sleep(0.05)
             assert run_capability.speculation_stats.launched == 2
             assert sorted(starts) == ["'a\"b'", "{'k': [1, 2]}"]

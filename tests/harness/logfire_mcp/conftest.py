@@ -9,14 +9,14 @@ import pytest
 
 # The `mcp` SDK's server, not FastMCP's: the slim install has only the FastMCP client.
 _WHOAMI_SERVER = """
-import asyncio, socket, uvicorn
+import anyio, socket, uvicorn
 from mcp.server.fastmcp import Context, FastMCP
 
 mcp = FastMCP('whoami', stateless_http=True)
 
 @mcp.tool()
 async def whoami(ctx: Context) -> str:
-    await asyncio.sleep(0.05)  # keep concurrent runs overlapping
+    await anyio.sleep(0.05)  # keep concurrent runs overlapping
     return ctx.request_context.request.headers['authorization']
 
 server_socket = socket.create_server(('127.0.0.1', 0))

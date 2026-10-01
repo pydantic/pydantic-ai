@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from unittest.mock import patch
 
+import anyio
 import httpx2
 import pytest
 from httpx import AsyncClient
@@ -1667,7 +1668,7 @@ async def test_dbos_agent_with_hitl_tool(allow_model_requests: None, dbos: DBOS)
     wf_handle = await DBOS.start_workflow_async(hitl_main_loop, 'Delete the file `.env` and create `test.txt`')
 
     while True:
-        await asyncio.sleep(1)
+        await anyio.sleep(1)
         status = await wf_handle.get_status()
         if status.status == 'SUCCESS':
             break

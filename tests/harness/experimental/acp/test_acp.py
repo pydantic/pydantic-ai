@@ -1521,7 +1521,7 @@ class TestCancellation:
         session = adapter._sessions[session_id]  # pyright: ignore[reportPrivateUsage]
         with anyio.fail_after(5):
             while session.active_turn is None:
-                await asyncio.sleep(0)
+                await anyio.sleep(0)
         turn = session.active_turn
         # Tear the prompt handler down in the same tick the dismissed dialog ends the turn: the
         # turn's internal rollback signal must not escape (or replace) the handler's cancellation.
@@ -1555,7 +1555,7 @@ class TestCancellation:
         with pytest.raises(asyncio.CancelledError):
             await turn
         # The inner turn was stopped rather than orphaned, so the tool never completed.
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         assert tool_finished is False
 
 
@@ -1637,7 +1637,7 @@ class TestMultiTurn:
             nonlocal active, max_active
             active += 1
             max_active = max(max_active, active)
-            await asyncio.sleep(0.02)
+            await anyio.sleep(0.02)
             active -= 1
             return 'ok'
 
@@ -1760,7 +1760,7 @@ class TestSessionClose:
         await asyncio.wait_for(started.wait(), timeout=5)
         # A second prompt queues on the session's turn lock behind the in-flight first turn.
         queued = asyncio.ensure_future(adapter.prompt(prompt=[acp.text_block('two')], session_id=session_id))
-        await asyncio.sleep(0)
+        await anyio.sleep(0)
         await adapter.close_session(session_id=session_id)
 
         assert (await asyncio.wait_for(first, timeout=5)).stop_reason == 'cancelled'
@@ -2051,7 +2051,7 @@ class TestEntryPoints:
             prompt = asyncio.ensure_future(
                 conn.prompt(session_id=session.session_id, prompt=[acp.text_block('go')], message_id=uuid4().hex)
             )
-            await asyncio.sleep(0.5)  # let the slow tool start
+            await anyio.sleep(0.5)  # let the slow tool start
             await conn.cancel(session_id=session.session_id)
             response = await asyncio.wait_for(prompt, timeout=10)
 

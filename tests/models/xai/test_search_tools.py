@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+import anyio
 import pytest
 
 from pydantic_ai import (
@@ -818,7 +819,6 @@ async def test_xai_builtin_file_search_tool(
     Re-recording requires `XAI_MANAGEMENT_KEY` in addition to `XAI_API_KEY` — the SDK reads it from env
     when creating the management gRPC channel used by `client.collections.*`.
     """
-    import asyncio
     from datetime import timedelta
     from uuid import uuid4
 
@@ -844,7 +844,7 @@ async def test_xai_builtin_file_search_tool(
                 return doc
             if doc.status == collections_pb2.DocumentStatus.DOCUMENT_STATUS_FAILED:
                 raise ValueError(f'Document indexing failed: {doc.error_message}')
-            await asyncio.sleep(timer.sleep_interval_or_raise())
+            await anyio.sleep(timer.sleep_interval_or_raise())
 
     monkeypatch.setattr(_AioCollectionsClient, '_wait_for_indexing', _tolerant_wait_for_indexing)
 
@@ -875,7 +875,7 @@ async def test_xai_builtin_file_search_tool(
         )
         if not isinstance(client, XaiProtoCassetteClient):  # pragma: no cover
             # PROCESSED status doesn't guarantee the live search index is fully propagated; give it a moment.
-            await asyncio.sleep(5)
+            await anyio.sleep(5)
 
         m = XaiModel(XAI_NON_REASONING_MODEL, provider=xai_provider)
         agent = Agent(

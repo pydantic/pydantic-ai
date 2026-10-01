@@ -12,6 +12,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import anyio
 import httpx2
 import pytest
 from cassetter import Cassette, RecordMode
@@ -15504,7 +15505,7 @@ def _tracking_sleep(*, real_sleep: bool = False) -> tuple[list[float], Callable[
     async def sleep(delay: float) -> None:
         delays.append(delay)
         if real_sleep:  # pragma: lax no cover
-            await asyncio.sleep(delay)
+            await anyio.sleep(delay)
 
     return delays, sleep
 

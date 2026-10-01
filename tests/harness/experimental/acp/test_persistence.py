@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 import acp
+import anyio
 import pytest
 from pydantic import TypeAdapter
 
@@ -154,7 +155,7 @@ async def test_queued_prompt_does_not_clobber_a_reloaded_session() -> None:
     await asyncio.wait_for(started.wait(), timeout=5)
     # A second prompt queues on the old state's turn lock; the load then replaces that state.
     queued = asyncio.ensure_future(adapter.prompt(prompt=[acp.text_block('two')], session_id=session.session_id))
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     await adapter.load_session(cwd='/ws', session_id=session.session_id)
 
     assert (await asyncio.wait_for(first, timeout=5)).stop_reason == 'cancelled'

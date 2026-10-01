@@ -613,7 +613,7 @@ This is the toolset-level equivalent of the [`SetToolMetadata`][pydantic_ai.capa
 It is a no-op by default, but you can subclass `WrapperToolset` to change the wrapped toolset's tool execution behavior by overriding the [`call_tool()`][pydantic_ai.toolsets.AbstractToolset.call_tool] method.
 
 ```python {title="logging_toolset.py" requires="function_toolset.py,combined_toolset.py,renamed_toolset.py,prepared_toolset.py"}
-import asyncio
+import anyio
 
 from typing_extensions import Any
 
@@ -628,7 +628,7 @@ class LoggingToolset(WrapperToolset):
     async def call_tool(self, name: str, tool_args: dict[str, Any], ctx: RunContext, tool: ToolsetTool) -> Any:
         LOG.append(f'Calling tool {name!r} with args: {tool_args!r}')
         try:
-            await asyncio.sleep(0.1 * len(LOG)) # (1)!
+            await anyio.sleep(0.1 * len(LOG)) # (1)!
 
             result = await super().call_tool(name, tool_args, ctx, tool)
             LOG.append(f'Finished calling tool {name!r} with result: {result!r}')

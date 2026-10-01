@@ -2,6 +2,7 @@
 
 import asyncio
 
+import anyio
 import pytest
 from anyio import to_thread
 from pydantic import SecretStr
@@ -88,7 +89,7 @@ async def test_a_flows_own_timeout_reaches_the_menu_instead_of_being_polled_fore
 
 async def test_the_flows_result_is_returned() -> None:
     async def answered() -> str:
-        await asyncio.sleep(0.1)  # Past one polling interval.
+        await anyio.sleep(0.1)  # Past one polling interval.
         return 'done'
 
     assert await to_thread.run_sync(on_loop, answered, asyncio.get_running_loop()) == 'done'

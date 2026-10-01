@@ -290,7 +290,7 @@ async def test_cancellation_during_spawn_still_kills_the_process_group(tmp_path:
     task = asyncio.create_task(workspace.run(_background_sleep_command(pid_file), shell=True))
     await _wait_for_pid_file(pid_file)
     task.cancel()
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     assert not task.done()
     release.set()
     with pytest.raises(asyncio.CancelledError):
@@ -430,7 +430,7 @@ async def test_failing_spawn_after_cancellation_raises_oserror(tmp_path: Path, m
     task = asyncio.create_task(workspace.run('true', shell=True))
     await started.wait()
     task.cancel()
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
     assert not task.done()
     release.set()
     with pytest.raises(OSError, match='spawn failed'):

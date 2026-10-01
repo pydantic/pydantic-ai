@@ -263,7 +263,7 @@ async def _cancellation_stream_model(messages: list[ModelMessage], info: AgentIn
     try:
         while True:
             activity.heartbeat()
-            await asyncio.sleep(0.01)
+            await anyio.sleep(0.01)
     except asyncio.CancelledError:
         _cancellation_activity_cancel_absorbed = True
         yield 'completed despite activity cancellation'
@@ -302,7 +302,7 @@ class CancellationBackstopWorkflow:
 
 @activity.defn
 async def _slow_cancellable_activity() -> str:
-    await asyncio.sleep(1)
+    await anyio.sleep(1)
     return 'completed slowly'
 
 
@@ -365,7 +365,7 @@ class WaitForNonStreamingAgentTimeoutWorkflow:
 
 
 async def _slow_nonstreaming_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    await asyncio.sleep(10)
+    await anyio.sleep(10)
     return ModelResponse(parts=[TextPart('done')])  # pragma: no cover
 
 
@@ -400,7 +400,7 @@ async def test_wait_for_nonstreaming_agent_timeout_does_not_livelock(client: Cli
 async def _wait_for_timeout_stream_model(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
     while True:
         activity.heartbeat()
-        await asyncio.sleep(0.01)
+        await anyio.sleep(0.01)
         yield ''
 
 
@@ -2274,7 +2274,7 @@ async def test_temporal_agent_with_hitl_tool(allow_model_requests: None, client:
             task_queue=TASK_QUEUE,
         )
         while True:
-            await asyncio.sleep(1)
+            await anyio.sleep(1)
             status = await workflow.query(HitlAgentWorkflow.get_status)
             if status == 'done':
                 break

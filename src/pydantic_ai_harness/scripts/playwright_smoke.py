@@ -50,6 +50,7 @@ import hashlib
 import socket
 from tempfile import TemporaryDirectory
 
+import anyio
 from playwright.async_api import StorageState, async_playwright
 
 from pydantic_ai import Agent
@@ -99,7 +100,7 @@ async def _run_tools(
         # A real run spends a model round trip between tool calls; this scripted one
         # spends none, which is short enough that a browser event triggered by the
         # previous call (a tab opening) may not have been delivered yet.
-        await asyncio.sleep(pause)
+        await anyio.sleep(pause)
         for part in messages[-1].parts:
             if isinstance(part, ToolReturnPart):
                 results.append(str(part.content))
@@ -556,7 +557,7 @@ async def _serve_websocket_secret() -> tuple[asyncio.Server, int]:
         payload = _SECRET.encode()
         writer.write(bytes([0x81, len(payload)]) + payload)
         await writer.drain()
-        await asyncio.sleep(5)
+        await anyio.sleep(5)
 
     server = await asyncio.start_server(handle, '127.0.0.1', 0)
     return server, server.sockets[0].getsockname()[1]

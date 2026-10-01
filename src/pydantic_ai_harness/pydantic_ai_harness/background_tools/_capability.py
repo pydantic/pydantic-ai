@@ -120,7 +120,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
     The model receives a "started" message right away and the result when the tool finishes.
 
     ```python
-    import asyncio
+    import anyio
 
     from pydantic_ai import Agent
     from pydantic_ai_harness import BackgroundTools
@@ -130,7 +130,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
 
     @agent.tool_plain(metadata={'background': True})
     async def slow_research(query: str) -> str:
-        await asyncio.sleep(60)  # stand-in for a long-running job
+        await anyio.sleep(60)  # stand-in for a long-running job
         return f'Research findings for {query!r}'
     ```
 

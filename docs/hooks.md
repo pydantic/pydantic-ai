@@ -383,7 +383,7 @@ The `tools` parameter accepts a sequence of tool names. The hook only fires for 
 Each hook supports an optional `timeout` in seconds. If the hook exceeds the timeout, a [`HookTimeoutError`][pydantic_ai.capabilities.HookTimeoutError] is raised:
 
 ```python {title="hooks_timeout.py"}
-import asyncio
+import anyio
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks, HookTimeoutError
@@ -395,7 +395,7 @@ hooks = Hooks()
 async def slow_hook(
     ctx: RunContext, request_context: ModelRequestContext
 ) -> ModelRequestContext:
-    await asyncio.sleep(10)  # Will be interrupted by timeout
+    await anyio.sleep(10)  # Will be interrupted by timeout
     return request_context  # pragma: no cover
 
 

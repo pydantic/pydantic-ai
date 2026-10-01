@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 
@@ -330,7 +331,7 @@ class TestAdvisor:
         async def advisor_model(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
             nonlocal advisor_calls
             advisor_calls += 1
-            await asyncio.sleep(0)
+            await anyio.sleep(0)
             return ModelResponse(parts=[TextPart('advice')])
 
         def executor(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
