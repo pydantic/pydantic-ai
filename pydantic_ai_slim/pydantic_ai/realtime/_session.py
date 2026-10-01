@@ -328,6 +328,8 @@ class _TapView(AsyncIterator[_TapItem]):
 
 
 class _Pulse:
+    """Broadcast by replacing AnyIO's one-shot event; callers must check state without a checkpoint before waiting."""
+
     def __init__(self) -> None:
         self._event = anyio.Event()
 
