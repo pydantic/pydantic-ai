@@ -177,6 +177,25 @@ DBOS_OPERATION_NAMES = {
     'compat__capability__compat.operation',
 }
 
+RENDER_TASK_NAMES = {
+    'compat__model.request',
+    'compat__model.request_stream',
+    'compat__model.cancel_suspended_response',
+    'compat__model.compact_messages',
+    'compat__event_stream_handler',
+    'compat__function_toolset__<agent>.call_tool',
+    'compat__function_toolset__<agent>.validate_args',
+    'compat__function_toolset__functions.call_tool',
+    'compat__function_toolset__functions.validate_args',
+    'compat__mcp_server__mcp.get_tools',
+    'compat__mcp_server__mcp.get_instructions',
+    'compat__mcp_server__mcp.call_tool',
+    'compat__dynamic_toolset__dynamic.get_tools',
+    'compat__dynamic_toolset__dynamic.call_tool',
+    'compat__dynamic_toolset__dynamic.validate_args',
+    'compat__capability__compat.operation',
+}
+
 
 def _operation_ids() -> list[DurableOperationId]:
     return [
@@ -404,6 +423,29 @@ def test_dbos_operation_name_matrix_and_assembly_completeness() -> None:
     assert workspace_backend is not None
     workspace_names = {cast(Any, registration).dbos_function_name for registration in workspace_backend.registrations()}
     assert workspace_names - DBOS_OPERATION_NAMES == JOURNAL_WORKSPACE_NAMES
+
+
+@pytest.mark.parametrize('workspace', [False, True])
+def test_render_task_name_matrix_and_assembly_completeness(workspace: bool) -> None:
+    pytest.importorskip('render')
+    pytest.importorskip('pydantic_ai_harness')
+    from pydantic_ai_harness import RenderWorkflows
+
+    from ..harness.render.conftest import RecordingWorkflows
+
+    app = RecordingWorkflows()
+    capabilities: list[AbstractCapability[Any]] = [
+        CompatCapability(),
+        RenderWorkflows(app, models={'registered': TestModel()}, event_stream_handler=_event_handler),
+    ]
+    if workspace:
+        capabilities.append(CompatWorkspaceSupplier())
+    Agent(TestModel(), name='compat', toolsets=list(_synthetic_toolsets()), capabilities=capabilities)
+
+    names = app.registered_task_names
+    expected = RENDER_TASK_NAMES | (JOURNAL_WORKSPACE_NAMES if workspace else set[str]())
+    assert set(names) == expected
+    assert len(names) == len(expected)
 
 
 def _synthetic_toolsets() -> tuple[FunctionToolset[Any], DynamicToolset[Any], Any]:
