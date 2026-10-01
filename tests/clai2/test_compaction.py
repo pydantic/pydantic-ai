@@ -142,18 +142,38 @@ async def test_direct_fallback_capability_compacts_before_gauging(strategy: str)
     )
     assert not plugin.host.status.context_alert, 'the gauge measures the compacted request'
     assert plugin.host.status.context_tokens is not None and plugin.host.status.context_tokens < 850
+    assert plugin.host.status.context_window == 1000
     cramped = make_plugin(session, strategy=strategy, context_window=1, protected_tokens=50_000)
     session.plugins = cramped.capabilities
     await session.prompt('again')
     assert cramped.host.status.context_alert, 'a protected tail can still exceed the threshold'
 
 
-async def test_unloading_clears_the_context_alert() -> None:
+@pytest.mark.parametrize(
+    ('model_window', 'override', 'expected'),
+    [(1_000_000, None, 1_000_000), (1_000_000, 200_000, 200_000), (None, None, None)],
+)
+async def test_gauge_uses_known_window_not_fallback(
+    model_window: int | None, override: int | None, expected: int | None
+) -> None:
+    model = TestModel(profile={'context_window': model_window})
+    session = Session(Agent(model), deps=None)
+    plugin = make_plugin(session, context_window=override)
+    plugin.host.status.context_window = 123
+    session.plugins = plugin.capabilities
+    await session.prompt('hello')
+    assert plugin.host.status.context_window == expected
+    assert plugin.host.status.context_tokens is not None
+
+
+async def test_unloading_clears_the_context_window_and_alert() -> None:
     plugin = make_plugin()
     plugin.host.status.context_alert = True
     plugin.host.status.context_tokens = 123
+    plugin.host.status.context_window = 1_000_000
     await plugin.dispatch(SessionEnd(reason='exit'))
     assert not plugin.host.status.context_alert
+    assert plugin.host.status.context_window is None
     assert plugin.host.status.context_tokens == 123
 
 

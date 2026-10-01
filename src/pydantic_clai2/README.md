@@ -1068,6 +1068,12 @@ turns it off, `/compact` included:
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
 
+The status row shows compact used/max context tokens, such as `128k/1m`.
+The maximum comes from the request's model or the `context_window` override;
+it stays `?` until the plugin reports a known window. An unknown model's fallback
+compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
+larger counts round to whole thousands (`k`) or tenths of a million (`m`).
+
 The context figure turns yellow when a request still exceeds `threshold` after
 compaction, for example because the protected tail is too large. For windows smaller
 than 50,000 tokens, redeclare the plugin with a smaller `protected_tokens` value;
