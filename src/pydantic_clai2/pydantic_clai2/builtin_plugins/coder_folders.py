@@ -87,7 +87,7 @@ class DirectoryPicker:
         if problem or self.error:
             items.append(MenuItem(_display(problem or self.error), disabled=True))
         elif not children:
-            items.append(MenuItem('No subdirectories. You can still use this directory.', disabled=True))
+            items.append(MenuItem('No subdirectories. This directory can be used.', disabled=True))
         return (
             MenuBuilder('Browse local directories')
             .size(_menu_size)
@@ -205,7 +205,7 @@ class FolderMenu(Generic[DepsT]):
             for index, value in enumerate(folders)
         ]
         if not folders:
-            items.append(MenuItem('No folders selected. Disk-defined agents are off.', disabled=True))
+            items.append(MenuItem('No folders selected. Disk agents are off.', disabled=True))
         if not self.source.host.settings(CoderSettings).sub_agents:
             items.append(MenuItem('Sub-agents are disabled in Coder settings.', disabled=True))
         items += [
