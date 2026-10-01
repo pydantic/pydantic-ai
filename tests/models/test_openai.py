@@ -2102,7 +2102,8 @@ _STREAM_ERROR_SSE_ERROR = b'data: {"error":{"message":"upstream model failed","t
     ],
 )
 async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, content: bytes) -> None:
-    """An error object inside a 200 SSE stream surfaces as `ModelAPIError`, with no status code invented for it.
+    """An error object inside a 200 SSE stream surfaces as the `ModelHTTPError` the same error gets before a stream
+    opens, with `in_stream` set.
 
     A mock transport stands in for a cassette because no real provider returns such a stream on demand.
     https://github.com/pydantic/pydantic-ai/issues/8722
@@ -2120,8 +2121,10 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
                 await result.get_output()
 
     # A server error isn't classified into a category.
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == 'upstream model failed'
+    assert type(exc_info.value) is ModelHTTPError
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.in_stream is True
+    assert exc_info.value.body == {'message': 'upstream model failed', 'type': 'server_error', 'code': 500}
     assert exc_info.value.provider_error_code == '500'
     assert exc_info.value.provider_error_type == 'server_error'
     cause = exc_info.value.__cause__

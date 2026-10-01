@@ -5,7 +5,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pydantic_core
 from pydantic_core import core_schema
@@ -525,8 +525,11 @@ class ModelAPIError(AgentRunError):
     [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]), or
     [`ContextWindowExceeded`][pydantic_ai.exceptions.ContextWindowExceeded]. When the error came with an HTTP
     status code, the raised exception is also a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError].
-    An error the provider sends inside an already successful response, such as an error event in a stream,
-    has no status code and is not a `ModelHTTPError`.
+
+    A request can be streamed without you asking for it, e.g. when the agent has an event stream handler, so an error
+    the provider sends inside an already open stream is reported the same way as the same error before the stream
+    opened: with the HTTP status the provider uses for it, where that is clear. Such errors have
+    [`in_stream`][pydantic_ai.exceptions.ModelAPIError.in_stream] set.
 
     The provider SDK's own exception, if any, is available as `__cause__`.
     """
@@ -550,6 +553,21 @@ class ModelAPIError(AgentRunError):
     For example `'overloaded_error'` or `'invalid_request_error'` (Anthropic, OpenAI).
     """
 
+    in_stream: bool
+    """Whether the provider reported the error inside an already open, successful (HTTP 200) stream.
+
+    Its [`status_code`][pydantic_ai.exceptions.ModelHTTPError.status_code], if any, is then the status the provider
+    uses for the same error before a stream opens, rather than the stream's own, and its
+    [`headers`][pydantic_ai.exceptions.ModelHTTPError.headers], if any, are the stream's.
+    """
+
+    retry_after: float | None
+    """Seconds the provider asked you to wait before retrying, if it said.
+
+    An HTTP error reads it from the `retry-after-ms` or `Retry-After` response header; other errors carry it when the
+    provider sends a retry hint some other way, such as Google's `RetryInfo`.
+    """
+
     def __init__(
         self,
         model_name: str,
@@ -558,11 +576,15 @@ class ModelAPIError(AgentRunError):
         body: object | None = None,
         provider_error_code: str | None = None,
         provider_error_type: str | None = None,
+        retry_after: float | None = None,
+        in_stream: bool = False,
     ):
         self.model_name = model_name
         self.body = body
         self.provider_error_code = provider_error_code
         self.provider_error_type = provider_error_type
+        self.retry_after = retry_after
+        self.in_stream = in_stream
         super().__init__(message)
 
     def __reduce__(self) -> tuple[Any, ...]:
@@ -573,21 +595,16 @@ class ModelAPIError(AgentRunError):
             'body': self.body,
             'provider_error_code': self.provider_error_code,
             'provider_error_type': self.provider_error_type,
+            'retry_after': self.retry_after,
+            'in_stream': self.in_stream,
         }
 
     def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
         self.body = state.get('body')
         self.provider_error_code = state.get('provider_error_code')
         self.provider_error_type = state.get('provider_error_type')
-
-    @property
-    def retry_after(self) -> float | None:
-        """Seconds to wait before retrying, if the provider said.
-
-        `None` unless the error came with a hint; [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] reads
-        it from the `Retry-After` response header.
-        """
-        return None
+        self.retry_after = state.get('retry_after')
+        self.in_stream = state.get('in_stream', False)
 
 
 class ModelRateLimitError(ModelAPIError):
@@ -618,6 +635,48 @@ class ModelConnectionError(ModelAPIError):
     is available as `__cause__`.
     """
 
+    phase: Literal['pool', 'connect', 'write', 'read'] | None
+    """The stage of the request at which the transport failed, if known.
+
+    - `'pool'`: waiting for a free connection in the local connection pool. The request was not sent.
+    - `'connect'`: opening the connection to the provider. The request was not sent.
+    - `'write'`: sending the request. It may have been partly or fully sent.
+    - `'read'`: receiving the response, including a stream that broke off. The request was sent, so the provider
+      may have acted on it.
+
+    `None` when the transport doesn't say, as with gRPC.
+    """
+
+    def __init__(
+        self,
+        model_name: str,
+        message: str,
+        *,
+        phase: Literal['pool', 'connect', 'write', 'read'] | None = None,
+        body: object | None = None,
+        provider_error_code: str | None = None,
+        provider_error_type: str | None = None,
+        retry_after: float | None = None,
+        in_stream: bool = False,
+    ):
+        self.phase = phase
+        super().__init__(
+            model_name,
+            message,
+            body=body,
+            provider_error_code=provider_error_code,
+            provider_error_type=provider_error_type,
+            retry_after=retry_after,
+            in_stream=in_stream,
+        )
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {**super().__getstate__(), 'phase': self.phase}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        super().__setstate__(state)
+        self.phase = state.get('phase')
+
 
 class ModelTimeoutError(ModelConnectionError):
     """Raised when a single attempt at the request timed out at the transport layer.
@@ -646,11 +705,11 @@ class ModelHTTPError(ModelAPIError):
     An HTTP error that also belongs to an error category is an instance of that category too, e.g.
     `except ModelRateLimitError` catches a 429 and `except ModelHTTPError` still does.
 
-    For errors that did not come with an HTTP status, some adapters report a status derived from the provider's
-    error instead: xAI maps gRPC status codes, OpenRouter uses the `code` of an error inside a 200 response or
-    stream, and Google uses the `code` of an error inside a stream. Their `status_code` is deprecated and these
-    errors will stop being `ModelHTTPError`s in the next major version; use the error category or
-    [`provider_error_code`][pydantic_ai.exceptions.ModelAPIError.provider_error_code] instead.
+    Errors that didn't come with an HTTP status of their own get the status the provider uses for the same error
+    where that is clear, so they are handled the same way: xAI maps gRPC status codes (e.g. `RESOURCE_EXHAUSTED`
+    to 429), OpenRouter uses the `code` of an error inside a 200 response, and an error inside an open stream gets
+    the status of the same error before the stream opened, with
+    [`in_stream`][pydantic_ai.exceptions.ModelAPIError.in_stream] set.
     """
 
     status_code: int
@@ -677,6 +736,8 @@ class ModelHTTPError(ModelAPIError):
         suggested_model_id: str | None = None,
         provider_error_code: str | None = None,
         provider_error_type: str | None = None,
+        retry_after: float | None = None,
+        in_stream: bool = False,
     ):
         self.status_code = status_code
         self.headers = {k.lower(): v for k, v in headers.items()} if headers is not None else None
@@ -690,6 +751,8 @@ class ModelHTTPError(ModelAPIError):
             body=body,
             provider_error_code=provider_error_code,
             provider_error_type=provider_error_type,
+            retry_after=retry_after if retry_after is not None else _parse_retry_after(self.headers),
+            in_stream=in_stream,
         )
 
     def __reduce__(self) -> tuple[type, tuple[Any, ...], dict[str, Any]]:
@@ -702,40 +765,61 @@ class ModelHTTPError(ModelAPIError):
         super().__setstate__(state)
         self.headers = state.get('headers')
         self.suggested_model_id = state.get('suggested_model_id')
+        if 'retry_after' not in state:
+            # Pickled before `retry_after` was stored.
+            self.retry_after = _parse_retry_after(self.headers)
         if self.suggested_model_id is not None:
             self.message += f'. Did you mean {self.suggested_model_id!r}?'
             self.args = (self.message,)
 
     @property
-    def retry_after(self) -> float | None:
-        """Seconds to wait before retrying, parsed from the `Retry-After` response header.
+    def should_retry(self) -> bool | None:
+        """Whether the provider said retrying the request may succeed, from its `x-should-retry` response header.
 
-        Returns `None` when the header is absent or cannot be parsed. The header value
-        is interpreted first as an integer number of seconds, then as an
-        [HTTP-date](https://httpwg.org/specs/rfc9110.html#http.date) string.
+        `None` when the header is absent or isn't `true` or `false`. OpenAI and Anthropic send it, and their SDKs
+        follow it when they retry.
         """
         if self.headers is None:
             return None
-        raw = self.headers.get('retry-after')
-        if raw is None:
-            return None
+        return {'true': True, 'false': False}.get(self.headers.get('x-should-retry', '').strip().lower())
+
+
+def _parse_retry_after(headers: Mapping[str, str] | None) -> float | None:
+    """Seconds to wait before retrying, from the `retry-after-ms` or `Retry-After` header (keys lowercased).
+
+    `retry-after-ms` is a number of milliseconds, as OpenAI and Anthropic send it. `Retry-After` is interpreted first
+    as an integer number of seconds, then as an [HTTP-date](https://httpwg.org/specs/rfc9110.html#http.date).
+    """
+    if headers is None:
+        return None
+    if (raw_ms := headers.get('retry-after-ms')) is not None:
         try:
-            seconds = int(raw)
-            if seconds < 0:
-                return None
-            return float(seconds)
-        except (ValueError, OverflowError):
+            milliseconds = float(raw_ms)
+        except ValueError:
             pass
-        try:
-            retry_time = parsedate_to_datetime(raw)
-            assert isinstance(retry_time, datetime)
-            # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
-            if retry_time.tzinfo is None:
-                retry_time = retry_time.replace(tzinfo=timezone.utc)
-            wait = (retry_time - datetime.now(timezone.utc)).total_seconds()
-            return max(0.0, wait)
-        except (ValueError, TypeError, AssertionError):
+        else:
+            if 0 <= milliseconds < float('inf'):
+                return milliseconds / 1000
+    raw = headers.get('retry-after')
+    if raw is None:
+        return None
+    try:
+        seconds = int(raw)
+        if seconds < 0:
             return None
+        return float(seconds)
+    except (ValueError, OverflowError):
+        pass
+    try:
+        retry_time = parsedate_to_datetime(raw)
+        assert isinstance(retry_time, datetime)
+        # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
+        if retry_time.tzinfo is None:
+            retry_time = retry_time.replace(tzinfo=timezone.utc)
+        wait = (retry_time - datetime.now(timezone.utc)).total_seconds()
+        return max(0.0, wait)
+    except (ValueError, TypeError, AssertionError):
+        return None
 
 
 class FallbackExceptionGroup(ExceptionGroup[Any]):

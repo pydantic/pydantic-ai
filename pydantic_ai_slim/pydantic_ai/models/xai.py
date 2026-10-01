@@ -97,6 +97,7 @@ except ImportError as _import_error:
 _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
     grpc.StatusCode.UNAUTHENTICATED: 401,
     grpc.StatusCode.PERMISSION_DENIED: 403,
+    grpc.StatusCode.INVALID_ARGUMENT: 400,
     grpc.StatusCode.NOT_FOUND: 404,
     grpc.StatusCode.RESOURCE_EXHAUSTED: 429,
     grpc.StatusCode.INTERNAL: 500,

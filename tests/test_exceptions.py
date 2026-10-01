@@ -4,12 +4,13 @@ import pickle
 from collections.abc import Callable
 from typing import Any
 
+import httpx2
 import pytest
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import ModelRetry, ToolFailed
-from pydantic_ai._model_errors import http_error_class
+from pydantic_ai._model_errors import http_error_class, transport_phase
 from pydantic_ai.exceptions import (
     AgentRunError,
     ApprovalRequired,
@@ -19,6 +20,7 @@ from pydantic_ai.exceptions import (
     ContextWindowExceeded,
     IncompleteToolCall,
     ModelAPIError,
+    ModelConnectionError,
     ModelHTTPError,
     ModelOverloadedError,
     ModelRateLimitError,
@@ -167,7 +169,10 @@ def test_exceptions_hashable(exc_factory: Callable[[], Any]):
                 'provider_error_type': 'overloaded_error',
             },
         ),
-        (lambda: ModelTimeoutError('gpt-4', 'Request timed out.'), {'message': 'Request timed out.'}),
+        (
+            lambda: ModelTimeoutError('gpt-4', 'Request timed out.', phase='pool', retry_after=1.5),
+            {'message': 'Request timed out.', 'phase': 'pool', 'retry_after': 1.5},
+        ),
         (
             lambda: http_error_class(ContextWindowExceeded)(
                 400, 'gpt-4', {'code': 'context_length_exceeded'}, provider_error_code='context_length_exceeded'
@@ -544,3 +549,77 @@ def test_model_http_error_headers_provider_xai_no_headers():
     assert exc.status_code == 429
     assert exc.headers is None
     assert exc.retry_after is None
+
+
+def test_model_http_error_retry_after_ms():
+    """`retry-after-ms`, which OpenAI and Anthropic send, takes precedence over `Retry-After`."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after-ms': '1500', 'retry-after': '2'})
+    assert exc.retry_after == 1.5
+
+
+@pytest.mark.parametrize('raw', ['soon', '-5', 'inf'])
+def test_model_http_error_retry_after_ms_invalid_falls_back(raw: str):
+    """An unusable `retry-after-ms` falls back to `Retry-After`."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after-ms': raw, 'retry-after': '2'})
+    assert exc.retry_after == 2.0
+
+
+def test_model_http_error_retry_after_explicit():
+    """An explicit `retry_after` wins over the headers."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': '2'}, retry_after=7.0)
+    assert exc.retry_after == 7.0
+
+
+def test_model_api_error_retry_after_stored():
+    """Any `ModelAPIError` can carry a retry hint, e.g. from a non-HTTP source."""
+    exc = ModelRateLimitError('gemini-2.5-flash', 'Resource exhausted', retry_after=3.0)
+    assert exc.retry_after == 3.0
+    assert pickle.loads(pickle.dumps(exc)).retry_after == 3.0
+    assert ModelAPIError('gpt-4', 'failed').retry_after is None
+
+
+def test_model_http_error_unpickles_state_without_retry_after():
+    """An error pickled before `retry_after` was stored recomputes it from the headers."""
+    exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': '60'})
+    state = exc.__getstate__()
+    del state['retry_after']
+    restored = ModelHTTPError(429, 'gpt-4')
+    restored.__setstate__(state)
+    assert restored.retry_after == 60.0
+
+
+@pytest.mark.parametrize(
+    ('headers', 'expected'),
+    [
+        ({'x-should-retry': 'true'}, True),
+        ({'X-Should-Retry': 'False'}, False),
+        ({'x-should-retry': 'maybe'}, None),
+        ({}, None),
+        (None, None),
+    ],
+)
+def test_model_http_error_should_retry(headers: dict[str, str] | None, expected: bool | None):
+    assert ModelHTTPError(503, 'gpt-4', headers=headers).should_retry is expected
+
+
+def test_transport_phase():
+    """The phase is read from the transport exception, following `__cause__` from an SDK's wrapper."""
+    request = httpx2.Request('POST', 'https://example.com')
+    for error, phase in [
+        (httpx2.PoolTimeout('pool', request=request), 'pool'),
+        (httpx2.ConnectTimeout('connect', request=request), 'connect'),
+        (httpx2.WriteError('write', request=request), 'write'),
+        (httpx2.RemoteProtocolError('read', request=request), 'read'),
+    ]:
+        wrapper = RuntimeError('wrapped')
+        wrapper.__cause__ = error
+        assert transport_phase(wrapper) == phase
+
+    looping = RuntimeError('loop')
+    looping.__cause__ = looping
+    assert transport_phase(looping) is None
+    assert transport_phase(ValueError('unrelated')) is None
+
+
+def test_model_connection_error_phase_defaults_to_none():
+    assert ModelConnectionError('gpt-4', 'Connection error.').phase is None

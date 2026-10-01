@@ -226,7 +226,7 @@ these categories, whichever provider it came from:
 |---|---|
 | [`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError] | A rate limit was reached, e.g. an HTTP 429. Exhausted quota or billing is not a rate limit. |
 | [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError] | The provider or model is temporarily overloaded or unavailable, e.g. an HTTP 503 or 529. |
-| [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. |
+| [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] | The request could not reach the provider, or its response could not be read. Its [`phase`][pydantic_ai.exceptions.ModelConnectionError.phase] says whether the request may have reached the provider. |
 | [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] | An attempt timed out at the transport layer. A subclass of `ModelConnectionError`. |
 | [`ContextWindowExceeded`][pydantic_ai.exceptions.ContextWindowExceeded] | The input exceeds the model's context window. |
 
@@ -237,10 +237,10 @@ only where the provider offers nothing else. Every `ModelAPIError` also exposes 
 [`provider_error_type`][pydantic_ai.exceptions.ModelAPIError.provider_error_type], and error
 [`body`][pydantic_ai.exceptions.ModelAPIError.body], when available.
 
-A category means the same thing whether the provider reported the error with an HTTP status or inside an
-already successful response, such as an error event in a stream. For example, both an HTTP 503 from Bedrock
-and a `serviceUnavailableException` in a Bedrock stream raise `ModelOverloadedError`, but only the first is also
-a `ModelHTTPError`, because only it has a status code.
+An error is reported the same way whether the provider sent it before a stream opened or inside an already open
+stream. For example, both an HTTP 503 from Bedrock and a `serviceUnavailableException` in a Bedrock stream raise a
+`ModelHTTPError` with status 503 that is also a `ModelOverloadedError`. The second has
+[`in_stream`][pydantic_ai.exceptions.ModelAPIError.in_stream] set, so you can still tell them apart.
 
 This lets you decide what to do about a failure without knowing which provider it came from:
 
@@ -274,8 +274,10 @@ that it belongs to, if any. The exception exposes the
 **response headers** via the [`headers`][pydantic_ai.exceptions.ModelHTTPError.headers]
 attribute (a `dict[str, str]` with lowercase keys, or `None` for providers that don't
 surface headers, such as gRPC-based providers). Its
-[`retry_after`][pydantic_ai.exceptions.ModelHTTPError.retry_after] parses the `Retry-After` header, handling
-both the integer delta-seconds and HTTP-date formats.
+[`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] is parsed from the `retry-after-ms` or
+`Retry-After` header, handling both the integer delta-seconds and HTTP-date formats, and
+[`should_retry`][pydantic_ai.exceptions.ModelHTTPError.should_retry] from the `x-should-retry` header that OpenAI
+and Anthropic send to say whether retrying may help.
 
 When [OpenAI](openai.md), [Anthropic](anthropic.md), the [Google Gemini API](google.md),
 [Amazon Bedrock](bedrock.md), or [Groq](groq.md) reports that a requested model identifier is
@@ -286,11 +288,17 @@ best-effort guidance after the provider rejects a request, not local validation:
 identifiers remain valid so custom deployments and newly released models continue to work.
 
 !!! note
-    A few `ModelHTTPError`s are synthesised from a non-HTTP source, and have `headers=None`: xAI's gRPC status
-    codes are mapped to HTTP ones, and OpenRouter errors parsed from a 200-OK response or stream, like Google
-    errors inside a stream, report the error's own `code` as the `status_code`. That `status_code` is
-    deprecated: these errors will stop being `ModelHTTPError`s in the next major version. Match on the error
-    category or [`provider_error_code`][pydantic_ai.exceptions.ModelAPIError.provider_error_code] instead.
+    Some `ModelHTTPError`s don't come with an HTTP status of their own, and get the status the provider uses for
+    the same error instead, so they're handled the same way:
+
+    - xAI's gRPC status codes are mapped to their HTTP equivalents, like `RESOURCE_EXHAUSTED` to 429. These have
+      `headers=None`.
+    - OpenRouter errors parsed from a 200-OK response report the error's own `code`.
+    - An error sent inside an already open stream gets the status of the same error before the stream opens, like
+      529 for Anthropic's `overloaded_error`. These have
+      [`in_stream`][pydantic_ai.exceptions.ModelAPIError.in_stream] set, and their `headers` are the stream's.
+      A request can be streamed without you asking for it (e.g. when the agent has an event stream handler), which
+      is why the error doesn't otherwise depend on it.
 
 ## Fallback Model
 

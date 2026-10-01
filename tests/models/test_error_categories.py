@@ -177,11 +177,11 @@ def _sse_data(*data: dict[str, Any]) -> Handler:
     return handler
 
 
-def _raise(kind: Literal['connect', 'timeout']) -> Handler:
+def _raise(kind: Literal['connect', 'timeout', 'pool']) -> Handler:
     def handler(request: Any) -> Any:
-        if isinstance(request, httpx.Request):
-            raise (httpx.ConnectError if kind == 'connect' else httpx.ReadTimeout)('failed', request=request)
-        raise (httpx2.ConnectError if kind == 'connect' else httpx2.ReadTimeout)('failed', request=request)
+        lib = httpx if isinstance(request, httpx.Request) else httpx2
+        error_class = {'connect': lib.ConnectError, 'timeout': lib.ReadTimeout, 'pool': lib.PoolTimeout}[kind]
+        raise error_class('failed', request=request)
 
     return handler
 
@@ -273,12 +273,21 @@ CASES = [
         model=_openai,
         handler=_raise('connect'),
         categories={ModelConnectionError},
+        attrs={'phase': 'connect'},
     ),
     Case(
         id='openai-timeout',
         model=_openai,
         handler=_raise('timeout'),
         categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read'},
+    ),
+    Case(
+        id='openai-pool-timeout',
+        model=_openai,
+        handler=_raise('pool'),
+        categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'pool'},
     ),
     Case(
         id='openai-stream-rate-limit',
@@ -286,8 +295,14 @@ CASES = [
         handler=_sse_data(
             {'error': {'message': 'Rate limit reached', 'type': 'tokens', 'code': 'rate_limit_exceeded'}}
         ),
-        categories={ModelRateLimitError},
-        attrs={'provider_error_code': 'rate_limit_exceeded', 'provider_error_type': 'tokens', 'retry_after': None},
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={
+            'status_code': 429,
+            'in_stream': True,
+            'provider_error_code': 'rate_limit_exceeded',
+            'provider_error_type': 'tokens',
+            'retry_after': None,
+        },
         stream=True,
     ),
     Case(
@@ -302,8 +317,10 @@ CASES = [
                 }
             }
         ),
-        categories={ContextWindowExceeded},
+        categories={ModelHTTPError, ContextWindowExceeded},
         attrs={
+            'status_code': 400,
+            'in_stream': True,
             'provider_error_code': 'context_length_exceeded',
             'body': {
                 'message': "This model's maximum context length is 128000 tokens.",
@@ -314,11 +331,28 @@ CASES = [
         stream=True,
     ),
     Case(
+        id='openai-stream-numeric-code',
+        model=_openai,
+        # Gateways like OpenRouter send the HTTP status as the `code`.
+        handler=_sse_data({'error': {'message': 'Rate limited', 'code': 429}}),
+        categories={ModelHTTPError, ModelRateLimitError},
+        attrs={'status_code': 429, 'in_stream': True, 'provider_error_code': '429'},
+        stream=True,
+    ),
+    Case(
+        id='openai-stream-unclassified',
+        model=_openai,
+        handler=_sse_data({'error': {'message': 'Something went wrong'}}),
+        categories=set(),
+        attrs={'in_stream': True, 'message': 'Something went wrong'},
+        stream=True,
+    ),
+    Case(
         id='openai-stream-overloaded-type',
         model=_openai,
         handler=_sse_data({'error': {'message': 'Overloaded', 'type': 'overloaded'}}),
-        categories={ModelOverloadedError},
-        attrs={'provider_error_code': None, 'provider_error_type': 'overloaded'},
+        categories={ModelHTTPError, ModelOverloadedError},
+        attrs={'status_code': 503, 'in_stream': True, 'provider_error_code': None, 'provider_error_type': 'overloaded'},
         stream=True,
     ),
     Case(
@@ -403,6 +437,7 @@ CASES = [
         categories={ModelHTTPError, ModelOverloadedError},
         attrs={
             'status_code': 529,
+            'in_stream': True,
             'provider_error_type': 'overloaded_error',
             'body': {'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'Overloaded'}},
             'retry_after': None,
@@ -417,7 +452,7 @@ CASES = [
             ('error', {'type': 'error', 'error': {'type': 'api_error', 'message': 'Internal server error'}}),
         ),
         categories={ModelHTTPError},
-        attrs={'status_code': 500, 'provider_error_type': 'api_error'},
+        attrs={'status_code': 500, 'in_stream': True, 'provider_error_type': 'api_error'},
         stream=True,
     ),
     Case(
@@ -425,6 +460,7 @@ CASES = [
         model=_anthropic,
         handler=_raise('timeout'),
         categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read'},
     ),
     Case(
         id='groq-context-window-without-code',
@@ -472,12 +508,14 @@ CASES = [
         model=_groq,
         handler=_raise('connect'),
         categories={ModelConnectionError},
+        attrs={'phase': 'connect'},
     ),
     Case(
         id='groq-timeout',
         model=_groq,
         handler=_raise('timeout'),
         categories={ModelConnectionError, ModelTimeoutError},
+        attrs={'phase': 'read'},
     ),
     Case(
         id='google-rate-limit',
@@ -631,26 +669,32 @@ def _bedrock_error(code: str, message: str, status_code: int | None) -> ClientEr
         ),
         pytest.param(
             lambda: _bedrock_error('throttlingException', 'Too many tokens, please wait before trying again.', None),
-            {ModelRateLimitError},
-            {'provider_error_code': 'throttlingException', 'retry_after': None},
+            {ModelHTTPError, ModelRateLimitError},
+            {'status_code': 429, 'in_stream': True, 'provider_error_code': 'throttlingException', 'retry_after': None},
             id='stream-rate-limit',
         ),
         pytest.param(
             lambda: _bedrock_error('validationException', 'Input is too long for requested model.', None),
-            {ContextWindowExceeded},
-            {'provider_error_code': 'validationException'},
+            {ModelHTTPError, ContextWindowExceeded},
+            {'status_code': 400, 'in_stream': True, 'provider_error_code': 'validationException'},
             id='stream-context-window',
+        ),
+        pytest.param(
+            lambda: _bedrock_error('modelStreamErrorException', 'The model stream failed.', None),
+            set[type[ModelAPIError]](),
+            {'in_stream': True, 'provider_error_code': 'modelStreamErrorException'},
+            id='stream-unmapped',
         ),
         pytest.param(
             lambda: ReadTimeoutError(endpoint_url='https://bedrock.stub'),
             {ModelConnectionError, ModelTimeoutError},
-            {},
+            {'phase': 'read'},
             id='timeout',
         ),
         pytest.param(
             lambda: EndpointConnectionError(endpoint_url='https://bedrock.stub'),
             {ModelConnectionError},
-            {},
+            {'phase': 'connect'},
             id='connection',
         ),
     ],
@@ -707,8 +751,8 @@ def _rpc_error(status: str, details: str) -> grpc.RpcError:
         pytest.param(
             'INVALID_ARGUMENT',
             "This model's maximum prompt length is 131072 but the request contains 150004 tokens.",
-            {ContextWindowExceeded},
-            {'provider_error_code': 'INVALID_ARGUMENT'},
+            {ModelHTTPError, ContextWindowExceeded},
+            {'status_code': 400, 'provider_error_code': 'INVALID_ARGUMENT'},
             id='context-window',
         ),
         pytest.param(

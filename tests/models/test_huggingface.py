@@ -677,8 +677,8 @@ async def test_stream_error_object_raises_model_api_error(
     error_kind: Literal['overloaded', 'generation'],
     error_class: type[ModelAPIError],
 ) -> None:
-    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces as
-    `ModelAPIError`, with no status code invented for it.
+    """An error object inside a 200 stream, which `huggingface_hub` raises as a `TextGenerationError`, surfaces with
+    `in_stream` set: an overloaded server gets the 503 it answers with before a stream opens, other errors no status.
 
     https://github.com/pydantic/pydantic-ai/issues/8722
     """
@@ -690,8 +690,15 @@ async def test_stream_error_object_raises_model_api_error(
         async with Agent(model).run_stream('hello') as result:
             await result.get_output()
 
-    assert type(exc_info.value) is error_class
-    assert exc_info.value.message == 'Model is overloaded'
+    assert isinstance(exc_info.value, error_class)
+    assert exc_info.value.in_stream is True
+    if error_kind == 'overloaded':
+        assert isinstance(exc_info.value, ModelHTTPError)
+        assert exc_info.value.status_code == 503
+        assert exc_info.value.body == 'Model is overloaded'
+    else:
+        assert type(exc_info.value) is ModelAPIError
+        assert exc_info.value.message == 'Model is overloaded'
     assert exc_info.value.__cause__ is error
 
 

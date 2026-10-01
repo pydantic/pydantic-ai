@@ -13699,7 +13699,7 @@ _ERROR_EVENT: dict[str, Any] = {
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 @pytest.mark.parametrize(
-    ('stream', 'content', 'message'),
+    ('stream', 'content', 'status_code', 'message'),
     [
         pytest.param(
             True,
@@ -13707,13 +13707,25 @@ _ERROR_EVENT: dict[str, Any] = {
                 _CREATED_EVENT,
                 {'type': 'error', 'code': 'server_error', 'message': 'The server had an error', 'sequence_number': 1},
             ),
-            'server_error: The server had an error',
+            500,
+            None,
             id='stream-error-event',
         ),
         pytest.param(
             True,
+            _sse(
+                _CREATED_EVENT,
+                {'type': 'error', 'code': 'invalid_prompt', 'message': 'Invalid prompt', 'sequence_number': 1},
+            ),
+            None,
+            'invalid_prompt: Invalid prompt',
+            id='stream-error-event-unmapped',
+        ),
+        pytest.param(
+            True,
             _sse(_ERROR_EVENT),
-            'insufficient_quota: You exceeded your current quota',
+            429,
+            None,
             id='stream-error-event-first',
         ),
         pytest.param(
@@ -13730,7 +13742,8 @@ _ERROR_EVENT: dict[str, Any] = {
                     },
                 }
             ),
-            'You exceeded your current quota',
+            429,
+            None,
             id='stream-error-event-nested',
         ),
         pytest.param(
@@ -13746,22 +13759,27 @@ _ERROR_EVENT: dict[str, Any] = {
                     'sequence_number': 1,
                 },
             ),
-            'rate_limit_exceeded: Rate limit reached',
+            429,
+            None,
             id='stream-response-failed-background',
         ),
         pytest.param(
             False,
             json.dumps(_failed_response_json({'code': 'server_error', 'message': 'The model failed'})).encode(),
+            None,
             'server_error: The model failed',
             id='response-failed',
         ),
     ],
 )
 async def test_response_error_raises_model_api_error(
-    allow_model_requests: None, stream: bool, content: bytes, message: str
+    allow_model_requests: None, stream: bool, content: bytes, status_code: int | None, message: str | None
 ):
-    """A failure the Responses API reports in a 200 body or stream raises `ModelAPIError` with no status code,
-    instead of ending the response with `finish_reason='error'` and sending the model an output retry.
+    """A failure the Responses API reports in a 200 body or stream raises instead of ending the response with
+    `finish_reason='error'` and sending the model an output retry.
+
+    In a stream, it gets the status the same error has before a stream opens, with `in_stream` set. A failed
+    response body has no status to report.
 
     A mock transport stands in for a cassette because no real provider returns such a response on demand.
     """
@@ -13787,8 +13805,14 @@ async def test_response_error_raises_model_api_error(
             else:
                 await agent.run('Hello')
 
-    assert type(exc_info.value) is ModelAPIError
-    assert exc_info.value.message == message
+    if status_code is not None:
+        assert isinstance(exc_info.value, ModelHTTPError)
+        assert exc_info.value.status_code == status_code
+        assert exc_info.value.in_stream is True
+    else:
+        assert type(exc_info.value) is ModelAPIError
+        assert exc_info.value.message == message
+        assert exc_info.value.in_stream is stream
     # No output retry, re-poll, or cancellation of a background job the provider already marked as failed.
     assert requests_made == 1
 

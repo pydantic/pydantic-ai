@@ -93,10 +93,13 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             headers=dict(e.response.headers),
         ) from e
     except TextGenerationError as e:
-        # Raised for an error object inside a stream, after the HTTP 200 has already been received, so there is no
-        # status code to report.
-        error_class = ModelOverloadedError if isinstance(e, OverloadedError) else ModelAPIError
-        raise error_class(model_name=model_name, message=str(e)) from e
+        # Raised for an error object inside a stream, after the HTTP 200 has already been received. An overloaded
+        # server gets the 503 it answers with before a stream opens; other errors have no clear status.
+        if isinstance(e, OverloadedError):
+            raise _model_errors.http_error_class(ModelOverloadedError)(
+                status_code=503, model_name=model_name, body=str(e), in_stream=True
+            ) from e
+        raise ModelAPIError(model_name=model_name, message=str(e), in_stream=True) from e
 
 
 __all__ = (

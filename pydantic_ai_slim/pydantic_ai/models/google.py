@@ -421,6 +421,8 @@ def _map_api_error(e: errors.APIError, model_name: str, model_id_namespace: str 
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
         status = e.status if isinstance(e.status, str) else None
         category = _error_category(status, e.message)
+        # An error chunk inside a stream comes with the stream's own 200 response; its `code` is the error's status.
+        response_status = getattr(e.response, 'status_code', None)
         return _model_errors.http_error_class(category or _model_errors.http_status_category(status_code))(
             status_code=status_code,
             model_name=model_name,
@@ -428,6 +430,7 @@ def _map_api_error(e: errors.APIError, model_name: str, model_id_namespace: str 
             headers=headers,
             suggested_model_id=suggested_model_id,
             provider_error_code=status,
+            in_stream=isinstance(response_status, int) and response_status < 400,
         )
     return ModelAPIError(model_name=model_name, message=str(e))
 

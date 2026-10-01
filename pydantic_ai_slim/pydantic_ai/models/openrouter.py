@@ -356,16 +356,21 @@ class _OpenRouterError(BaseModel):
     message: str
 
 
-def _map_openrouter_error(error: _OpenRouterError, model_name: str) -> ModelHTTPError:
+def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream: bool = False) -> ModelHTTPError:
     """Map an error OpenRouter sent inside a 200 response or stream.
 
-    Its `code` is reported as the status code, as it always has been, although the HTTP status was 200.
+    Its `code` is the HTTP status OpenRouter uses for the same error, so it's reported as the status code although
+    the response's own status was 200.
     """
     category = _model_errors.http_status_category(error.code)
     if error.code == 400 and 'maximum context length' in error.message.lower():
         category = ContextWindowExceeded
     return _model_errors.http_error_class(category)(
-        status_code=error.code, model_name=model_name, body=error.message, provider_error_code=str(error.code)
+        status_code=error.code,
+        model_name=model_name,
+        body=error.message,
+        provider_error_code=str(error.code),
+        in_stream=in_stream,
     )
 
 
@@ -1271,8 +1276,8 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
                 error = _OpenRouterError.model_validate(e.body)
             except ValidationError:
                 # An error object without an integer `code`: there's no status to report.
-                raise ModelAPIError(model_name=self._model_name, message=e.message) from e
-            raise _map_openrouter_error(error, self._model_name) from e
+                raise ModelAPIError(model_name=self._model_name, message=e.message, in_stream=True) from e
+            raise _map_openrouter_error(error, self._model_name, in_stream=True) from e
 
     @override
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:

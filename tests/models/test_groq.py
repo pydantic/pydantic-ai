@@ -745,7 +745,8 @@ _STREAM_ERROR_SSE_ERROR = (
     ],
 )
 async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, content: bytes) -> None:
-    """An error object inside a 200 SSE stream surfaces as `ModelAPIError`, with no status code invented for it.
+    """An error object inside a 200 SSE stream surfaces as the `ModelHTTPError` the same error gets before a stream
+    opens, with `in_stream` set.
 
     A mock transport stands in for a cassette because no real provider returns such a stream on demand.
     https://github.com/pydantic/pydantic-ai/issues/8722
@@ -760,8 +761,10 @@ async def test_stream_error_object_raises_model_api_error(allow_model_requests: 
             async with Agent(model).run_stream('hello') as result:
                 await result.get_output()
 
-    assert type(exc_info.value) is ModelOverloadedError
-    assert exc_info.value.message == 'over capacity'
+    assert isinstance(exc_info.value, ModelHTTPError)
+    assert isinstance(exc_info.value, ModelOverloadedError)
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.in_stream is True
     assert exc_info.value.provider_error_code == 'service_unavailable'
     assert exc_info.value.provider_error_type == 'server_error'
     cause = exc_info.value.__cause__

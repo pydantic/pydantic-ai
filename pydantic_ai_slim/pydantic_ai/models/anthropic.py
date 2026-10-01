@@ -24,10 +24,8 @@ from ..capabilities.abstract import AbstractCapability
 from ..exceptions import (
     ContextWindowExceeded,
     ModelAPIError,
-    ModelConnectionError,
     ModelOverloadedError,
     ModelRateLimitError,
-    ModelTimeoutError,
     UserError,
 )
 from ..messages import (
@@ -421,14 +419,15 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'anthropic') -> G
                 headers=dict(e.response.headers),
                 suggested_model_id=suggested_model_id,
                 provider_error_type=provider_error_type,
+                # An `error` event inside a stream comes with the stream's own 200 status; it got its status above.
+                in_stream=e.status_code < 400,
             ) from e
-        # An `error` event inside a stream: the SDK reports the stream's own 200 status, which says nothing about the error.
+        # An `error` event inside a stream whose type has no known status.
         raise (category or ModelAPIError)(
-            model_name=model_name, message=e.message, body=body, provider_error_type=provider_error_type
+            model_name=model_name, message=e.message, body=body, provider_error_type=provider_error_type, in_stream=True
         ) from e
     except APIConnectionError as e:
-        error_class = ModelTimeoutError if isinstance(e, APITimeoutError) else ModelConnectionError
-        raise error_class(model_name=model_name, message=e.message) from e
+        raise _model_errors.connection_error(model_name, e.message, e, timeout=isinstance(e, APITimeoutError)) from e
 
 
 _ERROR_TYPE_CATEGORIES: dict[str, type[ModelAPIError]] = {
@@ -1106,7 +1105,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 async for _ in streamed_response:
                     pass
         except httpx2.TransportError as e:
-            raise ModelAPIError(model_name=self.model_name, message=str(e)) from e
+            timeout = isinstance(e, httpx2.TimeoutException)
+            raise _model_errors.connection_error(self.model_name, str(e), e, timeout=timeout) from e
         return streamed_response.get()
 
     async def count_tokens(
