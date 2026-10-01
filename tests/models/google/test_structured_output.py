@@ -97,9 +97,13 @@ async def test_function_tools_with_builtin_tools_unsupported(
         await agent.run('What is the largest city in the user country?')
 
 
-async def test_tool_output_with_builtin_tools_unsupported(allow_model_requests: None, google_model: GoogleModelFactory):
+@pytest.mark.parametrize('optional', [False, True])
+async def test_tool_output_with_builtin_tools_unsupported(
+    allow_model_requests: None, google_model: GoogleModelFactory, optional: bool
+):
+    """A supported native tool goes on the wire even when optional, so it counts against output tools."""
     m = google_model('gemini-2.5-flash')
-    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebSearchTool())])
+    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebSearchTool(optional=optional))])
 
     with pytest.raises(
         UserError,
