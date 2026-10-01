@@ -3228,20 +3228,23 @@ async def test_durability_image_generation_notice_names_the_fallback_member_that
     workflow code and reaches `pytest.warns` in the test. The output pins that `no_native`
     answered with the direct generator.
     """
-    with pytest.warns(UserWarning) as recorded:
-        async with Worker(
-            client,
-            task_queue=TASK_QUEUE,
-            workflows=[TemporalFallbackDropsQualityWorkflow],
-            plugins=[AgentPlugin(_durability_fallback_drops_quality_agent)],
-        ):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalFallbackDropsQualityWorkflow],
+        plugins=[AgentPlugin(_durability_fallback_drops_quality_agent)],
+    ):
+        # `pytest.warns` records every warning in the process with the project's ignore filters lifted,
+        # so it wraps only the run, and only `UserWarning`s are compared: a `ResourceWarning` from
+        # another test's garbage would otherwise land here.
+        with pytest.warns(UserWarning) as recorded:
             output = await client.execute_workflow(
                 TemporalFallbackDropsQualityWorkflow.run,
                 id='test_temporal_fallback_drops_quality',
                 task_queue=TASK_QUEUE,
                 execution_timeout=timedelta(seconds=30),
             )
-    assert [str(warning.message) for warning in recorded] == [
+    assert [str(warning.message) for warning in recorded if issubclass(warning.category, UserWarning)] == [
         "The direct `ImageGeneration` fallback ignored native-tool setting(s) on 'no_native': `quality`. "
         'Configure provider-specific direct settings on the `ImageGenerator` or `ImageGenerationModel` instead.'
     ]
