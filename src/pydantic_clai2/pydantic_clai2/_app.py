@@ -10,7 +10,7 @@ from pathlib import Path
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-from anyio import create_memory_object_stream, create_task_group
+from anyio import create_memory_object_stream, create_task_group, to_thread
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
@@ -268,20 +268,22 @@ class _ModelResolver:
         if name.startswith('openrouter:'):
             from pydantic_clai2.models import openrouter
 
-            return await asyncio.to_thread(openrouter.model, name)
+            return await to_thread.run_sync(openrouter.model, name, abandon_on_cancel=True)
         if name.startswith('vllm:'):
             from pydantic_clai2.models import vllm
 
-            return await asyncio.to_thread(vllm.model, name)
+            return await to_thread.run_sync(vllm.model, name, abandon_on_cancel=True)
         if name.startswith('github-copilot:'):
             from pydantic_clai2.models import github_copilot
 
-            return await asyncio.to_thread(github_copilot.model, name)
+            return await to_thread.run_sync(github_copilot.model, name, abandon_on_cancel=True)
         if name.startswith('openai-codex:'):
             return self.codex_auth().model(name)
         prefix, separator, model_name = name.partition(':')
         provider = self.plugins().get(prefix) if separator else None
-        return name if provider is None else await asyncio.to_thread(provider.resolve, model_name)
+        return (
+            name if provider is None else await to_thread.run_sync(provider.resolve, model_name, abandon_on_cancel=True)
+        )
 
 
 def create_shell(
