@@ -18,14 +18,16 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.pylon import Pylon
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys, pylon
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins import pylon
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
-from pydantic_clai2.field_menu import FieldMenu
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import OAUTH_TIMEOUT
-from pydantic_clai2.plugin_loader import PluginLoader
-from pydantic_clai2.plugins import PluginHost, SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionStart, load_plugin
+from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from tests.clai2.menu_script import Script, pick
 
 pytestmark = pytest.mark.anyio
@@ -47,15 +49,14 @@ class Prompt:
         return value
 
 
-def make_host(settings: dict[str, JsonValue] | None = None) -> PluginHost[None]:
+def make_plugin(settings: dict[str, JsonValue] | None = None) -> LoadedPlugin[None]:
     host: PluginHost[None] = PluginHost(name='pylon', console=Console(file=io.StringIO()), settings=settings or {})
-    pylon.activate(host)
-    return host
+    return load_plugin(pylon.PylonPlugin, host)
 
 
-def built(host: PluginHost[None]) -> Pylon[None]:
+def built(loaded: LoadedPlugin[None]) -> Pylon[None]:
     """The `Pylon` the plugin builds for the next run."""
-    [capability] = host.capabilities
+    [capability] = loaded.capabilities
     assert not isinstance(capability, AbstractCapability), 'rebuilt per run from the current settings'
     result = capability(CTX)
     assert isinstance(result, Pylon)
@@ -93,17 +94,17 @@ def loader(store: SettingsStore) -> PluginLoader[None]:
     )
 
 
-async def command(host: PluginHost[None], *args: str) -> str:
-    [registered] = host.commands
+async def command(loaded: LoadedPlugin[None], *args: str) -> str:
+    [registered] = loaded.commands
     result = registered.handler(list(args))
     assert not isinstance(result, str)
     return await result
 
 
-def pylon_tools(host: PluginHost[None]) -> list[str]:
+def pylon_tools(loaded: LoadedPlugin[None]) -> list[str]:
     """Run once and report the Pylon tools the run could see; `TestModel` calls none of them."""
     model = TestModel(call_tools=[])
-    Agent(model, deps_type=type(None), capabilities=host.capabilities).run_sync('hi')
+    Agent(model, deps_type=type(None), capabilities=loaded.capabilities).run_sync('hi')
     assert model.last_model_request_parameters is not None
     return [tool.name for tool in model.last_model_request_parameters.function_tools]
 
@@ -111,27 +112,27 @@ def pylon_tools(host: PluginHost[None]) -> list[str]:
 class TestDeclarationAndConnection:
     def test_declared_as_disabled_clai_built_in(self) -> None:
         [declaration] = [plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'pylon']
-        assert declaration.factory == 'pydantic_clai2.pylon'
+        assert declaration.factory == 'pydantic_clai2.builtin_plugins.pylon'
         assert not declaration.enabled
         assert declaration.settings == {}, 'nothing secret, or otherwise, is declared'
 
     def test_no_key_chosen_means_no_pylon_tools(self) -> None:
-        assert pylon_tools(make_host()) == []
+        assert pylon_tools(make_plugin()) == []
 
     def test_key_mode_passes_the_capability_options(self) -> None:
         api_keys.save_key(name='SHARED_PYLON', value='secret')
         save_codex_credentials(account='pylon', value='{"token": {"name": "SHARED_PYLON"}}')
-        capability = built(make_host({'read_only': True, 'include_instructions': False}))
+        capability = built(make_plugin({'read_only': True, 'include_instructions': False}))
         assert capability.client is None and capability.read_only and not capability.include_instructions
 
     async def test_shared_key_is_referenced_and_resolved_each_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
         api_keys.save_key(name='SHARED_PYLON', value='first')
         use_key(monkeypatch, 'SHARED_PYLON')
         assert await pylon.choose_key() == 'Pylon connects with SHARED_PYLON from /keys.'
-        host = make_host()
-        assert built(host).auth == 'first'
+        loaded = make_plugin()
+        assert built(loaded).auth == 'first'
         api_keys.save_key(name='SHARED_PYLON', value='replaced')
-        assert built(host).auth == 'replaced', 'replacing the key in /keys reaches the next run without a reload'
+        assert built(loaded).auth == 'replaced', 'replacing the key in /keys reaches the next run without a reload'
         with pytest.raises(ValueError, match='used by pylon'):
             api_keys.rename_key(name='SHARED_PYLON', new_name='OTHER')
 
@@ -140,7 +141,7 @@ class TestDeclarationAndConnection:
         save_codex_credentials(account='pylon', value='{"token": {"name": "PYLON_ACCESS_TOKEN"}}')
         api_keys.delete_key(name='PYLON_ACCESS_TOKEN')
         with pytest.raises(UserError, match='PYLON_ACCESS_TOKEN is missing'):
-            pylon_tools(make_host())
+            pylon_tools(make_plugin())
 
     def test_invalid_saved_reference_fails_closed(self) -> None:
         save_codex_credentials(account='pylon', value='{"token": "inline-secret"}')
@@ -149,7 +150,7 @@ class TestDeclarationAndConnection:
         assert config().current(config().rows()[1]) == '(invalid; choose again)'
 
     def test_browser_sign_in(self) -> None:
-        capability = built(make_host({'auth': 'browser'}))
+        capability = built(make_plugin({'auth': 'browser'}))
         client = capability.client
         assert isinstance(client, Client)
         transport = client.transport
@@ -161,7 +162,7 @@ class TestDeclarationAndConnection:
     @pytest.mark.parametrize('settings', [{'token': 'pylon-token'}, {'auth': 'env'}])
     def test_settings_reject_secrets_and_unknown_modes(self, settings: dict[str, JsonValue]) -> None:
         with pytest.raises(ValidationError):
-            make_host(settings)
+            make_plugin(settings)
 
 
 class TestChooseKey:
@@ -226,31 +227,31 @@ class TestSettingsMenu:
         assert config().problem(auth, 'env') is not None
 
     async def test_edits_save_to_plugin_settings_at_once_and_apply_next_run(self) -> None:
-        host = make_host()
+        loaded = make_plugin()
         script = Script(
             lists=[pick('read_only'), pick('include_instructions'), pick('auth'), CLOSE],
             choices=[pick('true'), pick('false'), pick('browser')],
             texts=[],
         )
-        edited = pylon.PylonConfig(host.settings(pylon.PylonSettings), host.save_settings)
+        edited = pylon.PylonConfig(loaded.host.settings(pylon.PylonSettings), loaded.host.save_settings)
         message = await pylon.configure(edited, script.runners)
         assert message.splitlines() == [
             'Pylon read-only tools: true. Applies from the next run.',
             'Pylon server instructions: false. Applies from the next run.',
             'Pylon sign-in: Browser sign-in (OAuth). Applies from the next run.',
         ]
-        assert host.settings(pylon.PylonSettings) == pylon.PylonSettings(
+        assert loaded.host.settings(pylon.PylonSettings) == pylon.PylonSettings(
             auth='browser', read_only=True, include_instructions=False
         )
 
     async def test_menu_edits_reach_the_running_capability(self, monkeypatch: pytest.MonkeyPatch) -> None:
         api_keys.save_key(name='SHARED_PYLON', value='secret')
         save_codex_credentials(account='pylon', value='{"token": {"name": "SHARED_PYLON"}}')
-        host = make_host()
+        loaded = make_plugin()
         script = Script(lists=[pick('read_only'), CLOSE], choices=[pick('true')], texts=[])
         monkeypatch.setattr(pylon, 'TERMINAL', script.runners)
-        assert await command(host) == 'Pylon read-only tools: true. Applies from the next run.'
-        assert built(host).read_only, 'no reload needed'
+        assert await command(loaded) == 'Pylon read-only tools: true. Applies from the next run.'
+        assert built(loaded).read_only, 'no reload needed'
 
     async def test_key_row_opens_the_key_picker_and_reopens_the_menu(self, monkeypatch: pytest.MonkeyPatch) -> None:
         api_keys.save_key(name='SHARED_PYLON', value='secret')
@@ -315,16 +316,16 @@ class TestShellIntegration:
         assert isinstance(rebuilt, Pylon) and isinstance(rebuilt.client, Client)
 
     async def test_command_key_status_and_help(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        host = make_host()
-        assert 'no key yet' in await command(host, 'status')
+        loaded = make_plugin()
+        assert 'no key yet' in await command(loaded, 'status')
         use_prompt(monkeypatch, Prompt('secret'))
-        assert await command(host, 'key') == 'Pylon connects with PYLON_ACCESS_TOKEN from /keys.'
-        assert await command(host, 'status') == (
+        assert await command(loaded, 'key') == 'Pylon connects with PYLON_ACCESS_TOKEN from /keys.'
+        assert await command(loaded, 'status') == (
             'Pylon connects with PYLON_ACCESS_TOKEN from /keys; read-only tools false, server instructions true.'
         )
-        assert 'browser' in await command(make_host({'auth': 'browser'}), 'status')
+        assert 'browser' in await command(make_plugin({'auth': 'browser'}), 'status')
         with pytest.raises(ValueError, match='Usage: /pylon'):
-            await command(host, 'nope')
-        [registered] = host.commands
+            await command(loaded, 'nope')
+        [registered] = loaded.commands
         assert list(registered.complete([])) == ['key', 'status']
         assert list(registered.complete(['s'])) == ['status'] and list(registered.complete(['key', ''])) == []
