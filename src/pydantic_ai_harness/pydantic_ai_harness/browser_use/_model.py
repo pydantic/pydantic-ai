@@ -203,7 +203,7 @@ class RunChatModel(PydanticAIChatModel):
         model = ctx.model
         if not _is_request_response_model(model):
             raise UserError(
-                f"BrowserUse without an `llm` runs the browser agent on the host run's model, but "
+                "BrowserUse without an `llm` runs the browser agent on the host run's model, but "
                 f'{model.model_id!r} is not a request-response model. Pass `llm` to BrowserUse.'
             )
         super().__init__(model)
