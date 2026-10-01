@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 import anyio
@@ -180,7 +180,9 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     Scope: the guard runs exactly once per run — on the first model request —
     and evaluates the original user prompt. Subsequent model requests in the
     same run (e.g. after tool calls) are not re-checked, since the user input
-    has not changed.
+    has not changed. A block sticks for the rest of the run: if an output
+    validator or capability retries the refusal, every later request in the run
+    returns the same refusal instead of sending the blocked prompt to the model.
 
     Ordering: declares `position='innermost'` so any capability that morphs
     the messages (a prompt rewriter, a context manager) runs first and the
@@ -198,6 +200,8 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     parallel: bool = False
     """Run the guard concurrently with the model request and cancel the model call on failure."""
 
+    _blocked: ModelResponse | None = field(default=None, init=False, repr=False, compare=False)
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Exclude a callable policy from YAML and JSON agent specifications."""
@@ -206,6 +210,10 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
     def get_ordering(self) -> CapabilityOrdering:
         """Sit innermost so message-morphing capabilities run first and the guard sees the final prompt."""
         return CapabilityOrdering(position='innermost')
+
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> InputGuardrail[AgentDepsT]:
+        """Return a per-run copy, so a block in one run never leaks into another."""
+        return replace(self)
 
     async def _run_guard(
         self,
@@ -241,7 +249,8 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
             case 'block':
                 message = verdict.message or _DEFAULT_INPUT_BLOCK_MESSAGE
                 trace_block(ctx, direction='input', message=message)
-                raise SkipModelRequest(ModelResponse(parts=[TextPart(content=message)]))
+                self._blocked = ModelResponse(parts=[TextPart(content=message)])
+                raise SkipModelRequest(self._blocked)
             case 'replace':
                 if self.parallel:
                     raise UserError(
@@ -271,6 +280,9 @@ class InputGuardrail(AbstractCapability[AgentDepsT]):
         Sequential mode runs the guard then the model. `parallel=True` races
         the guard against the model call and cancels it on a violation.
         """
+        if self._blocked is not None:
+            # An output retry after a block would otherwise send the blocked prompt on the next request.
+            raise SkipModelRequest(self._blocked)
         if ctx.run_step > 1:
             return await handler(request_context)
         prompt = _extract_prompt(ctx, request_context.messages)

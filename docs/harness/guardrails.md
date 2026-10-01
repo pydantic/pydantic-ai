@@ -25,7 +25,7 @@ Three capabilities -- `InputGuardrail`, `OutputGuardrail`, and `ToolGuardrail` -
 | **retry** | -- (not valid for input) | send the output back to the model to try again |
 | **approve** | -- (not valid for input) | -- (not valid for output) |
 
-`ToolGuardrail` uses the same outcomes on both sides of a tool call; see [Tool calls](#tool-calls). The asymmetry between input `block` and output `block` is deliberate. Blocking the input spends no tokens, so a graceful refusal is almost always right. Blocking the output means the model already produced something you do not want exposed, so raising forces the caller to decide what to do next.
+`ToolGuardrail` uses the same outcomes on both sides of a tool call; see [Tool calls](#tool-calls). The asymmetry between input `block` and output `block` is deliberate. Blocking the input spends no tokens, so a graceful refusal is almost always right. Blocking the output means the model already produced something you do not want exposed, so raising forces the caller to decide what to do next. An input `block` also holds for the rest of the run: if an output validator or a capability such as [Goal](goal.md) rejects the refusal and retries, each retry gets the same refusal rather than sending the blocked prompt to the model, so the run fails once its output retries are exhausted.
 
 Both `InputGuardrail`, `OutputGuardrail`, and their supporting types are top-level exports:
 

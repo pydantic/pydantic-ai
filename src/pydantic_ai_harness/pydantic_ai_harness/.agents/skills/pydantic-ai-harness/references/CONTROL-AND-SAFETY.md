@@ -16,6 +16,7 @@ an extra. For plain tool approval (`requires_approval=True`, `ApprovalRequired`,
 | Refuse or redact a prompt before it reaches the model | `InputGuardrail(guard=...)` |
 | Block, redact, or retry the final output | `OutputGuardrail(guard=...)` |
 | Block/rewrite tool arguments, redact tool results, or hide tools | `ToolGuardrail(guard=..., result_guard=..., hidden=[...])` |
+| Keep an unattended run going until a completion check you define accepts the output | `Goal(goal=..., verify=...)` |
 | Mask API keys, tokens, PII in text | `guardrails.detectors.redact_secrets` / `redact_personal_data` in a guard |
 | Get human approval for some tool calls, decided per call | `ToolGuardrail` returning `GuardrailResult.approve()` |
 | Get human approval for a whole tool | core `requires_approval=True` (core skill) |
@@ -189,6 +190,34 @@ Gotchas:
 - Approval: `approve()` needs `output_type=[..., DeferredToolRequests]` on the agent and a resume with
   `DeferredToolResults` (core flow). On resume, the guard runs again and `approve` is a no-op for cleared calls.
 - Redaction/block spans carry content only when `trace_include_content` is on.
+
+## Goal
+
+States the run's goal in the instructions and, in headless mode (the default), calls your async
+`verify(ctx, output)` on every final output. Return `None` to accept or a nonempty string saying
+what remains; a rejection raises `ModelRetry` with the goal and the gap, so the model keeps working
+in the same conversation. No per-run state, not serializable to an agent spec.
+
+```python
+from pydantic_ai import Agent, RunContext
+
+from pydantic_ai_harness.goal import Goal
+
+
+async def verify(ctx: RunContext[None], output: object) -> str | None:
+    return None if output == 'done' else 'Finish the migration before answering.'
+
+
+agent = Agent('test', retries={'output': 3}, capabilities=[Goal(goal='Migrate the config.', verify=verify)])
+```
+
+Gotchas: rejections share the `retries={'output': n}` budget with other output validation, and
+exhaustion raises `UnexpectedModelBehavior`; `UsageLimits` still end the run with no grace request.
+Verify real evidence (files, tests, external state), not the model's claim. An LLM judge agent inside
+`verify` works: pass `usage=ctx.usage` to its `run()` and give it evidence, not just the answer.
+Output functions run before the check and can run again after a rejection, so keep them idempotent.
+`headless=False` keeps the instructions but never vetoes, so interactive runs can stop to ask.
+Partial streamed output is not checked, and `run_stream()` cannot retry a rejected final output.
 
 ## PromptInjectionDefender
 
@@ -453,6 +482,7 @@ not get the built-in judge instructions, so its `instructions` must describe the
 
 - https://pydantic.dev/docs/ai/harness/repair-tool-arguments/
 - https://pydantic.dev/docs/ai/harness/guardrails/
+- https://pydantic.dev/docs/ai/harness/goal/
 - https://pydantic.dev/docs/ai/harness/prompt-injection-defender/
 - https://pydantic.dev/docs/ai/harness/spend/
 - https://pydantic.dev/docs/ai/harness/ask-user/
