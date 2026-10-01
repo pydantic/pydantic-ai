@@ -56,7 +56,7 @@ def parent_model(*, background: bool = False, resume: str | None = None) -> Func
                 return ModelResponse(parts=[TextPart(item)])
             call = item[0]
             return ModelResponse(parts=[ToolCallPart(call.name or '', call.json_args or '{}', tool_call_id='delegate')])
-        raise AssertionError('Model produced no response')
+        raise AssertionError('Model produced no response')  # pragma: no cover
 
     return FunctionModel(function=respond, stream_function=stream)
 
@@ -147,12 +147,12 @@ async def test_promotion_and_targeted_cancellation(tmp_path: Path) -> None:
     async def first(record: DelegationTask) -> str:
         first_started.set()
         await release.wait()
-        return 'first'
+        return 'first'  # pragma: lax no cover
 
     async def second(record: DelegationTask) -> str:
         second_started.set()
         await release.wait()
-        return 'second'
+        return 'second'  # pragma: lax no cover
 
     with anyio.fail_after(WAIT):
         async with owner.opened():
@@ -399,7 +399,7 @@ async def test_foreground_parent_cancellation_drains_worker() -> None:
     async def wait(record: DelegationTask) -> str:
         started.set()
         await asyncio.Event().wait()
-        return 'unreachable'
+        return 'unreachable'  # pragma: no cover
 
     async with owner.opened():
         pending = asyncio.create_task(
@@ -452,7 +452,7 @@ async def test_failed_parent_drains_descendants() -> None:
     async def leaf(record: DelegationTask) -> str:
         started.set()
         await asyncio.Event().wait()
-        return 'unreachable'
+        return 'unreachable'  # pragma: no cover
 
     async def parent(record: DelegationTask) -> str:
         await owner.delegate(
@@ -486,14 +486,14 @@ async def test_targeted_stop_drains_nested_children() -> None:
     async def leaf(record: DelegationTask) -> str:
         started.set()
         await asyncio.Event().wait()
-        return 'unreachable'
+        return 'unreachable'  # pragma: no cover
 
     async def parent(record: DelegationTask) -> str:
         await owner.delegate(
             agent_name='leaf', prompt='', conversation_id='root', model=None, background=True, resume=None, run=leaf
         )
         await asyncio.Event().wait()
-        return 'unreachable'
+        return 'unreachable'  # pragma: no cover
 
     with anyio.fail_after(WAIT):
         async with owner.opened():
@@ -546,7 +546,7 @@ async def test_promoted_foreground_wait_cancellation_keeps_child() -> None:
     async def child(record: DelegationTask) -> str:
         started.set()
         await release.wait()
-        return 'child'
+        return 'child'  # pragma: lax no cover
 
     async with owner.opened():
         pending = asyncio.create_task(
@@ -644,4 +644,4 @@ async def test_rejects_cyclic_persisted_ancestry(tmp_path: Path) -> None:
         )
     with pytest.raises(ValueError, match='Cyclic'):
         async with DelegationTasks(directory=tmp_path).opened():
-            pytest.fail('Invalid ancestry must not reach task controls')
+            pytest.fail('Invalid ancestry must not reach task controls')  # pragma: no cover

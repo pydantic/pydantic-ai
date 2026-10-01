@@ -338,7 +338,7 @@ async def test_open_tasks_controls_on_application_loop(monkeypatch: pytest.Monke
 
     async def child(record: DelegationTask) -> str:
         await asyncio.Event().wait()
-        return 'unreachable'
+        return 'unreachable'  # pragma: no cover
 
     async with ui.owner.opened():
         await ui.owner.delegate(
@@ -358,7 +358,7 @@ async def test_promote_all_foreground_siblings() -> None:
     async def child(record: DelegationTask) -> str:
         started.set()
         await asyncio.Event().wait()
-        return 'unreachable'
+        return 'unreachable'  # pragma: no cover
 
     async with ui.owner.opened():
         pending = asyncio.create_task(
@@ -487,7 +487,7 @@ async def test_main_user_interrupt_marks_foreground_child_stopped(
         elif len(messages) == 1:
             yield {0: DeltaToolCall(name='delegate_task', json_args='{"agent_name":"self","task":"child"}')}
         else:
-            yield 'parent'
+            yield 'parent'  # pragma: lax no cover
 
     await chat(
         create_stock_agent(FunctionModel(stream_function=stream)),
@@ -632,8 +632,8 @@ async def test_background_completion_continues_parent_without_user_input(
     original_observer = shell.tasks.owner.observer
 
     async def observe(progress: DelegationTaskEvent) -> None:
-        if original_observer is not None:
-            await original_observer(progress)
+        assert original_observer is not None
+        await original_observer(progress)
         if progress.task.status == 'finished':
             finished.set()
 
