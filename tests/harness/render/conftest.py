@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import json
 import os
 import re
 import shutil
@@ -27,14 +28,14 @@ except ModuleNotFoundError as exc:
     _render_spec = None
 
 if TYPE_CHECKING:
-    from render.workflows import TaskContext, TaskDefinition
+    from render.workflows import TaskContext, TaskDefinition, TaskRunMetadata
 elif _render_spec is None:
     collect_ignore_glob = ['*.py']
 
     class TaskContext:
         """Placeholder used only while pytest ignores Render-extra tests."""
 else:
-    from render.workflows import TaskContext, TaskDefinition
+    from render.workflows import TaskContext, TaskDefinition, TaskRunMetadata
 
 
 def pytest_ignore_collect(collection_path: Path) -> bool:
@@ -65,17 +66,27 @@ def renderless_environment() -> dict[str, str]:
 
 
 class RecordingTaskContext(TaskContext):
-    """Execute child tasks locally while recording their public names."""
+    """Run child tasks through JSON in this process and record their public names."""
 
     def __init__(self) -> None:
         self.task_names: list[str] = []
 
+    @property
+    def metadata(self) -> TaskRunMetadata:
+        """No Render run IDs exist for tasks executed by this fixture."""
+        return TaskRunMetadata()
+
     async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
         self.task_names.append(task.name)
-        result = task.func(self, *args, **kwargs)
+        result = task.func(self, *json_round_trip(args), **json_round_trip(kwargs))
         if inspect.isawaitable(result):
-            return await result
-        return result
+            return json_round_trip(await result)
+        return json_round_trip(result)
+
+
+def json_round_trip(value: R) -> R:
+    """Copy JSON payloads while retaining their outer Python call-container type."""
+    return TypeAdapter(type(value)).validate_json(json.dumps(value))
 
 
 class LocalTask(BaseModel):

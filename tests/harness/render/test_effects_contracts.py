@@ -23,7 +23,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import RenderWorkflows
 
-from .conftest import RecordingTaskContext
+from .conftest import RecordingTaskContext, json_round_trip
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -129,31 +129,20 @@ class ImmediateDecisionCapability(AbstractCapability[None]):
 
 
 class JsonRecordingTaskContext(RecordingTaskContext):
-    """Run public task definitions across a real JSON encode/decode boundary.
-
-    This is Level 2/4 boundary evidence: it invokes the public `TaskDefinition.func`
-    locally and does not claim process isolation or Render service execution.
-    """
+    """Capture the JSON requests and results passed through the shared task fixture."""
 
     def __init__(self) -> None:
-        self.task_names: list[str] = []
+        super().__init__()
         self.requests: list[tuple[str, dict[str, object]]] = []
         self.results: list[tuple[str, dict[str, object]]] = []
 
     async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
-        self.task_names.append(task.name)
         for argument in args:
             if _is_json_envelope(argument):
-                self.requests.append((task.name, _refresh_through_json(argument)))
-        pending = task.func(self, *args, **kwargs)
-        if inspect.isawaitable(pending):
-            return self._record(task.name, await pending)
-        return self._record(task.name, pending)
-
-    def _record(self, task_name: str, result: R) -> R:
-        """Round-trip and keep one task result, leaving non-JSON results untouched."""
+                self.requests.append((task.name, json_round_trip(dict(argument))))
+        result = await super().run(task, *args, **kwargs)
         if _is_json_envelope(result):
-            self.results.append((task_name, _refresh_through_json(result)))
+            self.results.append((task.name, json_round_trip(dict(result))))
         return result
 
 

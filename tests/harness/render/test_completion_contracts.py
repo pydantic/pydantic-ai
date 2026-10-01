@@ -92,6 +92,7 @@ class NestedTaskContext(RecordingTaskContext):
     """Execute public task definitions while recording nested run depth."""
 
     def __init__(self) -> None:
+        super().__init__()
         self.calls: list[tuple[str, int]] = []
         self.stack: list[str] = []
 
@@ -99,10 +100,7 @@ class NestedTaskContext(RecordingTaskContext):
         self.calls.append((task.name, len(self.stack) + 1))
         self.stack.append(task.name)
         try:
-            result = task.func(self, *args, **kwargs)
-            if inspect.isawaitable(result):
-                return await result
-            return result
+            return await super().run(task, *args, **kwargs)
         finally:
             self.stack.pop()
 

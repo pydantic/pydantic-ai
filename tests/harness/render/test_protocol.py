@@ -82,6 +82,7 @@ class TaskBoundary(RecordingTaskContext):
     """
 
     def __init__(self, *, tamper_request: Tamper | None = None, tamper_result: Tamper | None = None) -> None:
+        super().__init__()
         self.requests: list[dict[str, object]] = []
         self.results: list[dict[str, object]] = []
         self.started: list[str] = []
@@ -95,13 +96,9 @@ class TaskBoundary(RecordingTaskContext):
             self.requests.append(dict(request))
             if self._tamper_request is not None:
                 self._tamper_request(request)
-        pending = task.func(self, *args, **kwargs)
-        if inspect.isawaitable(pending):
-            awaited = await pending
-            self._returned(awaited)
-            return awaited
-        self._returned(pending)
-        return pending
+        result = await super().run(task, *args, **kwargs)
+        self._returned(result)
+        return result
 
     def _returned(self, result: object) -> None:
         if _is_envelope(result):
