@@ -340,8 +340,34 @@ def create_shell(
 
         return await model_settings_command(context, args)
 
+    def fast(args: list[str]) -> str:
+        if args not in ([], ['on'], ['off']):
+            raise ValueError('Usage: /fast [on|off]')
+        model = session.model or _model_label(agent)
+        current = context.model_settings(model) or {}
+        saved = store.model_settings(model)
+        custom = saved.get('custom_params')
+        if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
+            raise ValueError('Custom service_tier overrides fast mode. Remove it with /model_settings first.')
+        enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
+        tier = 'priority' if enabled else 'default'
+        store.save_model_settings(model, {**saved, 'service_tier': tier})
+        return (
+            f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.'
+            + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
+        )
+
     sessions = Sessions(session=session, store=conversations, context=context)
     commands = Commands()
+    commands.register(
+        Command(
+            name='fast',
+            description='Toggle Codex priority processing: /fast [on|off] (uses more ChatGPT credits)',
+            handler=fast,
+            complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
+            available=lambda: (session.model or _model_label(agent)).startswith('openai-codex:'),
+        )
+    )
     commands.register(Command(name='resume', description='Browse or restore a saved session', handler=sessions.command))
     commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command))
     commands.register(
