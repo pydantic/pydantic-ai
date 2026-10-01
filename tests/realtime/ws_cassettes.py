@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from unittest import mock
 
+from pydantic_ai._utils import is_str_dict
+
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -83,11 +85,10 @@ def _gemini_realtime_audio(frame: dict[str, Any]) -> dict[str, Any] | None:
 
 def _transcription_model(frame: dict[str, Any]) -> object:
     """The input transcription model an OpenAI GA `session.update` frame sets, if any."""
-    session = frame.get('session')
-    audio = session.get('audio') if isinstance(session, dict) else None
-    audio_input = audio.get('input') if isinstance(audio, dict) else None
-    transcription = audio_input.get('transcription') if isinstance(audio_input, dict) else None
-    return transcription.get('model') if isinstance(transcription, dict) else None
+    value: object = frame
+    for key in ('session', 'audio', 'input', 'transcription', 'model'):
+        value = value.get(key) if is_str_dict(value) else None
+    return value
 
 
 def _is_audio_send(frame: dict[str, Any]) -> bool:
