@@ -66,7 +66,7 @@ async def reconnect_with_backoff(
         delay = min(policy.get('max_delay', 30.0), policy.get('base_delay', 0.5) * (2**i))
         if policy.get('jitter', True):
             delay *= 0.5 + random.random() * 0.5
-        await anyio.sleep(delay)
+        await anyio.sleep(max(delay, 0))
         if await attempt():
             return True
     return False
