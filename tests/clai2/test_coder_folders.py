@@ -414,15 +414,21 @@ def test_sqlite_save_failure_keeps_menu_and_previous_settings(
         return connection
 
     monkeypatch.setattr(sqlite3, 'connect', readonly)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (50, 24))
     script = Script(
         lists=[pick(FolderAction(kind='name')), MenuResult(cancelled=True)], choices=[], texts=[typed('agents')]
     )
-    assert folders.run(runners=script.runners) == []
+    frames: list[list[str]] = []
+
+    def run_list(menu: Menu) -> MenuResult:
+        frames.append(render_frame(menu))
+        return script.run_list(menu)
+
+    assert folders.run(runners=Runners(run_list=run_list, run_text=script.run_text)) == []
     assert 'readonly' in folders.notice
     assert folders.folders() == saved_folders
     assert store.plugins() == [declaration]
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (50, 24))
-    frame = render_frame(folders.build())
+    frame = frames[-1]
     assert frame[0] == 'Agent folders'
     assert 'Esc' in frame[-1]
     assert folders.notice in ' '.join(line.strip() for line in frame)

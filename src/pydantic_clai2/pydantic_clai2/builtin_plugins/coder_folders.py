@@ -357,6 +357,8 @@ class FolderMenu(Generic[DepsT]):
                 else:
                     value = self.edit(action, runners=runners)
                     if value is None:
+                        if self.notice:
+                            cursor = 0
                         continue
                     if action.index is None:
                         cursor = len(folders)
@@ -368,6 +370,7 @@ class FolderMenu(Generic[DepsT]):
                 self.source.host.save_settings(CoderSettings.model_validate(data))
             except (OSError, RuntimeError, ValueError, SQLiteError) as exc:
                 self.notice = f'Could not save: {exc}'
+                cursor = 0
                 continue
             self.notice = (
                 'Folder removed. Files were not changed.' if action.kind == 'remove' else 'Agent folder saved.'
