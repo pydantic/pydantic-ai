@@ -23,7 +23,8 @@ def describe(entry: PluginEntry[DepsT]) -> str:
     attr = entry.declaration.factory.partition(':')[2]
     owner = next((node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == attr), None)
     doc = (ast.get_docstring(owner) if owner else None) or ast.get_docstring(tree) or ''
-    return ' '.join(doc.split('\n\n')[0].split()).replace('`', '')
+    text = ' '.join(doc.split('\n\n')[0].split()).replace('`', '')
+    return ''.join(char for char in text if char.isprintable())
 
 
 def _source(entry: PluginEntry[DepsT]) -> Path | None:
