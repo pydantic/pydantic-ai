@@ -188,6 +188,9 @@ class JsonSchemaTransformer(ABC):
                 handled_pattern_properties[key] = self._handle(value)
             schema['patternProperties'] = handled_pattern_properties
 
+        if (property_names := schema.get('propertyNames')) is not None:
+            schema['propertyNames'] = self._handle(property_names)
+
         return schema
 
     def _handle_array(self, schema: JsonSchema) -> JsonSchema:
@@ -196,6 +199,9 @@ class JsonSchemaTransformer(ABC):
 
         if items := schema.get('items'):
             schema['items'] = self._handle(items)
+
+        if (contains := schema.get('contains')) is not None:
+            schema['contains'] = self._handle(contains)
 
         return schema
 

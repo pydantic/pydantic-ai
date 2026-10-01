@@ -197,6 +197,24 @@ def test_allof_with_refs_is_inlined():
     assert result['allOf'][1] == {'type': 'object', 'properties': {'b': {'type': 'integer'}}}
 
 
+def test_property_names_and_contains_refs_are_inlined():
+    """InlineDefsJsonSchemaTransformer should inline `$ref`s under `propertyNames` and `contains`."""
+    schema = {
+        '$defs': {'Key': {'type': 'string', 'minLength': 1}, 'Positive': {'type': 'integer', 'minimum': 1}},
+        'type': 'object',
+        'propertyNames': {'$ref': '#/$defs/Key'},
+        'properties': {'xs': {'type': 'array', 'contains': {'$ref': '#/$defs/Positive'}}},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    assert result == {
+        'type': 'object',
+        'propertyNames': {'type': 'string', 'minLength': 1},
+        'properties': {'xs': {'type': 'array', 'contains': {'type': 'integer', 'minimum': 1}}},
+    }
+
+
 def test_typed_schema_anyof_member_is_recursed_google():
     """GoogleJsonSchemaTransformer should strip unsupported keys from anyOf members of a typed node.
 
