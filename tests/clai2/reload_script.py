@@ -18,10 +18,11 @@ from pydantic_ai.capabilities import Hooks
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import DEFAULT_PLUGINS, chat, theme
+from pydantic_clai2 import DEFAULT_PLUGINS, chat
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.rendering import theme
 
 models.ALLOW_MODEL_REQUESTS = False
 PromptT = TypeVar('PromptT')
@@ -39,7 +40,7 @@ async def main(root: Path, mode: str) -> None:
         commands.write_text(commands.read_text() + '\nRELOAD_MARKER = "source graph"\n')
         (package / 'reload_bridge.py').write_text('from .commands import RELOAD_MARKER\n')
         updated += '\nfrom .reload_bridge import RELOAD_MARKER\nassert RELOAD_MARKER == "source graph"\n'
-    session = package / '_session.py'
+    session = package / 'runtime' / '_session.py'
     session.write_text(
         session.read_text().replace('                        content,', "                        content + ' updated',")
     )

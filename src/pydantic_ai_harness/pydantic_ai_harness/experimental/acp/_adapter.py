@@ -252,7 +252,8 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                 A turn that resumes after a tool approval starts a fresh run, so the limits bound
                 each approval-to-approval segment, not the whole turn. An exceeded limit ends the
                 turn with a `max_tokens`/`max_turn_requests` stop reason, never a request error.
-                Defaults to Pydantic AI's own defaults (50 requests per run).
+                By default, no request limit is applied. Pass `UsageLimits` to bound requests,
+                tokens, tool calls, or cost.
         """
         self._agent = agent
         self._deps = deps
@@ -272,7 +273,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         self._session_store = session_store
         self._models: tuple[str, ...] = _all_known_model_names() if models == 'all' else tuple(models) if models else ()
         self._model_resolver = model_resolver
-        self._usage_limits = usage_limits
+        self._usage_limits = usage_limits if usage_limits is not None else UsageLimits(request_limit=None)
         self._client_capabilities: schema.ClientCapabilities | None = None
         self._conn: Client | None = None
         # All live sessions, keyed by session id. Each owns its own turn lock (the dispatcher

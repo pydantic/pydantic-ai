@@ -333,7 +333,7 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels
+OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol']
 """
 Possible OpenAI model names.
 
@@ -343,6 +343,10 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
+
+The id in the local `Literal` is bridged because `AllModels` doesn't list it at the floor the
+`openai` extra declares; it arrived in `openai` 3.21.0
+(https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -1022,7 +1026,7 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
-def _resolve_prompt_cache_retention(
+def _resolve_cache_retention(
     default_settings: ModelSettings | None, model_settings: ModelSettings | None
 ) -> timedelta | None:
     settings = merge_model_settings(default_settings, model_settings) or {}
@@ -1092,9 +1096,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """The model name."""
         return self._model_name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_prompt_cache_retention(self.settings, model_settings)
+        return _resolve_cache_retention(self.settings, model_settings)
 
     @property
     def system(self) -> str:
@@ -2140,9 +2144,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The model name."""
         return self._model_name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_prompt_cache_retention(self.settings, model_settings)
+        return _resolve_cache_retention(self.settings, model_settings)
 
     @property
     def system(self) -> str:

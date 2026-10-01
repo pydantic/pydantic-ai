@@ -357,8 +357,11 @@ print(agent.run_sync('Set up storage').output)
 - An answer that does not fit (unknown header/label, several picks on single-select, missing
   answer) raises `ValueError` and fails the run; call `check_response(request, response)` (from
   `pydantic_ai_harness.ask_user`) first.
-- The run waits inside the tool call; a web UI must hold the run open until the answer arrives.
-  For a run that must end and resume later, use core deferred tools instead.
+- The run waits inside the tool call. `timeout=<seconds>` cancels a slow answerer; the model gets
+  `TIMED_OUT` and `AskUserAnsweredEvent` fires with `timed_out=True`.
+- `answerer=None` defers every call: the run ends with `DeferredToolRequests` (add it to
+  `output_type`). Rebuild each request with `AskUserRequest.from_tool_call(call)`, then resume with
+  `DeferredToolResults(calls={call.tool_call_id: ask_user_result(request, response)})`.
 - Observe with `AskUserRequestedEvent` / `AskUserAnsweredEvent`. Two `AskUser` on one agent
   collide on the tool name. It has a spec name, but a spec cannot supply the `answerer` callable,
   so pass it with `capabilities=` on `Agent.from_spec`/`Agent.from_file`.

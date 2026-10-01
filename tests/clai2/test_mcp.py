@@ -20,6 +20,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import (
     HTTPServer,
     MCPServers,
@@ -30,9 +31,8 @@ from pydantic_clai2.mcp import (
     activate,
     http_client,
 )
-from pydantic_clai2.plugin_loader import PluginLoader
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginLoader
 
 
 def make_host(settings: dict[str, JsonValue], store: MCPStore | None = None) -> PluginHost[None]:

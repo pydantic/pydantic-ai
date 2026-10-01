@@ -20,8 +20,10 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import BinaryContent, ModelMessagesTypeAdapter, ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
-from pydantic_clai2 import Session, chat, image_input
-from pydantic_clai2.image_input import (
+from pydantic_clai2 import Session, chat
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.prompt import image_input
+from pydantic_clai2.ui.prompt.image_input import (
     ImageBuffer,
     ImageInput,
     clipboard_images,
@@ -30,8 +32,7 @@ from pydantic_clai2.image_input import (
     read_image,
     read_images,
 )
-from pydantic_clai2.prompt_surface import PromptSurface
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 
 
 @pytest.fixture
@@ -440,7 +441,7 @@ async def test_image_can_be_retried_after_selecting_a_model(
             transcript.append(text)
             return super().write(text)
 
-    monkeypatch.setattr('pydantic_clai2.live_prompt.PromptSurface', Surface)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()), anyio.fail_after(15):
         pipe.send_text(f'\x1b[200~{image_path}\x1b[201~caption\n/set model test\n[image:12345678]caption\n/exit\n')
         await chat(

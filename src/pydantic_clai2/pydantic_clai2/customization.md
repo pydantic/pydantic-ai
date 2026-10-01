@@ -17,8 +17,9 @@ contract; this guide is shipped with the package for use without a checkout.
   init writes a starter). /spinner picks one; the choice persists as display.spinner.
 - React to prompts or session lifecycle: host.on with a typed handler.
 - Configure a plugin: host.settings with a Pydantic settings model.
-- Use a custom model/provider: supply a Pydantic AI Agent to chat from a Python
-  launcher. There is no host.register_provider or host.register_model API.
+- Use a custom model/provider: register your own `PREFIX:` with
+  host.model_provider(prefix, resolve, models=...), where resolve returns a
+  Pydantic AI Model, or supply a Pydantic AI Agent to chat from a Python launcher.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -100,7 +101,7 @@ The coding tools are themselves the built-in plugin named coder, shown by
 second Coder under another name. To change its options, declare coder again
 with the same name and different JSON; that replaces the built-in. Keep
 "repo_context": false in that JSON: the second built-in, repo_context
-(pydantic_clai2.repo_context), already reads AGENTS.md or CLAUDE.md from the
+(pydantic_clai2.builtin_plugins.repo_context), already reads AGENTS.md or CLAUDE.md from the
 launch directory, and Coder's bundled RepoContext would load it again. CLAI
 turns Coder's delegation off ("sub_agents": false) unless the JSON sets it:
 delegation needs Coder bound to the agent, and CLAI passes plugins to each run. To run
@@ -114,7 +115,7 @@ clai2 plugins add NAME module[:attr] [JSON] saves for the next startup.
 /plugins opens the management menu. Removing a drop-in disables it persistently;
 delete its source file yourself to remove it from disk.
 
-The second built-in is ask_user (pydantic_clai2.ask_user_menu:activate): the
+The second built-in is ask_user (pydantic_clai2.builtin_plugins.ask_user_menu:activate): the
 harness AskUser capability with an inline numbered picker as its answerer, so
 the model can ask the user multiple-choice questions mid-run through
 ask_user_question. The conversation remains visible. Enter or a number selects;
@@ -131,7 +132,7 @@ edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
 
-The built-in logfire plugin (pydantic_clai2.logfire) is enabled by default in the
+The built-in logfire plugin (pydantic_clai2.builtin_plugins.logfire) is enabled by default in the
 stock CLI. It contributes core's Instrumentation capability using an isolated
 Logfire instance. It exports to Logfire only when credentials are present, with
 no interactive setup or console logging. Text and binary images are included by
@@ -139,11 +140,18 @@ default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
 /plugins disable logfire to remove it, or replace its settings with:
 
 ```text
-/plugins add logfire pydantic_clai2.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
-Other options are service_name (default pydantic-clai2) and send_to_logfire
-(default "if-token-present", or false). This explicit option overrides
+Other options are service_name (default pydantic-clai2), send_to_logfire
+(default "if-token-present", or false), token (the name of a /keys entry
+holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
+then receives the telemetry), and ui_events (default false: also record UI
+interactions such as menus, commands, settings, plugin actions, keys, and prompt
+submissions, by name and never by content). /plugins configure logfire sets
+token and base_url for you, and turns sending on: pick Logfire US, EU, or
+a self-hosted URL, sign in in the browser, and pick a project; its new write
+token is saved in /keys. This explicit option overrides
 LOGFIRE_SEND_TO_LOGFIRE. Use LOGFIRE_TOKEN or the SDK credential file in
 $XDG_CONFIG_HOME/pydantic-clai2/logfire (default ~/.config/pydantic-clai2/logfire).
 Both SDK configuration and credentials are read from that user directory, not
@@ -172,6 +180,18 @@ resource. Drop-in entry modules
 reload from fresh source; installed modules use importlib.reload, which can retain
 globals absent from the new source. Initialize state explicitly on activation.
 Do not mutate another plugin's host or the agent to register a plugin's tools.
+
+## Finding CLAI source
+
+The package root keeps the shell entry point (`_app.py`) and the documented
+plugin-author imports `pydantic_clai2.plugins` and `pydantic_clai2.commands`.
+Implementations live in `cli/` (launch and command context), `config/` (settings
+and storage), `runtime/` (sessions and reload), `models/` (catalog and provider
+adapters), `ui/prompt/` (editor and terminal painting), `ui/menus/` (pickers),
+`ui/rendering/` (themes and streamed output), `plugins/` (host and loader),
+and `builtin_plugins/`. The MCP server implementation has its own `mcp/` package. UI helpers are internal: check
+their current import paths before writing an extension. The package initializer
+for `config/` still provides the `pydantic_clai2.config` settings types.
 
 ## Reload the shell during development
 
@@ -289,7 +309,7 @@ Return a Rich renderable, or None to let the next renderer/default handle it.
 CLAI flushes streaming text before printing it. First matching non-None renderer
 wins. Do not print from an event observer when a renderer can do the job.
 Use host.console for plugin-owned console output outside streaming handlers.
-Resolve pydantic_clai2.theme roles ACCENT, INFO, WARNING, ERROR, MUTED, THINKING
+Resolve pydantic_clai2.ui.rendering.theme roles ACCENT, INFO, WARNING, ERROR, MUTED, THINKING
 with theme.color(role) at render time, not hard-coded colours. Raw ANSI uses
 theme.sgr(role), which resolves the selected colours itself. Choices are default
 (the unchanged CLAI appearance) and termflow.themes.PALETTES. theme.current()
@@ -346,9 +366,9 @@ The following uses CLAI's internal UI helpers; check them when upgrading:
 ```python
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu
-from pydantic_clai2._rendering import markdown_style
+from pydantic_clai2.ui.rendering._rendering import markdown_style
 from pydantic_clai2.commands import Command
-from pydantic_clai2.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.plugins import PluginHost
 
 
@@ -452,8 +472,32 @@ way to pass deps, plugins, or builtin_plugins.
 chat preserves a supplied agent's model when no settings override selects another
 one. /model or /set model changes subsequent turns to the selected core model
 identifier, not an alias for your custom instance. Noninteractive Session exposes
-resolve_model for translating overrides; chat currently configures its own
-resolver for Codex authentication, not a plugin provider registry.
+resolve_model for translating overrides; chat configures its own resolver for
+Codex and CLAI's other connections, then for prefixes plugins register.
+
+To offer a Model you build from a plugin, keeping the stock agent, Coder, and
+every other plugin, register a prefix of your own:
+
+```python
+from pydantic_ai.models import Model
+from pydantic_clai2.plugins import PluginHost
+
+
+def activate(host: PluginHost[None]) -> None:
+    def resolve(name: str) -> Model:
+        return MyModel(name, provider=MyProvider())  # your Model and Provider
+
+    host.model_provider('my-service', resolve, models=('fast', 'smart'))
+```
+
+`/add_model` then lists my-service:fast and my-service:smart, and any
+my-service:NAME works with /add_model or /set model. resolve receives NAME
+without the prefix and runs in a worker thread before every run with that
+model, so it may read the keyring; raise UserError with setup instructions
+when it cannot build the model. The prefix starts with a lowercase letter,
+followed by lowercase letters, digits, and hyphens. A prefix Pydantic AI or
+CLAI already runs, aliases like openai-chat included, is rejected with
+ValueError.
 
 For `openai-codex` models, open `/model_settings openai-codex:gpt-6-astra`
 (or your saved Codex model), then **Service Tier / Fast Mode**. Choose
@@ -464,6 +508,12 @@ not lower reasoning effort. Reset restores the existing model default; it does
 not enable fast mode. The stored values remain `service_tier=priority` and
 `service_tier=default`, so older CLAI versions can read them. A custom
 `service_tier` body parameter still takes precedence.
+
+While using an `openai-codex:` model, `/fast` toggles priority processing;
+`/fast on` and `/fast off` select explicitly. The service tier is saved for that
+model's next prompts and sessions. Reasoning effort is unchanged. Other models
+neither expose nor accept `/fast`. Remove a custom `service_tier` parameter with
+`/model_settings` before using `/fast`.
 
 To extend the built-in picker in a CLAI source change, add a source returning
 CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
