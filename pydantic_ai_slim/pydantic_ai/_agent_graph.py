@@ -1303,8 +1303,8 @@ def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDe
 
 
 _PERSISTING_REQUEST_EDIT_WARNING = (
-    'In v3, appending to `request_context.messages` in `before_model_request` will no longer add to the message '
-    'history. Instead use `request_context.messages = [*request_context.messages, msg]` plus `ctx.messages.append(msg)`.'
+    'Appending to `request_context.messages` in `before_model_request` to add messages to the history is deprecated. '
+    'Use `request_context.messages = [*request_context.messages, msg]` plus `ctx.messages.append(msg)` instead.'
 )
 
 

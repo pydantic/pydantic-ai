@@ -143,7 +143,7 @@ def _add(messages: list[ModelMessage], edit: Edit, message: ModelMessage) -> Non
 async def test_before_model_request_in_place_additions_still_persist_with_deprecation_warning(
     edit: Edit, streaming: bool
 ) -> None:
-    """Until v3, adding to the request list in a before hook still reaches history, as it did before."""
+    """Adding to the request list in a before hook still reaches history, as it did before, with a deprecation warning."""
     marker = ModelRequest(parts=[UserPromptPart(content='hook marker')])
     model_messages: list[list[ModelMessage]] = []
 
@@ -165,7 +165,7 @@ async def test_before_model_request_in_place_additions_still_persist_with_deprec
     agent = Agent(FunctionModel(model_function, stream_function=stream_function), capabilities=[AddMessages()])
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'In v3, appending to `request_context\.messages` in `before_model_request`.*`ctx\.messages\.append\(msg\)`',
+        match=r'Appending to `request_context\.messages` in `before_model_request`.*deprecated.*`ctx\.messages\.append\(msg\)`',
     ):
         if streaming:
             async with agent.run_stream('hello') as stream:
