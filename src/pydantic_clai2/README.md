@@ -832,9 +832,12 @@ Other conditions are analyzed conservatively and may require a restart if their
 alternative imports form a cycle. No guard expression is executed during planning.
 A detected import cycle or invalid source reports an error before reloading modules.
 
-Restart for changes to startup code, the custom agent's construction, or dependencies
-loaded dynamically rather than declared by module-scope imports. `/reload` does not
-rerun the CLI or recursively reload third-party packages. Import-time side effects
+Restart for changes to startup code, the custom agent's construction, or dependencies,
+including `pydantic_ai_harness`. `/reload` refreshes CLAI only, not Harness or core,
+even when their source has changed in the same checkout. If new CLAI code imports
+a symbol the running dependency does not have, restart with the same launch options
+and `--resume` to continue the saved session. Keep the worktree if asked to remove it.
+`/reload` does not rerun the CLI or recursively reload third-party packages. Import-time side effects
 still cannot be undone. Use `/plugins reload NAME` when you only want to reload one
 plugin.
 

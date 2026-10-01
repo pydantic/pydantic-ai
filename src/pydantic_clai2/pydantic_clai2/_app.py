@@ -238,6 +238,13 @@ async def chat(
                     console.print(
                         f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
                     )
+                    if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
+                        console.print(
+                            'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
+                            '--resume to continue this session. Keep the worktree if asked to remove it.',
+                            style=theme.color(theme.INFO),
+                            markup=False,
+                        )
                 fresh = False
             else:
                 with transcript.capture(console):

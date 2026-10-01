@@ -662,6 +662,10 @@ file. Reloading a disabled plugin is rejected; enable it first. Drop-in entry
 modules are compiled from current source. Installed modules use `importlib.reload`,
 which can retain globals removed from source; initialize plugin state explicitly.
 
+`/reload` refreshes CLAI code, not Harness or core. After changing those packages,
+restart with the same launch options and `--resume` to continue the saved session.
+Keep the worktree if asked to remove it.
+
 Plugins are trusted code running as you. Only install what you trust.
 
 ## Worktree startup
