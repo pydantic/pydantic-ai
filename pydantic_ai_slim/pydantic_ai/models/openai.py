@@ -1277,12 +1277,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
 
         timestamp = _now_utc()
-        if not response.created:
-            response.created = int(timestamp.timestamp())
+        # Some OpenAI-compatible providers send a `null` `created` (e.g. OpenRouter) or none at all (e.g. GitHub Copilot),
+        # which fails validation. Like a zero one, it records no provider timestamp, as a stream without one doesn't.
+        if response.created is None:  # pyright: ignore[reportUnnecessaryComparison]
+            response.created = 0
 
-        # Workaround for local Ollama which sometimes returns a `None` finish reason.
-        if response.choices and (choice := response.choices[0]) and choice.finish_reason is None:  # pyright: ignore[reportUnnecessaryComparison]
-            choice.finish_reason = 'stop'
+        # Some OpenAI-compatible providers omit the finish reason (e.g. local Ollama) or send an empty one (e.g. Snowflake
+        # Cortex), which fails validation. The response is treated as a `'stop'`, like a stream that ends without one
+        # (subclasses may pick another in `_validate_completion`), but that's not reported as the provider's value.
+        missing_finish_reason = False
+        if response.choices and not (choice := response.choices[0]).finish_reason:
+            missing_finish_reason = True
+            if choice.finish_reason is None:
+                choice.finish_reason = 'stop'
 
         try:
             response = self._validate_completion(response)
@@ -1290,6 +1297,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
+        finish_reason = self._map_finish_reason(choice.finish_reason)
+        if missing_finish_reason:
+            # Restore the missing value after validation, so it's not reported as the provider's.
+            choice.finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
 
         # Moderation and service tier are top-level fields, so they're read here rather than in the choice-scoped
         # `_process_provider_details` hook that subclasses may override.
@@ -1311,7 +1322,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 model_name=response.model,
                 timestamp=_now_utc(),
                 provider_details=provider_details or None,
-                provider_response_id=response.id,
+                provider_response_id=response.id or None,
                 provider_name=self._provider.name,
                 provider_url=self._provider.base_url,
                 finish_reason='content_filter',
@@ -1342,7 +1353,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
 
-        if response.created:  # pragma: no branch
+        if response.created:
             provider_details['timestamp'] = number_to_datetime(response.created)
 
         return ModelResponse(
@@ -1351,10 +1362,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             model_name=response.model,
             timestamp=timestamp,
             provider_details=provider_details or None,
-            provider_response_id=response.id,
+            provider_response_id=response.id or None,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
-            finish_reason=self._map_finish_reason(choice.finish_reason),
+            finish_reason=finish_reason,
         )
 
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
@@ -4092,6 +4103,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                     }
                 if chunk.service_tier:
                     self.provider_details = {**(self.provider_details or {}), 'service_tier': chunk.service_tier}
+                if chunk_provider_details := self._map_chunk_provider_details(chunk):
+                    self.provider_details = {**(self.provider_details or {}), **chunk_provider_details}
 
                 # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
                 # malformed chunks that the openai SDK's loose constructor lets through (https://github.com/pydantic/pydantic-ai/issues/5165).
@@ -4138,6 +4151,9 @@ class OpenAIStreamedResponse(StreamedResponse):
                     model_name=self.model_name,
                     message='Streamed response ended without a `finish_reason`',
                 )
+            if not self._has_finish_reason and not self._has_refusal and not self.cancelled:
+                # Some OpenAI-compatible providers never send a finish reason.
+                self.finish_reason = self._missing_finish_reason()
 
     def _validate_response(self) -> AsyncIterable[ChatCompletionChunk]:
         """Hook that validates incoming chunks.
@@ -4245,6 +4261,21 @@ class OpenAIStreamedResponse(StreamedResponse):
             # once the stream ends.
             self._logprobs.extend(logprobs)
         return provider_details or None
+
+    def _missing_finish_reason(self) -> FinishReason:
+        """The finish reason of a stream that ended without one, matching `OpenAIChatModel._process_response`.
+
+        This method may be overridden by subclasses of `OpenAIStreamResponse` whose model picks another one.
+        """
+        return 'stop'
+
+    def _map_chunk_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
+        """Hook that generates provider details from a chunk's top-level fields, rather than its choice.
+
+        This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
+        Unlike `_map_provider_details`, it's also called for chunks without choices, like the final usage-only chunk.
+        """
+        return None
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
