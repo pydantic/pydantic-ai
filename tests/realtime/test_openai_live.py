@@ -28,6 +28,7 @@ from pydantic_ai.messages import (
     BinaryContent,
     BinaryImage,
     FilePart,
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     RealtimeSessionErrorEvent,
@@ -2299,21 +2300,23 @@ async def test_a_sideband_accepts_history_live_echoes_with_other_whitespace(mode
 
 
 @pytest.mark.parametrize(
-    'started_input',
+    ('started_input', 'sideband_history'),
     [
-        pytest.param([], id='offer-seeded-nothing'),
-        pytest.param(_SEEDED_INPUT[:1], id='offer-seeded-other-history'),
+        pytest.param([], _HISTORY, id='offer-seeded-nothing'),
+        pytest.param(_SEEDED_INPUT[:1], _HISTORY, id='offer-seeded-other-history'),
+        # The other direction: the offer seeded history, and the sideband was opened without it.
+        pytest.param(_SEEDED_INPUT, [], id='sideband-opened-without-the-offers-history'),
     ],
 )
 async def test_a_sideband_with_history_the_offer_did_not_seed_raises(
-    model: OpenAILiveModel, started_input: list[dict[str, Any]]
+    model: OpenAILiveModel, started_input: list[dict[str, Any]], sideband_history: list[ModelMessage]
 ) -> None:
     """Live can't take history after the session starts, so the model would never see what history records."""
     with _patched_connect(_FakeWebSocket([_started_frame(input=started_input)])):
         with pytest.raises(UserError, match='must be opened with the same `message_history`'):
             async with model.connect_webrtc(
                 WebRTCSession(provider_name='openai', session_id='live_test'),
-                messages=_HISTORY,
+                messages=sideband_history,
                 model_settings=None,
                 model_request_parameters=ModelRequestParameters(),
             ):
