@@ -1812,6 +1812,13 @@ def infer_model(  # noqa: C901
         from .typesafe import TypeSafeModel
 
         return TypeSafeModel(model_name, provider=provider)
+    elif model_kind == 'system-one':
+        from ..providers.system_one import SystemOneProvider
+        from .system_one import SystemOneModel
+
+        if not isinstance(provider, SystemOneProvider):
+            raise UserError('System One models require a `SystemOneProvider`.')
+        return SystemOneModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 
