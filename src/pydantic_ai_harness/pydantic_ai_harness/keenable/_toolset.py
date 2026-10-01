@@ -154,9 +154,15 @@ def _normalize_base_url(base_url: str | None) -> str:
     `?` or `#`, which parses as no query at all): the endpoint path is appended
     to this string, so either one would land before it and the request would go
     somewhere other than the endpoint it names.
+
+    Credentials in the URL (`https://user:password@proxy`) are rejected as
+    well, without echoing the URL: httpx puts the request URL in its error
+    messages, so they would otherwise reach logs and retry prompts.
     """
     base = (base_url or KEENABLE_DEFAULT_BASE_URL).rstrip('/')
     parsed = httpx.URL(base)
+    if parsed.userinfo:
+        raise UserError(f'{_BASE_URL_ENV} must not contain credentials; pass the API key separately')
     if parsed.host and '?' not in base and '#' not in base:
         if parsed.scheme == 'https':
             return base
@@ -199,7 +205,10 @@ def _recoverable(
         except httpx.HTTPStatusError as error:
             if error.response.status_code in _AUTH_STATUSES:
                 raise
-            raise ModelRetry(f'Keenable request failed: {error}') from error
+            response = error.response
+            raise ModelRetry(
+                f'Keenable request failed with HTTP {response.status_code} {response.reason_phrase}.'
+            ) from error
         except httpx.HTTPError as error:
             raise ModelRetry(f'Keenable request failed: {error}') from error
         except (json.JSONDecodeError, UnicodeDecodeError) as error:

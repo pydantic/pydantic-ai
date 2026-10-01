@@ -219,6 +219,17 @@ async def test_transient_http_errors_become_retries(status: int):
         await _toolset(client).web_search('cats')
 
 
+async def test_status_retry_prompt_omits_the_request_url():
+    request = httpx.Request('GET', 'https://user:secret@proxy.example/v1/fetch?url=https://example.com')
+    error = httpx.HTTPStatusError('boom', request=request, response=httpx.Response(429, request=request))
+    client = FakeClient(error=error)
+
+    with pytest.raises(ModelRetry) as excinfo:
+        await _toolset(client).get_page('https://example.com/one')
+
+    assert str(excinfo.value) == 'Keenable request failed with HTTP 429 Too Many Requests.'
+
+
 @pytest.mark.parametrize('status', [401, 402, 403])
 async def test_auth_errors_propagate(status: int):
     request = httpx.Request('POST', 'https://api.keenable.ai/v1/search')
@@ -382,6 +393,13 @@ def test_base_url_accepts_https_and_loopback_http(base_url: str):
 def test_base_url_rejects_plaintext_hostless_and_query_bearing_urls(base_url: str):
     with pytest.raises(UserError, match='must be an https:// URL'):
         HttpKeenableClient(api_key='', base_url=base_url)
+
+
+def test_base_url_rejects_credentials_without_echoing_them():
+    with pytest.raises(UserError, match='must not contain credentials') as excinfo:
+        HttpKeenableClient(api_key='', base_url='https://user:secret@proxy.example')
+
+    assert 'secret' not in str(excinfo.value)
 
 
 async def test_http_client_parses_search_and_fetch(monkeypatch: pytest.MonkeyPatch):
