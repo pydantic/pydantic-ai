@@ -22,9 +22,10 @@ def test_selected_theme_and_available_background_action(palette: str, background
     ui.owner.records[record.id] = record
     with theme.use(lambda: palette):
         rows = ui.rows('*')
-        mode_color = theme.SUCCESS if background else theme.WARNING
-        assert theme.sgr(mode_color) + ('background' if background else 'foreground') in rows[0]
-        assert theme.sgr(theme.INFO) + 'starting' in rows[0]
+        accent, muted = theme.sgr(theme.ACCENT), theme.sgr(theme.MUTED)
+        mode = 'background' if background else 'foreground'
+        assert rows[0].startswith(accent + '* ' + theme.sgr(theme.INFO) + 'worker ')
+        assert f'{muted}[{record.id[:8]}] 0s · {mode} · {accent}starting' in rows[0]
         assert theme.sgr(theme.ACCENT) + '/tasks' in rows[-1]
         assert ('Ctrl+B' in rows[-1]) is (not background)
 

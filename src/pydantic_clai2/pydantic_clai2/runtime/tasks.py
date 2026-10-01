@@ -192,16 +192,16 @@ class Tasks:
             elapsed = (record.finished_at or now) - record.started_at
             name = 'general-purpose' if record.agent_name == 'self' else record.agent_name
             mode = 'background' if record.background else 'foreground'
-            label = f'{"  " * depth}{glyph if record.status == "running" else "!"} {name} [{record.id[:8]}]'
             suffix = f' · {descendants} descendants' if descendants else ''
-            mode_color = theme.SUCCESS if record.background else theme.WARNING
-            state_color = theme.INFO if record.status == 'running' else theme.ERROR
+            state_color = theme.ACCENT if record.status == 'running' else theme.ERROR
             if record.outcome in ('cancelled', 'interrupted'):
                 state_color = theme.WARNING
+            marker = glyph if record.status == 'running' else '!'
+            muted = theme.sgr(theme.MUTED)
             rows.append(
-                f'{theme.sgr(theme.INFO)}{label}{theme.sgr(theme.MUTED)} {elapsed:.0f}s · '
-                f'{theme.sgr(mode_color)}{mode}{theme.sgr(theme.MUTED)} · '
-                f'{theme.sgr(state_color)}{terminal_text(state or "")}{theme.sgr(theme.MUTED)}{suffix}\x1b[0m'
+                f'{"  " * depth}{theme.sgr(state_color)}{marker} {theme.sgr(theme.INFO)}{name} '
+                f'{muted}[{record.id[:8]}] {elapsed:.0f}s · {mode} · '
+                f'{theme.sgr(state_color)}{terminal_text(state or "")}{muted}{suffix}\x1b[0m'
             )
         if rows or recent:
             hint = f'{theme.sgr(theme.ACCENT)}/tasks{theme.sgr(theme.MUTED)} inspect'
