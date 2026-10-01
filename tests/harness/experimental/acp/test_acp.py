@@ -283,7 +283,7 @@ def _last_prompt(messages: list[ModelMessage]) -> str | None:
             if isinstance(part, UserPromptPart):
                 content = [part.content] if isinstance(part.content, str) else part.content
                 return ''.join(item for item in content if isinstance(item, str))
-    return None
+    return None  # pragma: no cover
 
 
 class TestLifecycle:
