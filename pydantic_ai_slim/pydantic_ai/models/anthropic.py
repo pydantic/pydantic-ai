@@ -719,6 +719,15 @@ _AnthropicEventStream: TypeAlias = _utils.PeekableAsyncStream[
 """A streamed response whose first event has been read, so an error that stops it is raised before it's processed."""
 
 
+def _is_plain_text_response(response: object) -> bool:
+    if isinstance(response, str):
+        return True
+    if not isinstance(response, AsyncStream):
+        return False
+    content_type = response.response.headers.get('content-type', '').partition(';')[0].strip().lower()
+    return content_type == 'text/plain'
+
+
 def _default_max_tokens(thinking: dict[str, object] | Omit, profile: AnthropicModelProfile) -> int:
     """The `max_tokens` to send when the request doesn't set one.
 
@@ -1300,7 +1309,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             max_tokens = model_settings.get('max_tokens', _default_max_tokens(effective_thinking, anthropic_profile))
 
             async def send(stream: bool) -> BetaMessage | AsyncStream[BetaRawMessageStreamEvent]:
-                return await self.client.beta.messages.create(
+                response = await self.client.beta.messages.create(
                     max_tokens=max_tokens,
                     system=system_prompt or OMIT,
                     messages=anthropic_messages,
@@ -1323,6 +1332,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     extra_headers=extra_headers,
                     extra_body=_build_extra_body(model_settings, thinking_override),
                 )
+                if _is_plain_text_response(response):
+                    raise ModelAPIError(
+                        model_name=self.model_name,
+                        message='Expected a structured response from the Anthropic Messages API, got plain text.',
+                    )
+                return response
 
             async def open_stream() -> _AnthropicEventStream:
                 raw_stream = cast(AsyncStream[BetaRawMessageStreamEvent], await send(True))

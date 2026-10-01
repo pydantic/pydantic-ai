@@ -13794,6 +13794,37 @@ async def test_response_error_raises_model_api_error(
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_text_plain_response_raises_model_api_error(allow_model_requests: None, stream: bool) -> None:
+    """A successful HTTP response with a plain-text body is reported as a provider API error.
+
+    A mock transport stands in for a cassette because this malformed response cannot be triggered on demand.
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, text='upstream error', headers={'content-type': 'text/plain'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with Agent(model).run_stream('Hello') as result:
+                    await result.get_output()
+            else:
+                await Agent(model).run('Hello')
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.model_name == 'gpt-5'
+    assert exc_info.value.message == 'Expected a structured response from the OpenAI Responses API, got plain text.'
+    assert exc_info.value.__cause__ is None
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 async def test_response_error_event_first_falls_back(allow_model_requests: None):
     """An `error` event that opens the stream fires `FallbackModel`'s default `fallback_on`."""
 

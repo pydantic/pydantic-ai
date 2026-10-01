@@ -2874,7 +2874,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
         with _map_api_errors(self.model_name, self._provider.model_id_namespace), _map_decode_errors(self.model_name):
             try:
-                return await self.client.responses.create(
+                response = await self.client.responses.create(
                     model=request_params.model,
                     input=request_params.input,
                     instructions=request_params.instructions,
@@ -2905,6 +2905,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     extra_headers=extra_headers,
                     extra_body=model_settings.get('extra_body'),
                 )
+                is_plain_text_response = isinstance(response, str)
+                if isinstance(response, AsyncStream):
+                    content_type = response.response.headers.get('content-type', '').partition(';')[0].strip().lower()
+                    is_plain_text_response = content_type == 'text/plain'
+                if is_plain_text_response:
+                    raise ModelAPIError(
+                        model_name=self.model_name,
+                        message='Expected a structured response from the OpenAI Responses API, got plain text.',
+                    )
+                return response
             except APIStatusError as e:
                 if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response

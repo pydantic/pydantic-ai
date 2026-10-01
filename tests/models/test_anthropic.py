@@ -2988,6 +2988,32 @@ def test_model_status_error(allow_model_requests: None) -> None:
     )
 
 
+@pytest.mark.vcr(ignore_hosts=['api.anthropic.com'])
+async def test_text_plain_response_raises_model_api_error(allow_model_requests: None) -> None:
+    """A successful HTTP response with a plain-text body is reported as a provider API error.
+
+    A mock transport stands in for a cassette because this malformed response cannot be triggered on demand.
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, text='upstream error', headers={'content-type': 'text/plain'})
+
+    async with AsyncAnthropic(
+        api_key='test',
+        base_url='https://api.anthropic.com',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as anthropic_client:
+        model = AnthropicModel('claude-sonnet-4-5', provider=AnthropicProvider(anthropic_client=anthropic_client))
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            await Agent(model).run('hello')
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.model_name == 'claude-sonnet-4-5'
+    assert exc_info.value.message == 'Expected a structured response from the Anthropic Messages API, got plain text.'
+    assert exc_info.value.__cause__ is None
+
+
 @pytest.mark.parametrize(
     ('error_type', 'expected'),
     [
