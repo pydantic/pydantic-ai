@@ -669,22 +669,25 @@ async def test_event_delivered_while_tool_still_running():
     The tool blocks until the handler has seen the event, so delivery that only happened at the
     tool's completion would deadlock (and trip the timeout) instead of passing.
     """
-    received = asyncio.Event()
+    received = [asyncio.Event(), asyncio.Event()]
     agent = Agent(FunctionModel(stream_function=_tool_then_text))
 
     @agent.tool
     async def progress(ctx: RunContext[Any]) -> str:
-        await ctx.emit(ProgressEvent(payload={'done': 1}))
-        await asyncio.wait_for(received.wait(), timeout=5)
+        for index, signal in enumerate(received):
+            await ctx.emit(ProgressEvent(payload={'done': index}))
+            await asyncio.wait_for(signal.wait(), timeout=5)
         return 'ok'
 
     async def handler(ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
         async for event in events:
-            if isinstance(event, CustomEvent) and event.name == 'progress':
-                received.set()
+            if isinstance(event, ProgressEvent):
+                index = event.payload['done']
+                assert isinstance(index, int)
+                received[index].set()
 
     await agent.run('go', event_stream_handler=handler)
-    assert received.is_set()
+    assert all(signal.is_set() for signal in received)
 
 
 async def test_event_delivered_while_tool_still_running_with_ordered_events():
