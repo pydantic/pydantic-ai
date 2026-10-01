@@ -344,7 +344,7 @@ def test_result_validation_error_without_json_string_fallback_error():
                     'type': 'value_error',
                     'loc': ('response',),
                     'msg': 'Value error, name must be at least 2 words long',
-                    'input': '"word"',
+                    'input': 'word',
                 }
             ],
         ]

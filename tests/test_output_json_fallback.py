@@ -6,11 +6,13 @@ from typing import Annotated
 
 import pytest
 from inline_snapshot import snapshot
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, Strict, ValidationInfo
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, Strict, ValidationError, ValidationInfo
+from pydantic_core import PydanticCustomError
 
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.test import TestModel
 
 
 class StrictEvent(BaseModel):
@@ -89,6 +91,35 @@ async def test_partial_defaulted_output_fallback(valid_json: bool):
 class Person(BaseModel):
     name: str
     age: int
+
+
+def test_json_string_fallback_nested_validation_error():
+    agent = Agent(TestModel(custom_output_args='[{"name": "First"}]'), output_type=list[Person], retries=0)
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        agent.run_sync('Test')
+
+    error = exc_info.value.__cause__
+    assert isinstance(error, ValidationError)
+    assert error.errors(include_url=False) == snapshot(
+        [{'type': 'missing', 'loc': ('response', 0, 'age'), 'msg': 'Field required', 'input': {'name': 'First'}}]
+    )
+
+
+def test_json_string_fallback_custom_validation_error():
+    def reject(values: list[int]) -> list[int]:
+        raise PydanticCustomError('json_invalid', 'Rejected {value}', {'value': values[0]})
+
+    agent = Agent(
+        TestModel(custom_output_args='[0]'), output_type=Annotated[list[int], AfterValidator(reject)], retries=0
+    )
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        agent.run_sync('Test')
+
+    error = exc_info.value.__cause__
+    assert isinstance(error, ValidationError)
+    assert error.errors(include_url=False) == snapshot(
+        [{'type': 'json_invalid', 'loc': ('response',), 'msg': 'Rejected 0', 'input': [0], 'ctx': {'value': 0}}]
+    )
 
 
 @pytest.mark.parametrize('stringified_response', [False, True])

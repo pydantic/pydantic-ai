@@ -865,6 +865,15 @@ def _output_type_name(output: Any) -> str | None:
     return getattr(output, '__name__', None)
 
 
+class _JsonStringResponse(TypedDict):
+    """Check JSON decoding without applying the output type's validators."""
+
+    response: Json[object]
+
+
+_JSON_STRING_RESPONSE_VALIDATOR = cast(SchemaValidator, TypeAdapter(_JsonStringResponse).validator)
+
+
 @dataclass(kw_only=True)
 class BaseObjectOutputProcessor(BaseOutputProcessor[OutputDataT]):
     object_def: OutputObjectDefinition
@@ -1010,9 +1019,15 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             if self._json_string_validator is not None:
                 try:
                     return validate_with(self._json_string_validator)
-                except ValidationError:
-                    pass
-            # The fallback is leniency, not part of the declared schema: report only the original error.
+                except ValidationError as fallback_error:
+                    try:
+                        validate_with(_JSON_STRING_RESPONSE_VALIDATOR)
+                    except ValidationError:
+                        pass
+                    else:
+                        # JSON decoded successfully: keep its actionable validation errors, including custom errors.
+                        raise fallback_error
+            # Suppress only the decoding failure, not errors validating a successfully decoded value.
             raise
 
     async def call(
