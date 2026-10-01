@@ -207,7 +207,9 @@ class Fallback(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        if not await self._predicates.should_fallback(response):
+        # A streamed response has already reached the consumer, so it's accepted without consulting
+        # the response handlers, as `FallbackModel` does.
+        if request_context.streaming or not await self._predicates.should_fallback(response):
             if response.state == 'suspended':
                 # Its continuation, in this run or a later one that resumes it, has to go back to the
                 # model that started the provider-side job, not to the top of the chain.

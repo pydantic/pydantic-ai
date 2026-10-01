@@ -621,3 +621,16 @@ async def test_a_wrapped_fallback_default_is_still_outranked():
         ]
     )
     assert (await agent.run('x')).output == 'hello'
+
+
+@pytest.mark.anyio
+async def test_response_handlers_are_not_consulted_for_a_streamed_response():
+    async def nope_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'nope'
+
+    agent = Agent(
+        FunctionModel(stream_function=nope_stream),
+        capabilities=[Fallback(FunctionModel(stream_function=success_stream), fallback_on=reject_nope)],
+    )
+    async with agent.run_stream('x') as stream:
+        assert await stream.get_output() == 'nope'
