@@ -1774,6 +1774,26 @@ async def test_first_party_cancel_swallowed_by_after_run_is_typed():
         await agent.run('go')
 
 
+async def test_first_party_cancel_uncancelled_by_after_run_is_typed():
+    """A first-party request remains terminal after a hook clears the task's cancellation count."""
+
+    class UncancelInAfterRun(AbstractCapability):
+        async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
+            ctx.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                assert task is not None
+                task.uncancel()
+            return result
+
+    agent = Agent(TestModel(), capabilities=[UncancelInAfterRun()])
+
+    with pytest.raises(RunCancelled):
+        await agent.run('go')
+
+
 @pytest.mark.parametrize('first_party', [True, False])
 async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
     """`wrap_run` and `on_run_error` may observe cancellation but cannot recover it."""

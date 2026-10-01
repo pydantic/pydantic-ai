@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from builtins import BaseExceptionGroup
 from collections.abc import Callable
 from dataclasses import replace
 from io import StringIO
@@ -28,9 +29,6 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup
 
 
 async def test_reload_keeps_saved_conversation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

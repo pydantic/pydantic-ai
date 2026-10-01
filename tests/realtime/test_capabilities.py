@@ -880,6 +880,27 @@ async def test_before_run_can_cancel_realtime_session() -> None:
     assert model.instructions is None
 
 
+async def test_after_run_uncancel_cannot_complete_realtime_session() -> None:
+    """A first-party cancellation remains terminal after a hook clears the task's cancellation count."""
+
+    class UncancelAfterRun(AbstractCapability[None]):
+        async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[str]) -> AgentRunResult[str]:
+            ctx.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                assert task is not None
+                task.uncancel()
+            return result
+
+    agent = Agent(capabilities=[UncancelAfterRun()], deps_type=type(None))
+    with pytest.raises(RunCancelled):
+        async with agent.realtime(_RecordingModel()).session() as session:
+            async for _ in session:
+                pass
+
+
 async def test_cancel_on_finished_realtime_context_is_noop() -> None:
     """A retained context cannot cancel the task that happened to own an already-finished session."""
     contexts: list[RunContext[None]] = []
