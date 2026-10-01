@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ._inline_snapshot import snapshot
 
@@ -315,8 +316,6 @@ def test_list_form_items_are_walked():
     `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 tool schemas, emits this shape.
     The walk runs before any request is built, so the transformer output is asserted directly.
     """
-    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-
     schema = {
         '$defs': {'Point': {'title': 'Point', 'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
         'type': 'object',
