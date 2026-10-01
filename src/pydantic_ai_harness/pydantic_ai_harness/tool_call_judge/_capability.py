@@ -245,6 +245,9 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
             instructions=_JUDGE_INSTRUCTIONS.format(question=self.question),
             output_type=Literal['yes', 'no', 'unsure'],
         )
+        # The judge's prompt carries the call's arguments, so it must not inherit global
+        # instrumentation that could ignore the host agent's content or opt-out settings.
+        self._judge.instrument = False
 
     def get_ordering(self) -> CapabilityOrdering:
         """Judge closest to execution, so the arguments judged are the ones that would run."""

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import is_dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 import pytest
 from inline_snapshot import snapshot
@@ -34,15 +34,12 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge, ToolCallVerdict
 from tests.harness._recording_durability import RecordingDurability
-from tests.harness.conftest import agent_run_names
-
-if TYPE_CHECKING:
-    from logfire.testing import CaptureLogfire
 
 pytestmark = pytest.mark.anyio
 
@@ -781,15 +778,31 @@ class TestObservability:
         assert attributes['tool_call_judge.error.type'] == 'RuntimeError'
         assert attributes['tool_call_judge.verdict'] == 'block'
 
-    @pytest.mark.usefixtures('instrument_all_agents')
-    async def test_the_internal_agent_run_is_named_after_the_capability(self, capfire: CaptureLogfire) -> None:
+    @pytest.mark.parametrize('host_instrument', ['redacted', 'off'])
+    async def test_the_internal_judge_does_not_trace_its_prompt(self, host_instrument: str) -> None:
+        """Global instrumentation must not record arguments the host agent redacts or does not trace."""
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
         agent = _agent(
             _judge(_judge_model('no')),
-            _outer_model(ToolCallPart('danger', {'x': 1}, tool_call_id='call-1')),
+            _outer_model(ToolCallPart('danger', {'x': 987654321}, tool_call_id='call-1')),
             ran=[],
         )
-        await agent.run('go')
-        assert 'tool_call_judge' in agent_run_names(capfire)
+        agent.instrument = (
+            InstrumentationSettings(tracer_provider=provider, include_content=False)
+            if host_instrument == 'redacted'
+            else False
+        )
+        Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
+        try:
+            await agent.run('go')
+        finally:
+            Agent.instrument_all(False)
+
+        spans = exporter.get_finished_spans()
+        assert 'invoke_agent tool_call_judge' not in {span.name for span in spans}
+        assert not [span.name for span in spans if '987654321' in str(span.attributes)]
 
     async def test_the_judge_usage_is_added_to_the_run(self) -> None:
         agent = _agent(

@@ -140,7 +140,7 @@ from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 judge = ToolCallJudge(
     'anthropic:claude-haiku-4-5',
     tools=['delete_file'],
-    question='Did the user ask for this deletion?',
+    question='Does this deletion go beyond what the user asked for?',
     include_conversation=True,
     conversation_window=4_000,
 )
@@ -159,11 +159,12 @@ Either way, what the judge is shown leaves the process. The whole validated argu
 Tiering is expressed with more than one judge instead. Each instance carries its own selector, question, model, and uncertainty policy, and a call must clear all of them:
 
 ```python
-from pydantic_ai import Agent
+from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai_harness.tool_call_judge import ToolCallJudge
 
 agent = Agent(
     'anthropic:claude-fable-5',
+    output_type=[str, DeferredToolRequests],
     capabilities=[
         ToolCallJudge(
             'anthropic:claude-haiku-4-5',
@@ -226,7 +227,7 @@ Every judged call opens a `judge tool call` span on the run's tracer:
 | `tool_call_judge.error.type` | exception type when the judge failed |
 | `tool_call_judge.arguments` | validated arguments, only when `trace_include_content` is on |
 
-The internal agent is named `tool_call_judge`, so its spend groups under that name in Logfire.
+The internal judge agent is not instrumented, so its prompt (which contains the call's arguments) is not recorded even when global instrumentation is on. Its usage is still added to the outer run's usage.
 
 A blocked call's `ToolReturnPart` carries the answer, the confidence, and the question under a `tool_call_judge` key in its `metadata`, which the application can read and the model cannot see.
 
