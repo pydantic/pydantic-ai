@@ -126,7 +126,9 @@ class JsonSchemaTransformer(ABC):
                     return self._walk_def(key, siblings)
                 return deepcopy(self._walked_def(key))
 
-        # Handle the schema based on its type / structure
+        # Handle the schema based on its type / structure. Object and array keywords are only walked under a matching
+        # `type`: walking them on a schema without one would reach subtrees that work as written, collapse their
+        # single-member unions, run `transform()` on them and raise on their unresolvable `$ref`s.
         type_ = schema.get('type')
         if type_ == 'object':
             schema = self._handle_object(schema)
@@ -243,7 +245,13 @@ class JsonSchemaTransformer(ABC):
 
 
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
-    """Transforms the JSON Schema to inline $defs."""
+    """Transforms the JSON Schema to inline $defs.
+
+    Object keywords (`properties`, `additionalProperties`, `patternProperties`) are only walked on a schema with
+    `type: 'object'`, and array keywords (`items`, `prefixItems`) only on a schema with `type: 'array'`. Without a
+    matching `type`, they are left as written, so a `$ref` inside them still points into the removed `$defs`. Add
+    `type: 'object'` (or `type: 'array'`) to such a schema to have its references inlined.
+    """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)

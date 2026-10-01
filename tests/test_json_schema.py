@@ -485,6 +485,26 @@ def test_inline_defs_repeated_ref_with_siblings():
     assert result['properties']['defaulted'] == {**pet, 'default': None}
 
 
+def test_inline_defs_leaves_untyped_subtrees_as_written():
+    """Object keywords on a schema without `type: 'object'` are deliberately left as written, `$ref`s included.
+
+    The dangling `$ref` is the documented output, not a bug: see the `InlineDefsJsonSchemaTransformer` docstring,
+    and the comment in `JsonSchemaTransformer._handle` for why untyped subtrees aren't walked. Adding the `type`
+    gets the reference inlined. Tests internal schema walking, which has no provider request to cover with VCR.
+    """
+    schema = {
+        '$defs': {'Payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}},
+        'properties': {'payload': {'$ref': '#/$defs/Payload'}},
+    }
+
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {'properties': {'payload': {'$ref': '#/$defs/Payload'}}}
+    )
+    assert InlineDefsJsonSchemaTransformer({**deepcopy(schema), 'type': 'object'}).walk() == snapshot(
+        {'properties': {'payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}}, 'type': 'object'}
+    )
+
+
 def test_inline_defs_recursive_ref():
     """A recursive `$def` is emitted as `$defs` + `$ref`, walked and transformed like the rest.
 
