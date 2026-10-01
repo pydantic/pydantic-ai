@@ -379,9 +379,13 @@ jobs:
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
+          PR: repos/${{ github.repository }}/pulls/${{ needs.eligibility.outputs.pr_number }}
           LABELS: repos/${{ github.repository }}/issues/${{ needs.eligibility.outputs.pr_number }}/labels
+          SHA: ${{ needs.eligibility.outputs.head_sha }}
           FAILED: ${{ needs.safe_outputs.result != 'success' || needs.agent.outputs.output_types == '' }}
         run: |
+          # Runs for different heads overlap, so only the run for the current head owns the label.
+          [ "$(gh api "$PR" -q .head.sha)" = "$SHA" ] || exit 0
           if [ "$FAILED" = true ]; then
             gh api "$LABELS" -f 'labels[]=ci-review-failed' --silent
           else
