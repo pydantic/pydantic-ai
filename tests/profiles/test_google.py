@@ -264,8 +264,8 @@ def test_model_profile_server_side_tool_invocations(model_name: str, expected: b
     """Gemini 3 image models reject `include_server_side_tool_invocations`, unlike Gemini 3 text models.
 
     Pins the profile flag on both sides. The request field it gates is asserted omitted on the wire by
-    `test_google_image_generation_with_web_search`, and sent by
-    `test_google_gemini_api_sets_include_server_side_tool_invocations` on `_get_tool_config`.
+    `test_google_image_generation_with_web_search`, and asserted set on the `_get_tool_config` result by
+    `test_google_gemini_api_sets_include_server_side_tool_invocations`.
     """
     profile = google_model_profile(model_name)
     assert profile is not None
