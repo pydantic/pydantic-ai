@@ -1794,6 +1794,30 @@ async def test_first_party_cancel_uncancelled_by_after_run_is_typed():
         await agent.run('go')
 
 
+async def test_uncancelled_request_does_not_leak_after_hook_error():
+    """A hook error after clearing cancellation leaves the caller task's counter unchanged."""
+
+    class FailAfterUncancel(AbstractCapability):
+        async def after_run(self, ctx: RunContext, *, result: AgentRunResult) -> AgentRunResult:
+            ctx.cancel()
+            try:
+                await asyncio.sleep(0)
+            except asyncio.CancelledError:
+                task = asyncio.current_task()
+                assert task is not None
+                task.uncancel()
+            raise ValueError('hook failed')
+
+    task = asyncio.current_task()
+    assert task is not None
+    baseline = task.cancelling()
+    agent = Agent(TestModel(), capabilities=[FailAfterUncancel()])
+
+    with pytest.raises(ValueError, match='hook failed'):
+        await agent.run('go')
+    assert task.cancelling() == baseline
+
+
 @pytest.mark.parametrize('first_party', [True, False])
 async def test_run_capabilities_cannot_recover_cancellation(first_party: bool):
     """`wrap_run` and `on_run_error` may observe cancellation but cannot recover it."""
