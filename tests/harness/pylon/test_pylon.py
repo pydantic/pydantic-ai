@@ -20,6 +20,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage
+from pydantic_ai_harness import MCPReadOnlyNoToolsWarning
 from pydantic_ai_harness.pylon import Pylon
 
 # The MCP SDK leaves a settings annotation unresolved in some supported dependency
@@ -96,7 +97,9 @@ class TestPylon:
         assert (await unfiltered_agent.run('Use the tools')).output == '{"unmarked":"unmarked"}'
 
         agent = Agent(TestModel(), capabilities=[Pylon(client=server, read_only=True)])
-        with pytest.warns(UserWarning, match=r"`read_only=True` removed every tool from MCPToolset 'pylon'"):
+        with pytest.warns(
+            MCPReadOnlyNoToolsWarning, match=r"`read_only=True` removed every tool from MCPToolset 'pylon'"
+        ):
             await agent.run('Use the tools')
 
     async def test_read_only_does_not_warn_for_an_empty_server(self) -> None:

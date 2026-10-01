@@ -110,7 +110,7 @@ error.
 
 `read_only=True` gives the agent only the tools that Pylon's server labels as
 read-only, and leaves out all the others. If Pylon has not labeled its read
-tools, the agent gets no Pylon tools and emits a `UserWarning`. The token's
+tools, the agent gets no Pylon tools and emits an `MCPReadOnlyNoToolsWarning`. The token's
 permissions still decide what the agent can reach.
 
 To filter tools or require approval in your application, wrap the toolset with

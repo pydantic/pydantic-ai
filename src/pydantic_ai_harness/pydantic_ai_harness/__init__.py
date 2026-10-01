@@ -2,6 +2,7 @@
 
 from typing import TYPE_CHECKING
 
+from ._mcp import MCPReadOnlyNoToolsWarning
 from ._warn import HarnessDeprecationWarning
 
 if TYPE_CHECKING:
@@ -99,6 +100,7 @@ __all__ = [
     'GuardrailError',
     'GuardrailResult',
     'HarnessDeprecationWarning',
+    'MCPReadOnlyNoToolsWarning',
     'InputBlocked',
     'InputGuardrail',
     'InputGuardrailFunc',

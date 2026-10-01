@@ -36,6 +36,15 @@ def is_read_only(tool: ToolDefinition) -> bool:
             return False
 
 
+class MCPReadOnlyNoToolsWarning(UserWarning):
+    """`read_only=True` removed every tool from a hosted MCP server, so the agent gets none of its tools.
+
+    The filter keeps only tools the server annotates with `readOnlyHint: true`, and some servers
+    publish no annotations at all. Disable `read_only`, or filter this category when an empty
+    toolset is intended.
+    """
+
+
 def read_only_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
     """Keep tools marked as read-only and warn when the filter removes every tool."""
 
@@ -45,7 +54,9 @@ def read_only_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[A
             warnings.warn(
                 f'`read_only=True` removed every tool from {toolset.label} because none was marked with '
                 '`readOnlyHint: true`. '
-                'Disable `read_only` or configure the server to publish read-only annotations.',
+                'Disable `read_only` or configure the server to publish read-only annotations, or filter '
+                '`MCPReadOnlyNoToolsWarning` if this is intended.',
+                MCPReadOnlyNoToolsWarning,
                 stacklevel=2,
             )
         return read_only_tools
