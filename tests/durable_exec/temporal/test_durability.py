@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import re
 import sys
 import uuid
@@ -109,6 +110,7 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
+    import pydantic_ai.durable_exec.temporal._toolset as temporal_toolset
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -865,6 +867,43 @@ def test_durability_coerces_activity_config_values():
     assert durability._model_activity_config.get('start_to_close_timeout') == timedelta(minutes=5)  # pyright: ignore[reportPrivateUsage]
     toolset_config = durability._toolset_activity_config['my_toolset']  # pyright: ignore[reportPrivateUsage]
     assert toolset_config.get('schedule_to_close_timeout') == timedelta(minutes=9)
+
+
+def test_durability_activity_config_tolerates_unschemable_annotations(monkeypatch: pytest.MonkeyPatch):
+    """A new `ActivityConfig` key Pydantic can't schema must not break module import.
+
+    temporalio 1.34 added `event_groups: Sequence[EventGroup] | None` to `ActivityConfig`
+    (#9572), which made the module-level `TypeAdapter(_ValidatedActivityConfig)` build raise
+    `PydanticSchemaGenerationError` at import. The locked temporalio predates that key, so this
+    test injects a plain-class annotation and reloads the module: the reload reruns the
+    production derivation itself, not a local replica.
+    """
+
+    class _EventGroup:
+        """Stands in for a temporalio type Pydantic has no schema for."""
+
+    annotations = dict(ActivityConfig.__annotations__)
+    annotations['event_groups'] = Sequence[_EventGroup] | None
+    monkeypatch.setattr(ActivityConfig, '__annotations__', annotations)
+
+    importlib.reload(temporal_toolset)  # raises PydanticSchemaGenerationError without the fix (#9572)
+    try:
+        # The rebuilt adapter still rejects unknown keys (`extra='forbid'` is orthogonal).
+        with pytest.raises(UserError, match='unknown_key'):
+            temporal_toolset.validate_activity_config(cast(ActivityConfig, {'unknown_key': 1}), 'activity_config')
+
+        # A value of the unschemable type passes through (is-instance schema), while a schemable
+        # field keeps its real validation and coercion.
+        config = temporal_toolset.validate_activity_config(
+            cast(ActivityConfig, {'start_to_close_timeout': timedelta(minutes=5), 'event_groups': [_EventGroup()]}),
+            'activity_config',
+        )
+        config_any = cast(dict[str, Any], config)
+        assert isinstance(config_any['event_groups'][0], _EventGroup)
+        assert config_any['start_to_close_timeout'] == timedelta(minutes=5)
+    finally:
+        monkeypatch.undo()
+        importlib.reload(temporal_toolset)  # restore the production adapter for the other tests
 
 
 def test_durability_shared_instance_across_agents():
