@@ -55,6 +55,7 @@ from tenacity import RetryCallState, retry_if_result, stop_after_delay, wait_ran
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
 from pydantic_ai.capabilities import AbstractCapability, NativeTool, ProcessEventStream, ProcessHistory
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.mcp import load_mcp_toolsets
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -163,9 +164,9 @@ class _RecoverMCPToolErrors(AbstractCapability[object]):
 
 # pydantic-ai's built-in request_limit default of 50 is too low for the
 # deep multi-step workflows here; gh-aw's api-proxy still caps the run.
-REQUEST_LIMIT = 200
-ATTENTION_REQUEST_LIMIT = 25
-SUBAGENT_REQUEST_LIMIT = 75
+REQUEST_LIMIT = 400
+ATTENTION_REQUEST_LIMIT = 50
+SUBAGENT_REQUEST_LIMIT = 150
 ATTENTION_WORKFLOW = 'Pydantic AI Attention Triage'
 
 
@@ -854,8 +855,9 @@ def emit_result(
     usage: RunUsage | None,
     session_id: str,
     is_error: bool = False,
-    num_turns: int = 1,
+    num_turns: int = 0,
     duration_ms: int = 0,
+    error: BaseException | None = None,
 ) -> None:
     """Emit the Claude Code stream-json `result` line gh-aw parses for success + token totals."""
     if usage is None:
@@ -872,19 +874,65 @@ def emit_result(
             'cache_creation_input_tokens': usage.cache_write_tokens,
             'cache_read_input_tokens': usage.cache_read_tokens,
         }
-    emit(
-        {
-            'type': 'result',
-            'subtype': 'error' if is_error else 'success',
-            'is_error': is_error,
-            'result': text,
-            'session_id': session_id,
-            'num_turns': num_turns,
-            'duration_ms': duration_ms,
-            'total_cost_usd': 0,
-            'usage': token_usage,
-        }
+    provider_health: dict[str, object] = {
+        'workflow': os.environ.get('GITHUB_WORKFLOW'),
+        'task_key': os.environ.get('PYDANTIC_AI_TASK_KEY'),
+        'trigger_event': os.environ.get('PYDANTIC_AI_TRIGGER_EVENT'),
+    }
+    if is_error:
+        provider_health['failure'] = _failure_details(error)
+    result: dict[str, object] = {
+        'type': 'result',
+        'subtype': 'error' if is_error else 'success',
+        'is_error': is_error,
+        'result': text,
+        'session_id': session_id,
+        'num_turns': num_turns,
+        'duration_ms': duration_ms,
+        'total_cost_usd': 0,
+        'usage': token_usage,
+        'provider_health': provider_health,
+    }
+    emit(result)
+
+
+def _is_minimax_insufficient_balance(error: ModelHTTPError) -> bool:
+    """Recognize MiniMax's terminal insufficient-balance response from its typed body."""
+    if 'minimax' not in error.model_name.lower():
+        return False
+    body = error.body
+    if not isinstance(body, Mapping):
+        return False
+    details = body.get('error')
+    if not isinstance(details, Mapping):
+        return False
+    error_type = details.get('type')
+    message = details.get('message')
+    return error_type == 'insufficient_balance_error' or (
+        isinstance(message, str) and 'insufficient balance' in message.lower()
     )
+
+
+def _failure_details(error: BaseException | None) -> dict[str, object]:
+    """Return a safe, machine-readable classification while preserving the original error text."""
+    kind = 'other'
+    http_status: int | None = None
+    if isinstance(error, UsageLimitExceeded):
+        kind = 'request_limit'
+    elif isinstance(error, (asyncio.TimeoutError, TimeoutError)):
+        kind = 'timeout'
+    elif isinstance(error, ModelHTTPError):
+        http_status = error.status_code
+        if error.status_code in (401, 403):
+            kind = 'authentication'
+        elif error.status_code == 429:
+            kind = 'rate_limit'
+        elif error.status_code == 402 and _is_minimax_insufficient_balance(error):
+            kind = 'balance'
+    failure: dict[str, object] = {'kind': kind}
+    if http_status is not None:
+        failure['http_status'] = http_status
+    return failure
 
 
 # Live tool-call / tool-result streaming for gh-aw's log parser. Result
@@ -1049,18 +1097,32 @@ async def _run_with_timeout(
 ) -> int:
     """Wrap `run()` with the global wall-clock cap and emit a clean result on timeout."""
     budget = _run_timeout_secs()
+    usage = RunUsage()
     try:
         return await asyncio.wait_for(
-            run(prompt, model, label, claude_code_toolset, mcp_servers, session_id),
+            run(prompt, model, label, claude_code_toolset, mcp_servers, session_id, usage=usage),
             timeout=budget,
         )
     except asyncio.TimeoutError:
         logger.error('run timed out after %.0f min', budget / 60)
         emit_result(
             f'run timed out after {budget // 60}min',
-            usage=None,
+            usage=usage,
             session_id=session_id,
             is_error=True,
+            num_turns=usage.requests,
+            error=TimeoutError(),
+        )
+        return 1
+    except Exception as exc:
+        logger.exception('runner failed outside agent execution')
+        emit_result(
+            f'agent run failed: {exc}',
+            usage=usage,
+            session_id=session_id,
+            is_error=True,
+            num_turns=usage.requests,
+            error=exc,
         )
         return 1
 
@@ -1072,9 +1134,11 @@ async def run(
     claude_code_toolset: AbstractToolset[object],
     mcp_servers: list[AbstractToolset[object]],
     session_id: str,
+    usage: RunUsage | None = None,
 ) -> int:
     """Run one agent turn and emit Claude-shape stream-json. Always emits a `result` line."""
     reset_context_state()
+    run_usage = usage or RunUsage()
     agent: Agent[object, str] = Agent(
         model,
         instructions=[INSTRUCTIONS, prompt, request_budget_notice],
@@ -1096,7 +1160,7 @@ async def run(
     started = time.perf_counter()
     try:
         async with agent:
-            result = await agent.run(RUN_TRIGGER, usage_limits=limits)
+            result = await agent.run(RUN_TRIGGER, usage_limits=limits, usage=run_usage)
     except Exception as exc:
         # The limit is checked before a request, so a safe-output tool called on the
         # last one has already run: the task is done, only the closing turn is lost.
@@ -1104,8 +1168,9 @@ async def run(
             logger.warning('request limit reached after the safe output was emitted: %s', exc)
             emit_result(
                 'request limit reached after the safe output was emitted',
-                usage=None,
+                usage=run_usage,
                 session_id=session_id,
+                num_turns=run_usage.requests,
                 duration_ms=round((time.perf_counter() - started) * 1000),
             )
             log_safe_outputs_state()
@@ -1120,10 +1185,12 @@ async def run(
         logger.exception('agent run failed')
         emit_result(
             f'agent run failed: {exc}',
-            usage=None,
+            usage=run_usage,
             session_id=session_id,
             is_error=True,
+            num_turns=run_usage.requests,
             duration_ms=round((time.perf_counter() - started) * 1000),
+            error=exc,
         )
         return 1
 
@@ -1136,7 +1203,7 @@ async def run(
     text = str(result.output or '')
     emit({'type': 'assistant', 'message': {'role': 'assistant', 'content': text}})
 
-    emit_result(text, result.usage, session_id, num_turns=num_turns, duration_ms=duration_ms)
+    emit_result(text, run_usage, session_id, num_turns=num_turns, duration_ms=duration_ms)
     log_safe_outputs_state()
     return 0
 
@@ -1175,11 +1242,11 @@ def main() -> int:
         # rejection — an expected, clean exit, so a traceback would be noise.
         # gh-aw still needs a structured result line.
         logger.error('FATAL startup error: %r', exc)
-        emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True)
+        emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True, error=exc)
         return 1
     except Exception as exc:
         # A real crash before the agent run (model build, MCP load, …) — dump the
         # full stack so a blind FATAL doesn't cost another long investigation.
         logger.exception('FATAL startup error')
-        emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True)
+        emit_result(f'shim startup failed: {exc}', usage=None, session_id=session_id, is_error=True, error=exc)
         return 1

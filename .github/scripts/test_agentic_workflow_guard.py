@@ -8,6 +8,7 @@ shapes. The final test asserts the live repository is clean.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from agentic_workflow_guard import (
     Violation,
     changed_files,
     check_ai_credits_accounting,
+    check_assigned_alert_metadata_gate,
     check_awf_binary_version,
     check_compiled_runner_contract,
     check_compiler_version_compatibility,
@@ -28,6 +30,9 @@ from agentic_workflow_guard import (
     check_job_timeout_env,
     check_lock_regenerated,
     check_prompt_paths,
+    check_provider_health_identity,
+    check_provider_health_monitor,
+    check_provider_health_wiring,
     check_safe_output_job_max,
     check_timeout_declared,
     run_checks,
@@ -1123,4 +1128,187 @@ jobs:
 
     violations = run_checks(workflows)
 
-    assert [v.check for v in violations] == ['prompt-path-outside-workspace']
+    assert 'prompt-path-outside-workspace' in {violation.check for violation in violations}
+
+
+def test_provider_health_wiring_requires_the_shared_gate_and_compiled_activation_dependency(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    source = _write(
+        workflows / 'pydantic-ai-mini.md',
+        '---\nname: MiniMax\nimports:\n  - shared/engine-minimax.md\nif: true\n---\nPrompt\n',
+    )
+    lock = _write(
+        source.with_suffix('.lock.yml'),
+        """
+jobs:
+  activation:
+    needs: [pre_activation]
+  provider_health:
+    needs: [activation]
+""",
+    )
+
+    violations = check_provider_health_wiring(workflows)
+
+    assert {violation.check for violation in violations} == {
+        'provider-health-import',
+        'provider-health-prompt',
+        'provider-health-gate',
+        'provider-health-reporting',
+        'provider-health-activation-needs',
+        'provider-health-activation-if',
+        'provider-health-job-order',
+    }
+    assert all(violation.path in (str(source), str(lock)) for violation in violations)
+
+
+def test_provider_health_identity_is_shared_and_stable_for_workflow_run_retries(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    task_key = (
+        '${{ github.workflow }}:${{ github.event_name }}:${{ github.event.workflow_run.head_branch }}:'
+        "${{ github.event.workflow_run.head_sha }}:${{ (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}"
+    )
+    engine = _write(
+        shared / 'engine-minimax.md',
+        f'engine:\n  env:\n    GITHUB_WORKFLOW: ${{{{ github.workflow }}}}\n'
+        f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n    PYDANTIC_AI_TASK_KEY: {task_key}\n',
+    )
+    _write(shared / 'provider-health.md', f'job:\n  env:\n    PYDANTIC_AI_TASK_KEY: {task_key}\n')
+
+    assert check_provider_health_identity(workflows) == []
+    expression = re.search(r'^\s*PYDANTIC_AI_TASK_KEY: (.*)$', engine.read_text(), re.MULTILINE)
+    assert expression is not None
+    assert expression.group(1).count('github.run_id') == 1
+    assert "github.event_name == 'workflow_dispatch' && github.run_id" in expression.group(1)
+
+
+def test_provider_health_identity_rejects_gate_shim_drift(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    _write(
+        shared / 'engine-minimax.md',
+        'engine:\n  env:\n    GITHUB_WORKFLOW: ${{ github.workflow }}\n'
+        '    PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}\n'
+        '    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}: ${{ github.run_id }}\n',
+    )
+    _write(shared / 'provider-health.md', 'job:\n  env:\n    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}\n')
+
+    assert [violation.check for violation in check_provider_health_identity(workflows)] == ['provider-health-identity']
+
+
+def test_provider_health_monitor_is_explicitly_scoped_and_cannot_recurse(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'pydantic-ai-a.md',
+        '---\nname: Agent A\nimports:\n  - shared/engine-minimax.md\n---\nPrompt\n',
+    )
+    _write(
+        workflows / 'pydantic-ai-b.md',
+        '---\nname: Agent B\nimports:\n  - shared/engine-minimax.md\n---\nPrompt\n',
+    )
+    monitor = _write(
+        workflows / 'agent-provider-health.yml',
+        """
+name: Agent Provider Health
+on:
+  workflow_run:
+    workflows: [Agent A, Agent B, Agent Provider Health]
+    types: [completed]
+  schedule: [{cron: '0 */6 * * *'}]
+  workflow_dispatch: {}
+concurrency:
+  group: provider-health
+  cancel-in-progress: false
+jobs:
+  monitor:
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@sha
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: .github/scripts/agent_provider_health.py
+      - if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@sha
+        with:
+          name: agent
+      - if: github.event_name == 'workflow_run' && steps.agent-artifact.outcome != 'success'
+        run: |
+          mkdir -p agent
+          : > agent/agent-stdio.log
+      - if: github.event_name == 'workflow_run'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 .github/scripts/agent_provider_health.py monitor
+          --agent-artifact agent/agent-stdio.log
+      - if: github.event_name == 'schedule'
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          MINIMAX_QUOTA_RESOURCE: ${{ vars.MINIMAX_QUOTA_RESOURCE }}
+        run: python3 .github/scripts/agent_provider_health.py monitor
+      - if: github.event_name == 'workflow_dispatch'
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          MINIMAX_QUOTA_RESOURCE: ${{ vars.MINIMAX_QUOTA_RESOURCE }}
+        run: python3 .github/scripts/agent_provider_health.py monitor --recover-issue 1
+""",
+    )
+
+    violations = check_provider_health_monitor(workflows)
+
+    assert [violation.check for violation in violations] == [
+        'provider-health-monitor-workflows',
+        'provider-health-monitor-recursion',
+        'provider-health-monitor-queue',
+    ]
+    assert all(violation.path == str(monitor) for violation in violations)
+
+    trusted_config = monitor.read_text(encoding='utf-8')
+    _write(
+        monitor,
+        trusted_config.replace(
+            'ref: ${{ github.event.repository.default_branch }}',
+            'ref: ${{ github.event.workflow_run.head_sha }}',
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-trusted-checkout' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+    _write(
+        monitor,
+        trusted_config.replace(
+            'python3 .github/scripts/agent_provider_health.py monitor',
+            'python3 agent/agent-stdio.log',
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-artifact-execution' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+    _write(
+        monitor,
+        trusted_config.replace(
+            "- if: github.event_name == 'schedule'\n        env:",
+            "- if: github.event_name == 'workflow_run'\n        env:",
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-provider-event-scope' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+
+
+def test_assigned_alert_metadata_gate_excludes_operational_incidents(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(workflows / 'at-claude.yml', "name: @claude\non: issues\nif: contains(github.event.issue.body, '@claude')\n")
+
+    violations = check_assigned_alert_metadata_gate(workflows)
+
+    assert [violation.check for violation in violations] == ['assigned-alert-metadata-gate']

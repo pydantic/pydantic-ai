@@ -36,6 +36,7 @@ except ImportError:  # sparse checkouts that omit the telemetry module stay sile
 
 
 _API = 'https://api.github.com'
+_PROVIDER_HEALTH_MARKER = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
 _SLA = dt.timedelta(days=3)
 # Applied only by the community-demand sweep; scripts trust the label.
 COMMUNITY_LABEL = 'community-backed'
@@ -413,6 +414,29 @@ def rotated_search(
     return cast(list[dict[str, Any]], result.get('items') or [])
 
 
+def _is_provider_health_incident(item: Mapping[str, object]) -> bool:
+    """Recognize controller issues by both operational labels and their typed marker."""
+    if not {'agentic-workflows', 'pydanty:meta'}.issubset(item_labels(item)):
+        return False
+    body = item.get('body')
+    if not isinstance(body, str):
+        return False
+    match = _PROVIDER_HEALTH_MARKER.search(body)
+    if match is None:
+        return False
+    try:
+        marker: object = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return False
+    return (
+        isinstance(marker, dict)
+        and marker.get('version') == 1
+        and marker.get('scope') in ('provider', 'workflow', 'task')
+        and isinstance(marker.get('key'), str)
+        and bool(marker['key'])
+    )
+
+
 def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[dict[str, Any]]:
     cutoff_date = (now - _SLA).date()
     # An escalated item cools down outside classification. Reconciliation
@@ -440,7 +464,8 @@ def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
     )
     candidates: dict[int, dict[str, Any]] = {}
     for item in [*recent, *backlog]:
-        candidates.setdefault(int(item['number']), item)
+        if not _is_provider_health_incident(item):
+            candidates.setdefault(int(item['number']), item)
     return list(candidates.values())[:_CANDIDATE_LIMIT]
 
 
@@ -458,6 +483,7 @@ def build_snapshot(client: GitHubClient, repo: str, *, now: dt.datetime) -> dict
             or parse_time(updated_at) > cutoff
             or _ACTION_LABEL in labels
             or _ESCALATED_LABEL in labels
+            or _is_provider_health_incident(current)
         ):
             continue
         recent_activity, pr_context = _candidate_context(client, repo, current)

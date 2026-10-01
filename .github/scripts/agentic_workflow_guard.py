@@ -53,6 +53,7 @@ import re
 import shlex
 import subprocess
 import sys
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -634,6 +635,345 @@ def check_lock_regenerated(changed: list[str], workflows_dir: Path = WORKFLOWS_D
     return violations
 
 
+def _is_minimax_workflow(frontmatter: Mapping[str, object]) -> bool:
+    imports = _as_strings(frontmatter.get('imports'))
+    engine_env = _as_mapping(_as_mapping(frontmatter.get('engine')).get('env'))
+    return (
+        'shared/engine-minimax.md' in imports
+        or engine_env.get('ANTHROPIC_BASE_URL') == 'https://api.minimax.io/anthropic'
+    )
+
+
+def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Every MiniMax source must gate activation on its compiled provider-health job."""
+    violations: list[Violation] = []
+    for source in sorted(workflows_dir.glob(AGENTIC_GLOB)):
+        frontmatter = parse_frontmatter(source)
+        imports = _as_strings(frontmatter.get('imports'))
+        if not _is_minimax_workflow(frontmatter):
+            continue
+        if 'shared/provider-health.md' not in imports:
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-import',
+                    'MiniMax workflow does not import `shared/provider-health.md`.',
+                )
+            )
+        if 'needs.provider_health.outputs.ready' not in parse_prompt_body(source):
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-prompt',
+                    'Workflow prompt body must reference `provider_health` so gh-aw hoists the gate before activation.',
+                )
+            )
+        condition = str(frontmatter.get('if', ''))
+        if 'needs.provider_health.outputs.ready' not in condition or "'true'" not in condition:
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-gate',
+                    'MiniMax workflow top-level `if:` must require `provider_health` readiness.',
+                )
+            )
+        safe_outputs = _as_mapping(frontmatter.get('safe-outputs'))
+        noop = _as_mapping(safe_outputs.get('noop'))
+        if safe_outputs.get('report-failure-as-issue') is not False or noop.get('report-as-issue') is not False:
+            violations.append(
+                Violation(
+                    str(source),
+                    'provider-health-reporting',
+                    'MiniMax workflows must disable gh-aw generic failure-as-issue reporting.',
+                )
+            )
+        lock = source.with_suffix('.lock.yml')
+        if not lock.is_file():
+            violations.append(Violation(str(source), 'provider-health-lock', f'Compiled workflow `{lock}` is missing.'))
+            continue
+        workflow = _as_mapping(yaml.safe_load(lock.read_text(encoding='utf-8')))
+        jobs = _as_mapping(workflow.get('jobs'))
+        activation = _as_mapping(jobs.get('activation'))
+        activation_needs = _as_strings(activation.get('needs'))
+        activation_condition = str(activation.get('if', ''))
+        if 'provider_health' not in activation_needs:
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-activation-needs',
+                    '`activation.needs` does not include `provider_health`; the health gate can resolve empty.',
+                )
+            )
+        if 'needs.provider_health.outputs.ready' not in activation_condition or "'true'" not in activation_condition:
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-activation-if',
+                    '`activation.if` does not require `provider_health` readiness before agent execution.',
+                )
+            )
+        health_job = _as_mapping(jobs.get('provider_health'))
+        if not health_job:
+            violations.append(
+                Violation(str(lock), 'provider-health-job', 'Compiled workflow has no `provider_health` job.')
+            )
+        elif 'activation' in _as_strings(health_job.get('needs')):
+            violations.append(
+                Violation(
+                    str(lock),
+                    'provider-health-job-order',
+                    '`provider_health` depends on `activation` and therefore cannot gate inference.',
+                )
+            )
+    return violations
+
+
+def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """The gate and shim must receive the same stable workflow task identity."""
+    engine_path = workflows_dir / 'shared' / 'engine-minimax.md'
+    health_path = workflows_dir / 'shared' / 'provider-health.md'
+    if not engine_path.is_file() or not health_path.is_file():
+        return [
+            Violation(
+                str(engine_path), 'provider-health-identity', 'Shared workflow identity configuration is missing.'
+            )
+        ]
+    engine = engine_path.read_text(encoding='utf-8')
+    health = health_path.read_text(encoding='utf-8')
+    assignment = re.compile(r'^\s*PYDANTIC_AI_TASK_KEY:\s*(.+?)\s*$', re.MULTILINE)
+    engine_match = assignment.search(engine)
+    health_match = assignment.search(health)
+    workflow_assignment = 'GITHUB_WORKFLOW: ${{ github.workflow }}'
+    event_assignment = 'PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}'
+    if (
+        engine_match is None
+        or health_match is None
+        or engine_match.group(1) != health_match.group(1)
+        or workflow_assignment not in engine
+        or event_assignment not in engine
+    ):
+        return [
+            Violation(
+                str(engine_path),
+                'provider-health-identity',
+                'The agent and provider-health job must forward identical workflow, event, and task identities.',
+            )
+        ]
+    task_key = engine_match.group(1)
+    manual_run_id = "(github.event_name == 'workflow_dispatch' && github.run_id)"
+    if manual_run_id not in task_key or 'github.run_id' in task_key.replace(manual_run_id, ''):
+        return [
+            Violation(
+                str(engine_path),
+                'provider-health-task-stability',
+                '`github.run_id` may distinguish manual dispatches but must not change the same workflow task across runs.',
+            )
+        ]
+    expected_task_key = task_key
+    for source in workflows_dir.glob(AGENTIC_GLOB):
+        frontmatter = parse_frontmatter(source)
+        imports = _as_strings(frontmatter.get('imports'))
+        if not _is_minimax_workflow(frontmatter) or 'shared/engine-minimax.md' in imports:
+            continue
+        engine_env = _as_mapping(_as_mapping(frontmatter.get('engine')).get('env'))
+        if (
+            engine_env.get('GITHUB_WORKFLOW') != '${{ github.workflow }}'
+            or engine_env.get('PYDANTIC_AI_TRIGGER_EVENT') != '${{ github.event_name }}'
+            or engine_env.get('PYDANTIC_AI_TASK_KEY') != expected_task_key
+        ):
+            return [
+                Violation(
+                    str(source),
+                    'provider-health-identity',
+                    'A MiniMax workflow with a local engine config must forward the shared task identity exactly.',
+                )
+            ]
+    return []
+
+
+def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:  # noqa: C901
+    """The serialized monitor only accepts completions from the enumerated MiniMax workflows."""
+    monitor_path = workflows_dir / 'agent-provider-health.yml'
+    if not monitor_path.is_file():
+        return [Violation(str(monitor_path), 'provider-health-monitor', 'Provider-health monitor is missing.')]
+    monitor = _as_mapping(yaml.safe_load(monitor_path.read_text(encoding='utf-8')))
+    triggers = _as_mapping(monitor.get('on'))
+    workflow_run = _as_mapping(triggers.get('workflow_run'))
+    monitor_names = _as_strings(workflow_run.get('workflows'))
+    expected_names = {
+        str(parse_frontmatter(source).get('name'))
+        for source in workflows_dir.glob(AGENTIC_GLOB)
+        if _is_minimax_workflow(parse_frontmatter(source))
+    }
+    violations: list[Violation] = []
+    if monitor_names != expected_names:
+        missing = sorted(expected_names - monitor_names)
+        unexpected = sorted(monitor_names - expected_names)
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-workflows',
+                f'`workflow_run.workflows` must match all MiniMax workflows; missing={missing}, unexpected={unexpected}.',
+            )
+        )
+    if 'workflow_dispatch' not in triggers or 'schedule' not in triggers:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-triggers',
+                'Monitor needs schedule and manual recovery triggers.',
+            )
+        )
+    if str(monitor.get('name', '')) in monitor_names:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-recursion',
+                'Monitor must not trigger on its own completion.',
+            )
+        )
+    jobs = _as_mapping(monitor.get('jobs'))
+    monitor_job = _as_mapping(jobs.get('monitor'))
+    concurrency = _as_mapping(monitor.get('concurrency'))
+    if not concurrency.get('group') or concurrency.get('cancel-in-progress') is not False:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-concurrency',
+                'Monitor reconciliation must use one non-cancelling concurrency group.',
+            )
+        )
+    if concurrency.get('queue') != 'max':
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-queue',
+                'Monitor reconciliation must use FIFO `queue: max` and retain up to the platform limit of 100 pending runs.',
+            )
+        )
+    steps_value = monitor_job.get('steps')
+    steps: list[Mapping[str, object]] = []
+    if isinstance(steps_value, list):
+        for raw_step in steps_value:
+            if isinstance(raw_step, Mapping):
+                steps.append(_as_mapping(raw_step))
+    checkout_steps: list[Mapping[str, object]] = [
+        step for step in steps if str(step.get('uses', '')).startswith('actions/checkout@')
+    ]
+    checkout: Mapping[str, object] = _as_mapping(checkout_steps[0].get('with')) if len(checkout_steps) == 1 else {}
+    if (
+        len(checkout_steps) != 1
+        or checkout.get('repository') != '${{ github.repository }}'
+        or checkout.get('ref') != '${{ github.event.repository.default_branch }}'
+        or checkout.get('persist-credentials') is not False
+        or checkout.get('sparse-checkout') != '.github/scripts/agent_provider_health.py'
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-trusted-checkout',
+                'Monitor must check out only the controller script from the repository default branch, without persisted credentials.',
+            )
+        )
+    artifact_steps: list[Mapping[str, object]] = [
+        step for step in steps if str(step.get('uses', '')).startswith('actions/download-artifact@')
+    ]
+    if any(str(step.get('if', '')).strip() != "github.event_name == 'workflow_run'" for step in artifact_steps):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-artifact-trigger',
+                'Agent artifacts may only be downloaded for the allowlisted `workflow_run` event.',
+            )
+        )
+    artifact_paths = re.compile(r'(?:^|\s)(?:agent|provider-health)/\S+')
+    artifact_execution = False
+    for step in steps:
+        uses = str(step.get('uses', ''))
+        run = str(step.get('run', '')).strip()
+        if uses.startswith(('./agent/', './provider-health/')):
+            artifact_execution = True
+        if not artifact_paths.search(run):
+            continue
+        is_stub = run.splitlines() == ['mkdir -p agent', ': > agent/agent-stdio.log']
+        is_controller = (
+            run.startswith('python3 .github/scripts/agent_provider_health.py monitor')
+            and '\n' not in run
+            and not re.search(r';|&&|\|\|', run)
+        )
+        if not is_stub and not is_controller:
+            artifact_execution = True
+    if artifact_execution:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-artifact-execution',
+                'Downloaded agent artifacts must be parsed only as input to the trusted controller, never executed as code.',
+            )
+        )
+    provider_keys: tuple[str, str] = ('MINIMAX_API_KEY', 'MINIMAX_QUOTA_RESOURCE')
+    workflow_env: Mapping[str, object] = _as_mapping(monitor.get('env'))
+    job_env: Mapping[str, object] = _as_mapping(monitor_job.get('env'))
+    provider_key_events: dict[str, set[str]] = {key: set() for key in provider_keys}
+    if any(key in workflow_env or key in job_env for key in provider_keys):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-provider-event-scope',
+                'MiniMax credentials and quota selection must not be inherited by `workflow_run` steps.',
+            )
+        )
+    for step in steps:
+        step_env = _as_mapping(step.get('env'))
+        event_condition = str(step.get('if', ''))
+        for key in provider_keys:
+            if key not in step_env:
+                continue
+            if event_condition.strip() == "github.event_name == 'schedule'":
+                provider_key_events[key].add('schedule')
+            elif event_condition.strip() == "github.event_name == 'workflow_dispatch'":
+                provider_key_events[key].add('workflow_dispatch')
+            else:
+                provider_key_events[key].add('other')
+    expected_recovery_events: set[str] = {'schedule', 'workflow_dispatch'}
+    if any(provider_key_events[key] != expected_recovery_events for key in provider_keys):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-provider-event-scope',
+                'MiniMax credentials and quota selection must be scoped exactly to scheduled or explicitly requested recovery, never `workflow_run`.',
+            )
+        )
+    permissions = _as_mapping(monitor_job.get('permissions'))
+    if permissions != {'actions': 'read', 'contents': 'read', 'issues': 'write'}:
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-permissions',
+                'Monitor job permissions must be exactly `actions: read`, `contents: read`, and `issues: write`.',
+            )
+        )
+    return violations
+
+
+def check_assigned_alert_metadata_gate(workflows_dir: Path = WORKFLOWS_DIR) -> list[Violation]:
+    """Operational metadata issues must not start the @claude issue-assignment agent."""
+    source = workflows_dir / 'at-claude.yml'
+    if not source.is_file():
+        return [Violation(str(source), 'assigned-alert-metadata-gate', '@claude workflow is missing.')]
+    text = source.read_text(encoding='utf-8')
+    metadata_gate = "!contains(github.event.issue.labels.*.name, 'pydanty:meta')"
+    if text.count(metadata_gate) < 2:
+        return [
+            Violation(
+                str(source),
+                'assigned-alert-metadata-gate',
+                '`issues` and `issue_comment` activation must exclude `pydanty:meta` operational alerts.',
+            )
+        ]
+    return []
+
+
 def changed_files(base_ref: str) -> list[str]:
     """Return paths changed relative to `base_ref` (empty if git can't resolve it)."""
     try:
@@ -678,6 +1018,10 @@ def run_checks(
     for markdown in [*sources, *shared]:
         violations += check_prompt_paths(markdown)
     violations += check_compiler_versions(locks)
+    violations += check_provider_health_wiring(workflows_dir)
+    violations += check_provider_health_identity(workflows_dir)
+    violations += check_provider_health_monitor(workflows_dir)
+    violations += check_assigned_alert_metadata_gate(workflows_dir)
     if compatibility is not None:
         violations += check_compiler_version_compatibility(locks, compatibility)
     if changed:
