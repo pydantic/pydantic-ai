@@ -471,10 +471,6 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
   [`interrupt()`][pydantic_ai.realtime.RealtimeSession.interrupt].
 - An image sent without `respond=True`, text over the 500-token cap, and seeded history that contains
   audio or images.
-- A [`ToolReturn`][pydantic_ai.messages.ToolReturn] whose `content` carries media, which Pydantic AI
-  does not route to the delegated backend yet. It is refused before anything is sent rather than
-  reaching the backend without the material that explains it. Text `content` is sent to the backend as
-  a message after the tool's result.
 
 ### gpt-realtime {#gpt-realtime-feature-support-and-limitations}
 

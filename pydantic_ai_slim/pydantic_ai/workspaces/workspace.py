@@ -386,6 +386,15 @@ class Workspace(WorkspaceBackend):
         """Whether this workspace refuses commands and file changes, so tools can leave those out."""
         return isinstance(self._backend, Workspace) and self._backend.read_only
 
+    def durable_policy(self) -> tuple[object, ...]:
+        """Configuration a durable unit must rebuild with this wrapper.
+
+        Empty unless the wrapper's own arguments change what the unit does. Two workspaces of the
+        same class with different values are different policies: a run-level workspace that a unit
+        would not rebuild is rejected, rather than replaced by the construction-time one.
+        """
+        return ()
+
     @property
     def attached(self) -> bool:
         """Whether this workspace reaches an environment.

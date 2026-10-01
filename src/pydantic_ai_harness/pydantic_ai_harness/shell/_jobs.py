@@ -271,7 +271,8 @@ class Job:
         quoted = shlex.quote(path)
         result = await self.workspace.run(
             # A pipeline reports only `base64`'s status, so check the log is readable before it.
-            f'test -f {quoted} || exit 66; test -r {quoted} || exit 67; '
+            # A log removed between the two checks is missing, not unreadable.
+            f'test -f {quoted} || exit 66; test -r {quoted} || {{ test -f {quoted} || exit 66; exit 67; }}; '
             f'tail -c +{offset + 1} {quoted} | head -c {length} | base64',
             shell=True,
             timeout=CONTROL_TIMEOUT,
