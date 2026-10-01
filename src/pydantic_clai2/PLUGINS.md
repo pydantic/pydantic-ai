@@ -322,9 +322,9 @@ no notification-specific telemetry.
 to restore the built-in default. Normal plugin unloading discards its handlers;
 there are no background workers to stop.
 
-## Logfire: default agent tracing
+## Observability: default agent tracing
 
-The built-in `logfire` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
+The built-in `observability` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
 the stock CLI. It registers Pydantic AI's `Instrumentation` capability with an
 isolated Logfire instance, not process-wide instrumentation or custom tracing
 hooks. Agent/model/tool spans include timing, token usage, failures, text content,
@@ -342,11 +342,17 @@ telemetry destination through its own files. Without credentials the default
 `if-token-present` mode does not export to Logfire or start interactive setup. Console logging is disabled. Other SDK configuration,
 such as explicit OTLP exporters, still applies.
 
-Manage it with `/plugins disable logfire`, `/plugins enable logfire`, or
-`/plugins reload logfire`. To change its defaults:
+Previously named `logfire`, this plugin keeps existing enabled/disabled choices,
+settings, and saved token references. No reconfiguration is needed. Old commands
+and project or drop-in declarations using `logfire` refer to the same plugin,
+not a second tracing instance. If both names were saved, the `observability`
+declaration takes precedence; edits and removal apply to that one shared entry.
+
+Manage it with `/plugins disable observability`, `/plugins enable observability`, or
+`/plugins reload observability`. To change its defaults:
 
 ```text
-/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
@@ -361,7 +367,7 @@ Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled.
 
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
-`LOGFIRE_BASE_URL`, else the region the token names. `/plugins configure logfire`
+`LOGFIRE_BASE_URL`, else the region the token names. `/plugins configure observability`
 sets `token`, `base_url`, and `send_to_logfire` for you: it asks
 where traces go, runs Logfire's own device sign-in there (the one behind
 `logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
@@ -612,8 +618,8 @@ and each run fails with that message instead of reaching Logfire.
 
 The label is `LOGFIRE_API_KEY`, the variable `LogfireMCP` reads, and not
 `LOGFIRE_TOKEN`. `LOGFIRE_TOKEN` is the write token the
-[`logfire` plugin](#logfire-default-agent-tracing) sends traces with, and it
-cannot query the MCP server. The `logfire` plugin keeps reading it from the
+[`observability` plugin](#observability-default-agent-tracing) sends traces with, and it
+cannot query the MCP server. The `observability` plugin keeps reading it from the
 environment or the Logfire SDK's credential file.
 
 The same settings can be given as JSON, which is validated the same way:
@@ -655,6 +661,10 @@ same way. Explicit module declarations take precedence over a same-named drop-in
 file. Reloading a disabled plugin is rejected; enable it first. Drop-in entry
 modules are compiled from current source. Installed modules use `importlib.reload`,
 which can retain globals removed from source; initialize plugin state explicitly.
+
+`/reload` refreshes CLAI code, not Harness or core. After changing those packages,
+restart with the same launch options and `--resume` to continue the saved session.
+Keep the worktree if asked to remove it.
 
 Plugins are trusted code running as you. Only install what you trust.
 
@@ -1955,7 +1965,7 @@ spaced name, an empty frame list, or a control character in a frame raises
 name; the user's `spinners.json` replaces both. Unloading the plugin removes it,
 and a selected spinner that is gone shows the default `working`.
 
-### Run models under your own prefix: `host.model_provider(prefix, resolve, *, models)`
+### Run models under your own prefix: `host.model_provider(prefix, resolve, *, models, settings_from)`
 
 Makes `PREFIX:NAME` a model CLAI can run, for a Pydantic AI `Model` that no core
 provider builds, such as one authenticated with a subscription login:
@@ -1988,7 +1998,13 @@ wins. Unloading the plugin removes the prefix; a saved model under it stays in
 `/model`, and runs with it fail as an unknown provider until the plugin is enabled
 again.
 
-### Add a sign-in to `/login`: `host.login(name, handler)`
+`/model_settings` offers generic controls (max tokens, temperature, custom
+parameters) for plugin models. When `resolve` returns a model class of a provider
+CLAI knows, such as an `AnthropicModel` subclass, pass `settings_from='anthropic'`
+(or `'openai'`, `'openai-chat'`, `'google'`) and these models get that provider's
+controls instead, such as Claude's thinking mode and effort.
+
+### Add a sign-in to `/login`: `host.login(name, handler, *, models)`
 
 `/login NAME` signs in to a subscription: `codex` (bare `/login`) and `copilot`
 ship with CLAI, and `openai-codex` and `github-copilot` still work. A plugin whose
@@ -2003,7 +2019,8 @@ def activate(host: PluginHost) -> None:
         ...  # run the OAuth flow, save tokens to the keyring
         return 'Signed in to My Service.'
 
-    host.login('my-service', sign_in)
+    provider = host.model_provider('my-service', resolve, models=('fast', 'smart'))
+    host.login('my-service', sign_in, models=provider.names)
 ```
 
 `/login my-service` awaits `sign_in` and shows the message it returns, and `/login`
@@ -2011,6 +2028,10 @@ completes the name. Raise `UserError` when signing in fails, and keep tokens in 
 keyring, never in plugin settings. The name uses the same format as a model prefix
 and cannot be one of CLAI's sign-ins; when two plugins add one name, the later one
 wins. Unloading the plugin removes it.
+
+Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
+`names`) are added to the saved model list, so `/model` and `/model_settings`
+offer them without an `/add_model` first. A failed sign-in adds nothing.
 
 ## Rules that keep plugins predictable
 

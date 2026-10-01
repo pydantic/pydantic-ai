@@ -10,8 +10,10 @@ from prompt_toolkit.document import Document
 from rich.console import Console
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
+from pydantic_clai2.auth import CodexAuth, login_command
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -29,7 +31,7 @@ def activate(host: PluginHost) -> None:
     async def sign_in() -> str:
         return '{MESSAGE}'
 
-    host.login('claude', sign_in)
+    host.login('claude', sign_in, models=('claude-test:a', 'claude-test:b'))
 """
 
 
@@ -47,6 +49,27 @@ async def test_host_records_a_login() -> None:
     assert plugin.logins == [login]
     assert login == PluginLogin(name='claude', handler=signed_in)
     assert await login.handler() == 'Signed in.'
+
+
+async def test_a_plugin_login_saves_its_models_only_once_it_succeeds(tmp_path: Path) -> None:
+    async def refused() -> str:
+        raise UserError('Sign-in refused.')
+
+    store = SettingsStore(tmp_path / 'config.db')
+    plugin = host()
+    plugins = {
+        login.name: login
+        for login in (
+            plugin.login('claude', signed_in, models=['claude-test:a', 'claude-test:b']),
+            plugin.login('refused', refused, models=['claude-test:c']),
+        )
+    }
+    codex = CodexAuth(Console(file=io.StringIO()))
+    with pytest.raises(UserError, match='refused'):
+        await login_command(['refused'], codex=codex, plugins=plugins, store=store)
+    assert store.models() == []
+    assert await login_command(['claude'], codex=codex, plugins=plugins, store=store) == 'Signed in.'
+    assert store.models() == ['claude-test:a', 'claude-test:b']
 
 
 @pytest.mark.parametrize('name', ['', 'Claude', '1claude', 'claude code', 'claude:code'])
@@ -109,3 +132,4 @@ async def test_shell_runs_and_completes_a_plugin_login(tmp_path: Path, monkeypat
     )
     assert 'Signed in to Claude Code.' in output.getvalue()
     assert completions[0] == {'codex', 'copilot', 'claude'}
+    assert {'claude-test:a', 'claude-test:b'} <= set(store.models())

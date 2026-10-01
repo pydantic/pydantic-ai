@@ -22,6 +22,7 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexProvider,
 )
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import LOGIN_ALIASES, github_copilot, login_names
 from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.ui.rendering import theme
@@ -33,9 +34,16 @@ ReadLine = Callable[[str], Awaitable[str]]
 
 
 async def login_command(
-    args: list[str], *, codex: 'CodexAuth', plugins: Mapping[str, PluginLogin] | None = None
+    args: list[str],
+    *,
+    codex: 'CodexAuth',
+    plugins: Mapping[str, PluginLogin] | None = None,
+    store: SettingsStore | None = None,
 ) -> str:
-    """`/login NAME` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` stays Codex."""
+    """`/login NAME` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` stays Codex.
+
+    A plugin sign-in that succeeds saves its `models` to `store`.
+    """
     plugins = plugins or {}
     if len(args) > 1:
         raise ValueError(_login_usage(plugins))
@@ -45,7 +53,11 @@ async def login_command(
     if name == 'copilot':
         return await github_copilot.login(console=codex.console)
     if (login := plugins.get(name)) is not None:
-        return await login.handler()
+        message = await login.handler()
+        if store is not None:
+            for model in login.models:
+                store.add_model(name=model)
+        return message
     raise ValueError(_login_usage(plugins))
 
 

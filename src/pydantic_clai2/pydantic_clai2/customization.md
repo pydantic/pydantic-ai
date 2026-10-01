@@ -20,7 +20,9 @@ contract; this guide is shipped with the package for use without a checkout.
 - Use a custom model/provider: register your own `PREFIX:` with
   host.model_provider(prefix, resolve, models=...), where resolve returns a
   Pydantic AI Model, or supply a Pydantic AI Agent to chat from a Python launcher.
-  If its models need a sign-in, host.login(name, handler) adds /login NAME.
+  If its models need a sign-in, host.login(name, handler, models=...) adds
+  /login NAME and saves those models once it succeeds. settings_from='anthropic'
+  on model_provider gives its models Anthropic's /model_settings controls.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -133,15 +135,15 @@ edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
 
-The built-in logfire plugin (pydantic_clai2.builtin_plugins.logfire) is enabled by default in the
+The built-in observability plugin (pydantic_clai2.builtin_plugins.logfire) is enabled by default in the
 stock CLI. It contributes core's Instrumentation capability using an isolated
 Logfire instance. It exports to Logfire only when credentials are present, with
 no interactive setup or console logging. Text and binary images are included by
 default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
-/plugins disable logfire to remove it, or replace its settings with:
+/plugins disable observability to remove it, or replace its settings with:
 
 ```text
-/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
 Other options are service_name (default pydantic-clai2), send_to_logfire
@@ -149,7 +151,7 @@ Other options are service_name (default pydantic-clai2), send_to_logfire
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
 then receives the telemetry), and ui_events (default false: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
-submissions, by name and never by content). /plugins configure logfire sets
+submissions, by name and never by content). /plugins configure observability sets
 token and base_url for you, and turns sending on: pick Logfire US, EU, or
 a self-hosted URL, sign in in the browser, and pick a project; its new write
 token is saved in /keys. This explicit option overrides

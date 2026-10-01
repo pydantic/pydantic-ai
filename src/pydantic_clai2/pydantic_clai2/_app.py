@@ -105,7 +105,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
     PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
-    PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire'),
+    PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
     PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),
@@ -238,6 +238,13 @@ async def chat(
                     console.print(
                         f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
                     )
+                    if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
+                        console.print(
+                            'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
+                            '--resume to continue this session. Keep the worktree if asked to remove it.',
+                            style=theme.color(theme.INFO),
+                            markup=False,
+                        )
                 fresh = False
             else:
                 with transcript.capture(console):
@@ -254,6 +261,8 @@ class _ModelResolver:
     """Model prefixes registered by loaded plugins, read per resolution so enabling one applies at once."""
     logins: Callable[[], Mapping[str, PluginLogin]] = lambda: {}
     """Sign-ins registered by loaded plugins, read per `/login` like `plugins`."""
+    store: SettingsStore | None = None
+    """Where a plugin sign-in saves its models."""
     _auth: 'CodexAuth | None' = None
 
     def codex_auth(self) -> 'CodexAuth':
@@ -266,7 +275,7 @@ class _ModelResolver:
     async def login(self, args: list[str]) -> str:
         from pydantic_clai2.auth import login_command
 
-        return await login_command(args, codex=self.codex_auth(), plugins=self.logins())
+        return await login_command(args, codex=self.codex_auth(), plugins=self.logins(), store=self.store)
 
     async def resolve(self, name: str) -> Model | str:
         if name.startswith('openrouter:'):
@@ -323,7 +332,7 @@ def create_shell(
         session.summary = summary
     session.model = settings.model
     session.tool_retries = settings.tool_retries
-    models = _ModelResolver(console=console)
+    models = _ModelResolver(console=console, store=store)
     session.resolve_model = models.resolve
     if session.model is None and agent.model is None:
         console.print('Add a model with /add_model.', style=theme.color(theme.INFO))
@@ -482,6 +491,7 @@ def create_shell(
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
+    context.settings_model = loader.settings_model
     spinners = Spinners(selected=lambda: context.settings.spinner, registered=loader.spinners)
     commands.register(
         Command(

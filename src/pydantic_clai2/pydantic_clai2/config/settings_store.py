@@ -2,7 +2,7 @@
 
 import os
 import sqlite3
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -12,6 +12,26 @@ from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, reso
 
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
+# Keep the original IDs on disk so older builds share the same preferences, without loading a second plugin.
+_PLUGIN_NAMES = {'logfire': 'observability'}
+_STORED_PLUGIN_NAMES = {name: stored for stored, name in _PLUGIN_NAMES.items()}
+
+
+def canonical_plugin_id(plugin_id: str) -> str:
+    """Use one runtime identity for old and current plugin names."""
+    return _PLUGIN_NAMES.get(plugin_id, plugin_id)
+
+
+def canonical_plugin_declarations(plugins: Iterable[PluginSettings]) -> dict[str, PluginSettings]:
+    """Keep declaration order, preferring an explicit current name over its old alias."""
+    declarations = {plugin.id: plugin for plugin in plugins}
+    renamed: dict[str, PluginSettings] = {}
+    for plugin in declarations.values():
+        current = canonical_plugin_id(plugin.id)
+        if current != plugin.id and current in declarations:
+            continue
+        renamed[current] = plugin if current == plugin.id else plugin.model_copy(update={'id': current})
+    return renamed
 
 
 def config_dir() -> Path:
@@ -92,14 +112,19 @@ class SettingsStore:
     def plugins(self) -> list[PluginSettings]:
         """Return declarations in stable identifier order without importing code."""
         with self._connect() as connection:
-            return [
+            plugins = [
                 PluginSettings.model_validate_json(row[0])
                 for row in connection.execute('SELECT declaration FROM plugins ORDER BY id')
             ]
+        return sorted(canonical_plugin_declarations(plugins).values(), key=lambda plugin: plugin.id)
 
     def save_plugin(self, plugin: PluginSettings) -> None:
         """Persist an explicitly trusted plugin declaration."""
+        current_id = canonical_plugin_id(plugin.id)
+        plugin = plugin.model_copy(update={'id': _STORED_PLUGIN_NAMES.get(current_id, current_id)})
         with self._connect() as connection:
+            if current_id != plugin.id:
+                connection.execute('DELETE FROM plugins WHERE id = ?', (current_id,))
             connection.execute(
                 'INSERT INTO plugins VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET declaration = excluded.declaration',
                 (plugin.id, plugin.model_dump_json()),
@@ -107,8 +132,10 @@ class SettingsStore:
 
     def delete_plugin(self, plugin_id: str) -> None:
         """Forget a declaration; a plugin file in the plugins folder is not deleted."""
+        current_id = canonical_plugin_id(plugin_id)
+        stored_id = _STORED_PLUGIN_NAMES.get(current_id, current_id)
         with self._connect() as connection:
-            connection.execute('DELETE FROM plugins WHERE id = ?', (plugin_id,))
+            connection.execute('DELETE FROM plugins WHERE id IN (?, ?)', (current_id, stored_id))
 
     def model_settings(self, model: str) -> dict[str, JsonValue]:
         """Saved overrides for one model; empty when none."""
