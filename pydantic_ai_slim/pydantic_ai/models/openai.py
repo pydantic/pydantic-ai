@@ -682,6 +682,15 @@ def _add_openai_prompt_cache_breakpoint(
     content[-1]['prompt_cache_breakpoint'] = cache_breakpoint
 
 
+def _cacheable_instruction_count(instruction_parts: Sequence[InstructionPart]) -> int:
+    """Number of leading static instruction parts, which the instruction breakpoint goes after.
+
+    Agent runs sort static parts first, but a direct `Model.request` caller may not, and a dynamic
+    part must never end up inside the cached prefix.
+    """
+    return next((i for i, part in enumerate(instruction_parts) if part.dynamic), len(instruction_parts))
+
+
 def _leading_system_message_count(messages: Sequence[Mapping[str, Any]], system_prompt_role: str) -> int:
     """Number of leading messages holding system prompts, which is where instructions belong."""
     return next((i for i, message in enumerate(messages) if message.get('role') != system_prompt_role), len(messages))
@@ -1796,7 +1805,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
             and not _has_dynamic_system_prompt(messages)
         ):
-            static_count = sum(1 for part in instruction_parts if not part.dynamic)
+            static_count = _cacheable_instruction_count(instruction_parts)
             breakpoint_index = system_prompt_count + static_count - 1
             if breakpoint_index >= 0:
                 target = cast(dict[str, Any], openai_messages[breakpoint_index])
@@ -2911,7 +2920,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             ),
             len(openai_messages),
         )
-        breakpoint_index = system_prompt_count + sum(1 for part in instruction_parts if not part.dynamic) - 1
+        breakpoint_index = system_prompt_count + _cacheable_instruction_count(instruction_parts) - 1
         # With nothing static to cache, the instructions stay in the top-level field.
         if breakpoint_index >= 0:
             if instruction_parts:

@@ -1118,6 +1118,54 @@ async def test_openai_responses_cache_instructions_not_relocated_after_compactio
     )
 
 
+@pytest.mark.parametrize('api', ['chat', 'responses'])
+async def test_openai_cache_instructions_unsorted_parts_keep_dynamic_out_of_prefix(
+    allow_model_requests: None, api: Literal['chat', 'responses']
+):
+    """The breakpoint goes after the leading static parts, never on a dynamic part or past one.
+
+    Calls `model.request` directly because agent runs always sort static parts first.
+    """
+    instruction_parts = [
+        InstructionPart(content='Support policies.'),
+        InstructionPart(content='Today is 2026-08-18.', dynamic=True),
+        InstructionPart(content='Refund rules.'),
+    ]
+    messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Where is order 1234?')]
+    if api == 'chat':
+        chat_client = MockOpenAI.create_mock(chat_completion())
+        chat_model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=chat_client))
+        await chat_model.request(
+            messages,
+            OpenAIChatModelSettings(openai_cache_instructions=True),
+            ModelRequestParameters(instruction_parts=instruction_parts),
+        )
+        sent = get_mock_chat_completion_kwargs(chat_client)[0]['messages']
+        breakpoint_type = 'text'
+    else:
+        responses_client = MockOpenAIResponses.create_mock(responses_completion())
+        responses_model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=responses_client))
+        await responses_model.request(
+            messages,
+            OpenAIResponsesModelSettings(openai_cache_instructions=True),
+            ModelRequestParameters(instruction_parts=instruction_parts),
+        )
+        sent = get_mock_responses_kwargs(responses_client)[0]['input']
+        breakpoint_type = 'input_text'
+
+    assert sent == [
+        {
+            'role': 'system',
+            'content': [
+                {'type': breakpoint_type, 'text': 'Support policies.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
+            ],
+        },
+        {'role': 'system', 'content': 'Today is 2026-08-18.'},
+        {'role': 'system', 'content': 'Refund rules.'},
+        {'role': 'user', 'content': 'Where is order 1234?'},
+    ]
+
+
 @pytest.mark.parametrize('has_instructions', [True, False])
 async def test_openai_responses_cache_instructions_with_leading_tool_reveal(
     allow_model_requests: None, has_instructions: bool
