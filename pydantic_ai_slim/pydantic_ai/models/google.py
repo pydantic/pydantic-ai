@@ -630,6 +630,18 @@ class GoogleModel(Model[Client]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        # Check before base validation so a text model points at an image model, not the generic error.
+        if (
+            not self.profile.get('supports_image_output', False)
+            and any(
+                isinstance(t, ImageGenerationTool) and not t.optional for t in model_request_parameters.native_tools
+            )
+            and not any(t.unless_native == 'image_generation' for t in model_request_parameters.function_tools)
+        ):
+            raise UserError(
+                f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
+                "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
+            )
         # Count only native tools this model supports. `Model.prepare_request` swaps an unsupported
         # one for its local fallback, drops it when optional, or rejects it, so it never reaches the
         # wire beside output tools. A supported one is sent even when optional.
