@@ -112,6 +112,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
                 name='compact',
                 description='Compact the conversation so far; add words to say what the summary must keep',
                 handler=self._compact,
+                raw=True,
             ),
         )
 
