@@ -70,9 +70,7 @@ async def choose_key(
         if replace and not await run_worker(lambda: confirm_replace(name, runners)):
             return None
         try:
-            await finish_write(
-                to_thread.run_sync(partial(save_key, name=name, value=value, replace=replace), abandon_on_cancel=True)
-            )
+            await finish_write(asyncio.to_thread(partial(save_key, name=name, value=value, replace=replace)))
         except KeyExistsError:  # Another session saved `name` since `keys` was read: ask before replacing it.
             replace = True
         else:
