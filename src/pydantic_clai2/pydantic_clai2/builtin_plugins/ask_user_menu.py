@@ -1,4 +1,7 @@
-"""The built-in `ask_user` plugin: inline questions that keep the transcript visible."""
+"""Let the model ask you multiple-choice questions inline, without leaving the transcript.
+
+The built-in `ask_user` plugin: inline questions that keep the transcript visible.
+"""
 
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext

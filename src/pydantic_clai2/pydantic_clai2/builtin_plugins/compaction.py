@@ -1,4 +1,6 @@
-"""The built-in `compaction` plugin: Code Puppy's compaction chain from harness, `/compact`, and a context gauge.
+"""Keep long conversations inside the context window by summarizing older messages; adds /compact.
+
+The built-in `compaction` plugin: Code Puppy's compaction chain from harness, `/compact`, and a context gauge.
 
 The chain is `FallbackCompaction` over `SummarizingCompaction` then `SlidingWindowCompaction`, so a
 failed or over-budget summary degrades to truncation. `compact_now` drives the chain for `/compact`.
@@ -85,6 +87,7 @@ class _ContextGauge(AbstractCapability[None]):
     @on_event(ContextUsageEvent)
     async def _gauge(self, ctx: RunContext[None], event: ContextUsageEvent) -> None:
         self.status.context_tokens = event.used_tokens
+        self.status.context_window = event.window_tokens if event.resolved else None
         self.status.context_alert = event.fraction > self.threshold
 
 
@@ -112,10 +115,12 @@ class CompactionPlugin(Plugin[CompactionSettings]):
                 name='compact',
                 description='Compact the conversation so far; add words to say what the summary must keep',
                 handler=self._compact,
+                raw=True,
             ),
         )
 
     async def on_session_end(self, event: SessionEnd) -> None:
+        self.host.status.context_window = None
         self.host.status.context_alert = False
 
     async def _compact(self, args: list[str]) -> str:
