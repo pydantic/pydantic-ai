@@ -49,6 +49,10 @@ engine:
   env:
     ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+    GITHUB_WORKFLOW: ${{ github.workflow }}
+    PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
+    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
+    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
     # The custom shim is stateless, so an outer retry repeats the whole task.
     GH_AW_HARNESS_MAX_RETRIES: "0"
 tools:
@@ -61,7 +65,9 @@ safe-outputs:
   # for search-ability.
   footer: false
   activation-comments: false
+  report-failure-as-issue: false
   noop:
+    report-as-issue: false
   create-issue:
     max: 1
     title-prefix: "[stale-finder] "
@@ -97,12 +103,14 @@ models:
   default-ai-credits-pricing:
     input: 0.6
     output: 2.4
+if: ${{ needs.provider_health.outputs.ready == 'true' }}
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
   - shared/tool-hints.md
   - shared/repo-context.md
   - shared/rigor.md
+  - shared/provider-health.md
 pre-steps:
   # Setting engine.command makes gh-aw skip ALL engine installation steps,
   # which also drops the bundled AWF firewall binary install. Re-run gh-aw's
@@ -168,5 +176,7 @@ jobs:
           logfire-read-key: ${{ secrets.LOGFIRE_PROMPT_TOKEN }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-eu.pydantic.dev' }}
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}

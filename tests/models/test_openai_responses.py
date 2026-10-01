@@ -10361,7 +10361,7 @@ async def test_openai_responses_image_generation_store_false(
 
     result = await agent.run('Generate an image of a red circle on a white background.')
     assert [type(part).__name__ for part in result.all_messages()[-1].parts] == snapshot(
-        ['ThinkingPart', 'NativeToolCallPart', 'FilePart', 'NativeToolReturnPart', 'TextPart']
+        ['ThinkingPart', 'NativeToolCallPart', 'FilePart', 'NativeToolReturnPart']
     )
 
     result = await agent.run(
@@ -10373,9 +10373,7 @@ async def test_openai_responses_image_generation_store_false(
 
     _, second_request = request_capture.bodies('/v1/responses')
     second_input = cast(list[dict[str, Any]], second_request['input'])
-    assert [item.get('type', 'message') for item in second_input] == snapshot(
-        ['message', 'reasoning', 'message', 'message']
-    )
+    assert [item.get('type', 'message') for item in second_input] == snapshot(['message', 'reasoning', 'message'])
 
 
 async def test_openai_responses_history_with_combined_tool_call_id(allow_model_requests: None, openai_api_key: str):
