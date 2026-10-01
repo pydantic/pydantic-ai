@@ -82,7 +82,11 @@ Only the direct generator can apply `dimensions`, and only it can apply the aspe
 share, so pass `native=False` when you need either to be guaranteed: with the default `native=True` a model that
 generates images natively takes the native path, which has no equivalent for them, and the request warns that the
 settings went unapplied. Under a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], each of its models takes
-the path its own profile selects, and each of them that would drop a setting gets a warning naming it. Under a
+the path its own profile selects, and each one whose path drops a setting, such as `quality` on the direct generator or
+`dimensions` on the native tool, gets a warning naming it, also in a workflow run with
+[`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. A provider's native tool ignores a
+setting it has no field for without a warning; see the provider support tables under
+[Image Generation Tool](../native-tools.md#image-generation-tool). Under a
 [`TemporalAgent`][pydantic_ai.durable_exec.temporal.TemporalAgent] whose current model is a `FallbackModel`, or
 under a model of your own that routes requests without a profile of its own, no warning is given, since nothing
 public says which model a request reaches.
