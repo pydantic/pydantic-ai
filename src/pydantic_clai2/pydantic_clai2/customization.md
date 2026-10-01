@@ -502,6 +502,12 @@ not enable fast mode. The stored values remain `service_tier=priority` and
 `service_tier=default`, so older CLAI versions can read them. A custom
 `service_tier` body parameter still takes precedence.
 
+While using an `openai-codex:` model, `/fast` toggles priority processing;
+`/fast on` and `/fast off` select explicitly. The service tier is saved for that
+model's next prompts and sessions. Reasoning effort is unchanged. Other models
+neither expose nor accept `/fast`. Remove a custom `service_tier` parameter with
+`/model_settings` before using `/fast`.
+
 To extend the built-in picker in a CLAI source change, add a source returning
 CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
 catalog row does not implement provider support. Editable per-model settings

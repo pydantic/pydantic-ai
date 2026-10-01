@@ -1537,6 +1537,10 @@ list when there is none); `/fork` does this so prompts keep their apostrophes.
 It may be `async`. Add `complete=` to offer Tab suggestions. The registry filters
 command names and returned candidates by case-sensitive substring, replacing the
 whole typed fragment when selected. Return full candidates, not just suffixes.
+Set `available=` to a zero-argument callable returning a boolean to gate dispatch,
+help, and completion on live session state. It defaults to always available.
+Unavailable commands retain their registered names and ownership, so they still
+participate in duplicate checks and are removed on plugin unload.
 Names must be unique;
 clashing with a built-in is an error at startup, not a silent override.
 
@@ -2099,6 +2103,14 @@ not lower reasoning effort. Reset restores the existing model default; it does
 not enable fast mode. The stored values remain `service_tier=priority` and
 `service_tier=default`, so older CLAI versions can read them. A custom
 `service_tier` body parameter still takes precedence.
+
+While the active model starts with `openai-codex:`, `/fast` toggles between
+priority and standard processing. `/fast on` and `/fast off` select explicitly.
+It saves the active model's service tier for subsequent prompts and sessions,
+without changing reasoning effort or other preferences. It is absent from help
+and Tab completion on other models, and typing it there reports an unknown command.
+If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
+with `/model_settings` rather than saving an ineffective change.
 
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
