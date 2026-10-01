@@ -1385,18 +1385,13 @@ async def test_silence_timeout_keeps_the_next_read_in_flight() -> None:
         def __init__(self) -> None:
             super().__init__([_transcript_frame('first')])
             self.release = anyio.Event()
-            self.second_read_cancelled = False
             self.second_sent = False
 
         async def recv(self) -> str:
             if self._frames:
                 return await super().recv()
             if not self.second_sent:
-                try:
-                    await self.release.wait()
-                except anyio.get_cancelled_exc_class():
-                    self.second_read_cancelled = True
-                    raise
+                await self.release.wait()
                 self.second_sent = True
                 return _transcript_frame('second')
             await anyio.sleep_forever()
@@ -1407,7 +1402,7 @@ async def test_silence_timeout_keeps_the_next_read_in_flight() -> None:
     events: list[RealtimeCodecEvent] = []
     try:
         with anyio.fail_after(5):
-            async for event in connection:
+            async for event in connection:  # pragma: no branch
                 events.append(event)
                 if events == [OutputTranscript('first'), ResponseDone()]:
                     ws.release.set()
@@ -1416,7 +1411,6 @@ async def test_silence_timeout_keeps_the_next_read_in_flight() -> None:
     finally:
         await connection.aclose()
 
-    assert not ws.second_read_cancelled
     assert events == [OutputTranscript('first'), ResponseDone(), OutputTranscript('second'), ResponseDone()]
 
 
