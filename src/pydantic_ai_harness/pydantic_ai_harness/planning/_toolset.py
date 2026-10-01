@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from typing import TYPE_CHECKING
 
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness.planning._events import (
@@ -370,8 +371,33 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
                 description=descriptions.get('get_available_tasks', GET_AVAILABLE_TASKS_DESCRIPTION),
             )
 
-    def _resolve(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
-        return self._capability.resolve_store(ctx)
+    async def _resolve(self, ctx: RunContext[AgentDepsT]) -> PlanStore:
+        """Resolve the store through the run's copy of the capability, which shares this toolset.
+
+        The copy holds the store `for_run` resolved once for the run. A durable worker's tree holds
+        the construction-time capability instead, so the store is resolved for this call without
+        caching it there, where it would leak into later runs. A toolset used outside such a tree
+        keeps its capability's store.
+        """
+        from pydantic_ai_harness.planning._capability import Planning
+
+        run_capability: Planning[AgentDepsT] | None = None
+
+        def select(capability: AbstractCapability[AgentDepsT]) -> None:
+            nonlocal run_capability
+            # A wrapper such as `prefix_tools()` may be visited in place of the `Planning` it wraps.
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if isinstance(capability, Planning) and capability.get_toolset() is self:
+                run_capability = capability
+
+        if ctx.root_capability is not None:
+            ctx.root_capability.apply(select)
+        if run_capability is None:
+            return self._capability.resolve_store(ctx)
+        if run_capability is self._capability:
+            run_capability = await run_capability.for_run(ctx)
+        return run_capability.resolve_store(ctx)
 
     def _valid_status(self, status: TaskStatus) -> bool:
         return self._subtasks or status is not TaskStatus.blocked
@@ -428,7 +454,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             # commits one bulk `set_items` and stays event-silent (no per-step events).
             for item, new_status in list(dependency_block_transitions(new_items)):
                 item.status = new_status
-        store = self._resolve(ctx)
+        store = await self._resolve(ctx)
         before = await store.get_items()
         await store.set_items(new_items)
         await self._emit_changes(ctx, before, await store.get_items())
@@ -438,7 +464,8 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
 
     async def read_plan(self, ctx: RunContext[AgentDepsT]) -> str:
         """Read the current plan."""
-        items = await self._resolve(ctx).get_items()
+        store = await self._resolve(ctx)
+        items = await store.get_items()
         if not items:
             return 'No plan yet. Use write_plan to create one.'
         return f'{render_flat(items, subtasks=False)}\n\n{render_summary(items)}'
@@ -450,7 +477,8 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             ctx: Framework-provided run context.
             hierarchical: Render subtasks as an indented tree instead of a flat list.
         """
-        items = await self._resolve(ctx).get_items()
+        store = await self._resolve(ctx)
+        items = await store.get_items()
         if not items:
             return 'No plan yet. Use write_plan to create one.'
         body = render_tree(items) if hierarchical else render_flat(items, subtasks=True)
@@ -464,7 +492,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             content: The step description in imperative form.
             active_form: Optional present-continuous label, e.g. "Fix bug" -> "Fixing bug".
         """
-        store = self._resolve(ctx)
+        store = await self._resolve(ctx)
         before = await store.get_items()
         item = await store.add_item(PlanItem(content=content, active_form=active_form))
         await self._emit_changes(ctx, before, await store.get_items())
@@ -514,7 +542,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             task_id: Id of the step to update.
             status: New status.
         """
-        store = self._resolve(ctx)
+        store = await self._resolve(ctx)
         if not self._valid_status(status):
             return "Invalid status 'blocked': subtasks are not enabled on this capability."
         items = await store.get_items()
@@ -541,7 +569,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             ctx: Framework-provided run context.
             updates: The `{task_id, status}` entries to apply.
         """
-        store = self._resolve(ctx)
+        store = await self._resolve(ctx)
         if not updates:
             return 'No updates provided.'
         # Validate against a projection so earlier entries are visible to later ones
@@ -585,7 +613,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             ctx: Framework-provided run context.
             task_id: Id of the step to remove.
         """
-        store = self._resolve(ctx)
+        store = await self._resolve(ctx)
         before = await store.get_items()
         item = await store.get_item(task_id)
         if item is None:
@@ -640,7 +668,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             content: The subtask description in imperative form.
             active_form: Optional present-continuous label.
         """
-        store = self._resolve(ctx)
+        store = await self._resolve(ctx)
         before = await store.get_items()
         parent = await store.get_item(parent_id)
         if parent is None:
@@ -657,7 +685,7 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
             task_id: The step that depends on another (it may become blocked).
             depends_on_id: The prerequisite that must complete first.
         """
-        store = self._resolve(ctx)
+        store = await self._resolve(ctx)
         items = await store.get_items()
         item = find_item(items, task_id)
         if item is None:
@@ -692,7 +720,8 @@ class PlanningToolset(FunctionToolset[AgentDepsT]):
 
     async def get_available_tasks(self, ctx: RunContext[AgentDepsT]) -> str:
         """List steps that can be worked on now (no incomplete dependencies)."""
-        items = await self._resolve(ctx).get_items()
+        store = await self._resolve(ctx)
+        items = await store.get_items()
         available = [
             item
             for item in items

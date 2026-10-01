@@ -76,10 +76,10 @@ async def test_provider_error_message(
 
     if chain in ('direct', 'cause', 'context'):
         assert 'Could not refresh your Codex login.' in output
-        assert '/login openai-codex' in output
+        assert '/login codex' in output
         assert 'Connection error.' not in output
     else:
-        assert '/login openai-codex' not in output
+        assert '/login codex' not in output
         assert ('Credential storage is locked' if chain == 'persistence' else 'Connection error.') in output
     assert 'private-token-response' not in output
     saved = await SqliteConversationStore(database=tmp_path / 'sessions.db').listing()

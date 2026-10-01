@@ -14,11 +14,12 @@ Harness `Pylon(auth='oauth')` would keep them in memory and give the browser the
 so CLAI builds that client itself.
 """
 
-import asyncio
 import json
 from collections.abc import Callable, Sequence
+from functools import partial
 from typing import Literal
 
+import anyio
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from prompt_toolkit import PromptSession
@@ -249,7 +250,7 @@ def activate(host: PluginHost[DepsT]) -> None:
         if args == ['key']:
             return await choose_key()
         if args == ['status']:
-            return await asyncio.to_thread(_status, config)
+            return await anyio.to_thread.run_sync(_status, config, abandon_on_cancel=True)
         raise ValueError(_HELP)
 
     host.commands.register(
@@ -287,7 +288,7 @@ async def choose_key() -> str:
     if isinstance(token, str):
         if not token.strip():
             raise ValueError('A Pylon access token is required.')
-        if KEY_NAME in await asyncio.to_thread(load_keys):
+        if KEY_NAME in await anyio.to_thread.run_sync(load_keys, abandon_on_cancel=True):
             try:
                 answer = await prompt.prompt_async(
                     f'Replace {KEY_NAME} in /keys for every connection using it? [y/N]: '
@@ -296,10 +297,12 @@ async def choose_key() -> str:
                 return 'Pylon key unchanged.'
             if answer.strip().lower() != 'y':
                 return 'Pylon key unchanged.'
-        await asyncio.to_thread(save_key, name=KEY_NAME, value=token)
+        await anyio.to_thread.run_sync(partial(save_key, name=KEY_NAME, value=token), abandon_on_cancel=True)
         token = KeyReference(name=KEY_NAME)
     saved = json.dumps({'token': token.model_dump()})
-    await asyncio.to_thread(save_key_connection, account=ACCOUNT, token=token, value=saved)
+    await anyio.to_thread.run_sync(
+        partial(save_key_connection, account=ACCOUNT, token=token, value=saved), abandon_on_cancel=True
+    )
     return f'Pylon connects with {token.name} from /keys.'
 
 

@@ -20,6 +20,9 @@ contract; this guide is shipped with the package for use without a checkout.
 - Use a custom model/provider: register your own `PREFIX:` with
   host.model_provider(prefix, resolve, models=...), where resolve returns a
   Pydantic AI Model, or supply a Pydantic AI Agent to chat from a Python launcher.
+  If its models need a sign-in, host.login(name, handler, models=...) adds
+  /login NAME and saves those models once it succeeds. settings_from='anthropic'
+  on model_provider gives its models Anthropic's /model_settings controls.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -138,19 +141,26 @@ edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
 
-The built-in logfire plugin (pydantic_clai2.builtin_plugins.logfire) is enabled by default in the
+The built-in observability plugin (pydantic_clai2.builtin_plugins.logfire) is enabled by default in the
 stock CLI. It contributes core's Instrumentation capability using an isolated
 Logfire instance. It exports to Logfire only when credentials are present, with
 no interactive setup or console logging. Text and binary images are included by
 default, so review the telemetry destination before setting LOGFIRE_TOKEN. Use
-/plugins disable logfire to remove it, or replace its settings with:
+/plugins disable observability to remove it, or replace its settings with:
 
 ```text
-/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
-Other options are service_name (default pydantic-clai2) and send_to_logfire
-(default "if-token-present", or false). This explicit option overrides
+Other options are service_name (default pydantic-clai2), send_to_logfire
+(default "if-token-present", or false), token (the name of a /keys entry
+holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
+then receives the telemetry), and ui_events (default false: also record UI
+interactions such as menus, commands, settings, plugin actions, keys, and prompt
+submissions, by name and never by content). /plugins configure observability sets
+token and base_url for you, and turns sending on: pick Logfire US, EU, or
+a self-hosted URL, sign in in the browser, and pick a project; its new write
+token is saved in /keys. This explicit option overrides
 LOGFIRE_SEND_TO_LOGFIRE. Use LOGFIRE_TOKEN or the SDK credential file in
 $XDG_CONFIG_HOME/pydantic-clai2/logfire (default ~/.config/pydantic-clai2/logfire).
 Both SDK configuration and credentials are read from that user directory, not
@@ -508,12 +518,19 @@ not enable fast mode. The stored values remain `service_tier=priority` and
 `service_tier=default`, so older CLAI versions can read them. A custom
 `service_tier` body parameter still takes precedence.
 
+While using an `openai-codex:` model, `/fast` toggles priority processing;
+`/fast on` and `/fast off` select explicitly. The service tier is saved for that
+model's next prompts and sessions. Reasoning effort is unchanged. Other models
+neither expose nor accept `/fast`. Remove a custom `service_tier` parameter with
+`/model_settings` before using `/fast`.
+
 To extend the built-in picker in a CLAI source change, add a source returning
 CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
 catalog row does not implement provider support. Editable per-model settings
 are declared in ModelSettingsForm in model_settings.py; extend that form, not a
 second editor. Credentials belong in provider-supported storage, not model
-settings. /login currently covers Codex, not arbitrary provider authentication.
+settings. /login signs in to subscriptions: /login codex (the default),
+/login copilot, and any sign-in a plugin adds with host.login.
 
 ## Test and verify
 

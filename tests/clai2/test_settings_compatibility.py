@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from pydantic_clai2.commands import config_command
+from pydantic_clai2.commands import config_command, plugins_command
 from pydantic_clai2.config import PluginSettings, Settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.model_settings import model_settings_from_json
@@ -224,3 +224,93 @@ def test_saved_spinner_from_a_removed_plugin_is_kept(tmp_path: Path) -> None:
     assert store.load().spinner == 'wave'
     config_command(store, ['set', 'display.thinking', 'false'])
     assert SettingsStore(path).overrides() == {'display.spinner': 'wave', 'display.thinking': False}
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+@pytest.mark.parametrize('factory', ['pydantic_clai2.logfire', 'pydantic_clai2.builtin_plugins.logfire'])
+def test_logfire_preferences_follow_the_observability_name(tmp_path: Path, enabled: bool, factory: str) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    legacy = (
+        f'{{"id":"logfire","factory":"{factory}","enabled":{str(enabled).lower()},'
+        '"settings":{"token":{"name":"TEAM_LOGFIRE"},"base_url":"https://logfire-eu.pydantic.dev",'
+        '"include_content":false,"ui_events":true}}'
+    )
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', ('logfire', legacy))
+
+    expected = PluginSettings.model_validate_json(legacy).model_copy(update={'id': 'observability'})
+    assert store.plugins() == [expected]
+    assert SettingsStore(store.path).plugins() == [expected]
+    with closing(sqlite3.connect(store.path)) as connection:
+        assert connection.execute('SELECT id, declaration FROM plugins').fetchall() == [('logfire', legacy)]
+
+    updated = expected.model_copy(
+        update={'enabled': not enabled, 'settings': {**expected.settings, 'ui_events': False}}
+    )
+    store.save_plugin(updated)
+    assert SettingsStore(store.path).plugins() == [updated]
+    # Older builds still see the same plugin and its latest settings, not a second tracing plugin.
+    with closing(sqlite3.connect(store.path)) as connection:
+        rows = connection.execute('SELECT id, declaration FROM plugins').fetchall()
+    assert len(rows) == 1 and rows[0][0] == 'logfire'
+    assert PluginSettings.model_validate_json(rows[0][1]) == updated.model_copy(update={'id': 'logfire'})
+
+    store.delete_plugin('observability')
+    assert SettingsStore(store.path).plugins() == []
+
+
+def test_new_observability_preferences_remain_readable_by_older_builds(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    plugin = PluginSettings(id='observability', factory='my_custom_tracing', enabled=False)
+    store.save_plugin(plugin)
+    store.save_plugin(PluginSettings(id='mcp', factory='pydantic_clai2.mcp'))
+    assert [saved.id for saved in store.plugins()] == ['mcp', 'observability']
+    with closing(sqlite3.connect(store.path)) as connection:
+        stored = connection.execute('SELECT declaration FROM plugins WHERE id = ?', ('logfire',)).fetchone()
+    assert stored is not None
+    assert PluginSettings.model_validate_json(stored[0]) == plugin.model_copy(update={'id': 'logfire'})
+    store.delete_plugin('observability')
+    assert [saved.id for saved in store.plugins()] == ['mcp']
+
+
+@pytest.mark.parametrize('with_legacy', [False, True])
+@pytest.mark.parametrize('action', ['disable', 'remove'])
+def test_existing_observability_rows_are_coalesced(tmp_path: Path, with_legacy: bool, action: str) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    current = PluginSettings(id='observability', factory='custom_tracing', settings={'include_content': False})
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', (current.id, current.model_dump_json()))
+        if with_legacy:
+            legacy = PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire', enabled=False)
+            connection.execute('INSERT INTO plugins VALUES (?, ?)', (legacy.id, legacy.model_dump_json()))
+    assert store.plugins() == [current]
+    plugins_command(store, [action, 'observability'])
+    assert store.plugins() == ([current.model_copy(update={'enabled': False})] if action == 'disable' else [])
+    with closing(sqlite3.connect(store.path)) as connection:
+        assert connection.execute('SELECT id FROM plugins').fetchall() == (
+            [('logfire',)] if action == 'disable' else []
+        )
+
+
+def test_plugin_alias_coalescing_rolls_back_on_failure(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    plugin = PluginSettings(id='observability', factory='custom_tracing')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', (plugin.id, plugin.model_dump_json()))
+        connection.execute("CREATE TRIGGER refuse_insert BEFORE INSERT ON plugins BEGIN SELECT RAISE(FAIL, 'no'); END")
+        original = list(connection.iterdump())
+    with pytest.raises(sqlite3.IntegrityError):
+        store.save_plugin(plugin.model_copy(update={'enabled': False}))
+    with closing(sqlite3.connect(store.path)) as connection:
+        assert list(connection.iterdump()) == original
+
+
+def test_legacy_logfire_commands_edit_the_renamed_plugin(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    plugins_command(store, ['add', 'logfire', 'pydantic_clai2.builtin_plugins.logfire'])
+    plugins_command(store, ['disable', 'logfire'])
+    assert store.plugins()[0].id == 'observability' and not store.plugins()[0].enabled
+    plugins_command(store, ['enable', 'logfire'])
+    assert store.plugins()[0].enabled
+    plugins_command(store, ['remove', 'logfire'])
+    assert store.plugins() == []

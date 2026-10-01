@@ -30,7 +30,7 @@ dependencies = [
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai-harness/issues/966.
     "pydantic-ai-slim[anthropic,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     "genai-prices>=0.1.7",
-    "termflow-md>=0.9.3,<0.10",
+    "termflow-md>=0.11.0,<0.12",
     "pyfiglet>=1.0.4",
     "prompt-toolkit>=3.0.52",
     "rich>=14",

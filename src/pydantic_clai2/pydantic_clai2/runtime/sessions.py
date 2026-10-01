@@ -12,11 +12,11 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     conversation_text,
 )
-from pydantic_ai_harness.step_persistence.naming import NamingResult, SessionNamer, generate_name
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from pydantic_clai2.ui.rendering.usage_report import usage_command
@@ -102,16 +102,19 @@ class Sessions(Generic[DepsT, OutputT]):
             ):
                 raise ValueError('Session changed. Refresh and rename again.')
 
-        browser = SessionBrowser(
-            entries=entries,
-            workspace=self.session.workspace,
-            active_id=self.session.summary.id,
-            refresh=lambda query, limit: apply(self.store.listing(query=query, limit=limit)),
-            preview=lambda session_id: apply(preview(session_id)),
-            delete=lambda source: apply(self.store.delete(source=source)),
-            rename=lambda source, title: apply(rename(source, title)),
-        )
-        selected = await run_worker(browser.run)
+        def browse() -> str:
+            # Resolve Git identities on the menu worker, not the application loop.
+            return SessionBrowser(
+                entries=entries,
+                workspace=self.session.workspace,
+                active_id=self.session.summary.id,
+                refresh=lambda query, limit: apply(self.store.listing(query=query, limit=limit)),
+                preview=lambda session_id: apply(preview(session_id)),
+                delete=lambda source: apply(self.store.delete(source=source)),
+                rename=lambda source, title: apply(rename(source, title)),
+            ).run()
+
+        selected = await run_worker(browse)
         if not selected:
             return ''
         return await self.session.resume(selected, allow_other_workspace=True)

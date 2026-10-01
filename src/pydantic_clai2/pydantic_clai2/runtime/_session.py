@@ -37,6 +37,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -191,7 +192,9 @@ class Session(Generic[DepsT, OutputT]):
 
     def clear(self) -> None:
         """Start a new conversation without replacing the agent or plugins."""
+        cleared = len(self._messages)
         self.replace_messages(())
+        telemetry.record('conversation cleared', messages=cleared)
         self.summary = ConversationSummary(workspace=self.workspace)
 
     def replace_messages(self, messages: Sequence[ModelMessage]) -> None:
@@ -238,6 +241,12 @@ class Session(Generic[DepsT, OutputT]):
             if saved.summary.outcome in ('running', 'failed', 'cancelled'):
                 self._mark_interrupted()
             self.summary = saved.summary
+            telemetry.record(
+                'conversation resumed',
+                outcome=saved.summary.outcome,
+                messages=len(messages),
+                other_workspace=saved.summary.workspace != self.workspace,
+            )
             # Keep the caller's current model and approval configuration. Saved models are informational.
             return f'Resumed {saved.summary.title} ({saved.summary.id}).{warning}'
         finally:
