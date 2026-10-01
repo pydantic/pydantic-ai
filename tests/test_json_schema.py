@@ -309,6 +309,47 @@ def test_typeless_anyof_member_still_recursed():
     assert result == {'type': 'integer'}
 
 
+def test_list_form_items_are_walked():
+    """A draft-7 tuple, spelled as an `items` list rather than `prefixItems`, has each of its schemas walked.
+
+    `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 tool schemas, emits this shape.
+    The walk runs before any request is built, so the transformer output is asserted directly.
+    """
+    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
+
+    schema = {
+        '$defs': {'Point': {'title': 'Point', 'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
+        'type': 'object',
+        'properties': {
+            'pair': {'type': 'array', 'items': [{'type': 'string', 'title': 'A'}, {'$ref': '#/$defs/Point'}]}
+        },
+    }
+
+    # OpenAI keeps `$defs` and strips `title` from each element.
+    assert OpenAIJsonSchemaTransformer(deepcopy(schema), strict=False).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {'pair': {'type': 'array', 'items': [{'type': 'string'}, {'$ref': '#/$defs/Point'}]}},
+            '$defs': {'Point': {'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
+        }
+    )
+    # Inlining resolves the `$ref` inside the list.
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'pair': {
+                    'type': 'array',
+                    'items': [
+                        {'type': 'string', 'title': 'A'},
+                        {'title': 'Point', 'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+                    ],
+                }
+            },
+        }
+    )
+
+
 def test_inline_defs_preserves_ref_sibling_keywords():
     """Test internal schema walking, which has no provider request to cover with VCR."""
     schema = {
