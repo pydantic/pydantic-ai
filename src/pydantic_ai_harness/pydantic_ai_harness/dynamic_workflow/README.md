@@ -294,12 +294,56 @@ happens when the script also prints for debugging, here they are:
 > `print()` is for debug logging. It stringifies, so it is the wrong tool for returning structured
 > data. Let the last expression carry the real result.
 
+## Helpers every script gets
+
+Besides the sub-agent functions, every script can use a few helpers. None are required: a script
+that only awaits sub-agents and uses `asyncio.gather` works as before.
+
+- `await agent(task, *, name=None, schema=None, model=None, phase=None)` runs one sub-agent. `name`
+  picks it; without it, `default_agent` runs, or the only sub-agent. `schema` is a JSON schema
+  (`{"type": "object", ...}`) the output must follow for this call, so the result is a `dict`.
+  `model` names the model to run it with. `phase` also calls `phase(phase)` first.
+- `await parallel(tasks)` runs awaitables, or zero-argument functions, concurrently and returns
+  their results in order. A failed item becomes `None`, so one failure does not sink the batch.
+- `await pipeline(items, *stages)` runs every item through each stage in turn, without waiting for
+  the other items between stages. A stage is called as `stage(prev, item, index)`; one that raises
+  or returns `None` ends that item with `None`. Both raise `ValueError` up front when given more
+  than `max_items_per_call` items.
+- `log(message)` and `phase(title)` report progress, as a `WorkflowLogEvent` or
+  `WorkflowPhaseEvent` in the agent's event stream.
+- `budget()` returns `{"max": ..., "used": ..., "remaining": ...}` sub-agent calls for this run.
+- `args` holds the arguments the script was run with. See [Saved workflows](#saved-workflows).
+
+```python
+FINDINGS = {'type': 'object', 'properties': {'bugs': {'type': 'array', 'items': {'type': 'string'}}}}
+
+def review(prev, path, index):
+    return agent(f'Review {path} for bugs.', name='reviewer', schema=FINDINGS, phase='Find')
+
+def verify(findings, path, index):
+    if not findings['bugs']:
+        return None
+    return agent(f'Check these bugs in {path} are real: {findings["bugs"]}', name='reviewer')
+
+verified = await pipeline(['auth.py', 'parser.py', 'db.py'], review, verify)
+await agent('Summarize: ' + '\n'.join(v for v in verified if v), name='summarizer')
+```
+
+Outside `parallel` and `pipeline`, a failed `await agent(...)` raises `RuntimeError` rather than
+returning `None`, so it cannot pass for a sub-agent with nothing to say. A sub-agent named like a
+helper, say `log`, keeps its name, and that helper is left out. Names starting with `_dw_` are
+reserved for the helpers' internals.
+
 ## Choosing sub-agent models
 
 By default, each sub-agent uses the model it was constructed with. Set `inherit_model=True` when the
 host passes a per-run model override to the parent agent, for example from a `/model` command, and
 every sub-agent dispatch should follow that resolved parent model. Leave it `False` when a sub-agent
 is deliberately pinned to a different model.
+
+A script can also pick the model for one call with `agent(task, model=...)`, which wins over both.
+Any model name the script writes is accepted, so on a script the model wrote, `max_agent_calls` and
+`max_concurrent_agents` are what bound the cost.
 
 ## Keeping it safe: budgets
 
@@ -324,6 +368,12 @@ has. That result includes bounded previews of up to the 20 most recent completed
 >
 > `max_agent_calls` is the only knob that bounds the number of runs exactly. Reach for it when you
 > need a guarantee. The token-based limits below are budgets, not guarantees.
+
+### `max_concurrent_agents` and `max_items_per_call`: bounding fan-out
+
+`max_concurrent_agents` (default 16) caps how many sub-agents run at once in one `run_workflow`
+call, nested saved workflows included; the rest wait their turn. `max_items_per_call` (default
+4096) caps the items one `parallel()` or `pipeline()` call accepts.
 
 ### `sub_agent_usage_limits` and `forward_usage`: bounding cost
 
@@ -373,15 +423,56 @@ There is no default duration cap. To see why, it helps to know what the timer ac
 > print cap remains. Pass a partial dict like `{'max_memory': ...}` and it merges onto the backstop,
 > so you override only the caps you name and the rest keep their defaults.
 
-### Workflows do not nest
+### Sub-agents do not start workflows
 
-A sub-agent cannot start its own workflow. If one tries, the nested `run_workflow` call returns a
-terminal error instead of running.
+A sub-agent cannot start its own workflow. If one tries, its `run_workflow` call returns a terminal
+error instead of running. A script composes other scripts through
+[saved workflows](#saved-workflows) instead.
 
 > **Tip**
 >
 > Here is the practical rule: do not give the sub-agents in your catalog the `DynamicWorkflow`
 > capability. They are the leaves of the orchestration, not orchestrators themselves.
+
+## Saved workflows
+
+A script worth keeping can be saved and run again by name, in this run or a later one. A saved
+workflow is a `<name>.py` file in the `workflows` directory of the run's workspace, starting with a
+`meta` dict:
+
+```python
+"""Review each file in args['files'], then summarize."""
+
+meta = {
+    'name': 'triage-files',
+    'description': 'Review each file for bugs and summarize the findings.',
+    'when_to_use': 'When the user asks for a review of several files at once.',
+    'args': {'type': 'object', 'properties': {'files': {'type': 'array'}}, 'required': ['files']},
+    'agents': ['reviewer', 'summarizer'],
+    'returns': 'A summary of the bugs found.',
+}
+
+reviews = await parallel([agent(f'Review {path} for bugs.', name='reviewer') for path in args['files']])
+await agent('Summarize: ' + '\n'.join(r for r in reviews if r), name='summarizer')
+```
+
+`meta` needs a `name` equal to the file name and a `description`; the other keys are optional and
+no others are allowed. Only the top-level `required` of the `args` schema is checked. A file naming
+a sub-agent that is not in the catalog is skipped, as is any file that fails to load, with a
+warning.
+
+Each run lists the files to the model in an `<available_workflows>` block of the instructions. The
+model can run one with `run_workflow(name=..., args=...)`, run one from inside a script with
+`await workflow(name, args)`, and save a script with the `save_workflow` tool. `save_workflow`
+creates the directory on first save, refuses to replace a workflow unless the model passes
+`overwrite`, and is offered only when the workspace is writable. `workflow()` runs the saved
+workflow in a sandbox session of its own, sharing the caller's budget and concurrency cap, and
+refuses cycles and nesting deeper than `max_workflow_depth` (default 3).
+
+`workflows=` takes a directory or several, relative to the workspace; the first is where saves go.
+A missing directory is an empty library, so having no workflow files is the opt-out, and
+`workflows=None` turns saved workflows off entirely. Reading a saved script is a file tool's job:
+pair this with `FileSystem` if the model should read or edit them, not only list and run them.
 
 ## Renaming a sub-agent: `WorkflowAgent`
 
@@ -496,9 +587,11 @@ A suspended Monty program is a small serializable value you can dump, reload, an
 at two patterns that do not ship yet. The first is forking one expensive shared prefix into N
 best-of-N branches. The second is durable workflows that resume from a persisted snapshot after a
 crash or a redeploy. Two smaller extensions are also planned: structured sub-agent inputs (a
-`parameters` schema per `WorkflowAgent`, instead of only `task: str`) and first-class progress
-streaming. Until then, set `event_stream_handler` on each sub-agent `Agent`, or use Logfire, to
-watch sub-agent runs inside the one tool call.
+`parameters` schema per `WorkflowAgent`, instead of only `task: str`) and resuming a failed
+workflow from its completed calls. Until then, handle the `WorkflowLogEvent` and
+`WorkflowPhaseEvent` that `log()` and `phase()` emit, set `event_stream_handler` on each sub-agent
+`Agent`, or use Logfire: saved workflow runs get a `dynamic_workflow.workflow` span, and running out
+of `max_agent_calls` records a `dynamic_workflow.budget_exhausted` span.
 
 ## API
 
@@ -513,6 +606,11 @@ DynamicWorkflow(                  # all parameters are keyword-only
     sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> pydantic-ai default
     resource_limits=None,         # None -> backstop (256 MB, no time cap);
                                   # 'unlimited' -> sandbox limits off; a dict merges onto the backstop
+    workflows='workflows',        # str | Path | Sequence[str | Path] | None; None -> saved workflows off
+    default_agent=None,           # the sub-agent agent(task) runs without name=
+    max_concurrent_agents=16,     # sub-agents running at once per run_workflow call
+    max_workflow_depth=3,         # saved workflows running inside one another
+    max_items_per_call=4096,      # items per parallel() or pipeline() call
     id=None,                      # required when defer_loading=True
     description=None,             # one-line catalog entry shown while deferred
     defer_loading=False,

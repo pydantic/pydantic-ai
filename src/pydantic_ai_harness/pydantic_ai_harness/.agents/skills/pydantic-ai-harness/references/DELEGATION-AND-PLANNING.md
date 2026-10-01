@@ -198,7 +198,23 @@ All parameters are keyword-only: `agents` (required), `tool_name='run_workflow'`
 `run_workflow` calls), `max_retries=3`, `forward_usage=True`, `inherit_model=False` (children keep their own
 models; `True` makes them follow the parent run's resolved model, e.g. after a per-run model override), `sub_agent_usage_limits=None` (applied to each child run),
 `resource_limits=None` (backstop 256 MB, no time cap; dict merges, `'unlimited'` disables),
+`workflows='workflows'` (saved-workflow directories in the run's workspace; `None` turns them off),
+`default_agent=None`, `max_concurrent_agents=16`, `max_workflow_depth=3`, `max_items_per_call=4096`,
 `id`/`description`/`defer_loading`.
+
+Scripts also get helpers: `await agent(task, name=, schema=, model=, phase=)` (`schema` is a JSON
+object schema for this call's output, `model` any model name), `await parallel(tasks)` (a failed item
+becomes `None`; more than `max_items_per_call` items raise), `await pipeline(items, *stages)` (each stage called as
+`stage(prev, item, index)`; raising or returning `None` ends that item), `log(msg)`/`phase(title)`
+(emit `WorkflowLogEvent`/`WorkflowPhaseEvent`), `budget()`, and the `args` global.
+
+Saved workflows are `<name>.py` files in `workflows/`, starting with a literal
+`meta = {'name': ..., 'description': ..., 'when_to_use': ..., 'args': <JSON schema>, 'agents': [...], 'returns': ...}`
+(`name` and `description` required, `name` equal to the file stem). They are listed in an
+`<available_workflows>` instructions block, run with `run_workflow(name=..., args=...)` or
+`await workflow(name, args)` inside a script (shared budget and cap, cycles and depth past
+`max_workflow_depth` refused), and saved with the `save_workflow` tool when the workspace is writable
+(`overwrite` to replace). Invalid files are skipped with a warning; a missing directory is empty.
 
 Gotchas:
 
@@ -207,7 +223,11 @@ Gotchas:
 - `task` is keyword-only in the script. A structured `output_type` arrives as a `dict`: `r['field']`.
 - The parent `run(usage_limits=...)` is not forwarded into children; use `sub_agent_usage_limits` or
   `max_agent_calls`. With shared usage and concurrent fan-out, token limits are best-effort.
-- Workflows do not nest: do not give catalog agents `DynamicWorkflow`.
+- Sub-agents cannot start workflows: do not give catalog agents `DynamicWorkflow`. Compose scripts
+  with saved workflows and `workflow()` instead.
+- A failed bare `await agent(...)` raises `RuntimeError`; only `parallel`/`pipeline` turn failures
+  into `None`. `max_concurrent_agents` and `max_agent_calls` are the only bounds on a script's
+  `model=` choices.
 - Sandbox: no third-party imports, no clock/randomness/filesystem/env. A child failure raises
   `RuntimeError` in the script; uncaught, the whole script retries.
 - Past `max_agent_calls` a call raises in the script, and whatever the script does next (even a

@@ -344,7 +344,7 @@ async def test_description_lists_agents_as_functions() -> None:
     desc = tools['run_workflow'].tool_def.description
     assert desc is not None
     assert desc == snapshot(
-        """\
+        '''\
 Write and run a Python orchestration script in a sandbox to coordinate multiple sub-agents.
 
 Use this to break a task across specialized sub-agents and combine their results in a single step --
@@ -365,18 +365,19 @@ Each sub-agent below is an async function. Await it and pass `task` by keyword:
 sub-agent returns that agent's output: a string by default, or -- if it has a structured
 `output_type` -- a dict, whose fields you read by subscript (`r["field"]`), not attribute
 (`r.field`). Each sub-agent call is an independent run with no memory of earlier calls; include all
-needed context in `task`. Run several at once with `asyncio.gather` rather than awaiting each
-sequentially:
+needed context in `task`. A failed sub-agent call surfaces as `RuntimeError`: catch it with
+`try`/`except RuntimeError`, or let it abort the whole script and retry.
 
-```python
-import asyncio
-reviews = await asyncio.gather(reviewer(task="check auth"), reviewer(task="check parsing"))
-```
+These helpers are already defined:
+- `await agent(task, *, name=None, schema=None, model=None, phase=None)`: run one sub-agent (`name` picks it). `schema` is a JSON schema (`{"type": "object", ...}`) the output must follow for this call, so the result is a dict. `model` names a model (such as `"openai:gpt-5"`) to run it with. `phase` also calls `phase(phase)` first.
+- `await parallel(tasks)`: run awaitables (such as `agent(...)` calls) or zero-argument functions concurrently and return their results in order. A failed item becomes `None`, so one failure does not sink the batch.
+- `await pipeline(items, *stages)`: run every item through each stage in turn, without waiting for the other items between stages. A stage is called as `stage(prev, item, index)`, where `prev` is the previous stage's result (the item itself for the first stage), and may be `async` or return an awaitable. A stage that raises or returns `None` ends that item with `None`.
+- `log(message)`: report progress to the user.
+- `phase(title)`: start a named phase of progress for the user.
+- `budget()`: `{"max": ..., "used": ..., "remaining": ...}` sub-agent calls for this run.
 
-`asyncio.gather` accepts positional awaitables but no keyword arguments, including
-`return_exceptions=True`. Other task creation and wait APIs are unavailable. A sub-agent failure
-surfaces as `RuntimeError`: catch it with `try`/`except RuntimeError`, or let it abort the whole
-script and retry.
+`asyncio.gather` also works, over positional awaitables and without keyword arguments such as
+`return_exceptions=True`. Other task creation and wait APIs are unavailable.
 
 The last expression's value is captured as the result -- you do **not** need to `print()` it, and
 printing produces a string representation, not structured data. Use `print()` only for debug logging.
@@ -386,24 +387,25 @@ non-`None` value returns `{"output": "<printed text>", "result": <last expressio
 bounded previews of up to the 20 most recent results are reported so a retry can reuse untruncated
 values.
 
-This run can make at most 7 sub-agent calls in total -- one budget shared across every `run_workflow` call in the run, not per script; plan fan-out width accordingly.
+This run can make at most 7 sub-agent calls in total -- one budget shared across every `run_workflow` call in the run, not per script; plan fan-out width accordingly. At most 16 sub-agents run at once, and `parallel` and `pipeline` take at most 4096 items per call.
 
 Available sub-agents:
 
 ```python
 class Review(TypedDict):
     score: int
-    \"\"\"Score from 0 to 10.\"\"\"
+    """Score from 0 to 10."""
     note: str
 
 async def reviewer(*, task: str) -> Review:
-    \"\"\"Reviews code for bugs.\"\"\"
+    """Reviews code for bugs."""
     ...
 
 async def summarizer(*, task: str) -> str:
-    \"\"\"Summarizes findings.\"\"\"
+    """Summarizes findings."""
     ...
-```"""
+```\
+'''
     )
     assert 'async def reviewer(*, task: str) -> Review:' in desc
     assert 'async def summarizer(*, task: str) -> str:' in desc
