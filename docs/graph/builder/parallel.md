@@ -116,9 +116,9 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 The `.map()` operation also works with `AsyncIterable` values. When mapping over an async iterable, the graph creates parallel tasks dynamically as values are yielded. This is particularly useful for streaming data or processing data that's being generated on-the-fly:
 
 ```python {title="async_iterable_map.py"}
-import asyncio
-import anyio
 from dataclasses import dataclass
+
+import anyio
 
 from pydantic_graph import GraphBuilder, StepContext, reduce_list_append
 

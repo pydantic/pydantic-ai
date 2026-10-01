@@ -293,9 +293,9 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 [`ReduceFirstValue`][pydantic_graph.join.ReduceFirstValue] returns the first value it receives and cancels all other parallel tasks. This is useful for "race" scenarios where you want the first successful result:
 
 ```python {title="first_value_reducer.py"}
-import asyncio
-import anyio
 from dataclasses import dataclass
+
+import anyio
 
 from pydantic_graph import GraphBuilder, ReduceFirstValue, StepContext
 

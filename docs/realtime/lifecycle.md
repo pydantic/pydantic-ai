@@ -155,6 +155,7 @@ For external policy such as an idle timeout or maximum call duration, run a watc
 
 ```python {test="skip - the watchdog sleeps for the whole call budget"}
 import asyncio
+
 import anyio
 
 from pydantic_ai import Agent

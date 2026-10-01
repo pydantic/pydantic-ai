@@ -343,9 +343,10 @@ Here's an example that shows how to move a task that takes a while to complete t
 
 ```python {title="external_tool.py"}
 import asyncio
-import anyio
 from dataclasses import dataclass
 from typing import Any
+
+import anyio
 
 from pydantic_ai import (
     Agent,
