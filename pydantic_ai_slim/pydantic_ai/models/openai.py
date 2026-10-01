@@ -2913,7 +2913,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         returns what's left of the top-level `instructions`.
         """
         # An `additional_tools` item also has the `'developer'` role, but it's not a system prompt. Kept
-        # apart from `_leading_system_message_count`, whose other callers predate this setting.
+        # apart from `_leading_system_message_count`: checking `type` there would also move where
+        # prompted-output instructions go for users who don't set `openai_cache_instructions`.
         system_prompt_count = next(
             (
                 i
