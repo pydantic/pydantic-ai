@@ -3,8 +3,10 @@
 import asyncio
 import webbrowser
 from collections.abc import Awaitable, Callable, Mapping
+from functools import partial
 from urllib.parse import parse_qs, urlparse
 
+import anyio
 from anyio import fail_after
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -77,7 +79,7 @@ class CodexCredentials(OpenAICodexCredentialSource):
 
     async def load(self) -> OpenAICodexCredentials:
         """Load credentials without falling back to another application's tokens."""
-        value = await asyncio.to_thread(load_codex_credentials)
+        value = await anyio.to_thread.run_sync(load_codex_credentials, abandon_on_cancel=True)
         if value is None:
             raise UserError('Codex is not connected. Run /login codex.')
         try:
@@ -88,7 +90,7 @@ class CodexCredentials(OpenAICodexCredentialSource):
     async def save(self, credentials: OpenAICodexCredentials) -> None:
         """Persist login or refresh results using the configured OS credential backend."""
         value = _CREDENTIALS.dump_json(credentials).decode()
-        await asyncio.to_thread(save_codex_credentials, value=value)
+        await anyio.to_thread.run_sync(partial(save_codex_credentials, value=value), abandon_on_cancel=True)
 
 
 class CodexAuth:
@@ -118,7 +120,7 @@ class CodexAuth:
 
         # Launching in a thread keeps the loop available for core's callback listener.
         async def open_browser() -> None:
-            await asyncio.to_thread(webbrowser.open, flow.authorization_url())
+            await anyio.to_thread.run_sync(webbrowser.open, flow.authorization_url(), abandon_on_cancel=True)
 
         browser = asyncio.create_task(open_browser())
         try:
