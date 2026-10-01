@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import warnings
+from typing import Literal, overload
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import from_json
@@ -17,6 +19,7 @@ class PartialArgs(TypedDict):
 
 
 _PARTIAL_ARGS_ADAPTER: TypeAdapter[PartialArgs] = TypeAdapter(PartialArgs)
+_ANALYSIS_FILENAME = '<pydantic-ai-code-mode-analysis>'
 
 MAX_SCAN_CHARS = 1 << 18
 """Largest streamed prefix (in characters) the host will decode or `ast.parse`.
@@ -49,6 +52,31 @@ def decode_partial_args(args_text: str) -> PartialArgs | None:
         return None
 
 
+@overload
+def parse_code(code: str, *, mode: Literal['exec'] = 'exec') -> ast.Module: ...
+
+
+@overload
+def parse_code(code: str, *, mode: Literal['eval']) -> ast.Expression: ...
+
+
+def parse_code(code: str, *, mode: Literal['exec', 'eval'] = 'exec') -> ast.Module | ast.Expression:
+    """Parse model code for host-side analysis, leaving execution diagnostics to the sandbox."""
+    # Each streamed delta can reparse the same literal. CPython's invalid-escape advisory
+    # would flood stderr (or become an error under strict warning filters), even though
+    # these escapes preserve their backslashes. This is analysis, not Python execution.
+    # Warning filters are process-global on older Python. The unique filename limits
+    # suppression to our analysis, not another thread compiling unrelated source.
+    with warnings.catch_warnings():
+        for category in (SyntaxWarning, DeprecationWarning):
+            warnings.filterwarnings(
+                'ignore', message=r'.*invalid escape sequence', category=category, module=rf'^{_ANALYSIS_FILENAME}$'
+            )
+        tree = ast.parse(code, filename=_ANALYSIS_FILENAME, mode=mode)
+    assert isinstance(tree, (ast.Module, ast.Expression))
+    return tree
+
+
 def closed_statements(code: str) -> list[ast.stmt]:
     """Return the top-level statements in `code` that can no longer change as the stream grows.
 
@@ -71,7 +99,7 @@ def closed_statements(code: str) -> list[ast.stmt]:
         # eagerness for snippets this large, not correctness.
         return []
     try:
-        tree = ast.parse(code[: end + 1])
+        tree = parse_code(code[: end + 1])
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         # `ValueError` covers source `ast.parse` rejects before parsing, such as a NUL
         # character that JSON happily encodes; `RecursionError`/`MemoryError` cover parser

@@ -14,7 +14,7 @@ Pydantic AI allows you to build durable agents that can preserve their progress 
 !!! note "Durability is not storage"
     A durable engine keeps one run alive across crashes and restarts. It does not store your chat threads: saving a conversation and picking it up later is a different problem with a much lighter answer, laid out in [Persistence](../persistence.md).
 
-Pydantic AI supports seven durable execution solutions, plus a [builder](./backends.md) for any other engine. Five are co-maintained by the Pydantic and vendor teams:
+Pydantic AI supports eight durable execution solutions, plus a [builder](./backends.md) for any other engine. Five are co-maintained by the Pydantic and vendor teams:
 
 - [Temporal](./temporal.md)
 - [DBOS](./dbos.md)
@@ -26,5 +26,7 @@ Additional external SDK integrations:
 
 - [Kitaru](./kitaru.md)
 - [Apache Airflow](./airflow.md)
+- [Absurd](https://pydantic.dev/docs/ai/harness/absurd/)
 
-An agent runs under one durable execution engine. Each engine wraps every model request and tool call as its own durable unit, so attaching a second one, to the agent or for a single run, raises a [`UserError`][pydantic_ai.exceptions.UserError] before either is bound.
+!!! warning "One durable execution engine per agent"
+    Each engine wraps every model request and tool call as its own durable unit, so attaching a second one, whether to the agent, for a single run, or through an agent spec, raises a [`UserError`][pydantic_ai.exceptions.UserError] before either is bound.

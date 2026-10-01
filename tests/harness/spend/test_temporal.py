@@ -38,7 +38,7 @@ from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 from pydantic_ai_harness.spend import Budget, SpendLimitExceeded, SpendLimits
-from tests.harness.conftest import ignore_source_reads_left_open
+from tests.harness._temporal import ignore_source_reads_left_open
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 

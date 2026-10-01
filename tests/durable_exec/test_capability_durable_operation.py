@@ -16,6 +16,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent, AgentStreamEvent, ModelMessage, ModelSettings
 from pydantic_ai.agent import AbstractAgent, AgentRunResult
 from pydantic_ai.capabilities import (
+    CAPABILITY_TYPES,
     AbstractCapability,
     Instrumentation,
     ProcessEventStream,
@@ -315,6 +316,35 @@ async def test_a_durable_engine_returned_by_a_capability_factory_is_refused() ->
     with pytest.raises(UserError, match=_SECOND_ENGINE):
         await agent.run('hi', capabilities=[lambda ctx: other])
     assert other.calls == [], 'the factory engine never took over dispatch'
+
+
+def test_two_durable_engines_in_an_override_spec_are_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`override(spec=...)` replaces the agent's capabilities with the spec's, and binds them itself."""
+    bound: list[str] = []
+
+    class _SpecEngine(_BindLoggingDurability):
+        def __init__(self) -> None:
+            super().__init__(bound)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'SpecEngine'
+
+    class _OtherSpecEngine(_OtherEngineDurability):
+        def __init__(self) -> None:
+            super().__init__(bound)
+
+        @classmethod
+        def get_serialization_name(cls) -> str:
+            return 'OtherSpecEngine'
+
+    monkeypatch.setitem(CAPABILITY_TYPES, 'SpecEngine', _SpecEngine)
+    monkeypatch.setitem(CAPABILITY_TYPES, 'OtherSpecEngine', _OtherSpecEngine)
+    agent = Agent(TestModel(), name='override_two_engines')
+    with pytest.raises(UserError, match='would have 2: `_SpecEngine`, `_OtherSpecEngine`'):
+        with agent.override(spec={'capabilities': ['SpecEngine', 'OtherSpecEngine']}):
+            pass  # pragma: no cover
+    assert bound == []
 
 
 async def test_one_durable_engine_listed_twice_is_refused() -> None:

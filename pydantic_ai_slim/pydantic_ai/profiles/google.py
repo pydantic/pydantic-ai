@@ -173,10 +173,21 @@ class GoogleModelProfile(ModelProfile, total=False):
     See <https://ai.google.dev/gemini-api/docs/function-calling#function_calling_config>.
     """
 
+    google_web_search_billed_per_prompt: bool
+    """Whether Google Search grounding is billed once per grounded prompt rather than per search query. Default: `False`.
+
+    Gemini 2.5 and older bill a request once, however many queries it ran, and only when it returned a web source;
+    Gemini 3+ bills each unique search query. This decides the `web_searches` count on
+    [`RequestUsage`][pydantic_ai.usage.RequestUsage].
+    See <https://ai.google.dev/gemini-api/docs/google-search#pricing>.
+    """
+
 
 _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] = (
     # Documented per-model thinking levels, most specific prefix first. Gemini 3+ models not
-    # listed support the full `GOOGLE_THINKING_LEVELS` scale.
+    # listed support the full `GOOGLE_THINKING_LEVELS` scale, except where only one API enforces
+    # the documented set: `GoogleModel.profile` applies that set by the client's transport, as it
+    # does for `gemini-3.1-flash-image` on the Gemini API.
     # https://ai.google.dev/gemini-api/docs/thinking
     ('gemini-3.1-flash-lite-image', frozenset(('MINIMAL', 'HIGH'))),
     ('gemini-3.7-flash', frozenset(('LOW', 'MEDIUM', 'HIGH'))),
@@ -252,6 +263,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         google_supports_thinking_level=google_supports_thinking_level,
         google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
         google_supports_strict_tool_definition=supports_strict_tool_definition,
+        google_web_search_billed_per_prompt=is_older_gemini,
     )
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
@@ -382,6 +394,15 @@ def google_realtime_model_profile(model_name: str) -> RealtimeModelProfile:
     # its profile is updated.
     profile['google_supports_affective_dialog'] = not model_name.startswith(
         ('gemini-3.1-flash-live', 'gemini-3.8-live')
+    )
+    # Verified live 2026-09-28 by returning a solid-color image or a secret word from a tool and asking
+    # about it: the 3.x models read PNG, JPEG, WebP, and plain text in `FunctionResponse.parts`, while
+    # `gemini-2.5-flash-native-audio-latest` guesses. The 3.x models close the session with `1007
+    # Request contains an invalid argument` on a PDF, so documents aren't listed.
+    profile['google_supported_mime_types_in_tool_returns'] = (
+        ('image/png', 'image/jpeg', 'image/webp', 'text/plain')
+        if model_name.startswith(('gemini-3.1-flash-live', 'gemini-3.8-live'))
+        else ()
     )
     # Verified live 2026-09-25 by sending an image and then a typed question about it, 3/3 each: the 3.x
     # models answered that they couldn't see an image, and the 2.5 models misread it. A typed turn only
