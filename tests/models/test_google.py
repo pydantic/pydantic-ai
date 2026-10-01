@@ -137,10 +137,6 @@ if not imports_successful():  # pragma: lax no cover
 
     errors = SimpleNamespace(ServerError=Exception, ClientError=Exception, APIError=Exception)
 
-with try_import() as anthropic_imports_successful:
-    from pydantic_ai.models.anthropic import AnthropicModel
-    from pydantic_ai.providers.anthropic import AnthropicProvider
-
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='google-genai not installed'),
     pytest.mark.vcr,
@@ -1726,10 +1722,12 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
     )
 
 
-@pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_google_model_receive_web_search_history_from_another_provider(
     allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str
 ):
+    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.providers.anthropic import AnthropicProvider
+
     anthropic_model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(api_key=anthropic_api_key))
     anthropic_agent = Agent(model=anthropic_model, capabilities=[NativeTool(WebSearchTool())])
 

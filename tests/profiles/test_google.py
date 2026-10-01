@@ -252,6 +252,21 @@ def test_model_profile_gemini_2_disables_tool_combination_capabilities():
     assert profile.get('google_supports_server_side_tool_invocations', False) is False
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('gemini-3-flash-preview', True),
+        ('gemini-3-pro-image-preview', False),
+        ('gemini-3.1-flash-image', False),
+    ],
+)
+def test_model_profile_server_side_tool_invocations(model_name: str, expected: bool):
+    """Gemini 3 image models reject `include_server_side_tool_invocations`, unlike Gemini 3 text models."""
+    profile = google_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('google_supports_server_side_tool_invocations', False) is expected
+
+
 def test_model_profile_image_model():
     """Image models should have limited capabilities."""
     profile = google_model_profile('gemini-2.0-flash-image')

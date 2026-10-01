@@ -12,7 +12,11 @@ from pydantic_ai._http import (
     warn_if_legacy_httpx_client,
 )
 from pydantic_ai.models import get_user_agent
-from pydantic_ai.profiles.google import google_model_profile, google_realtime_model_profile
+from pydantic_ai.profiles.google import (
+    _profile_model_name,  # pyright: ignore[reportPrivateUsage]
+    google_model_profile,
+    google_realtime_model_profile,
+)
 from pydantic_ai.providers import Provider, missing_api_key_error
 
 if TYPE_CHECKING:
@@ -51,7 +55,9 @@ class BaseGoogleProvider(Provider[Client], ABC):
 
     @staticmethod
     def model_profile(model_name: str) -> ModelProfile | None:
-        return google_model_profile(model_name)
+        # Resource names are normalized here rather than in `google_model_profile`, which other
+        # providers share and call with model names in their own formats.
+        return google_model_profile(_profile_model_name(model_name))
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:

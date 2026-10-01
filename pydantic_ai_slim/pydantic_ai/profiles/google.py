@@ -120,14 +120,14 @@ class GoogleModelProfile(ModelProfile, total=False):
     native tools (Google Search, URL Context, File Search) that we round-trip through
     [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] /
     [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]. Pre-Gemini-3 models
-    reject the field with `'Tool call context circulation is not enabled'`.
+    and Gemini 3 image models reject the field with `'Tool call context circulation is not enabled'`.
 
     This is a Gemini Developer API (ML Dev) only parameter: the google-genai SDK's Vertex
     converter raises `ValueError` when the field is set, so `GoogleModel` skips it for
     Google Cloud (Vertex) even on Gemini 3+ models.
 
     Distinct from [`google_supports_tool_combination`][pydantic_ai.profiles.google.GoogleModelProfile.google_supports_tool_combination]
-    even though both currently flip on for Gemini 3+ — the former gates the SDK request
+    even though both flip on for Gemini 3+ text models — the former gates the SDK request
     field, the latter gates which combinations of native / function / output tools are
     allowed in the same request.
     """
@@ -208,6 +208,22 @@ _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]
 """Live model name prefixes mapped to the thinking levels they accept."""
 
 
+_GOOGLE_PUBLISHER_MODEL_RESOURCE_NAME = re.compile(
+    r'(?:(?:projects/[^/]+/locations/[^/]+/)?publishers/[^/]+/models/|(?!tunedModels/)[^/]+/)([^/]+)'
+)
+
+
+def _profile_model_name(model_name: str) -> str:  # pyright: ignore[reportUnusedFunction]
+    """The model id that profile lookup matches on, taken from a Google publisher model's resource name.
+
+    Google accepts `models/X` and `publishers/P/models/X` (optionally under `projects/A/locations/B/`) for the
+    same model as the bare id, and Vertex also takes `P/X`. Tuned models, Model Registry models and endpoints
+    carry an opaque id rather than a model name, so they are returned unchanged.
+    """
+    match = _GOOGLE_PUBLISHER_MODEL_RESOURCE_NAME.fullmatch(model_name)
+    return match.group(1) if match else model_name
+
+
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
@@ -258,7 +274,9 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_thinking=supports_thinking,
         thinking_always_enabled=thinking_always_enabled,
         google_supports_tool_combination=is_modern_gemini,
-        google_supports_server_side_tool_invocations=is_modern_gemini,
+        # Verified live 2026-10-01 on the Gemini API: every Gemini 3 image model 400s on the field
+        # (`Tool call context circulation is not enabled`) and accepts `googleSearch` without it.
+        google_supports_server_side_tool_invocations=is_modern_gemini and not is_image_model,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_modern_gemini else (),
         google_supports_thinking_level=google_supports_thinking_level,
         google_supports_minimal_thinking_level=thinking_levels is None or 'MINIMAL' in thinking_levels,
