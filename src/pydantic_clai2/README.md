@@ -285,6 +285,16 @@ Without installing, run `uvx pydantic-clai2`. The package also installs a
 
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
+For API-key providers, set the provider's API key environment variable before starting.
+Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
+can read and modify files and execute commands with your user permissions. Run it
+in a workspace you trust. CLAI does not add a sandbox or approval layer.
+
+The startup splash adapts Code Puppy's stdlib-only, alternate-screen Pydantic
+pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow`.
+The splash is disabled for redirected output, CLI arguments, small terminals,
+Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
+
 ## Updating
 
 Install with `uv tool install pydantic-clai2` and CLAI can update itself.
@@ -304,19 +314,15 @@ When a newer build exists, the status row shows `update <version or commit>: /up
 CLAI checks once at startup and again when you change the channel, and only for
 `uv tool` installs. Offline, it shows nothing. `/update` runs `uv tool install --force`,
 shows uv's output, then exits; start `clai2` again to use the new build. Switching
-back to `stable` offers the latest release. The reinstall keeps only CLAI's own
-packages, so add any extra `--with` packages again afterwards. Without uv on `PATH`,
-or outside a `uv tool` install, `/update` prints the command to run yourself.
+back to `stable` offers the latest release.
 
-For API-key providers, set the provider's API key environment variable before starting.
-Codex uses subscription OAuth instead, not `OPENAI_API_KEY`. The default Coder
-can read and modify files and execute commands with your user permissions. Run it
-in a workspace you trust. CLAI does not add a sandbox or approval layer.
+Windows does not let a program replace files it is running from, so there
+`/update` exits first and installs in a new PowerShell window; start `clai2`
+again when that window reports success.
 
-The startup splash adapts Code Puppy's stdlib-only, alternate-screen Pydantic
-pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow`.
-The splash is disabled for redirected output, CLI arguments, small terminals,
-Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
+The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
+again afterwards. Without uv on `PATH`, or outside a `uv tool` install, `/update`
+prints the command to run yourself, in PowerShell syntax on Windows.
 
 ## Your own agent
 

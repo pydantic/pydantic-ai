@@ -1,5 +1,6 @@
 """`/update`: release lookup, install commands, the footer notice, and the shell exit after an install."""
 
+import base64
 import json
 import os
 import shlex
@@ -25,10 +26,13 @@ from pydantic_clai2.cli.self_update import (
     Updates,
     _in_thread,  # pyright: ignore[reportPrivateUsage]
     _run_uv,  # pyright: ignore[reportPrivateUsage]
+    after_exit_script,
     find_update,
     find_uv,
+    install_after_exit,
     installed,
     latest,
+    powershell,
 )
 from pydantic_clai2.commands import set_completions
 from pydantic_clai2.config import Settings, UpdateChannel
@@ -195,6 +199,8 @@ def _updates(
         spawn=lambda work: work(),
         run=run,
         find_uv=lambda: uv,
+        windows=False,
+        hand_off=lambda script: pytest.fail('only Windows hands the install off'),
     )
     return updates, ran
 
@@ -305,6 +311,67 @@ def test_find_uv_skips_relative_path_entries(tmp_path: Path, monkeypatch: pytest
     assert find_uv(environ=windows, windows=True) == str(trusted / 'uv.EXE')
     assert find_uv(environ={'PATH': 'repo'}, windows=False) is None
     assert find_uv(environ={}, windows=False) is None
+
+
+def test_powershell_quotes_every_part() -> None:
+    line = powershell([r'C:\uv\uv.exe', 'tool', "it's"], {'NAME': "o'k"})
+    assert line == "$env:NAME = 'o''k'; & 'C:\\uv\\uv.exe' 'tool' 'it''s'"
+    assert powershell(['uv'], {}) == "& 'uv'"
+
+
+def test_after_exit_script(tmp_path: Path) -> None:
+    overrides = tmp_path / "o'verrides.txt"
+    script = after_exit_script(['uv', 'tool'], {'NAME': 'v'}, pid=42, overrides=overrides)
+    lines = script.splitlines()
+    assert lines[0] == 'Wait-Process -Id 42 -ErrorAction SilentlyContinue'
+    assert lines[2] == "$env:NAME = 'v'; & 'uv' 'tool'"
+    assert f"Remove-Item -LiteralPath '{str(overrides).replace(chr(39), chr(39) * 2)}'" in lines
+    assert lines[-1] == "Read-Host 'Press Enter to close'"
+    assert 'Remove-Item' not in after_exit_script(['uv'], {}, pid=42, overrides=None)
+
+
+def test_install_after_exit_starts_windows_powershell() -> None:
+    started: list[Sequence[str]] = []
+    install_after_exit('Write-Host é', environ={'SystemRoot': r'D:\Win'}, start=started.append)
+    [argv] = started
+    assert argv[:5] == [
+        r'D:\Win\System32\WindowsPowerShell\v1.0\powershell.exe',
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-EncodedCommand',
+    ]
+    assert base64.b64decode(argv[5]).decode('utf-16-le') == 'Write-Host é'
+    install_after_exit('', environ={}, start=started.append)
+    assert started[1][0] == r'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+
+
+async def test_windows_hands_the_install_off_and_exits() -> None:
+    updates, ran = _updates(['bleeding'])
+    scripts: list[str] = []
+    updates.windows = True
+    updates.hand_off = scripts.append
+    message = await updates.command([])
+    assert message == (
+        'Installing CLAI 9e08a34ee (bleeding) in a new window once CLAI exits. '
+        'Exiting; start clai2 again when it finishes.'
+    )
+    assert updates.restart_required
+    assert ran == []
+    [script] = scripts
+    assert f'Wait-Process -Id {os.getpid()} ' in script
+    assert "$env:UV_DYNAMIC_VERSIONING_BYPASS = '0.0.0+9e08a34ee'; & '/bin/uv' 'tool' 'install'" in script
+    # The overrides file outlives CLAI; the script removes it after uv reads it.
+    overrides = Path(script.split("Remove-Item -LiteralPath '")[1].split("'")[0])
+    assert 'pydantic-graph @ ' in overrides.read_text(encoding='utf-8')
+    overrides.unlink()
+
+
+async def test_windows_manual_command_is_powershell() -> None:
+    updates, _ = _updates(['stable'], uv=None)
+    updates.windows = True
+    printed = (await updates.command([])).splitlines()[-1]
+    assert printed == "& 'uv' 'tool' 'install' '--force' 'pydantic-clai2==0.53.0'"
 
 
 def test_in_thread_runs_the_work() -> None:

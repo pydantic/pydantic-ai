@@ -2,12 +2,15 @@
 
 `stable` follows PyPI releases. `bleeding` follows the newest commit on `main` that touches CLAI. It downloads
 that commit's source archive over HTTPS, so it needs no `git`, and installs CLAI with the harness and core
-packages from the same archive, whose exact dev pins are not on PyPI.
+packages from the same archive, whose exact dev pins are not on PyPI. On Windows, which locks the files
+of a running program, the install runs in a new PowerShell window after CLAI exits.
 """
 
+import base64
 import os
 import re
 import shlex
+import subprocess
 import sys
 import tempfile
 import threading
@@ -177,6 +180,57 @@ def find_uv(*, environ: Mapping[str, str] = os.environ, windows: bool = os.name 
     return None
 
 
+def _powershell_quote(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
+
+
+def powershell(command: Sequence[str], environment: Mapping[str, str]) -> str:
+    """The install as one PowerShell line, for Windows, where `NAME=value command` does not set a variable."""
+    variables = ''.join(f'$env:{name} = {_powershell_quote(value)}; ' for name, value in environment.items())
+    return f'{variables}& {" ".join(_powershell_quote(part) for part in command)}'
+
+
+def after_exit_script(
+    command: Sequence[str], environment: Mapping[str, str], *, pid: int, overrides: Path | None
+) -> str:
+    """A PowerShell script that waits for CLAI to exit, installs, removes `overrides`, and keeps its window open.
+
+    Windows refuses to replace files a running program uses, so the install cannot run inside CLAI.
+    """
+    lines = [
+        f'Wait-Process -Id {pid} -ErrorAction SilentlyContinue',
+        # The `clai2.exe` launcher exits just after the Python process it started.
+        'Start-Sleep -Seconds 1',
+        powershell(command, environment),
+        '$code = $LASTEXITCODE',
+        *([f'Remove-Item -LiteralPath {_powershell_quote(str(overrides))}'] if overrides is not None else []),
+        'if ($code -eq 0) { \'Updated CLAI. Start clai2 again.\' } else { "uv exited with status $code." }',
+        "Read-Host 'Press Enter to close'",
+    ]
+    return '\n'.join(lines)
+
+
+_CREATE_NEW_CONSOLE = 0x10
+"""`subprocess.CREATE_NEW_CONSOLE`, which the module defines only on Windows."""
+
+
+def _start_detached(argv: Sequence[str]) -> None:  # pragma: no cover -- `creationflags` exists only on Windows
+    subprocess.Popen(argv, creationflags=_CREATE_NEW_CONSOLE, close_fds=True)
+
+
+def install_after_exit(
+    script: str,
+    *,
+    environ: Mapping[str, str] = os.environ,
+    start: Callable[[Sequence[str]], None] = _start_detached,
+) -> None:
+    """Run `script` in a new console with Windows PowerShell, found by full path rather than a `PATH` search."""
+    root = environ.get('SystemRoot', r'C:\Windows')
+    executable = f'{root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+    encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
+    start([executable, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded])
+
+
 def _in_thread(work: Callable[[], None]) -> None:
     threading.Thread(target=work, name='clai-update-check', daemon=True).start()
 
@@ -206,6 +260,9 @@ class Updates:
     """Runs the background check; tests run it inline."""
     run: Callable[[Sequence[str], dict[str, str]], Awaitable[int]] = _run_uv
     find_uv: Callable[[], str | None] = find_uv
+    windows: bool = os.name == 'nt'
+    hand_off: Callable[[str], None] = install_after_exit
+    """Starts the Windows install that runs after CLAI exits."""
     restart_required: bool = False
     """Set after a successful install: the running environment was replaced, so the shell exits."""
     _checked: UpdateChannel | None = field(default=None, init=False)
@@ -247,9 +304,18 @@ class Updates:
         if uv is None or not self.current.tool:
             # Keep the overrides file: the printed command reads it.
             variables = ''.join(f'{name}={shlex.quote(value)} ' for name, value in environment.items())
+            shown = powershell(command, environment) if self.windows else variables + shlex.join(command)
             return (
                 f'CLAI {update.label} is available on the {channel} channel. CLAI updates itself only when installed '
-                f'with `uv tool install` and uv is on PATH. To update by hand, run:\n{variables}{shlex.join(command)}'
+                f'with `uv tool install` and uv is on PATH. To update by hand, run:\n{shown}'
+            )
+        if self.windows:
+            # The script removes the overrides file once uv has read it.
+            self.hand_off(after_exit_script(command, environment, pid=os.getpid(), overrides=overrides))
+            self.restart_required = True
+            return (
+                f'Installing CLAI {update.label} ({channel}) in a new window once CLAI exits. '
+                'Exiting; start clai2 again when it finishes.'
             )
         # Cancelling uv halfway could leave the environment half replaced, so let it finish.
         code: int | None = None
