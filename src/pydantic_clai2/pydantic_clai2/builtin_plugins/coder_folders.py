@@ -49,16 +49,42 @@ def _wrap(text: str, *, width: int) -> list[str]:
     return [line.plain for line in Text(safe).wrap(Console(), width, overflow='fold')]
 
 
-def _notice_items(text: str) -> list[MenuItem]:
-    columns = max(10, terminal_size()[0] - 1)
-    width = columns if collapsed(columns) else max(20, columns // 2)
-    return [MenuItem(line, disabled=True) for line in _wrap(text, width=width - 3)]
+def _responsive_menu(builder: MenuBuilder, items: list[MenuItem], *, initial: int = 0) -> Menu:
+    columns = terminal_size()[0]
 
+    def wrapped_items() -> list[MenuItem]:
+        available = max(10, columns - 1)
+        width = available if collapsed(available) else max(20, available // 2)
+        return [
+            row
+            for item in items
+            for row in (
+                [MenuItem(line, disabled=True) for line in _wrap(item.label, width=width - 3)]
+                if item.disabled
+                else [item]
+            )
+        ]
 
-def _menu_size() -> tuple[int, int]:
-    # Leave room for Termflow's final newline so a full page does not scroll off its title.
-    columns, rows = terminal_size()
-    return columns, max(1, rows - 1)
+    def size() -> tuple[int, int]:
+        nonlocal columns
+        width, height = terminal_size()
+        if width != columns:
+            selected = menu.highlighted
+            columns = width
+            menu.replace_items(wrapped_items())
+            # Termflow has no public selection setter; retain the highlighted entry as notices reflow.
+            rows = menu._filtered()  # pyright: ignore[reportPrivateUsage]
+            menu._cursor = next(  # pyright: ignore[reportPrivateUsage]
+                (index for index, (_, item) in enumerate(rows) if item is selected), 0
+            )
+        # Reserve Termflow's final newline so full pages do not scroll off their title.
+        return width, max(1, height - 1)
+
+    rendered = wrapped_items()
+    selected = items[min(initial, len(items) - 1)]
+    cursor = next((index for index, item in enumerate(rendered) if item is selected), 0)
+    menu = builder.items(rendered).initial_index(cursor).size(size).build()
+    return menu
 
 
 def _directory_problem(path: Path) -> str | None:
@@ -99,22 +125,23 @@ class DirectoryPicker:
             *[MenuItem(_display(child.name) + '/', value=child) for child in children],
         ]
         if problem or self.error:
-            items.extend(_notice_items(problem or self.error))
+            items.append(MenuItem(_display(problem or self.error), disabled=True))
         elif not children:
-            items.extend(_notice_items('No subdirectories. This directory can be used.'))
+            items.append(MenuItem('No subdirectories. This directory can be used.', disabled=True))
 
         def matches(query: str, item: MenuItem) -> bool:
             query = query.casefold()
             # Termflow only dispatches navigation shortcuts while filtered rows exist.
-            return query in item.label.casefold() or (
-                item.value == 'path' and not any(query in row.label.casefold() for row in items)
+            return not item.disabled and (
+                query in item.label.casefold()
+                or (
+                    item.value == 'path' and not any(query in row.label.casefold() for row in items if not row.disabled)
+                )
             )
 
-        return (
+        return _responsive_menu(
             MenuBuilder('Browse local directories')
-            .size(_menu_size)
             .style(markdown_style())
-            .items(items)
             .searchable(True)
             .filter_fn(matches)
             .preview(
@@ -128,8 +155,8 @@ class DirectoryPicker:
             .on_key('left', lambda _menu, _item: MenuResult(item=MenuItem('', value=self.current.parent)))
             .on_key('ctrl-l', lambda _menu, _item: MenuResult(item=MenuItem('', value='path')))
             .footer_hint('Enter open/use | Left up | Ctrl+L path | Esc back')
-            .key_source(menu_key)
-            .build()
+            .key_source(menu_key),
+            items,
         )
 
     def run(self, *, runners: Runners) -> Path | None:
@@ -229,30 +256,28 @@ class FolderMenu(Generic[DepsT]):
             for index, value in enumerate(folders)
         ]
         if not folders:
-            items.extend(_notice_items('No folders selected. Disk agents are off.'))
+            items.append(MenuItem('No folders selected. Disk agents are off.', disabled=True))
         if not self.source.host.settings(CoderSettings).sub_agents:
-            items.extend(_notice_items('Sub-agents are disabled in Coder settings.'))
+            items.append(MenuItem('Sub-agents are disabled in Coder settings.', disabled=True))
         items += [
             MenuItem('+ Add directory path...', value=FolderAction(kind='path')),
             MenuItem('+ Browse local directories...', value=FolderAction(kind='browse')),
             MenuItem('+ Add folder name...', value=FolderAction(kind='name')),
             save_and_close_item(),
         ]
-        notices = _notice_items(self.notice) if self.notice else []
-        return (
+        notices = [MenuItem(_display(self.notice), disabled=True)] if self.notice else []
+        return _responsive_menu(
             MenuBuilder('Agent folders')
-            .size(_menu_size)
             .style(markdown_style())
-            .items([*notices, *items])
-            .initial_index(min(initial, len(items) - 1) + len(notices))
             .preview(self.details)
             .on_key('a', lambda _menu, _item: MenuResult(item=MenuItem('', value=FolderAction(kind='path'))))
             .on_key('b', lambda _menu, _item: MenuResult(item=MenuItem('', value=FolderAction(kind='browse'))))
             .on_key('e', lambda _, item: self.action(item, kind='edit'))
             .on_key('d', lambda _, item: self.action(item, kind='remove'))
             .footer_hint('Enter menu | a add/b browse | e edit/d rm | Esc')
-            .key_source(menu_key)
-            .build()
+            .key_source(menu_key),
+            [*notices, *items],
+            initial=min(initial, len(items) - 1) + len(notices),
         )
 
     def action(self, item: MenuItem, *, kind: Literal['edit', 'remove']) -> MenuResult | None:
@@ -263,7 +288,6 @@ class FolderMenu(Generic[DepsT]):
     def actions(self, index: int) -> Menu:
         return (
             MenuBuilder('Manage agent folder')
-            .size(_menu_size)
             .style(markdown_style())
             .items(
                 [

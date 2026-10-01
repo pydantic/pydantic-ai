@@ -358,6 +358,32 @@ def test_full_browser_page_keeps_title_and_footer_on_screen(
     assert all(len(line) < 50 for line in frame)
 
 
+def test_notices_rewrap_when_terminal_shrinks(folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch) -> None:
+    size = (140, 24)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: size)
+    folders.source.host.save_settings(CoderSettings(agent_folders=[f'group{index}' for index in range(20)]))
+    folders.notice = 'Could not save: attempt to write a readonly database'
+    menu = folders.build(initial=1)
+    output = io.StringIO()
+    keys = iter(['', 'escape'])
+
+    def shrink_then_read() -> str:
+        nonlocal size
+        size = (50, 24)
+        return next(keys)
+
+    menu._use_alt_screen = False  # pyright: ignore[reportPrivateUsage]
+    menu._read_key = shrink_then_read  # pyright: ignore[reportPrivateUsage]
+    menu._output = output  # pyright: ignore[reportPrivateUsage]
+    assert menu.run().cancelled
+    last = Text.from_ansi(output.getvalue().split('\x1b[H')[-1]).plain.splitlines()
+    assert last[0] == 'Agent folders'
+    assert len(last) < 24
+    assert all(len(line) < 50 for line in last)
+    assert folders.notice in ' '.join(line.strip() for line in last)
+    assert menu.highlighted is not None and menu.highlighted.value == 1
+
+
 @pytest.mark.parametrize('navigation', ['ctrl-l', 'left'])
 def test_browser_shortcuts_recover_when_search_has_no_matches(folders: FolderMenu[object], navigation: str) -> None:
     picker = DirectoryPicker(start=Path.home(), project=folders.project)
