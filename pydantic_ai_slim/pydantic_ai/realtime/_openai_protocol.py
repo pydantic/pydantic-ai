@@ -15,17 +15,16 @@ the provider modules, not here.
 
 from __future__ import annotations as _annotations
 
-import asyncio
 import base64
 import hashlib
 import re
-import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeGuard, TypeVar, get_args
 from urllib.parse import quote
 
+import anyio
 import websockets
 from openai.types.realtime import (
     ConversationItem,
@@ -1261,11 +1260,12 @@ async def expect_event(
     capture its resumption replay burst). `timeout` bounds the total wait so `connect()` fails
     predictably instead of hanging if the expected event never arrives.
     """
-    deadline = time.monotonic() + timeout
+    deadline = anyio.current_time() + timeout
     while True:
         try:
-            raw = await asyncio.wait_for(ws.recv(), timeout=max(0.0, deadline - time.monotonic()))
-        except asyncio.TimeoutError:
+            with anyio.fail_after(max(0.0, deadline - anyio.current_time())):
+                raw = await ws.recv()
+        except TimeoutError:
             raise RealtimeHandshakeError(f'timed out waiting for a {expected_type!r} event') from None
         if not isinstance(raw, str):
             raise RealtimeHandshakeError(f'expected a text frame, got {type(raw).__name__}')

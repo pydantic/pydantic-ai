@@ -1457,17 +1457,26 @@ async def test_connect_surfaces_malformed_handshake_frame(
 class HangingWebSocket(FakeWebSocket):
     """A websocket whose `recv` never returns, to exercise the handshake timeout."""
 
+    def __init__(self) -> None:
+        super().__init__([])
+        self.recv_cancelled = False
+
     async def recv(self) -> Any:
-        await asyncio.Event().wait()
+        try:
+            await anyio.sleep_forever()
+        except anyio.get_cancelled_exc_class():
+            self.recv_cancelled = True
+            raise
 
 
 async def test_connect_handshake_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
-    ws = HangingWebSocket([])
+    ws = HangingWebSocket()
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     model = OpenAIRealtimeModel('gpt-realtime', settings=rt_openai.OpenAIRealtimeModelSettings(handshake_timeout=0.02))
     with pytest.raises(ModelAPIError, match=re.escape("timed out waiting for a 'session.created' event")):
         async with _connect(model, 'x'):
             pass  # pragma: no cover
+    assert ws.recv_cancelled
 
 
 async def test_connect_open_failure_propagates_without_teardown(monkeypatch: pytest.MonkeyPatch) -> None:
