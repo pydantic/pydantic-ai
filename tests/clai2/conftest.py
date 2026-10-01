@@ -9,6 +9,7 @@ import pytest
 from keyring.errors import PasswordDeleteError
 
 from pydantic_ai import models
+from pydantic_clai2.config import credential_store
 
 
 @pytest.fixture
@@ -57,7 +58,7 @@ def fake_gh(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.Monkey
         fake.opened.append(url)
         return True
 
-    monkeypatch.setattr('pydantic_clai2.github.OPEN_BROWSER', open_browser)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.OPEN_BROWSER', open_browser)
     return fake
 
 
@@ -94,6 +95,14 @@ def isolated_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(keyring, 'set_password', set_password)
     monkeypatch.setattr(keyring, 'delete_password', delete_password)
     monkeypatch.setenv('PYTHON_KEYRING_BACKEND', 'keyring.backends.null.Keyring')
+    # The encryption key is read once per process; each test gets a fresh keyring, so a fresh read.
+    credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+def stored_accounts() -> set[str]:
+    """Accounts with a saved credential: each is an encrypted file, while the keyring only holds their key."""
+    directory = credential_store.credentials_path().parent
+    return {path.stem.removeprefix('credentials-') for path in directory.glob('credentials-*.enc')}
 
 
 @pytest.fixture

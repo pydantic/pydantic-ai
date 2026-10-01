@@ -77,7 +77,7 @@ async def _wait_for_task(task: asyncio.Task[None]) -> None:
     """Wait for a task, then yield once so queued loop-stop callbacks run before this waiter completes."""
     if not task.done():
         await asyncio.wait((task,))
-    await asyncio.sleep(0)
+    await anyio.sleep(0)
 
 
 def _run_task_to_completion(loop: asyncio.AbstractEventLoop, task: asyncio.Task[None]) -> None:
