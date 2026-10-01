@@ -1955,7 +1955,7 @@ spaced name, an empty frame list, or a control character in a frame raises
 name; the user's `spinners.json` replaces both. Unloading the plugin removes it,
 and a selected spinner that is gone shows the default `working`.
 
-### Run models under your own prefix: `host.model_provider(prefix, resolve, *, models)`
+### Run models under your own prefix: `host.model_provider(prefix, resolve, *, models, settings_from)`
 
 Makes `PREFIX:NAME` a model CLAI can run, for a Pydantic AI `Model` that no core
 provider builds, such as one authenticated with a subscription login:
@@ -1988,7 +1988,13 @@ wins. Unloading the plugin removes the prefix; a saved model under it stays in
 `/model`, and runs with it fail as an unknown provider until the plugin is enabled
 again.
 
-### Add a sign-in to `/login`: `host.login(name, handler)`
+`/model_settings` offers generic controls (max tokens, temperature, custom
+parameters) for plugin models. When `resolve` returns a model class of a provider
+CLAI knows, such as an `AnthropicModel` subclass, pass `settings_from='anthropic'`
+(or `'openai'`, `'openai-chat'`, `'google'`) and these models get that provider's
+controls instead, such as Claude's thinking mode and effort.
+
+### Add a sign-in to `/login`: `host.login(name, handler, *, models)`
 
 `/login NAME` signs in to a subscription: `codex` (bare `/login`) and `copilot`
 ship with CLAI, and `openai-codex` and `github-copilot` still work. A plugin whose
@@ -2003,7 +2009,8 @@ def activate(host: PluginHost) -> None:
         ...  # run the OAuth flow, save tokens to the keyring
         return 'Signed in to My Service.'
 
-    host.login('my-service', sign_in)
+    provider = host.model_provider('my-service', resolve, models=('fast', 'smart'))
+    host.login('my-service', sign_in, models=provider.names)
 ```
 
 `/login my-service` awaits `sign_in` and shows the message it returns, and `/login`
@@ -2011,6 +2018,10 @@ completes the name. Raise `UserError` when signing in fails, and keep tokens in 
 keyring, never in plugin settings. The name uses the same format as a model prefix
 and cannot be one of CLAI's sign-ins; when two plugins add one name, the later one
 wins. Unloading the plugin removes it.
+
+Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
+`names`) are added to the saved model list, so `/model` and `/model_settings`
+offer them without an `/add_model` first. A failed sign-in adds nothing.
 
 ## Rules that keep plugins predictable
 

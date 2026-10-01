@@ -254,6 +254,8 @@ class _ModelResolver:
     """Model prefixes registered by loaded plugins, read per resolution so enabling one applies at once."""
     logins: Callable[[], Mapping[str, PluginLogin]] = lambda: {}
     """Sign-ins registered by loaded plugins, read per `/login` like `plugins`."""
+    store: SettingsStore | None = None
+    """Where a plugin sign-in saves its models."""
     _auth: 'CodexAuth | None' = None
 
     def codex_auth(self) -> 'CodexAuth':
@@ -266,7 +268,7 @@ class _ModelResolver:
     async def login(self, args: list[str]) -> str:
         from pydantic_clai2.auth import login_command
 
-        return await login_command(args, codex=self.codex_auth(), plugins=self.logins())
+        return await login_command(args, codex=self.codex_auth(), plugins=self.logins(), store=self.store)
 
     async def resolve(self, name: str) -> Model | str:
         if name.startswith('openrouter:'):
@@ -323,7 +325,7 @@ def create_shell(
         session.summary = summary
     session.model = settings.model
     session.tool_retries = settings.tool_retries
-    models = _ModelResolver(console=console)
+    models = _ModelResolver(console=console, store=store)
     session.resolve_model = models.resolve
     if session.model is None and agent.model is None:
         console.print('Add a model with /add_model.', style=theme.color(theme.INFO))
@@ -482,6 +484,7 @@ def create_shell(
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
+    context.settings_model = loader.settings_model
     spinners = Spinners(selected=lambda: context.settings.spinner, registered=loader.spinners)
     commands.register(
         Command(

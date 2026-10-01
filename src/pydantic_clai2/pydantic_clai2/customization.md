@@ -20,7 +20,9 @@ contract; this guide is shipped with the package for use without a checkout.
 - Use a custom model/provider: register your own `PREFIX:` with
   host.model_provider(prefix, resolve, models=...), where resolve returns a
   Pydantic AI Model, or supply a Pydantic AI Agent to chat from a Python launcher.
-  If its models need a sign-in, host.login(name, handler) adds /login NAME.
+  If its models need a sign-in, host.login(name, handler, models=...) adds
+  /login NAME and saves those models once it succeeds. settings_from='anthropic'
+  on model_provider gives its models Anthropic's /model_settings controls.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
