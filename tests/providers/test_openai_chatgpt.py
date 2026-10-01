@@ -59,6 +59,24 @@ def credentials(expires: int = 3600) -> OpenAIChatGPTCredentials:
     )
 
 
+@pytest.mark.parametrize('timestamp', ['expires_at', 'earliest_refresh_at'])
+def test_credentials_reject_naive_timestamps(timestamp: str):
+    grant = credentials()
+    naive = datetime(2026, 10, 1)
+    with pytest.raises(UserError, match=f'timezone-aware `{timestamp}`'):
+        if timestamp == 'expires_at':
+            replace(grant, expires_at=naive)
+        else:
+            replace(grant, earliest_refresh_at=naive)
+
+
+def test_credentials_preserve_aware_timestamps():
+    timestamp = datetime(2026, 10, 1, tzinfo=timezone(timedelta(hours=2)))
+    grant = replace(credentials(), expires_at=timestamp, earliest_refresh_at=timestamp)
+    assert grant.expires_at == timestamp
+    assert grant.earliest_refresh_at == timestamp
+
+
 def callback(flow: OpenAIChatGPTOAuthFlow, **changes: str) -> str:
     values = {'state': flow.state, 'code': 'synthetic-code', 'client_id': 'oaiapp_test', **changes}
     return flow.redirect_uri + '?' + urlencode(values)

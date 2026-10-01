@@ -70,6 +70,7 @@ class OpenAIChatGPTCredentials:
 
     Keep the complete record in protected application storage, including the issued client ID,
     stable host ID and callback URI. Tokens are hidden from `repr`, not from serialization.
+    `expires_at` and `earliest_refresh_at` must be timezone-aware, including after deserialization.
     """
 
     subject: str
@@ -84,6 +85,12 @@ class OpenAIChatGPTCredentials:
     email: str | None = None
     nonce: str | None = None
     earliest_refresh_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.expires_at.utcoffset() is None:
+            raise UserError('ChatGPT credentials require a timezone-aware `expires_at`.')
+        if self.earliest_refresh_at is not None and self.earliest_refresh_at.utcoffset() is None:
+            raise UserError('ChatGPT credentials require a timezone-aware `earliest_refresh_at`.')
 
 
 @dataclass
