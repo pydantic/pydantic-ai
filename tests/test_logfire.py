@@ -10,7 +10,7 @@ import pytest
 from dirty_equals import IsJson, IsList
 
 # `StatusCode` lives in `opentelemetry-api`, a core dependency, so it needs no guard.
-from opentelemetry.trace import StatusCode
+from opentelemetry.trace import StatusCode, Tracer
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from typing_extensions import NotRequired, Self, TypedDict
 
@@ -3912,13 +3912,16 @@ def test_instrument_all_skipped_when_capability_already_present(
 
 @dataclass
 class _SeenInstrumentation:
-    tracer: Any
+    tracer: Tracer
     include_content: bool
     version: int
+    settings: InstrumentationSettings | None
 
 
 def _seen(ctx: RunContext[Any]) -> _SeenInstrumentation:
-    return _SeenInstrumentation(ctx.tracer, ctx.trace_include_content, ctx.instrumentation_version)
+    return _SeenInstrumentation(
+        ctx.tracer, ctx.trace_include_content, ctx.instrumentation_version, ctx.instrumentation_settings
+    )
 
 
 @dataclass
@@ -3970,7 +3973,7 @@ def test_run_context_instrumentation_follows_the_capability_that_instruments_the
         Agent.instrument_all(False)
 
     assert implicit.tracer is not explicit.tracer
-    expected_seen = _SeenInstrumentation(expected.tracer, expected.include_content, expected.version)
+    expected_seen = _SeenInstrumentation(expected.tracer, expected.include_content, expected.version, expected)
     assert for_run_seen == [expected_seen]
     assert tool_seen == [expected_seen]
 
@@ -4001,12 +4004,24 @@ def test_run_context_instrumentation_follows_a_capability_function_instrumentati
     finally:
         Agent.instrument_all(False)
 
-    assert tool_seen == [_SeenInstrumentation(dynamic.tracer, False, 6)]
+    assert tool_seen == [_SeenInstrumentation(dynamic.tracer, False, 6, dynamic)]
     # The capability function's `Instrumentation` is the one that opened the run's spans.
     assert implicit_exporter.get_finished_spans() == ()
     assert [span.name for span in dynamic_exporter.get_finished_spans()] == snapshot(
         ['chat test', 'execute_tool peek', 'chat test', 'invoke_agent agent']
     )
+
+
+def test_run_context_instrumentation_settings_are_none_when_disabled() -> None:
+    agent = Agent(TestModel(), deps_type=None)
+    agent.instrument = False
+
+    @agent.tool
+    def check_settings(ctx: RunContext[None]) -> str:
+        assert ctx.instrumentation_settings is None
+        return 'ok'
+
+    agent.run_sync('hi')
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
