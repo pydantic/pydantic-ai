@@ -701,7 +701,7 @@ async def safe_download(
     effective_headers: dict[str, str] = dict(headers) if headers else {}
     cookie_jars: dict[str, httpx2.Cookies] = {}
 
-    async with create_async_httpx2_client(timeout=timeout) as client:
+    async with create_async_httpx2_client(timeout=httpx2.Timeout(timeout, connect=5)) as client:
         while True:
             # Validate and resolve the current URL
             resolved = await validate_and_resolve_url(current_url, allow_local)

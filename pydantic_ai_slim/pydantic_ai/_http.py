@@ -59,18 +59,36 @@ else:
 _NotGivenT = TypeVar('_NotGivenT')
 
 
-def create_async_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx2.AsyncClient:
-    """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts and user agent.
+_DEFAULT_HTTPX2_TIMEOUT = httpx2.Timeout(DEFAULT_HTTP_TIMEOUT, connect=5)
 
-    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
-    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
+_DEFAULT_HTTPX2_LIMITS = httpx2.Limits(max_connections=1000, max_keepalive_connections=100)
+"""Connection pool limits for the HTTP clients Pydantic AI creates.
+
+These match the defaults of the OpenAI and Anthropic SDKs' own clients, rather than HTTPX's
+`max_connections=100, max_keepalive_connections=20`.
+"""
+
+
+def create_async_httpx2_client(
+    *,
+    timeout: float | httpx2.Timeout = _DEFAULT_HTTPX2_TIMEOUT,
+    limits: httpx2.Limits = _DEFAULT_HTTPX2_LIMITS,
+) -> httpx2.AsyncClient:
+    """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts, connection limits and user agent.
+
+    This is the client a provider creates when you don't pass your own `http_client`. Call it yourself
+    to adjust the timeouts or connection pool limits, and pass the result to the provider as
+    `http_client`. A client you create this way is yours to close.
+
+    Args:
+        timeout: The client's timeout, in seconds or as an `httpx2.Timeout` that sets each phase
+            separately. Defaults to 600 seconds, with a 5-second connect timeout.
+        limits: The connection pool limits. Defaults to 1000 connections, of which up to 100 are kept
+            alive while idle, matching the OpenAI and Anthropic SDKs' own clients.
     """
     from .models import get_user_agent
 
-    return httpx2.AsyncClient(
-        timeout=httpx2.Timeout(timeout=timeout, connect=connect),
-        headers={'User-Agent': get_user_agent()},
-    )
+    return httpx2.AsyncClient(timeout=timeout, limits=limits, headers={'User-Agent': get_user_agent()})
 
 
 def to_httpx2_timeout(timeout: float | LegacyTimeout | _NotGivenT) -> float | httpx2.Timeout | _NotGivenT:
