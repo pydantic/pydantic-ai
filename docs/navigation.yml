@@ -475,6 +475,9 @@ navigation:
           - page: "Trajectory Judge"
             path: "harness/trajectory-judge.md"
             slug: "harness/trajectory-judge"
+          - page: "Tool Call Judge"
+            path: "harness/tool-call-judge.md"
+            slug: "harness/tool-call-judge"
       - section: "Self-Extension"
         slug: ""
         contents:
