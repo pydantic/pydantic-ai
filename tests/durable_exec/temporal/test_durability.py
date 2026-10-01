@@ -3188,6 +3188,66 @@ async def test_durability_image_generation_notice_meets_the_fallback_model_in_wo
     assert output == snapshot("native=['image_generation'] function=[]")
 
 
+_durability_fallback_drops_quality_agent = Agent(
+    FallbackModel(
+        FunctionModel(
+            _durability_native_image_generation_fn,
+            model_name='no_native',
+            profile=ModelProfile(supported_native_tools=frozenset()),
+        ),
+        FunctionModel(
+            _durability_native_image_generation_fn,
+            model_name='native',
+            profile=_durability_native_image_generation_profile,
+        ),
+    ),
+    name='durability_fallback_drops_quality_agent',
+    capabilities=[
+        ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high', id='fallback_drops_quality'),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class TemporalFallbackDropsQualityWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _durability_fallback_drops_quality_agent.run('Generate an image')).output
+
+
+async def test_durability_image_generation_notice_names_the_fallback_member_that_drops_a_setting_in_workflow_code(
+    client: Client,
+):
+    """In workflow code the dropped-settings notice names the `FallbackModel` member that drops a setting.
+
+    `TemporalDurability` leaves the agent's own model on the run context, so the notice's prepare
+    function reads each member's profile, as it does outside a workflow. `no_native` has no native
+    tool and takes the direct generator, which can't apply `quality`, so one warning names it;
+    `native` carries `quality` on the native tool and goes unnamed. The warning is raised in
+    workflow code and reaches `pytest.warns` in the test. The output pins that `no_native`
+    answered with the direct generator.
+    """
+    with pytest.warns(UserWarning) as recorded:
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[TemporalFallbackDropsQualityWorkflow],
+            plugins=[AgentPlugin(_durability_fallback_drops_quality_agent)],
+        ):
+            output = await client.execute_workflow(
+                TemporalFallbackDropsQualityWorkflow.run,
+                id='test_temporal_fallback_drops_quality',
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+    assert [str(warning.message) for warning in recorded] == [
+        "The direct `ImageGeneration` fallback ignored native-tool setting(s) on 'no_native': `quality`. "
+        'Configure provider-specific direct settings on the `ImageGenerator` or `ImageGenerationModel` instead.'
+    ]
+    assert output == snapshot("native=[] function=['generate_image']")
+
+
 # --- ToolReturn metadata round-trip ---
 
 

@@ -3313,6 +3313,68 @@ async def test_image_generation_prepare_function_reads_the_model_temporal_select
     assert await prepared == [replace(tool_def, unless_native=ImageGenerationTool.kind)]
 
 
+def _image_generation_tools_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    native = [tool.kind for tool in info.model_request_parameters.native_tools]
+    function = [tool.name for tool in info.function_tools]
+    return ModelResponse(parts=[TextPart(f'native={native} function={function}')])
+
+
+fallback_image_generation_temporal_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(
+        FallbackModel(
+            FunctionModel(
+                _image_generation_tools_fn,
+                model_name='no_native',
+                profile=ModelProfile(supported_native_tools=frozenset()),
+            ),
+            FunctionModel(
+                _image_generation_tools_fn,
+                model_name='native',
+                profile=ModelProfile(supported_native_tools=frozenset({ImageGenerationTool})),
+            ),
+        ),
+        name='fallback_image_generation_agent',
+        capabilities=[
+            ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high', id='fallback_images')
+        ],
+    ),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class FallbackImageGenerationWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await fallback_image_generation_temporal_agent.run('Generate an image')).output
+
+
+async def test_image_generation_notice_says_nothing_for_a_temporal_agent_fallback_model(client: Client):
+    """Under `TemporalAgent`, the notice meets a `TemporalModel` over a `FallbackModel` and says nothing.
+
+    In workflow code the run context carries the `TemporalModel`, whose profile is its current
+    model's, and a current `FallbackModel` has none. Nothing public says which model `using_model()`
+    made current, so the notice says nothing rather than read the members of a `FallbackModel` that
+    may not be the one running, even though `no_native` drops `quality`. Under
+    `filterwarnings = ['error']` a crash reading that profile, or a warning naming a member, fails
+    the workflow task, which Temporal retries until the `execution_timeout` fails the test. The
+    output pins that `no_native` answered with the direct generator and without the native tool.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackImageGenerationWorkflow],
+        plugins=[AgentPlugin(fallback_image_generation_temporal_agent)],
+    ):
+        output = await client.execute_workflow(
+            FallbackImageGenerationWorkflow.run,
+            id=FallbackImageGenerationWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == snapshot("native=[] function=['generate_image']")
+
+
 class LegacyFieldsRunContext(TemporalRunContext[Any]):
     """A user subclass with its own field set."""
 

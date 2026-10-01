@@ -8,7 +8,6 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import re
-import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import cached_property
@@ -74,44 +73,6 @@ _REQUEST_BODY_ADAPTER = TypeAdapter(dict[str, Any])
 def _custom_local_tool(prompt: str) -> str:
     """A local tool of the user's own, for cases that only need `local` to be stated."""
     return 'image_url'  # pragma: no cover
-
-
-class _RouterModel(Model):
-    """Routes every request to another model and, like `FallbackModel`, has no profile of its own."""
-
-    def __init__(self, routed: Model):
-        super().__init__()
-        self.routed = routed
-
-    @property
-    def model_name(self) -> str:
-        return 'router'
-
-    @property
-    def system(self) -> str:
-        return 'router'
-
-    @cached_property
-    def profile(self) -> ModelProfile:
-        raise NotImplementedError('_RouterModel does not have its own model profile.')
-
-    def prepare_request(
-        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
-    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        return model_settings, model_request_parameters
-
-    def prepare_messages(
-        self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
-    ) -> list[ModelMessage]:
-        return messages
-
-    async def request(
-        self,
-        messages: list[ModelMessage],
-        model_settings: ModelSettings | None,
-        model_request_parameters: ModelRequestParameters,
-    ) -> ModelResponse:
-        return await self.routed.request(messages, model_settings, model_request_parameters)
 
 
 with try_import() as openai_imports:
@@ -304,7 +265,7 @@ class TestImageGenerationCapability:
         assert [warning.filename for warning in recorded] == [inspect.getsourcefile(ImageGeneration)]
 
     @pytest.mark.parametrize(
-        ('construct', 'expected_messages'),
+        ('construct', 'expected'),
         [
             pytest.param(
                 lambda: ImageGeneration(
@@ -322,12 +283,10 @@ class TestImageGenerationCapability:
                     dimensions=(1280, 720),
                     aspect_ratio='16:9',
                 ),
-                [
-                    '`ImageGeneration` ignored setting(s): `background`, `input_fidelity`, `moderation`, '
-                    '`output_compression`, `output_format`, `quality`, `size`, `action`, `image_model`, '
-                    '`dimensions`, `aspect_ratio`. With `native=False` the `local` tool you supplied is the only '
-                    'implementation, and the capability passes it no settings; configure that tool instead.'
-                ],
+                '`ImageGeneration` ignored setting(s): `background`, `input_fidelity`, `moderation`, '
+                '`output_compression`, `output_format`, `quality`, `size`, `action`, `image_model`, '
+                '`dimensions`, `aspect_ratio`. With `native=False` the `local` tool you supplied is the only '
+                'implementation, and the capability passes it no settings; configure that tool instead.',
                 id='every-setting-native-aspect-ratio',
             ),
             pytest.param(
@@ -346,30 +305,26 @@ class TestImageGenerationCapability:
                     dimensions=(1280, 720),
                     aspect_ratio='2:1',
                 ),
-                [
-                    '`ImageGeneration` ignored setting(s): `background`, `input_fidelity`, `moderation`, '
-                    '`output_compression`, `output_format`, `quality`, `size`, `action`, `image_model`, '
-                    '`dimensions`, `aspect_ratio`. With `native=False` the `local` tool you supplied is the only '
-                    'implementation, and the capability passes it no settings; configure that tool instead.'
-                ],
+                '`ImageGeneration` ignored setting(s): `background`, `input_fidelity`, `moderation`, '
+                '`output_compression`, `output_format`, `quality`, `size`, `action`, `image_model`, '
+                '`dimensions`, `aspect_ratio`. With `native=False` the `local` tool you supplied is the only '
+                'implementation, and the capability passes it no settings; configure that tool instead.',
                 id='every-setting-direct-only-aspect-ratio',
             ),
             pytest.param(
                 lambda: ImageGeneration(
                     native=False, local=_custom_local_tool, quality='high', dimensions=(1280, 720), aspect_ratio='16:9'
                 ),
-                [
-                    '`ImageGeneration` ignored setting(s): `quality`, `dimensions`, `aspect_ratio`. With '
-                    '`native=False` the `local` tool you supplied is the only implementation, and the '
-                    'capability passes it no settings; configure that tool instead.'
-                ],
+                '`ImageGeneration` ignored setting(s): `quality`, `dimensions`, `aspect_ratio`. With '
+                '`native=False` the `local` tool you supplied is the only implementation, and the '
+                'capability passes it no settings; configure that tool instead.',
                 id='some-settings',
             ),
-            pytest.param(lambda: ImageGeneration(native=False, local=_custom_local_tool), [], id='no-settings'),
+            pytest.param(lambda: ImageGeneration(native=False, local=_custom_local_tool), None, id='no-settings'),
         ],
     )
     def test_image_generation_native_false_with_a_custom_local_tool_warns_for_every_setting_it_ignores(
-        self, construct: Callable[[], object], expected_messages: list[str]
+        self, construct: Callable[[], object], expected: str | None
     ):
         """With `native=False` the tool you supply is the only implementation, and the capability hands it nothing.
 
@@ -383,13 +338,13 @@ class TestImageGenerationCapability:
 
         It warns at construction, before any request, so this is not a VCR test.
         """
-        with warnings.catch_warnings(record=True) as recorded:
-            warnings.simplefilter('always')
+        if expected is None:
+            # `filterwarnings = ['error']` turns an unexpected notice into the failure.
             construct()
-
-        assert [(warning.category, str(warning.message), warning.filename) for warning in recorded] == [
-            (UserWarning, message, __file__) for message in expected_messages
-        ]
+        else:
+            with pytest.warns(UserWarning, match=re.escape(expected)) as recorded:
+                construct()
+            assert [(str(warning.message), warning.filename) for warning in recorded] == [(expected, __file__)]
 
     def test_image_generation_native_only_settings_are_not_ignored_when_native_is_enabled(self):
         """With native enabled these settings reach the native tool, so reporting them as dropped is wrong.
@@ -850,7 +805,7 @@ class TestImageGenerationCapability:
         result = await Agent(direct_generation_model, capabilities=[copy]).run('Generate an image')
 
         assert result.output == 'done'
-        assert image_model.last_settings == snapshot({})
+        assert image_model.last_settings == {}
 
     async def test_image_generation_composed_capabilities_send_the_merged_dimensions(
         self, allow_model_requests: None, direct_generation_model: FunctionModel
@@ -1215,21 +1170,12 @@ class TestImageGenerationCapability:
                 None,
                 id='wrapped-direct-only',
             ),
-        ]
-        + [
-            pytest.param(
-                agent_model,
-                ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high'),
-                None,
-                id=f'{agent_model}-native-only',
-            )
-            for agent_model in ('router', 'wrapped-router')
         ],
     )
     async def test_image_generation_dropped_settings_notice_reads_each_routed_model(
         self,
         allow_model_requests: None,
-        agent_model: Literal['fallback', 'wrapped-fallback', 'wrapped', 'router', 'wrapped-router'],
+        agent_model: Literal['fallback', 'wrapped-fallback', 'wrapped'],
         capability: ImageGeneration[object],
         notice: str | None,
     ):
@@ -1238,8 +1184,6 @@ class TestImageGenerationCapability:
         A `FallbackModel` has no profile, so each of its models is named for the setting it would drop,
         whether the `FallbackModel` is the agent's model or sits inside a wrapper; a wrapper over a
         regular model is read through its own profile, which drops `quality` but applies `dimensions`.
-        Any other model without a profile routes by rules the notice can't see, so it says nothing for
-        it, bare or wrapped, and the run goes ahead even though the model it routes to drops `quality`.
         The notice fires while the toolset is prepared, before any request, so this is not a VCR test.
         """
 
@@ -1259,8 +1203,6 @@ class TestImageGenerationCapability:
             'fallback': fallback_model,
             'wrapped-fallback': WrapperModel(fallback_model),
             'wrapped': WrapperModel(no_native),
-            'router': _RouterModel(no_native),
-            'wrapped-router': WrapperModel(_RouterModel(no_native)),
         }
         agent = Agent(models[agent_model], capabilities=[capability])
 
@@ -1273,6 +1215,70 @@ class TestImageGenerationCapability:
             assert len(recorded) == 1
 
         assert result.output == 'done'
+
+    @pytest.mark.parametrize('wrapped', [pytest.param(False, id='bare'), pytest.param(True, id='wrapped')])
+    async def test_image_generation_dropped_settings_notice_says_nothing_for_a_model_that_routes_itself(
+        self, allow_model_requests: None, wrapped: bool
+    ):
+        """A model with no profile of its own that routes each request itself gets no notice, bare or wrapped.
+
+        Like a `FallbackModel` it routes by rules the notice can't see, but it has no list of models
+        to read in its place, so the notice says nothing for it rather than crash reading its profile,
+        and the run goes ahead even though the model it routes to drops `quality`. The response
+        carries the router's own name, so the run went through it.
+        `filterwarnings = ['error']` turns a notice into the failure. The notice fires while the
+        toolset is prepared, before any request, so this is not a VCR test.
+        """
+
+        def outer_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        no_native = FunctionModel(
+            outer_model_fn, model_name='no_native', profile=ModelProfile(supported_native_tools=frozenset())
+        )
+
+        class RouterModel(Model):
+            """Answers every request through `no_native` under its own name, with no profile of its own."""
+
+            @property
+            def model_name(self) -> str:
+                return 'router'
+
+            @property
+            def system(self) -> str:
+                return 'router'
+
+            @cached_property
+            def profile(self) -> ModelProfile:
+                raise NotImplementedError('RouterModel does not have its own model profile.')
+
+            def prepare_messages(
+                self, messages: list[ModelMessage], model_request_parameters: ModelRequestParameters | None = None
+            ) -> list[ModelMessage]:
+                return messages
+
+            async def request(
+                self,
+                messages: list[ModelMessage],
+                model_settings: ModelSettings | None,
+                model_request_parameters: ModelRequestParameters,
+            ) -> ModelResponse:
+                response = await no_native.request(messages, model_settings, model_request_parameters)
+                return replace(response, model_name=self.model_name, provider_name=self.system)
+
+        router = RouterModel()
+        agent = Agent(
+            WrapperModel(router) if wrapped else router,
+            capabilities=[ImageGeneration(fallback_image_model=TestImageGenerationModel(), quality='high')],
+        )
+
+        result = await agent.run('Generate an image')
+
+        assert (result.output, result.response.model_name, result.response.provider_name) == (
+            'done',
+            'router',
+            'router',
+        )
 
     async def test_image_generation_native_only_settings_are_silent_when_the_native_tool_runs(
         self, allow_model_requests: None
