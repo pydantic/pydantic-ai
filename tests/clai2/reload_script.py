@@ -121,6 +121,8 @@ async def main(root: Path, mode: str) -> None:
                     elif mode == 'import':
                         (package / 'new_module.py').write_text('VALUE = 1\n')
                         app.write_text(updated + '\nfrom . import new_module\nraise RuntimeError("bad import")\n')
+                    elif mode == 'harness':
+                        app.write_text(updated + '\nfrom pydantic_ai_harness.subagents import _missing_reload_symbol\n')
                     elif mode == 'build':
                         app.write_text(
                             updated.replace('    commands = Commands()', '    raise RuntimeError("bad build")')
@@ -199,6 +201,10 @@ async def main(root: Path, mode: str) -> None:
         assert text.count('CLAI2 reloaded. Conversation preserved.') == 1, text
         assert 'Use /help.' in text, text
         assert 'pydantic_clai2.new_module' not in sys.modules
+    assert ('Harness is not refreshed by /reload.' in text) == (mode == 'harness'), text
+    if mode == 'harness':
+        assert '--resume to continue this session.' in text, text
+        assert 'Keep the worktree if asked to remove it.' in text, text
 
 
 asyncio.run(main(Path(sys.argv[1]), sys.argv[2]))
