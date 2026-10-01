@@ -228,8 +228,6 @@ def test_typed_schema_anyof_member_is_recursed_openai_strict():
     Before the fix, composition members of a typed node were never walked, so OpenAI strict
     mode additions (`additionalProperties: false` and `required`) were missing from them.
     """
-    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-
     schema = {
         'type': 'object',
         'properties': {'p': {'type': 'string'}},
