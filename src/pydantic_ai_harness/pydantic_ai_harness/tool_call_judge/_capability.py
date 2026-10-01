@@ -219,7 +219,11 @@ class ToolCallJudge(AbstractCapability[AgentDepsT]):
     """
 
     on_verdict: Callable[[ToolCallVerdict], None] | None = field(default=None, repr=False)
-    """Optional callback invoked with each verdict, for application code and tests."""
+    """Optional callback invoked with each verdict, for application code and tests.
+
+    Under durable execution it runs again on every replay, with the recorded verdict, so a callback
+    that writes to an external sink should deduplicate on `tool_call_id`.
+    """
 
     _judge: Agent[None, _JudgeAnswer] = field(init=False, repr=False, compare=False)
 

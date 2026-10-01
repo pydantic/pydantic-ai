@@ -19,7 +19,7 @@ from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.tool_call_judge import ToolCallJudge
+from pydantic_ai_harness.tool_call_judge import ToolCallJudge, ToolCallVerdict
 from tests.conftest import detach_dbos_logging
 
 
@@ -45,6 +45,7 @@ def dbos(tmp_path: Path) -> Generator[DBOS, None, None]:
 
 
 _judge_calls = 0
+_verdicts: list[ToolCallVerdict] = []
 
 
 def _judge_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -71,6 +72,7 @@ _judge: ToolCallJudge[None] = ToolCallJudge(
     id='refund-judge',
     tools=['issue_refund'],
     question='Would this refund more than the original charge?',
+    on_verdict=_verdicts.append,
 )
 _agent: Agent[None, str] = Agent(
     FunctionModel(_respond),
@@ -114,6 +116,7 @@ async def test_dbos_replays_the_recorded_verdict(dbos: DBOS) -> None:
     """A replay must reuse the recorded verdict: no second judge request, same decision."""
     global _judge_calls
     _judge_calls = 0
+    _verdicts.clear()
     workflow_id = str(uuid.uuid4())
 
     with SetWorkflowID(workflow_id):
@@ -122,5 +125,6 @@ async def test_dbos_replays_the_recorded_verdict(dbos: DBOS) -> None:
         assert await _workflow() == 'done'
 
     assert _judge_calls == 1, 'the replay asked the judging model again'
+    assert [v.verdict for v in _verdicts] == ['allow', 'allow'], '`on_verdict` fires on every replay'
     steps = await dbos.list_workflow_steps_async(workflow_id)
     assert 'durable_judge__capability__refund-judge.judge' in {step['function_name'] for step in steps}

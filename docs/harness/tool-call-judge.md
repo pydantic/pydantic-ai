@@ -193,6 +193,8 @@ Inside a durable workflow or flow (Temporal, DBOS, Prefect) the judgement is a d
 
 That matters because the judgement is made from `before_tool_execute`, which runs in orchestration context rather than inside a checkpointed unit. An uncheckpointed model call there would be re-made on every replay, paid for each time, and free to answer differently, which would leave the same call allowed on one replay and blocked on the next.
 
+`on_verdict` is not part of the durable operation. It runs from the same hook as the judgement, so a replay calls it again with the recorded verdict. Deduplicate on `ToolCallVerdict.tool_call_id` when the callback writes metrics or records to an external system.
+
 A durable operation is addressed by the capability's `id`, and `ToolCallJudge` has no default one, because several judges on one agent is the normal shape and a shared default would merge them. So a judge on a durable-capable agent needs an explicit `id`, distinct per judge:
 
 ```python
