@@ -111,6 +111,24 @@ async def test_group_by_temporal_first_window_starts_on_first_item():
         assert groups == [[1, 2]]
 
 
+async def test_group_by_temporal_keeps_prefetch_after_timeout() -> None:
+    release_next = anyio.Event()
+    next_started = anyio.Event()
+
+    async def source() -> AsyncIterator[int]:
+        yield 1
+        next_started.set()
+        await release_next.wait()
+        yield 2
+
+    with anyio.fail_after(5):
+        async with group_by_temporal(source(), soft_max_interval=0.01) as groups:
+            assert await anext(groups) == [1]
+            await next_started.wait()
+            release_next.set()
+            assert await anext(groups) == [2]
+
+
 def test_check_object_json_schema():
     object_schema = {'type': 'object', 'properties': {'a': {'type': 'string'}}}
     assert check_object_json_schema(object_schema) == object_schema

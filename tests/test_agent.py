@@ -10253,7 +10253,7 @@ async def test_wrap_run_readiness_wait_cancels_wrapper_task_on_outer_cancellatio
     """Outer cancellation while waiting for `wrap_run` readiness should clean up the wrapper task.
 
     Target boundary: `Agent.iter()` creates `_wrap_task` and `_ready_waiter`, then waits for
-    `asyncio.wait({_ready_waiter, _wrap_task}, return_when=asyncio.FIRST_COMPLETED)`.
+    the first-completion wait for `_ready_waiter` and `_wrap_task`.
     The test should cancel the parent task while that wait is pending, then assert the
     capability's `wrap_run` cleanup has completed before cancellation returns.
     """
