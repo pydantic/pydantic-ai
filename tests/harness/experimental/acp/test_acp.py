@@ -709,12 +709,18 @@ class TestStopReason:
     def test_usage_limit_maps_to_stop_reason(self, message: str, expected: schema.StopReason) -> None:
         assert _usage_limit_stop_reason(UsageLimitExceeded(message)) == expected
 
-    async def test_request_limit_ends_the_turn_with_max_turn_requests(self) -> None:
-        # A model that calls a tool on every request never finishes the turn, so pydantic-ai's
-        # default request_limit (50) trips. ACP defines `max_turn_requests` for exactly this; it
-        # must end the turn with that stop reason, not surface as a JSON-RPC error.
-        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[dict[int, DeltaToolCall]]:
-            yield {0: DeltaToolCall(name='spin', json_args='{}')}
+    async def test_default_usage_limits_do_not_limit_requests(self) -> None:
+        request_count = 0
+
+        async def stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[str | dict[int, DeltaToolCall]]:
+            nonlocal request_count
+            request_count += 1
+            if request_count > 50:
+                yield 'done'
+            else:
+                yield {0: DeltaToolCall(name='spin', json_args='{}')}
 
         agent = Agent(FunctionModel(stream_function=stream))
 
@@ -728,11 +734,10 @@ class TestStopReason:
 
         response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
 
-        assert response.stop_reason == 'max_turn_requests'
-        # The raising run's messages are not retrievable, so the turn rolls back like a
-        # cancellation: no committed history or usage.
-        assert response.usage is None
-        assert adapter._sessions[session_id].history == []  # pyright: ignore[reportPrivateUsage]
+        assert response.stop_reason == 'end_turn'
+        assert response.usage is not None
+        assert request_count == 51
+        assert len(adapter._sessions[session_id].history) >= 2  # pyright: ignore[reportPrivateUsage]
 
     async def test_configured_usage_limits_end_the_turn_with_max_turn_requests(self) -> None:
         request_count = 0
@@ -2405,7 +2410,6 @@ class TestWorkspaceRooting:
     """A `session_config` factory roots `FileSystem` at the client's `cwd`, with absolute locations."""
 
     async def test_session_config_roots_filesystem_at_client_cwd(self, tmp_path: Path) -> None:
-
         write = DeltaToolCall(name='write_file', json_args=json.dumps({'path': 'note.txt', 'content': 'hi'}))
         agent = Agent(_calls_tool_each_turn(write))  # the agent itself has no filesystem tools
 

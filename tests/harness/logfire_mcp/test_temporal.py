@@ -33,7 +33,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
-from tests.harness.conftest import ignore_source_reads_left_open
+from tests.harness._temporal import ignore_source_reads_left_open
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
@@ -136,7 +136,7 @@ async def test_current_time_is_read_in_an_activity(client: Client) -> None:
             execution_timeout=timedelta(seconds=25),
         )
 
-    assert 'Current UTC time is `' in output
+    assert 'The current UTC time is within the hour starting `' in output
 
 
 async def test_auth_function_runs_under_temporal(client: Client, whoami_url: str) -> None:
