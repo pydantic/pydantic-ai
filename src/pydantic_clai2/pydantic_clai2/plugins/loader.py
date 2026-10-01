@@ -20,7 +20,7 @@ from pydantic_ai import AgentStreamEvent
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_clai2.commands import Commands, added_plugin
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
 from pydantic_clai2.plugins import (
     Conversation,
     DepsT,
@@ -164,8 +164,8 @@ class PluginLoader(Generic[DepsT]):
         self._full_screen = full_screen
         self._conversation = conversation
         self._status = status
-        self._builtin = {declaration.id: declaration for declaration in builtin}
-        self._project = {declaration.id: declaration for declaration in project}
+        self._builtin = canonical_plugin_declarations(builtin)
+        self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, PluginHost[DepsT]] = {}
         # A `/plugins add` declaration being tried before it is saved, so rejected settings never reach the store.
@@ -261,6 +261,7 @@ class PluginLoader(Generic[DepsT]):
             name = child.stem if child.suffix == '.py' else child.name
             if not name.isidentifier() or name.startswith('_'):
                 continue
+            name = canonical_plugin_id(name)
             if child.is_file() and child.suffix == '.py':
                 found[name] = child
             elif (child / '__init__.py').is_file():
@@ -500,11 +501,13 @@ class PluginLoader(Generic[DepsT]):
                 '\n'.join(f'{entry.name}: {entry.source} ({entry.state})' for entry in self.entries()) or 'No plugins.'
             )
         action, *rest = args
+        if rest:
+            rest[0] = canonical_plugin_id(rest[0])
         if action == 'add':
             existing = next((entry for entry in self.entries() if rest and entry.name == rest[0]), None)
             if existing is not None and not existing.shipped:
                 raise ValueError(f'Plugin {rest[0]} already exists; remove its declaration before replacing it.')
-            declaration = added_plugin(args)
+            declaration = added_plugin([action, *rest])
             loaded = existing is not None and existing.host is not None
             if existing is not None:
                 await self.unload(rest[0])
@@ -560,7 +563,7 @@ class PluginLoader(Generic[DepsT]):
 
 
 def _requested(action: str, name: str) -> None:
-    """UI telemetry for an action on a plugin known to exist (never a mistyped name), before disabling `logfire`."""
+    """UI telemetry for an action on a plugin known to exist (never a mistyped name), before disabling `observability`."""
     telemetry.record('plugin {plugin} {action}', plugin=name, action=action)
 
 

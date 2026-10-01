@@ -105,7 +105,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
     PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
-    PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire'),
+    PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
     PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),
@@ -238,6 +238,13 @@ async def chat(
                     console.print(
                         f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
                     )
+                    if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
+                        console.print(
+                            'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
+                            '--resume to continue this session. Keep the worktree if asked to remove it.',
+                            style=theme.color(theme.INFO),
+                            markup=False,
+                        )
                 fresh = False
             else:
                 with transcript.capture(console):
