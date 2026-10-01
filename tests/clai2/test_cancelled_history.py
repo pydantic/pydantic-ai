@@ -10,7 +10,7 @@ from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session
-from pydantic_clai2.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
 
 
 @pytest.mark.parametrize('stage', ['before_run', 'before_model', 'stream'])

@@ -10,8 +10,8 @@ from rich.text import Text
 
 from pydantic_ai import PartDeltaEvent, PartStartEvent, TextPart, TextPartDelta, ThinkingPart, ThinkingPartDelta
 from pydantic_clai2 import StreamRenderer
-from pydantic_clai2._rendering import LinkOutput
-from pydantic_clai2.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.rendering._rendering import LinkOutput
 
 URL = 'https://github.com/pydantic/pydantic-ai-harness/pull/1006'
 OPEN = f'\x1b]8;;{URL}\x1b\\'
