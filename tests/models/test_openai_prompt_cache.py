@@ -26,11 +26,16 @@ from pydantic_ai import Agent, BinaryContent, CachePoint, ImageUrl, PromptedOutp
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CompactionPart,
+    InstructionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ToolAvailabilityDeltaPart,
+    UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from .._inline_snapshot import snapshot
@@ -62,6 +67,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
     )
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.native_tools._tool_search import ToolSearchTool
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
@@ -1109,6 +1115,67 @@ async def test_openai_responses_cache_instructions_not_relocated_after_compactio
             {'id': None, 'encrypted_content': 'encrypted', 'type': 'compaction'},
             {'role': 'user', 'content': 'And order 5678?'},
         ]
+    )
+
+
+@pytest.mark.parametrize('has_instructions', [True, False])
+async def test_openai_responses_cache_instructions_with_leading_tool_reveal(
+    allow_model_requests: None, has_instructions: bool
+):
+    """An `additional_tools` item shares the `'developer'` role but is not a system prompt, so the
+    instructions go ahead of it, and without instructions it's left alone instead of being marked.
+
+    Calls `model.request` directly because the item only leads the input when a tool-availability
+    delta opens the history, which an agent run doesn't produce on its first request.
+    """
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_system_prompt_role='developer', openai_supports_prompt_cache_breakpoints=True
+        ),
+    )
+    tool = ToolDefinition(
+        name='lookup_refund_policy',
+        parameters_json_schema={'type': 'object', 'properties': {}},
+        defer_loading=True,
+        with_native=ToolSearchTool.kind,
+    )
+
+    await model.request(
+        [
+            ModelRequest(
+                parts=[ToolAvailabilityDeltaPart(tools_added=[tool.name]), UserPromptPart('Where is order 1234?')]
+            )
+        ],
+        OpenAIResponsesModelSettings(openai_cache_instructions=True),
+        ModelRequestParameters(
+            function_tools=[tool],
+            native_tools=[ToolSearchTool(optional=True)],
+            instruction_parts=[InstructionPart(content='Support policies.')] if has_instructions else None,
+        ),
+    )
+
+    request_input = get_mock_responses_kwargs(mock_client)[0]['input']
+    assert [(item.get('type'), item['role'], item.get('content')) for item in request_input] == (
+        [
+            (
+                None,
+                'developer',
+                [
+                    {
+                        'type': 'input_text',
+                        'text': 'Support policies.',
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            ),
+            ('additional_tools', 'developer', None),
+            (None, 'user', 'Where is order 1234?'),
+        ]
+        if has_instructions
+        else [('additional_tools', 'developer', None), (None, 'user', 'Where is order 1234?')]
     )
 
 

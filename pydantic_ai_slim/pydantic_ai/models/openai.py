@@ -2898,7 +2898,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         The top-level `instructions` field cannot carry a breakpoint. Mutates `openai_messages` and
         returns what's left of the top-level `instructions`.
         """
-        system_prompt_count = _leading_system_message_count(openai_messages, system_prompt_role)
+        # An `additional_tools` item also has the `'developer'` role, but it's not a system prompt.
+        system_prompt_count = next(
+            (
+                i
+                for i, message in enumerate(openai_messages)
+                if message.get('role') != system_prompt_role or message.get('type', 'message') != 'message'
+            ),
+            len(openai_messages),
+        )
         breakpoint_index = system_prompt_count + sum(1 for part in instruction_parts if not part.dynamic) - 1
         # With nothing static to cache, the instructions stay in the top-level field.
         if breakpoint_index >= 0:
