@@ -25,7 +25,7 @@ Run with:
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
+from enum import Enum
 from textwrap import dedent
 from typing import Any
 
@@ -38,7 +38,8 @@ MODEL = 'openai:gpt-5.2'
 
 
 # Structured Outputs
-class Specialty(StrEnum):
+# Keep `Enum.__str__`; `StrEnum` changes the text returned for members.
+class Specialty(str, Enum):  # noqa: UP042
     general = 'general'
     cardiology = 'cardiology'
     neurology = 'neurology'
