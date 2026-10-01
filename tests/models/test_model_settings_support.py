@@ -48,6 +48,7 @@ import textwrap
 import types
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 import httpx
@@ -84,6 +85,10 @@ with try_import() as openai_available:
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.zai import ZaiProvider
+
+with try_import() as chatgpt_available:
+    from pydantic_ai.models.openai_chatgpt import OpenAIChatGPTModel
+    from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTCredentials, OpenAIChatGPTProvider
 
 with try_import() as anthropic_available:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -495,6 +500,26 @@ def _openai_responses(client: httpx2.AsyncClient) -> Model:
     return OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _openai_chatgpt(client: httpx2.AsyncClient) -> Model:
+    return OpenAIChatGPTModel(
+        'gpt-6.1-sol',
+        provider=OpenAIChatGPTProvider(
+            OpenAIChatGPTCredentials(
+                subject='probe',
+                client_id='oaiapp_probe',
+                ext_agent_host_id='probe',
+                redirect_uri='http://127.0.0.1:1455/auth/callback',
+                expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                scopes=('resource.invoke', 'chatgpt.tokens.use.direct'),
+                access_token=PROBE_KEY,
+                refresh_token=PROBE_KEY,
+                id_token=PROBE_KEY,
+            ),
+            http_client=client,
+        ),
+    )
+
+
 def _openai_codex(client: httpx2.AsyncClient) -> Model:
     return OpenAICodexModel(
         'gpt-5.6-luna',
@@ -589,6 +614,13 @@ CASES = [
         ('OpenAI Codex',),
         http_probe(_openai_codex),
         _needs(openai_available, 'openai') + (pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning'),),
+    ),
+    Case(
+        'OpenAIChatGPTModel',
+        ('OpenAI ChatGPT',),
+        http_probe(_openai_chatgpt),
+        _needs(chatgpt_available, 'openai-chatgpt')
+        + (pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning'),),
     ),
     Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras), _needs(openai_available, 'openai')),
     Case('CrusoeModel', ('Crusoe',), http_probe(_crusoe), _needs(openai_available, 'openai')),

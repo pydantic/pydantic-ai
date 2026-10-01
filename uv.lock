@@ -28,24 +28,24 @@ exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for 
 exclude-newer-span = "P7D"
 
 [options.exclude-newer-package]
-anthropic = "2026-09-28T18:04:04Z"
+pydantic-monty-runtime = false
+pydantic-handlebars = false
+pydantic-extra-types = false
+pydantic = false
+pydantic-core = false
+pydantic-ai-harness = false
+logfire-api = false
 cassetter = false
-genai-prices = false
-google-genai = "2026-09-22T17:23:02Z"
 listentome = false
 logfire = false
-logfire-api = false
-openai = "2026-09-23T00:08:49Z"
-pydantic = false
-pydantic-ai-harness = false
-pydantic-core = false
-pydantic-extra-types = false
-pydantic-handlebars = false
-pydantic-monty = false
-pydantic-monty-client = false
-pydantic-monty-runtime = false
 pydantic-settings = false
+pydantic-monty-client = false
+genai-prices = false
+pydantic-monty = false
 termflow-md = "2026-09-30T15:58:29Z"
+anthropic = "2026-09-28T18:04:04Z"
+openai = "2026-09-23T00:08:49Z"
+google-genai = "2026-09-22T17:23:02Z"
 
 [manifest]
 members = [
@@ -6194,6 +6194,9 @@ mcp-tasks = [
 mistral = [
     { name = "pydantic-ai-slim", extra = ["mistral"] },
 ]
+openai-chatgpt = [
+    { name = "pydantic-ai-slim", extra = ["openai-chatgpt"] },
+]
 openai-realtime = [
     { name = "pydantic-ai-slim", extra = ["openai-realtime"] },
 ]
@@ -6304,6 +6307,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["huggingface"], marker = "extra == 'huggingface'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mcp-tasks"], marker = "extra == 'mcp-tasks'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mistral"], marker = "extra == 'mistral'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["openai-chatgpt"], marker = "extra == 'openai-chatgpt'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openai-realtime"], marker = "extra == 'openai-realtime'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openrouter"], marker = "extra == 'openrouter'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "pydantic_ai_slim" },
@@ -6320,7 +6324,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai-realtime"], marker = "extra == 'xai-realtime'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
+provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-chatgpt", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
 
 [package.metadata.requires-dev]
 coverage = [{ name = "strict-no-cover", git = "https://github.com/pydantic/strict-no-cover.git?rev=6c644106e03138abae01d8d60105d4a7ad4916a1" }]
@@ -6686,6 +6690,11 @@ openai = [
     { name = "openai" },
     { name = "tiktoken" },
 ]
+openai-chatgpt = [
+    { name = "openai" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "tiktoken" },
+]
 openai-realtime = [
     { name = "openai" },
     { name = "tiktoken" },
@@ -6781,6 +6790,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.19.0" },
     { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.19.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=3.19.0" },
+    { name = "openai", marker = "extra == 'openai-chatgpt'", specifier = ">=3.19.0" },
     { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.19.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.19.0" },
     { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.19.0" },
@@ -6794,6 +6804,7 @@ requires-dist = [
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "pydantic_evals" },
     { name = "pydantic-graph", editable = "pydantic_graph" },
     { name = "pydantic-handlebars", marker = "extra == 'spec'", specifier = ">=0.1.0" },
+    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'openai-chatgpt'", specifier = ">=2.13.0" },
     { name = "pyperclip", marker = "extra == 'cli'", specifier = ">=1.9.0" },
     { name = "pyyaml", marker = "extra == 'cli'", specifier = ">=6.0.2" },
     { name = "pyyaml", marker = "extra == 'spec'", specifier = ">=6.0.2" },
@@ -6806,6 +6817,7 @@ requires-dist = [
     { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.27.0" },
     { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
+    { name = "tiktoken", marker = "extra == 'openai-chatgpt'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai-realtime'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'xai-realtime'", specifier = ">=0.12.0" },
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.6.0" },
@@ -6819,7 +6831,7 @@ requires-dist = [
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.16.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-chatgpt", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-clai2"
