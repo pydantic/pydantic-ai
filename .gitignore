@@ -6,7 +6,6 @@ __pycache__
 .dev.vars
 /scratch/
 /.coverage
-/.testmon-cache/
 env*/
 /TODO.md
 /postgres-data/

@@ -3,23 +3,24 @@
 import asyncio
 import io
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 from rich.console import Console
 
-from pydantic_ai import Agent, PartDeltaEvent, PartStartEvent, RunContext
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai import Agent, AgentStreamEvent, PartDeltaEvent, PartStartEvent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.messages import TextPart, TextPartDelta, ThinkingPart
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import StreamRenderer
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.config import PluginSettings, Settings
-from pydantic_clai2.menu_worker import menu_key, run_worker
-from pydantic_clai2.model_settings import ModelSettingsForm
-from pydantic_clai2.plugin_loader import PluginError
-from pydantic_clai2.plugins import PluginHost
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.models.model_settings import ModelSettingsForm
+from pydantic_clai2.plugins import Plugin, PluginHost, load_plugin
+from pydantic_clai2.plugins.loader import PluginError
+from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from tests.clai2.test_plugin_loader import Harness
 
 
@@ -29,11 +30,15 @@ async def test_package_relative_import_and_fresh_source(tmp_path: Path) -> None:
     package.mkdir()
     (package / 'helper.py').write_text('VALUE = 1')
     source = package / '__init__.py'
-    source.write_text('from .helper import VALUE\ndef activate(host): host.console.print(VALUE)')
+    source.write_text(
+        'from .helper import VALUE\nfrom pydantic_clai2.plugins import Plugin\nclass Package(Plugin):\n    async def on_session_start(self, event): self.host.console.print(VALUE)'
+    )
     stamp = source.stat().st_mtime
     await harness.loader.load_all()
     assert '1' in harness.text
-    source.write_text('from .helper import VALUE\ndef activate(host): host.console.print(22222)')
+    source.write_text(
+        'from .helper import VALUE\nfrom pydantic_clai2.plugins import Plugin\nclass Package(Plugin):\n    async def on_session_start(self, event): self.host.console.print(22222)'
+    )
     os.utime(source, (stamp, stamp))
     await harness.loader.reload('package')
     assert '22222' in harness.text
@@ -47,12 +52,12 @@ async def test_cancelled_plugin_start_rolls_back(tmp_path: Path) -> None:
     path = harness.write('cancelled')
     path.write_text(
         path.read_text().replace(
-            "host.console.print('cancelled started')", 'raise __import__("asyncio").CancelledError()'
+            "self.host.console.print('cancelled started')", 'raise __import__("asyncio").CancelledError()'
         )
     )
     with pytest.raises(asyncio.CancelledError):
         await harness.loader.load('cancelled')
-    assert harness.loader.entries()[0].host is None
+    assert harness.loader.entries()[0].loaded is None
     assert 'cancelled' not in await harness.commands.execute_async('/help')
 
 
@@ -93,7 +98,7 @@ async def test_worker_cancellation_joins_before_return(monkeypatch: pytest.Monke
         loop.call_soon_threadsafe(entered.set)
         return ''
 
-    monkeypatch.setattr('pydantic_clai2.menu_worker.read_key', key)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', key)
     assert menu_key() == ''
 
     def worker() -> None:
@@ -113,13 +118,11 @@ async def test_worker_cancellation_joins_before_return(monkeypatch: pytest.Monke
 async def test_intercepted_start_keeps_streaming(thinking: bool) -> None:
     output = io.StringIO()
     console = Console(file=output)
-    host: PluginHost[None] = PluginHost(console=console, name='test', settings={})
 
-    @host.render(PartStartEvent)
-    def replace(event: PartStartEvent) -> str:
-        return 'replacement'
+    def replace(event: AgentStreamEvent) -> str | None:
+        return 'replacement' if isinstance(event, PartStartEvent) else None
 
-    renderer = StreamRenderer(console, stop_loading=lambda: None, renderers=host.renderers)
+    renderer = StreamRenderer(console, stop_loading=lambda: None, renderers=[replace])
     await renderer.on_stream_event(
         PartStartEvent(index=0, part=ThinkingPart('original') if thinking else TextPart('original'))
     )
@@ -142,15 +145,19 @@ def test_reset_preserves_other_runtime_overrides(tmp_path: Path) -> None:
 
 
 async def test_capability_factory_is_resolved_by_core() -> None:
-    host: PluginHost[None] = PluginHost(console=Console(file=io.StringIO()), name='test', settings={})
     called: list[bool] = []
 
     def factory(ctx: RunContext[None]) -> AbstractCapability[None] | None:
         called.append(True)
         return None
 
-    host.add(factory)
-    await Agent(TestModel(), deps_type=type(None)).run('hi', capabilities=host.capabilities)
+    class Factory(Plugin):
+        def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+            return (factory,)
+
+    host: PluginHost[None] = PluginHost(console=Console(file=io.StringIO()), name='test', settings={})
+    plugin = load_plugin(Factory, host)
+    await Agent(TestModel(), deps_type=type(None)).run('hi', capabilities=plugin.capabilities)
     assert called == [True]
 
 
