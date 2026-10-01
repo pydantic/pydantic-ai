@@ -23,7 +23,6 @@ from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, warn_default_changed
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace, workspace_path
 from pydantic_ai_harness.subagents._disk import AgentOverride, DiskDefinition, load_definitions
-from pydantic_ai_harness.subagents._effort import clamp_effort
 from pydantic_ai_harness.subagents._models import ModelOption, as_option, model_label, validate_restriction
 from pydantic_ai_harness.subagents._tasks import DelegationTasks
 from pydantic_ai_harness.subagents._toolset import (
@@ -190,7 +189,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     agent_overrides: Mapping[str, AgentOverride] = field(default_factory=dict[str, AgentOverride])
     """Per-disk-agent overrides keyed by the agent's name. An entry can set the
     agent's `model` (otherwise the parent's model is inherited) and its `effort`
-    (otherwise the minimum floor). Has no effect on explicitly-passed `agents`."""
+    (otherwise no thinking setting is added). Has no effect on explicitly-passed `agents`."""
 
     tool_resolver: ToolResolver | None = None
     """Optional override for how a disk agent gets its tools. When set, each tool
@@ -400,7 +399,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             validate_restriction(name, sub_agent.models, self._menu)
 
     def _build_disk_agent(self, definition: DiskDefinition) -> SubAgent[AgentDepsT]:
-        """Build one disk-defined sub-agent: parent model + floored effort, tools resolved or inherited.
+        """Build one disk-defined sub-agent: parent model, optional effort, and resolved tools.
 
         The agent is constructed with `deps_type=object` so the parent's deps (of
         any type) flow through unused at delegation; this also lets a disk
@@ -417,7 +416,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             name=name,
             description=parsed.description,
             instructions=parsed.body or None,
-            model_settings=ModelSettings(thinking=clamp_effort(effort)),
+            model_settings=ModelSettings(thinking=effort) if effort is not None else None,
             toolsets=toolsets,
         )
         return SubAgent(agent)

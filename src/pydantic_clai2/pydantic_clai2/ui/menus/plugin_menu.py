@@ -110,6 +110,8 @@ class PluginMenu(Generic[DepsT]):
             self._field('provides', entry.loaded.summary() if entry.loaded else 'nothing while off'),
             self._field('settings', self._settings_hint(entry)),
         ]
+        if entry.ignored:
+            lines += ['', _paint(theme.WARNING, 'notice', bold=True), *self._wrap(entry.ignored, theme.WARNING)]
         if entry.error:
             lines += ['', _paint(theme.ERROR, 'error', bold=True), *self._wrap(entry.error, theme.ERROR)]
         if self.notice:
