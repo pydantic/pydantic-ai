@@ -120,7 +120,7 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
         return parts
 
 
-def _is_duplicate_load_in_response(ctx: RunContext[AgentDepsT], capability_id: str) -> bool:
+def _is_duplicate_load_in_response(ctx: RunContext[Any], capability_id: str) -> bool:
     """Whether an earlier call in the response being executed already loads `capability_id`.
 
     A load only counts as loaded once its return reaches history at the end of the step, so sibling
