@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-import re
+import itertools
 import string
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -257,13 +257,21 @@ class TestModel(Model):
 
         # if there are tools, the first thing we want to do is call all of them
         if tool_calls and not any(isinstance(m, ModelResponse) for m in messages):
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(name, self.gen_tool_args(args), tool_call_id=f'pyd_ai_tool_call_id__{name}')
-                    for name, args in tool_calls
-                ],
-                model_name=self._model_name,
-            )
+            # Multiple calls to the same tool would otherwise share the documented
+            # `pyd_ai_tool_call_id__{name}` id, which tool execution rejects as ambiguous, so
+            # uniquify only on collision, including with a tool whose own name ends in `__<n>`.
+            emitted_ids: set[str] = set()
+            parts: list[ToolCallPart] = []
+            for name, args in tool_calls:
+                base_id = f'pyd_ai_tool_call_id__{name}'
+                tool_call_id = next(
+                    candidate
+                    for candidate in itertools.chain([base_id], (f'{base_id}__{n}' for n in itertools.count(2)))
+                    if candidate not in emitted_ids
+                )
+                emitted_ids.add(tool_call_id)
+                parts.append(ToolCallPart(name, self.gen_tool_args(args), tool_call_id=tool_call_id))
+            return ModelResponse(parts=parts, model_name=self._model_name)
 
         if messages:  # pragma: no branch
             last_message = messages[-1]
@@ -467,11 +475,12 @@ class _JsonSchemaTestData:
         elif examples := schema.get('examples'):
             return examples[self.seed % len(examples)]
         elif ref := schema.get('$ref'):
-            key = re.sub(r'^#/\$defs/', '', ref)
-            js_def = self.defs[key]
-            return self._gen_any(js_def)
+            return self._gen_any(self._resolve_ref(ref))
         elif any_of := schema.get('anyOf'):
             return self._gen_any(any_of[self.seed % len(any_of)])
+        elif schema.get('oneOf') and 'type' not in schema:
+            # a `oneOf` beside a `type` narrows that type, so the `type` drives generation
+            return self._one_of_gen(schema)
 
         type_ = schema.get('type')
         if type_ is None:
@@ -493,6 +502,29 @@ class _JsonSchemaTestData:
             return None
         else:
             raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
+
+    def _resolve_ref(self, ref: str) -> dict[str, Any]:
+        """Look up a JSON Schema `$ref` in the schema's `$defs`."""
+        return self.defs[ref.removeprefix('#/$defs/')]
+
+    def _one_of_gen(self, schema: dict[str, Any]) -> Any:
+        """Generate data for a JSON Schema `oneOf`."""
+        one_of = schema['oneOf']
+        member = one_of[self.seed % len(one_of)]
+        if not _utils.is_str_dict(member):
+            # a boolean subschema has no structure to generate from
+            return self._char()
+        # Pydantic leaves a defaulted discriminator tag out of `required`, but validation needs it to pick the
+        # member. A nested union passes on the `required` its parent union added.
+        required = schema.get('required', [])
+        discriminator = schema.get('discriminator')
+        if _utils.is_str_dict(discriminator) and (tag := discriminator.get('propertyName')):
+            required = [*required, tag]
+        if required:
+            if ref := member.get('$ref'):
+                member = self._resolve_ref(ref)
+            member = {**member, 'required': [*member.get('required', []), *required]}
+        return self._gen_any(member)
 
     def _object_gen(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Generate data for a JSON Schema object."""

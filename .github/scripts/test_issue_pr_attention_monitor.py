@@ -72,6 +72,7 @@ class FakeClient(monitor.GitHubClient):
         self.reviews: dict[int, list[dict[str, Any]]] = {}
         self.truncated: set[int] = set()
         self.timelines: dict[int, list[dict[str, Any]]] = {}
+        self.label_descriptions: dict[str, str] = {}
 
     def get(self, path: str) -> Any:
         self.calls.append(('GET', path, None))
@@ -108,7 +109,8 @@ class FakeClient(monitor.GitHubClient):
             start = (page - 1) * per_page
             return {'total_count': len(values), 'items': values[start : start + per_page]}
         if '/labels/' in path:
-            return {'name': path.rsplit('/', 1)[-1]}
+            name = urllib.parse.unquote(path.rsplit('/', 1)[-1])
+            return {'name': name, 'description': self.label_descriptions.get(name, monitor._LABELS[name][1])}
         if '/issues?state=' in path and 'labels=' in path:
             requested = urllib.parse.unquote(path.split('labels=')[1].split('&')[0])
             state = path.split('/issues?state=')[1].split('&')[0]
@@ -148,6 +150,10 @@ class FakeClient(monitor.GitHubClient):
             existing = {str(value['name']) for value in self.items[number]['labels']}
             labels = [str(label) for label in payload['labels']]
             self.items[number]['labels'].extend({'name': label} for label in labels if label not in existing)
+        return {}
+
+    def patch(self, path: str, payload: object) -> Any:
+        self.calls.append(('PATCH', path, payload))
         return {}
 
     def delete(self, path: str, payload: object | None = None) -> None:
@@ -696,6 +702,19 @@ def test_apply_pings_all_assigned_maintainers_without_reassigning(tmp_path: Path
         '#7: requested maintainer attention from @alice @bob'
     ]
     assert not any(call[1].endswith('/assignees') for call in client.calls)
+
+
+def test_ensure_labels_updates_a_stale_description_but_not_the_color():
+    client = FakeClient()
+    client.label_descriptions[monitor.COMMUNITY_LABEL] = 'An outdated description'
+
+    monitor.ensure_labels(client, 'r')
+
+    patches = [call for call in client.calls if call[0] == 'PATCH']
+    assert patches == [
+        ('PATCH', '/repos/r/labels/community-backed', {'description': monitor._LABELS[monitor.COMMUNITY_LABEL][1]})
+    ]
+    assert not any(call[0] == 'POST' for call in client.calls)
 
 
 def test_apply_restarts_a_prior_terminal_escalation(tmp_path: Path):

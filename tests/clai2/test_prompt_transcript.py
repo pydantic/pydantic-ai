@@ -9,8 +9,8 @@ from rich.style import Style
 from rich.text import Text
 from termflow.ansi.utils import visible_length
 
-from pydantic_clai2 import theme
-from pydantic_clai2.prompt_transcript import TranscriptBuffer, render_ansi, style_prefix
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer, render_ansi, style_prefix
+from pydantic_clai2.ui.rendering import theme
 
 
 def plain(buffer: TranscriptBuffer, *, width: int = 80, height: int = 24) -> list[str]:

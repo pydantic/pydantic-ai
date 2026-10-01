@@ -316,7 +316,10 @@ agent = Agent(model, model_settings=model_settings)
 ```
 
 Pydantic AI resolves each model's supported levels from Google's documented thinking table and snaps a
-requested effort to the nearest supported level. For a model id the table doesn't cover, declare its
+requested effort to the nearest supported level. `gemini-3.1-flash-image` is the exception: Google
+[documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for it, but only the Gemini
+API enforces them, so Pydantic AI applies those levels only when the client talks to the Gemini API, and Vertex AI
+keeps the full scale. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
 (default: the full scale); unsupported efforts resolve to the nearest supported level.
 

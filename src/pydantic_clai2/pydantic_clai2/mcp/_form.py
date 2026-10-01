@@ -22,12 +22,12 @@ from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu
 from termflow.tui.textinput import TextInput
 
-from .._rendering import markdown_style
-from ..field_menu import TERMINAL, Runners, first_error
-from ..menu_worker import menu_key
-from ._settings import OAUTH_TIMEOUT, Server, ServerName, ServerType, StdioServer, missing
-from ._store import MCPStore
-from ._tokens import TokenStore
+from pydantic_clai2.mcp._settings import OAUTH_TIMEOUT, Server, ServerName, ServerType, StdioServer, missing
+from pydantic_clai2.mcp._store import MCPStore
+from pydantic_clai2.mcp._tokens import TokenStore
+from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners, first_error
+from pydantic_clai2.ui.menus.menu_worker import menu_key
+from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 SERVER_TYPES: tuple[ServerType, ...] = get_args(ServerType)
 TYPE_DESCRIPTIONS: dict[ServerType, str] = {
