@@ -41,6 +41,10 @@ class _Queued:
     """The raw draft `accept` saved to history for this prompt, before command expansion."""
 
 
+class PromptWakeup(Exception):
+    """An automated continuation is ready; the editor draft is not a submission."""
+
+
 class LivePrompt:
     """One terminal surface, one keyboard reader, sequential queued submissions."""
 
@@ -64,7 +68,7 @@ class LivePrompt:
     ) -> None:
         """Bind editing state, terminal ownership and per-session services.
 
-        `chords` maps a two-key sequence such as `'ctrl-x ctrl-s'` to an action returning a
+        `chords` maps a key or sequence such as `'ctrl-b'` or `'ctrl-x ctrl-s'` to an action returning a
         footer notice. `pinned` returns an optional styled row painted above the footer.
         `run_now` may take an accepted draft instead of queueing it, returning whether it did.
         `spinner` returns the working animation; it is read on every frame, so a new choice shows at once.
@@ -100,6 +104,7 @@ class LivePrompt:
         self._recall_target: _Queued | None = None
         self._search_target: _Queued | None = None
         self._submitted = asyncio.Event()
+        self._wake_pending = False
         self._suspended = False
         self._completions: list[Completion] = []
         self._selection = -1
@@ -129,16 +134,25 @@ class LivePrompt:
         self._submitted.set()
         self.paint()
 
+    def wake(self) -> None:
+        """Wake an idle reader once, without changing its draft, history, or queue."""
+        self._wake_pending = True
+        self._submitted.set()
+
     def _discard(self, entry: _Queued) -> None:
         self._submissions.remove(entry)
-        if not self._submissions:
+        if not self._submissions and not self._wake_pending:
             self._submitted.clear()
 
     async def read(self) -> str:
         """Consume queued submissions in order."""
         await self._submitted.wait()
-        value = self._submissions.popleft()
         if not self._submissions:
+            self._wake_pending = False
+            self._submitted.clear()
+            raise PromptWakeup
+        value = self._submissions.popleft()
+        if not self._submissions and not self._wake_pending:
             self._submitted.clear()
         self.paint()
         if isinstance(value, BaseException):
@@ -226,6 +240,9 @@ class LivePrompt:
 
     def _chord(self, key: str) -> bool:
         """Consume a chord prefix or its completion; any other second key acts on its own."""
+        if key in self.chords:
+            self.notice = self.chords[key]()
+            return True
         if self._chord_prefix:
             chord, self._chord_prefix = f'{self._chord_prefix} {key}', ''
             if chord in self.chords:

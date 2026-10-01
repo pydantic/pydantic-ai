@@ -10,7 +10,7 @@ from pathlib import Path
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-from anyio import create_memory_object_stream, create_task_group
+from anyio import Lock, create_memory_object_stream, create_task_group
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
@@ -59,18 +59,20 @@ from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
 from pydantic_clai2.runtime.sessions import Sessions
 from pydantic_clai2.runtime.speculation import Speculation
+from pydantic_clai2.runtime.tasks import Tasks, task_row
 from pydantic_clai2.ui.menus.key_menu import keys_command
 from pydantic_clai2.ui.menus.menu_worker import holding_output
 from pydantic_clai2.ui.menus.model_picker import model_command, model_completions
 from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
 from pydantic_clai2.ui.menus.set_menu import set_command
 from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
+from pydantic_clai2.ui.menus.task_menu import open_tasks
 from pydantic_clai2.ui.menus.theme_picker import theme_command
 from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, PromptCompleter
 from pydantic_clai2.ui.prompt.image_input import ImageInput
 from pydantic_clai2.ui.prompt.input_history import input_history
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
-from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt, PromptWakeup
 from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_clai2.ui.prompt.screen import Screen
 from pydantic_clai2.ui.rendering import theme
@@ -544,6 +546,14 @@ def create_shell(
             raw=True,
         )
     )
+    commands.register(
+        Command(
+            name='tasks',
+            description='Inspect and control delegated tasks',
+            handler=shell.tasks_command,
+            during_turn=True,
+        )
+    )
     commands.register(Command(name='forks', description='Show background forks', handler=shell.forks.status_command))
     return shell
 
@@ -573,9 +583,18 @@ class _Shell(Generic[DepsT, OutputT]):
     reload_requested: bool = False
     editor: LivePrompt | None = None
     forks: Forks[DepsT, OutputT] = field(init=False)
+    tasks: Tasks = field(init=False)
     _mid_turn_commands: MemoryObjectSendStream[str] | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
+        self.tasks = Tasks(
+            console=self.console,
+            conversation_id=lambda: self.session.summary.id,
+            directory=None
+            if str(self.sessions.store.database) == ':memory:'
+            else Path(str(self.sessions.store.database) + '.tasks'),
+            step_store=self.session.step_store,
+        )
         self.forks = Forks(
             console=self.console,
             history=lambda: self.session.messages,
@@ -590,6 +609,8 @@ class _Shell(Generic[DepsT, OutputT]):
         Speculation sees the others, so its sandbox mount stays within their `FileSystem`.
         """
         granted = (*self.plugins, *self.loader.capabilities())
+        if self.session.delegations is not None:
+            granted = (*granted, self.tasks.presentation)
         return (*granted, *self.speculation.capabilities(granted))
 
     def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
@@ -609,6 +630,28 @@ class _Shell(Generic[DepsT, OutputT]):
         child.model_settings = self.context.model_settings(child.model or _model_label(self.agent))
         return child
 
+    async def tasks_command(self, args: list[str]) -> str:
+        if not args:
+            return await open_tasks(self.tasks)
+        if len(args) != 2 or args[0] not in ('stop', 'background', 'resume'):
+            raise ValueError('Usage: /tasks [stop|background|resume ID]')
+        record = self.tasks.resolve(args[1])
+        if args[0] == 'stop':
+            await self.tasks.owner.cancel(record.id)
+            await self.tasks.owner.save(record)
+            return f'Stopping task {record.id[:8]} and its descendants.'
+        if args[0] == 'background':
+            self.tasks.owner.background(record.id)
+            return f'Task {record.id[:8]} moved to background.'
+        await self.tasks.owner.allow_resume(record.id)
+        if self.editor is None:
+            return f'Task {record.id} may now be resumed with delegate_task(resume={record.id!r}).'
+        self.editor.submit(
+            f'Resume task {record.id} using delegate_task with agent_name={record.agent_name!r}, '
+            f'resume={record.id!r}. Continue from its saved history and report the result.'
+        )
+        return f'Resume requested for task {record.id[:8]}.'
+
     def request_reload(self, args: list[str]) -> str:
         if args:
             raise ValueError('Usage: /reload')
@@ -617,8 +660,12 @@ class _Shell(Generic[DepsT, OutputT]):
 
     async def run(self) -> SessionEndReason:
         try:
-            return await self._run()
+            async with self.tasks.owner.opened():
+                if isinstance(self.agent, StockAgent):
+                    self.session.delegations = self.tasks.owner
+                return await self._run()
         finally:
+            self.session.delegations = None
             await self.forks.close()
 
     async def _run(self) -> SessionEndReason:
@@ -633,16 +680,20 @@ class _Shell(Generic[DepsT, OutputT]):
                 steer=self.steer,
                 run_now=self.run_now,
                 transcript=self.transcript,
-                chords={'ctrl-x ctrl-s': self.speculation.toggle},
+                chords={'ctrl-x ctrl-s': self.speculation.toggle, 'ctrl-b': self.tasks.promote},
                 pinned=self.speculation.row,
                 spinner=self.spinners.active,
-                panel=self.forks.rows,
+                panel=lambda glyph: (*self.tasks.rows(glyph), *self.forks.rows(glyph)),
             )
             self.screen.editor = self.editor.suspended
             try:
                 async with self.editor.opened():
+                    self.tasks.wake = self.editor.wake
+                    if self.tasks.owner.reports(conversation_id=self.session.summary.id):
+                        self.editor.wake()
                     return await self._read_loop()
             finally:
+                self.tasks.wake = None
                 self.screen.editor = None
                 self.editor = None
         return await self._read_loop()
@@ -679,7 +730,20 @@ class _Shell(Generic[DepsT, OutputT]):
             async for text in commands:
                 menus.start_soon(self._run_mid_turn, text)
 
+    def plugins_busy(self, text: str) -> bool:
+        """Keep plugin-owned transports alive until all children using them settle."""
+        if text.split(maxsplit=1)[0] != '/plugins':
+            return False
+        if not any(record.status == 'running' for record in self.tasks.owner.records.values()):
+            return False
+        self.console.print(
+            'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.', markup=False
+        )
+        return True
+
     async def _run_mid_turn(self, text: str) -> None:
+        if self.plugins_busy(text):
+            return
         async with self.screen.overlay():
             self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
@@ -700,6 +764,13 @@ class _Shell(Generic[DepsT, OutputT]):
                 else:
                     assert self.prompt is not None
                     text = expand_bare_command((await self.prompt.prompt_async('> ')).strip())
+            except PromptWakeup:
+                if not self.tasks.owner.reports(conversation_id=self.session.summary.id):
+                    continue
+                async with self.forks.busy():
+                    if await self._turn(None):
+                        return 'exit'
+                continue
             except KeyboardInterrupt:
                 if self.interrupts.press():
                     return 'exit'
@@ -715,35 +786,38 @@ class _Shell(Generic[DepsT, OutputT]):
             if self.editor is not None:
                 self.console.print(f'> {terminal_text(text)}', markup=False, highlight=False)
             self.console.print()
-            if (command := shell_command(text)) is not None:
-                async with self.forks.busy(), self._released():
-                    await run_shell_command(command, console=self.console, interrupts=self.interrupts)
-                if self.interrupts.exit_requested:
-                    return 'exit'
-                continue
-            if is_command_input(text):
-                async with self.forks.busy(), self._released():
-                    await self.interrupts.run(
-                        _execute_command(self.commands, text, console=self.console, status=self.status)
-                    )
-                if text == '/exit' or self.interrupts.exit_requested or self.reload_requested:
-                    return 'exit'
-                continue
-            if self.session.model is None and self.agent.model is None:
-                self.images.retry_text = text
-                self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
-                continue
-            try:
-                async with self.forks.busy():
-                    if await self._turn(text):
-                        return 'exit'
-            finally:
-                if self.editor is not None:
-                    await self.editor.output.drain()
+            if await self._dispatch_input(text):
+                return 'exit'
 
-    async def _turn(self, text: str) -> bool:
+    async def _dispatch_input(self, text: str) -> bool:
+        if (command := shell_command(text)) is not None:
+            async with self.forks.busy(), self._released():
+                await run_shell_command(command, console=self.console, interrupts=self.interrupts)
+            return self.interrupts.exit_requested
+        if is_command_input(text):
+            return await self._command(text)
+        if self.session.model is None and self.agent.model is None:
+            self.images.retry_text = text
+            self.console.print('Choose a model first: /set model <Tab>', style=theme.color(theme.WARNING))
+            return False
         try:
-            text, images = self.images.resolve(text)
+            async with self.forks.busy():
+                return await self._turn(text)
+        finally:
+            if self.editor is not None:
+                await self.editor.output.drain()
+
+    async def _command(self, text: str) -> bool:
+        if self.plugins_busy(text):
+            return False
+        async with self.forks.busy(), self._released():
+            await self.interrupts.run(_execute_command(self.commands, text, console=self.console, status=self.status))
+        return text == '/exit' or self.interrupts.exit_requested or self.reload_requested
+
+    async def _turn(self, text: str | None) -> bool:
+        automated = text is None
+        try:
+            text, images = self.images.resolve(text) if text is not None else ('', [])
         except ValueError as exc:
             self.console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
             return False
@@ -752,9 +826,18 @@ class _Shell(Generic[DepsT, OutputT]):
 
         async def run_turn() -> None:
             nonlocal ended
-            ended = await self.run_turn(start, images=images)
+            ended = await self.run_turn(start, images=images, automated=automated)
 
+        previous_tasks = {(record.id, record.generation) for record in self.tasks.records()}
         completed = await self.interrupts.run(run_turn())
+        if not completed:
+            for record in self.tasks.records():
+                if (
+                    (record.id, record.generation) not in previous_tasks
+                    and not record.background
+                    and record.outcome == 'cancelled'
+                ):
+                    await self.tasks.owner.cancel(record.id)
         self.sessions.namer.submit(self.session.summary.id)
         if self.editor is not None:
             await self.editor.output.drain()
@@ -769,7 +852,7 @@ class _Shell(Generic[DepsT, OutputT]):
         return self.interrupts.exit_requested
 
     async def run_turn(
-        self, start: TurnStart, *, images: Sequence[BinaryContent] = (), headless: bool = False
+        self, start: TurnStart, *, images: Sequence[BinaryContent] = (), headless: bool = False, automated: bool = False
     ) -> TurnEnd:
         """Apply turn hooks and settings, then run with optional terminal rendering."""
         try:
@@ -802,7 +885,7 @@ class _Shell(Generic[DepsT, OutputT]):
             return TurnEnd(text=start.text, outcome='failed', error=exc)
         if headless:
             try:
-                result = await self.session.prompt(start.text)
+                result = await self.session.prompt(None if automated else start.text)
             except Exception as exc:
                 return TurnEnd(text=start.text, outcome='failed', error=exc)
             return TurnEnd(text=start.text, outcome='completed', result=result)
@@ -817,7 +900,7 @@ class _Shell(Generic[DepsT, OutputT]):
                 try:
                     ended = await _run_prompt(
                         self.session,
-                        start.text,
+                        None if automated else start.text,
                         images=images,
                         console=self.console,
                         settings=self.context.settings,
@@ -825,6 +908,7 @@ class _Shell(Generic[DepsT, OutputT]):
                         renderers=self.loader.renderers(),
                         screen=self.screen,
                         spinner=self.spinners.active,
+                        tasks=self.tasks if self.session.delegations is not None else None,
                     )
                 finally:
                     self._mid_turn_commands = None
@@ -886,7 +970,7 @@ def _model_label(agent: AbstractAgent[DepsT, OutputT]) -> str:
 
 async def _run_prompt(
     session: Session[DepsT, OutputT],
-    text: str,
+    text: str | None,
     *,
     console: Console,
     settings: Settings,
@@ -895,6 +979,7 @@ async def _run_prompt(
     screen: Screen,
     spinner: Callable[[], Spinner],
     images: Sequence[BinaryContent] = (),
+    tasks: Tasks | None = None,
 ) -> TurnEnd:
     renderer = StreamRenderer(
         console,
@@ -905,15 +990,21 @@ async def _run_prompt(
         shell_lines=settings.shell_lines,
         grep_lines=settings.grep_lines,
         tool_arg_chars=settings.tool_arg_chars,
-        renderers=renderers,
+        renderers=[*renderers, task_row] if tasks is not None else renderers,
     )
     status.streamed_chars = 0
     status.output_tokens = None
     status.activity = 'waiting'
 
+    render_lock = Lock()
+
     async def observe(event: AgentStreamEvent) -> None:
-        status.observe(event)
-        await renderer.on_stream_event(event)
+        async with render_lock:
+            status.observe(event)
+            await renderer.on_stream_event(event)
+
+    if tasks is not None:
+        tasks.sink = observe
 
     def context_usage(tokens: int) -> None:
         status.context_tokens = tokens
@@ -941,7 +1032,7 @@ async def _run_prompt(
         if not renderer.rendered_text or not isinstance(result.output, str):
             console.print(str(result.output), markup=False)
             console.print()
-        return TurnEnd(text=text, outcome='completed', result=result)
+        return TurnEnd(text=text or '', outcome='completed', result=result)
     except asyncio.CancelledError:
         await renderer.abort()
         raise
@@ -953,8 +1044,10 @@ async def _run_prompt(
             style=theme.color(theme.MUTED),
         )
         console.print()
-        return TurnEnd(text=text, outcome='failed', error=exc)
+        return TurnEnd(text=text or '', outcome='failed', error=exc)
     finally:
+        if tasks is not None:
+            tasks.sink = None
         status.activity = 'ready'
         status.cost = session_usage(session.messages).total.cost
         session.on_context_usage = None

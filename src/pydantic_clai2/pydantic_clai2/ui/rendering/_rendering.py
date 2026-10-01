@@ -34,7 +34,7 @@ from pydantic_ai import (
     ThinkingPart,
     ThinkingPartDelta,
 )
-from pydantic_clai2.runtime.sandbox_calls import SandboxCallOrder
+from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent, SandboxCallOrder
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.grep_output import GrepOutput
 from pydantic_clai2.ui.rendering.tool_output import ToolOutput, print_tool_header, terminal_text, tool_arguments_text
@@ -177,6 +177,8 @@ class StreamRenderer:
         self._render_tool_event(event)
 
     def _render_tool_event(self, event: FunctionToolCallEvent | FunctionToolResultEvent) -> None:
+        if isinstance(event, DelegationToolCallEvent):
+            return
         if isinstance(event, FunctionToolResultEvent):
             self._tool_output.discard_call(event.part.tool_call_id)
         if self._grep_output.render(event):

@@ -1052,6 +1052,72 @@ Saved Coder declarations that omit `sub_agents` still default to `false`. Enable
 to restore the stock declaration. Explicit `false` remains an opt-out. Custom agents
 are not rebuilt and must bind delegation and its accompanying capabilities themselves.
 
+### Managed tasks in the interactive stock CLI
+
+The interactive stock agent runs `SubAgents` inside a harness `DelegationTasks`
+owner. `delegate_task(agent_name, task, background=False, resume=None)` starts a
+child with its own history. `general-purpose` is an alias for `self`, carrying
+all agent-bound tools, instructions, and guardrails. `Explore` and `Plan` use
+only filesystem readers and a `ReadOnlyWorkspace`: neither shell commands nor
+`run_code` are available. They inherit the current model and are one-shot.
+Custom delegates and general-purpose children can resume with the same task ID.
+There are three child layers below the main agent by default.
+
+Use foreground delegation when the answer is needed immediately, and background
+delegation for independent work. Give each child a self-contained task with
+paths, constraints, and expected evidence. A background acceptance receipt is
+not a result. CLAI delivers a settled child's report through core's native
+queued-message API, marked as automated, untrusted task data. Reports are not
+user instructions or permission grants. In the interactive stock CLI, a report
+that arrives while idle automatically continues the parent. No extra user prompt
+is needed, and your unfinished draft and queued input are preserved. Reports
+arriving during a turn use that run's queue; completed reports are not replayed.
+Nested children join their descendants and receive their reports before settling.
+
+- **Ctrl+B** moves foreground children of the main run to the background without
+  restarting them. In tmux, send Ctrl+B through to the application or change the
+  tmux prefix.
+- **`/tasks`** opens the live picker during a turn or between turns. Enter opens
+  a full-width transcript with in-flight text; Esc returns to the picker, then
+  closes it. Arrow keys scroll the transcript; End follows its tail. Completing
+  a task does not close its detail view.
+- **`b` / `/tasks background ID`** backgrounds the selected child.
+- **`x` / `/tasks stop ID`** stops that child and its descendants, leaving siblings
+  running. Stopping a child prevents automatic model resume.
+- **`/tasks resume ID`** explicitly authorizes resume and queues a request to the
+  parent to continue the saved child. Explore and Plan cannot resume. The parent
+  uses `delegate_task` with the same ID and agent name; it remains responsible
+  for reviewing the child's result.
+
+The editor panel shows the task tree, activity, elapsed time, and descendant
+counts. Successful rows disappear on completion; failed and stopped rows remain
+for 30 seconds. The `/tasks` hint also remains for 30 seconds. The picker retains
+completed tasks for inspection. Live previews retain the latest 65,536 characters
+of an unfinished text part; settled responses retain their full history.
+Questions asked by children use the main
+terminal and identify the requesting child.
+
+Task metadata and independent histories are stored beside the session database
+in `<database-name>.tasks/`. Each database has its own task directory; in-memory
+stores do not write task files. Child runs also use the session's `StepPersistence` store.
+After restarting, resume the parent session to inspect or continue its children.
+Restoring an interrupted child does not execute it. Inspect partial effects
+before requesting resume. Delivery acknowledgements are saved to prevent replay
+of reports already consumed by a parent.
+
+Background execution is supported for local workspaces. A run-owned remote or
+sandbox workspace can still run foreground children, but background requests and
+promotion are refused because that workspace can close when its parent exits.
+Plugin changes are held while managed children run so their transports and hooks
+remain alive. Exit and reload cancel and drain managed children before plugin
+shutdown. Cancelling the main turn stops its foreground delegates; children
+already in the background remain owned by the session.
+
+Supplied agents and headless invocations keep their existing delegation behavior;
+the managed task UI is not installed on them. Saved Coder `sub_agents: false`
+and declarations omitting that setting remain opt-outs. CLAI adds no tools when
+delegation is disabled.
+
 ## Bring an agent
 
 ```python

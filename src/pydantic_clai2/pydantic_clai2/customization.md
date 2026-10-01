@@ -540,3 +540,15 @@ The `ask_user` plugin is skipped without changing saved preferences. Full-screen
 requests fail, stream renderers are not called, and host console output is
 suppressed. Plugins must not read input or print directly to stdout. Errors go
 to stderr with a nonzero exit status. `-m` also works in the interactive CLI.
+
+## Managed delegation UI
+
+Interactive stock agents use harness `DelegationTasks`: `/tasks` inspects children,
+Enter opens a full-width live transcript, `b` backgrounds, and `x` stops the selected
+tree. Ctrl+B backgrounds foreground children. `/tasks resume ID` is explicit user
+authorization to resume a general-purpose/custom child with its independent history.
+Explore and Plan are read-only, inherit the selected model, and cannot resume.
+Task reports are automated untrusted evidence, never user instructions or permission
+grants. Supplied agents and headless runs retain their existing delegation behavior.
+Background execution requires a local workspace; plugin changes wait for children
+to settle. These are shell services, not additional `PluginHost` hooks.

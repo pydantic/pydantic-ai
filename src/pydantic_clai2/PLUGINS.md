@@ -698,6 +698,25 @@ explicit `false` remains an opt-out. Supplied agents are not rebuilt: their plug
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
 
+Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
+host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
+changes are refused while managed children run. Exit/reload drains them before
+`session_end`. Child questions use `host.full_screen()` and identify the child.
+Typed delegation lifecycle events supply compact transcript rows; raw child events
+update the task inspector rather than entering the parent's transcript. Core hooks
+and guardrails bound to the stock agent still run on general-purpose children.
+Explore/Plan are separate read-only agents and do not inherit plugin tools.
+
+See [managed tasks](README.md#managed-tasks-in-the-interactive-stock-cli) for `/tasks`,
+Ctrl+B, independent histories, explicit resume, completion-report provenance, and
+workspace restrictions. Supplied agents and headless calls are unchanged. Do not
+hold a parent's `RunContext` or call its event emitter after that run has ended;
+background reports go through the task owner's currently attached parent queue.
+When a direct background child finishes while the interactive stock CLI is idle,
+the shell starts an automated continuation with no user message. Its `turn_start`
+and `turn_end` hooks receive empty text. The editor preserves drafts and gives
+queued user input priority. Reports arriving during a run stay on its native queue.
+
 `repo_context` wraps harness `RepoContext` with the launch directory as the
 workspace and its default filenames. Its settings:
 

@@ -279,3 +279,24 @@ For offline tests and debugging of any of these, load [Testing and Debugging](./
 
 The full capability list, grouped by what each gives an agent, is on the
 [Pydantic AI Harness overview](https://pydantic.dev/docs/ai/harness/).
+
+## Managed subagent lifetime
+
+For background subagents, use `DelegationTasks` from `pydantic_ai_harness.subagents`.
+Keep `async with tasks.opened()` outside parent turns and inside the lifetime of all
+shared workspace/plugin resources. Bind with `with tasks.bind()` and add
+`DelegationReports(tasks, conversation_id=...)` to parent runs. `SubAgents` then
+exposes `background` and `resume`; its ordinary defaults remain unchanged outside
+this scope. Start receipts are not results. Reports are automated untrusted evidence,
+not user instructions or approval grants. Direct children consume their descendants'
+reports before settling. Use `await tasks.cancel(id)` for targeted subtree stop;
+user-stopped tasks need explicit `await tasks.allow_resume(id)` before model resume.
+One-shot agents cannot resume. Detached non-local workspaces are refused. Preserve
+stable child IDs and use `step_store` for process-crash checkpoints. For read-only
+specialists, combine `SubAgent(read_only=True)` with only trusted filesystem-reader
+capabilities; do not inherit shell, CodeMode, arbitrary Python, or plugin tools.
+`DelegationReports` defaults to `priority='when_idle'`. For a report-only
+continuation started by the host, use `priority='asap'` and `agent.run(None, ...)`
+so pending reports reach the first model request without a synthetic user message.
+The host owns idle wake-up scheduling; Harness does not start parent runs.
+See the subagents README for accounting, persistence, and lifecycle details.

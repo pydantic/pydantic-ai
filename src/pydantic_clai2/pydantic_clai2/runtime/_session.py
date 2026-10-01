@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import replace
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -35,6 +36,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     ensure_inactive,
 )
+from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
@@ -157,6 +159,7 @@ class Session(Generic[DepsT, OutputT]):
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
     ) -> None:
+        self.delegations: DelegationTasks | None = None
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
         self.summary = ConversationSummary(workspace=self.workspace)
@@ -272,11 +275,14 @@ class Session(Generic[DepsT, OutputT]):
             self._run_context.enqueue(*content, priority='asap')
         return True
 
-    async def prompt(self, text: str, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
+    async def prompt(self, text: str | None, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
         """Execute the complete native agent loop, including tool calls."""
         if self._running:
             raise RuntimeError('A conversation can only run one prompt at a time')
-        content: str | Sequence[UserContent] = [text, *images] if images else text
+        content: str | Sequence[UserContent] | None = (
+            [*([text] if text is not None else []), *images] if images else text
+        )
+        submitted = [ModelRequest(parts=[UserPromptPart(content)])] if content is not None else []
         self._running = True
         self._accepting_steering = True
         try:
@@ -285,14 +291,17 @@ class Session(Generic[DepsT, OutputT]):
             candidate = replace(self.summary, run_id=run_id, owner_pid=os.getpid(), model=self.model)
             if self.conversations is not None:
                 if self.summary.revision == 0:
-                    title = ' '.join(''.join(c for c in text if c.isprintable() or c.isspace()).split())[:64]
+                    title = ' '.join(''.join(c for c in (text or '') if c.isprintable() or c.isspace()).split())[:64]
                     candidate = replace(candidate, title=title or 'New session')
-                accepted: list[ModelMessage] = [*previous, ModelRequest(parts=[UserPromptPart(content)])]
+                accepted: list[ModelMessage] = [*previous, *submitted]
                 self.summary = await self.conversations.save(
                     summary=replace(candidate, outcome='running'), messages=accepted
                 )
                 self._messages = accepted
-            with capture_run_messages() as messages:
+            with (
+                capture_run_messages() as messages,
+                self.delegations.bind() if self.delegations is not None else nullcontext(),
+            ):
                 try:
                     model = await self.resolved_model()
                     capabilities = list(self.plugins)
@@ -304,6 +313,14 @@ class Session(Generic[DepsT, OutputT]):
                             self._bound_plugins = tuple(self.plugins)
                         # Already bound to the stock agent, including delegation and guardrails.
                         capabilities = []
+                    if self.delegations is not None:
+                        capabilities.append(
+                            DelegationReports(
+                                self.delegations,
+                                conversation_id=self.summary.id,
+                                priority='asap' if text is None else 'when_idle',
+                            )
+                        )
                     workspace: Literal['new'] | None = None
                     if _supports_local_workspace() and not _supplies_workspace(
                         [*_agent_capabilities(self.agent), *self.plugins]
@@ -334,7 +351,7 @@ class Session(Generic[DepsT, OutputT]):
                     self._accepting_steering = False
                     # Core captures partial responses and tool results during cleanup.
                     # If cancellation precedes graph startup, retain at least the prompt.
-                    self._messages = messages or [*previous, ModelRequest(parts=[UserPromptPart(content)])]
+                    self._messages = messages or [*previous, *submitted]
                     self._mark_interrupted()
                     try:
                         with move_on_after(5, shield=True):
