@@ -630,10 +630,14 @@ class GoogleModel(Model[Client]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        # Ignore optional infrastructure native tools (e.g. auto-injected `ToolSearchTool`) —
-        # they're dropped by `Model.prepare_request` when inert and shouldn't trigger the
+        # Count only native tools that reach the wire. `Model.prepare_request` drops optional
+        # infrastructure native tools (e.g. auto-injected `ToolSearchTool`) when inert, and swaps an
+        # unsupported one for its local fallback or rejects it, so neither should trigger the
         # "native tool + output tools" path.
-        user_native_tools = [t for t in model_request_parameters.native_tools if not t.optional]
+        supported_native_tools = tuple(self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))
+        user_native_tools = [
+            t for t in model_request_parameters.native_tools if not t.optional and isinstance(t, supported_native_tools)
+        ]
         if (
             user_native_tools
             and model_request_parameters.output_tools
