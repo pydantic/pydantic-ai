@@ -94,7 +94,7 @@ A declaration's `factory` resolves to a plugin class:
 - `module:Class`: that `Plugin` subclass, or a capability class wrapped as above.
 
 A factory that still resolves to an `activate(host)` function fails to load with
-an error pointing at "Writing a plugin" in `PLUGINS.md`, rather than being run
+an error pointing at "What a plugin declares" in `PLUGINS.md`, rather than being run
 through a compatibility shim. `pydantic-clai2` is 0.x, whose minor releases may
 change APIs; it has shipped one release with `activate(host)`, every known plugin
 is in this repository and was ported, and a shim would have to keep the whole

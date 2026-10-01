@@ -281,10 +281,15 @@ async def test_declared_plugin_and_capability_classes(tmp_path: Path, monkeypatc
         await harness.loader.command(['add', 'empty', 'clai_extras'])
     with pytest.raises(PluginError, match=r'defines several plugins \(Installer, Other\); name one as'):
         await harness.loader.command(['add', 'several', 'clai_extras.caps'])
-    with pytest.raises(PluginError, match='is an `activate\\(host\\)` function'):
-        await harness.loader.command(['add', 'legacy', 'clai_extras.legacy'])
-    with pytest.raises(PluginError, match='is an `activate\\(host\\)` function'):
-        await harness.loader.command(['add', 'legacy_attr', 'clai_extras.legacy:activate'])
+    for name, factory in [('legacy', 'clai_extras.legacy'), ('legacy_attr', 'clai_extras.legacy:activate')]:
+        with pytest.raises(PluginError) as legacy:
+            await harness.loader.command(['add', name, factory])
+        assert str(legacy.value) == (
+            f'Plugin {name!r}: TypeError: {factory} is an `activate(host)` function; plugins are now `Plugin`'
+            ' subclasses. See "What a plugin declares" in PLUGINS.md.'
+        )
+    plugins_md = Path(__file__).parents[2] / 'src' / 'pydantic_clai2' / 'PLUGINS.md'
+    assert '\n## What a plugin declares\n' in plugins_md.read_text()
     with pytest.raises(PluginError, match='ModuleNotFoundError'):
         await harness.loader.command(['add', 'missing', 'clai_extras.nope'])
     listing = await harness.loader.command(['list'])

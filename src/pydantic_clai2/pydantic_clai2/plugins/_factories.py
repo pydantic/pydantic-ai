@@ -68,7 +68,7 @@ def build(module: ModuleType, declaration: PluginSettings, host: PluginHost[Deps
     if inspect.isfunction(legacy):
         raise TypeError(
             f'{declaration.factory} is an `activate(host)` function; plugins are now `Plugin` subclasses.'
-            ' See "Writing a plugin" in PLUGINS.md.'
+            ' See "What a plugin declares" in PLUGINS.md.'
         )
     raise TypeError(f'{declaration.factory} is neither a `Plugin` nor a capability class')
 
