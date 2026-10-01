@@ -11,6 +11,7 @@ from dataclasses import field
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, overload
 
+import anyio
 from opentelemetry.trace import NoOpTracer, Tracer
 from typing_extensions import TypeVar, deprecated
 
@@ -80,7 +81,7 @@ async def dispatch_event_immediate(ctx: RunContext[Any], event: _messages.AgentS
     # settlement signal the stream consumer awaits before yielding the event, so consumers never
     # observe a decision event whose listeners are still mutating it. A list per id keeps repeated
     # emissions of one object (a capability re-emitting on behalf of another) exactly-once each.
-    settled = asyncio.Event()
+    settled = anyio.Event()
     ctx._pending_immediate_dispatches.setdefault(id(event), []).append(settled)  # pyright: ignore[reportPrivateUsage]
     try:
         capability = ctx.root_capability
@@ -288,8 +289,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
     where [`emit`][pydantic_ai.tools.RunContext.emit] raises.
     """
 
-    _pending_immediate_dispatches: dict[int, list[asyncio.Event]] = field(
-        default_factory=dict[int, list[asyncio.Event]], repr=False
+    _pending_immediate_dispatches: dict[int, list[anyio.Event]] = field(
+        default_factory=dict[int, list[anyio.Event]], repr=False
     )
     """Per-event-id settlement signals for buffered events dispatched immediately, shared across the run.
 

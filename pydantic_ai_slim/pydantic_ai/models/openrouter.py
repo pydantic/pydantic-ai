@@ -216,11 +216,13 @@ class OpenRouterProviderConfig(TypedDict, total=False):
     ignore: list[str]
     """List of provider slugs to skip for this request. [See details](https://openrouter.ai/docs/features/provider-routing#ignoring-providers)"""
 
-    quantizations: list[Literal['int4', 'int8', 'fp4', 'fp6', 'fp8', 'fp16', 'bf16', 'fp32', 'unknown']]
+    quantizations: list[
+        Literal['int4', 'int8', 'fp4', 'mxfp4', 'nvfp4', 'fp6', 'fp8', 'mxfp8', 'fp16', 'bf16', 'fp32', 'unknown']
+    ]
     """List of quantization levels to filter by (e.g. ["int4", "int8"]). [See details](https://openrouter.ai/docs/features/provider-routing#quantization)"""
 
-    sort: Literal['price', 'throughput', 'latency']
-    """Sort providers by price or throughput. (e.g. "price" or "throughput"). [See details](https://openrouter.ai/docs/features/provider-routing#provider-sorting)"""
+    sort: Literal['price', 'throughput', 'latency', 'exacto']
+    """Sort providers by price, throughput, latency, or exacto. [See details](https://openrouter.ai/docs/features/provider-routing#provider-sorting) and [Exacto](https://openrouter.ai/docs/guides/routing/model-variants/exacto)."""
 
     max_price: _OpenRouterMaxPrice
     """The maximum pricing you want to pay for this request. [See details](https://openrouter.ai/docs/features/provider-routing#max-price)"""
@@ -562,7 +564,13 @@ def _map_openrouter_provider_details(
     provider_details['downstream_provider'] = response.provider
     if native_finish_reason := response.choices[0].native_finish_reason:
         provider_details['finish_reason'] = native_finish_reason
+    return provider_details
 
+
+def _map_openrouter_usage_provider_details(
+    response: _OpenRouterChatCompletion | _OpenRouterChatCompletionChunk,
+) -> dict[str, Any]:
+    provider_details: dict[str, Any] = {}
     if usage := response.usage:
         if cost := usage.cost:
             provider_details['cost'] = cost
@@ -1080,6 +1088,7 @@ class OpenRouterModel(OpenAIChatModel):
 
         provider_details = super()._process_provider_details(response) or {}
         provider_details.update(_map_openrouter_provider_details(response))
+        provider_details.update(_map_openrouter_usage_provider_details(response))
         if annotations := response.choices[0].message.annotations:
             provider_details['annotations'] = _dump_openrouter_annotations(annotations)
         return provider_details or None
@@ -1293,6 +1302,12 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
             # Provider details are shallow-merged across chunks, so publish the running list.
             provider_details['annotations'] = list(self._annotations)
         return provider_details or None
+
+    @override
+    def _map_chunk_provider_details(self, chunk: chat.ChatCompletionChunk) -> dict[str, Any] | None:
+        assert isinstance(chunk, _OpenRouterChatCompletionChunk)
+        # Usage often arrives on a final chunk without choices.
+        return _map_openrouter_usage_provider_details(chunk) or None
 
     @override
     def _map_usage(self, response: chat.ChatCompletionChunk) -> usage.RequestUsage:

@@ -207,6 +207,7 @@ A model id is any string a Pydantic AI model accepts, so newer models not yet in
 ## Cancellation and limitations
 
 - **Cancellation.** `session/cancel` and `session/close` cancel the in-flight turn; close waits for it to unwind before returning. Cooperative async tools stop promptly. A synchronous tool already running in a worker thread cannot be force-stopped, so prefer async tools for cancellation-sensitive work.
+- **Usage limits.** ACP turns have no request limit by default. Pass `usage_limits=UsageLimits(...)` to bound model requests, tokens, tool calls, or cost. Reaching a configured limit ends the turn with `max_tokens` or `max_turn_requests`; partial messages from that turn are not committed.
 - **Approval detection.** Tools that require approval are recognized when they live in a `FunctionToolset` (which the harness `FileSystem`/`Shell` and `@agent.tool` all use). A tool whose approval requirement is decided dynamically per call (by raising `ApprovalRequired` from its body) starts as `in_progress`, and any side effects it ran before raising have already happened -- use an `ApprovalRequiredToolset` for actions that must not partially execute before approval. A tool added only per run (via a capability's `for_run()`, or the callable arm of an `AgentToolset`) is not recognized up front, but the run reports exactly which calls paused for approval, and the adapter corrects their announced status to `pending` before asking the client.
 - **Overwrite diffs.** `write_file` renders an overwrite as if creating a new file, so the diff understates what it replaced.
 - **Live terminal panes.** `acp_terminal` returns a command's captured output; it does not embed a live terminal pane in the tool call.
@@ -230,7 +231,7 @@ run_acp_stdio(            # async; serve until the client disconnects
     session_store=None,       # enables session/load by persisting each session
     models=None,              # models offered as the `model` config option ('all' for every known model)
     model_resolver=None,      # maps an advertised model id to the Model used for the run
-    usage_limits=None,        # per-run request/token ceilings
+    usage_limits=None,        # no request limit by default; pass UsageLimits(...) to set ceilings
 )
 
 run_acp_stdio_sync(...)   # synchronous wrapper, same arguments
