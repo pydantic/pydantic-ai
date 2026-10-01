@@ -13,11 +13,11 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     conversation_text,
 )
-from pydantic_ai_harness.step_persistence.naming import NamingResult, SessionNamer, generate_name
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.plugins import Plugin
 from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.menus.session_browser import SessionBrowser
 from pydantic_clai2.ui.rendering.usage_report import usage_command

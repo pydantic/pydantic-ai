@@ -26,6 +26,7 @@ from pydantic_clai2.plugins import (
     ModelProvider,
     Plugin,
     PluginHost,
+    PluginLogin,
     Renderer,
     SessionEnd,
     SessionEndReason,
@@ -291,6 +292,10 @@ class PluginLoader(Generic[DepsT]):
     def model_providers(self) -> dict[str, ModelProvider]:
         """Plugin model prefixes; a later plugin wins a prefix collision, as with spinners."""
         return {provider.prefix: provider for loaded in self._loaded.values() for provider in loaded.model_providers}
+
+    def logins(self) -> dict[str, PluginLogin]:
+        """Plugin sign-ins for `/login NAME`; a later plugin wins a name collision, as with model prefixes."""
+        return {login.name: login for loaded in self._loaded.values() for login in loaded.logins}
 
     def model_names(self) -> list[str]:
         """Every plugin-offered model, with its prefix, for menus and completions."""

@@ -8,8 +8,10 @@ plugin that shares it, and a deleted key fails the run rather than connecting.
 
 import asyncio
 from collections.abc import Iterable, Sequence
+from functools import partial
 from typing import Generic, Literal
 
+import anyio
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
@@ -91,7 +93,7 @@ class NotionPlugin(Plugin[NotionSettings, DepsT]):
 
     async def on_session_start(self, event: SessionStart) -> None:
         # Here rather than on load, so the keyring read does not block the shell's loop.
-        if self.settings.auth == 'key' and await asyncio.to_thread(selected_key) is None:
+        if self.settings.auth == 'key' and await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True) is None:
             self.host.console.print(
                 f'Notion has no key selected, so runs fail. {SETUP}',
                 style=theme.color(theme.WARNING),
@@ -100,9 +102,11 @@ class NotionPlugin(Plugin[NotionSettings, DepsT]):
 
     async def _connect(self, _: RunContext[DepsT]) -> Notion[DepsT]:
         settings = self.settings
-        reference = None if settings.auth == 'oauth' else await asyncio.to_thread(selected_key)
+        reference = (
+            None if settings.auth == 'oauth' else await anyio.to_thread.run_sync(selected_key, abandon_on_cancel=True)
+        )
         if reference is not None:
-            token = await asyncio.to_thread(resolve_key, token=reference)
+            token = await anyio.to_thread.run_sync(partial(resolve_key, token=reference), abandon_on_cancel=True)
             return Notion[DepsT](
                 auth=token, read_only=settings.read_only, include_instructions=settings.include_instructions
             )
@@ -246,8 +250,8 @@ async def _configure(source: NotionSource[DepsT]) -> str:
 async def _command(args: list[str]) -> str:
     if args != ['logout']:
         raise ValueError('Usage: /notion logout (settings and the key: /plugins configure notion)')
-    await asyncio.to_thread(TOKENS.forget)
-    await asyncio.to_thread(delete_credentials, account=ACCOUNT)
+    await anyio.to_thread.run_sync(TOKENS.forget, abandon_on_cancel=True)
+    await anyio.to_thread.run_sync(partial(delete_credentials, account=ACCOUNT), abandon_on_cancel=True)
     return 'Signed out of Notion and cleared the selected key. The key itself stays in /keys.'
 
 

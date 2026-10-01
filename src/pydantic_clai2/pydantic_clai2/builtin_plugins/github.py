@@ -14,6 +14,7 @@ from dataclasses import replace
 from typing import Generic, Literal
 from urllib.parse import urlsplit
 
+import anyio
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu, MenuResult
@@ -102,7 +103,7 @@ class GitHubPlugin(Plugin[GitHubSettings, DepsT]):
     async def on_session_start(self, event: SessionStart) -> None:
         # Loading anyway keeps the settings menu available; each run fails closed until there is a token.
         # A worker thread, because `gh` and the `/keys` lock can take a while.
-        problem = await asyncio.to_thread(_token_problem, self.settings)
+        problem = await anyio.to_thread.run_sync(_token_problem, self.settings, abandon_on_cancel=True)
         if problem is not None:
             self.host.console.print(
                 f'GitHub has no token: {problem} {SETUP}', style=theme.color(theme.WARNING), markup=False

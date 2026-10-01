@@ -1,9 +1,10 @@
 """Connect to a trusted vLLM server using core's OpenAI-compatible provider."""
 
-import asyncio
 import json
+from functools import partial
 
 import httpx
+from anyio import to_thread
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, HttpUrl, SecretStr, TypeAdapter, ValidationError
 from termflow.tui import MenuBuilder, MenuItem
@@ -50,7 +51,7 @@ def api_url(value: str) -> str:
 
 async def discover(connection: Connection, *, transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
     """Query only the requested endpoint; do not forward credentials across redirects."""
-    token = await asyncio.to_thread(resolve_key, token=connection.token)
+    token = await to_thread.run_sync(partial(resolve_key, token=connection.token), abandon_on_cancel=True)
     headers = {'Authorization': f'Bearer {token}'} if token else {}
     async with httpx.AsyncClient(transport=transport, timeout=20, follow_redirects=False, trust_env=False) as client:
         try:
@@ -108,7 +109,7 @@ async def connect(context: CommandContext, args: list[str]) -> str:
     if args:
         raise ValueError('Usage: /vllm (URL and optional token are prompted separately)')
     try:
-        raw = await asyncio.to_thread(load_codex_credentials, account='vllm')
+        raw = await to_thread.run_sync(partial(load_codex_credentials, account='vllm'), abandon_on_cancel=True)
         connection = Connection.model_validate_json(raw) if raw else None
     except (ValidationError, UserError):
         connection = None
@@ -126,7 +127,7 @@ async def connect(context: CommandContext, args: list[str]) -> str:
     selected = await run_worker(lambda: choose(names))
     if selected is None:
         return 'Connection cancelled.'
-    await asyncio.to_thread(save_connection, connection)
+    await to_thread.run_sync(save_connection, connection, abandon_on_cancel=True)
     return context.set_setting(['model', f'vllm:{selected}'])
 
 

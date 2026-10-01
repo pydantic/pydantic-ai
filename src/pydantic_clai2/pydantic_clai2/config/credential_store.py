@@ -124,7 +124,7 @@ def _decrypt(path: Path) -> str:
             pass
     raise UserError(
         'Stored credentials cannot be decrypted: the keyring lost their key. Reconnect through /add_model, '
-        'or /keys for saved API keys; for Codex run /login openai-codex.'
+        'or /keys for saved API keys; for Codex run /login codex.'
     )
 
 
@@ -183,9 +183,7 @@ def _chunk_services(*, value: str, account: str) -> list[str]:
         return []
     match = re.fullmatch(r'clai-chunks-v1:([0-9a-f]{32}):([1-9][0-9]{0,3})', value)
     if match is None:
-        raise UserError(
-            'Stored credentials are invalid. Reconnect through /add_model; for Codex run /login openai-codex.'
-        )
+        raise UserError('Stored credentials are invalid. Reconnect through /add_model; for Codex run /login codex.')
     generation, count = match.groups()
     return [f'{_SERVICE}.{account}.{generation}.{index}' for index in range(int(count))]
 
@@ -200,7 +198,7 @@ def _join_chunks(*, root: str, account: str) -> str:
         chunk = keyring.get_password(service, account)
         if chunk is None:
             raise UserError(
-                'Stored credentials are incomplete. Reconnect through /add_model; for Codex run /login openai-codex.'
+                'Stored credentials are incomplete. Reconnect through /add_model; for Codex run /login codex.'
             )
         chunks.append(chunk)
     return ''.join(chunks)

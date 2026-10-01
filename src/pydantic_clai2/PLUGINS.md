@@ -206,7 +206,7 @@ Output-validation and HTTP transport retry budgets are unchanged.
 
 ## Credentials
 
-CLAI's `/login openai-codex`, `/login github-copilot`, and the vllm and openrouter connections store tokens
+CLAI's `/login codex`, `/login copilot`, and the vllm and openrouter connections store tokens
 in the configured keyring backend, not plugin settings. Plugins that need an API key, such as
 [`posthog`](#posthog-posthog-analytics-signed-in-for-clai), keep it in `/keys` and save only its name. Large token bundles use
 multiple entries to fit Windows Credential Manager's size limit. When no keyring
@@ -221,7 +221,7 @@ details.
 uv run clai2
 ```
 
-Run `/login github-copilot`, then open `/add_model` and choose `github-copilot`.
+Run `/login copilot`, then open `/add_model` and choose `github-copilot`.
 The provider menu also starts login when no credentials exist. No application
 registration or client ID configuration is required. CLAI supplies the same
 [public Copilot OAuth client ID as Pi](https://github.com/earendil-works/pi/blob/fde38ed7c2f64434beffc6c0ec3b9994cb89ae23/packages/ai/src/auth/oauth/github-copilot.ts#L10-L11)
@@ -244,7 +244,7 @@ organization policy still control inference access. A known ID also works with
 The `github-copilot` keyring account is separate from Codex and named API keys.
 Without a keyring, CLAI reports the plaintext `credentials-github-copilot.json`
 fallback, created with mode `0600`. Tokens and issuance time stay out of settings,
-history, and login output. Expiring tokens require another `/login github-copilot`;
+history, and login output. Expiring tokens require another `/login copilot`;
 there is no automatic refresh. Failed or cancelled authorization preserves the
 previous login.
 
@@ -911,7 +911,7 @@ The token is looked up on every run. If none is available when the plugin loads
 loads, prints a warning, and keeps its settings menu available. Until you sign
 in or save a key, each run fails with an error saying how to fix it, so the agent
 never runs as the wrong account. `/keys` does not stop you renaming or deleting a
-key that a plugin uses. Neither sign-in uses your `/login github-copilot` login,
+key that a plugin uses. Neither sign-in uses your `/login copilot` login,
 and Copilot does not read the `GITHUB_TOKEN` key. The plugin emits no telemetry
 of its own; tool calls appear in core's spans.
 
@@ -1568,7 +1568,7 @@ A prompt cancelled by `on_turn_start` never starts an agent run and is not retai
 `/fork` fires both handlers for its background run too: an `on_turn_start` that cancels
 the prompt refuses the fork, and `on_turn_end` runs when the fork finishes.
 
-Codex token-refresh failures show `/login openai-codex` recovery advice, including
+Codex token-refresh failures show `/login codex` recovery advice, including
 when the SDK wraps them as connection errors. This changes only the terminal
 message: `TurnEnd.error` still contains the original exception and its chain.
 Headless runs show the same advice on stderr and exit with code 1.
@@ -1681,6 +1681,10 @@ list when there is none); `/fork` does this so prompts keep their apostrophes.
 It may be `async`. Add `complete=` to offer Tab suggestions. The registry filters
 command names and returned candidates by case-sensitive substring, replacing the
 whole typed fragment when selected. Return full candidates, not just suffixes.
+Set `available=` to a zero-argument callable returning a boolean to gate dispatch,
+help, and completion on live session state. It defaults to always available.
+Unavailable commands retain their registered names and ownership, so they still
+participate in duplicate checks and are removed on plugin unload.
 Names must be unique;
 clashing with a built-in is an error at startup, not a silent override.
 
@@ -2097,6 +2101,34 @@ wins. Unloading the plugin removes the prefix; a saved model under it stays in
 `/model`, and runs with it fail as an unknown provider until the plugin is enabled
 again.
 
+### Add a sign-in to `/login`: `get_logins()`
+
+`/login NAME` signs in to a subscription: `codex` (bare `/login`) and `copilot`
+ship with CLAI, and `openai-codex` and `github-copilot` still work. A plugin whose
+models need a sign-in adds its own name next to them:
+
+```python
+from collections.abc import Sequence
+
+from pydantic_clai2.plugins import Plugin, PluginLogin
+
+
+async def sign_in() -> str:
+    ...  # run the OAuth flow, save tokens to the keyring
+    return 'Signed in to My Service.'
+
+
+class MyService(Plugin):
+    def get_logins(self) -> Sequence[PluginLogin]:
+        return (PluginLogin(name='my-service', handler=sign_in),)
+```
+
+`/login my-service` awaits `sign_in` and shows the message it returns, and `/login`
+completes the name. Raise `UserError` when signing in fails, and keep tokens in the
+keyring, never in plugin settings. The name uses the same format as a model prefix
+and cannot be one of CLAI's sign-ins, which raises `ValueError`; when two plugins
+add one name, the later one wins. Unloading the plugin removes it.
+
 ## Rules that keep plugins predictable
 
 - Handlers are `async`. There is no sync variant of anything.
@@ -2289,6 +2321,14 @@ not enable fast mode. The stored values remain `service_tier=priority` and
 `service_tier=default`, so older CLAI versions can read them. A custom
 `service_tier` body parameter still takes precedence.
 
+While the active model starts with `openai-codex:`, `/fast` toggles between
+priority and standard processing. `/fast on` and `/fast off` select explicitly.
+It saves the active model's service tier for subsequent prompts and sessions,
+without changing reasoning effort or other preferences. It is absent from help
+and Tab completion on other models, and typing it there reports an unknown command.
+If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
+with `/model_settings` rather than saving an ineffective change.
+
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
 compatibility fix. Editing or resetting a known field preserves unknown fields
@@ -2392,7 +2432,7 @@ This is a notification, not the durable source of truth or permission to replay 
 tool. A durable replay may notify again. An observer failure cannot roll back the
 already committed snapshot. No new CLAI lifecycle hooks are introduced.
 
-Session naming is a shell-owned background service over Harness's `SessionNamer`.
+Session naming is a shell-owned background service (`runtime/session_naming.py`).
 It never writes into the agent transcript or loads plugin code. `/resume` does
 not fire plugin load/unload hooks or restore previous plugin approvals. Cross-project
 resume keeps the current working directory and the saved conversation's original

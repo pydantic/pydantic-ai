@@ -10,7 +10,7 @@ from pathlib import Path
 from threading import Thread
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-from anyio import create_memory_object_stream, create_task_group
+from anyio import create_memory_object_stream, create_task_group, to_thread
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from prompt_toolkit.formatted_text import FormattedText
@@ -43,8 +43,10 @@ from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
 from pydantic_clai2.errors import error_message
+from pydantic_clai2.models import login_names
 from pydantic_clai2.plugins import (
     ModelProvider,
+    PluginLogin,
     Renderer,
     SessionEndReason,
     SessionStart,
@@ -250,6 +252,8 @@ class _ModelResolver:
     console: Console
     plugins: Callable[[], Mapping[str, ModelProvider]] = lambda: {}
     """Model prefixes registered by loaded plugins, read per resolution so enabling one applies at once."""
+    logins: Callable[[], Mapping[str, PluginLogin]] = lambda: {}
+    """Sign-ins registered by loaded plugins, read per `/login` like `plugins`."""
     _auth: 'CodexAuth | None' = None
 
     def codex_auth(self) -> 'CodexAuth':
@@ -262,26 +266,28 @@ class _ModelResolver:
     async def login(self, args: list[str]) -> str:
         from pydantic_clai2.auth import login_command
 
-        return await login_command(args, codex=self.codex_auth())
+        return await login_command(args, codex=self.codex_auth(), plugins=self.logins())
 
     async def resolve(self, name: str) -> Model | str:
         if name.startswith('openrouter:'):
             from pydantic_clai2.models import openrouter
 
-            return await asyncio.to_thread(openrouter.model, name)
+            return await to_thread.run_sync(openrouter.model, name, abandon_on_cancel=True)
         if name.startswith('vllm:'):
             from pydantic_clai2.models import vllm
 
-            return await asyncio.to_thread(vllm.model, name)
+            return await to_thread.run_sync(vllm.model, name, abandon_on_cancel=True)
         if name.startswith('github-copilot:'):
             from pydantic_clai2.models import github_copilot
 
-            return await asyncio.to_thread(github_copilot.model, name)
+            return await to_thread.run_sync(github_copilot.model, name, abandon_on_cancel=True)
         if name.startswith('openai-codex:'):
             return self.codex_auth().model(name)
         prefix, separator, model_name = name.partition(':')
         provider = self.plugins().get(prefix) if separator else None
-        return name if provider is None else await asyncio.to_thread(provider.resolve, model_name)
+        return (
+            name if provider is None else await to_thread.run_sync(provider.resolve, model_name, abandon_on_cancel=True)
+        )
 
 
 def create_shell(
@@ -340,16 +346,42 @@ def create_shell(
 
         return await model_settings_command(context, args)
 
+    def fast(args: list[str]) -> str:
+        if args not in ([], ['on'], ['off']):
+            raise ValueError('Usage: /fast [on|off]')
+        model = session.model or _model_label(agent)
+        current = context.model_settings(model) or {}
+        saved = store.model_settings(model)
+        custom = saved.get('custom_params')
+        if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
+            raise ValueError('Custom service_tier overrides fast mode. Remove it with /model_settings first.')
+        enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
+        tier = 'priority' if enabled else 'default'
+        store.save_model_settings(model, {**saved, 'service_tier': tier})
+        return (
+            f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.'
+            + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
+        )
+
     sessions = Sessions(session=session, store=conversations, context=context)
     commands = Commands()
+    commands.register(
+        Command(
+            name='fast',
+            description='Toggle Codex priority processing: /fast [on|off] (uses more ChatGPT credits)',
+            handler=fast,
+            complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
+            available=lambda: (session.model or _model_label(agent)).startswith('openai-codex:'),
+        )
+    )
     commands.register(Command(name='resume', description='Browse or restore a saved session', handler=sessions.command))
     commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command))
     commands.register(
         Command(
             name='login',
-            description='Connect your ChatGPT/Codex or GitHub Copilot subscription',
+            description='Sign in to a subscription: codex, copilot, or one a plugin adds',
             handler=models.login,
-            complete=lambda _: ('openai-codex', 'github-copilot'),
+            complete=lambda args: login_names(models.logins()) if len(args) <= 1 else (),
         )
     )
     commands.register(
@@ -448,6 +480,7 @@ def create_shell(
         enabled=load_plugins,
     )
     models.plugins = loader.model_providers
+    models.logins = loader.logins
     context.plugin_models = loader.model_names
     spinners = Spinners(selected=lambda: context.settings.spinner, registered=loader.spinners)
     commands.register(

@@ -1,10 +1,10 @@
 """The built-in `google_workspace` plugin: Google's hosted Workspace MCP servers, through harness `GoogleWorkspace`."""
 
-import asyncio
 from collections.abc import Sequence
 from functools import partial
 from typing import Generic, get_args
 
+import anyio
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from termflow.tui import MenuBuilder, MenuItem
@@ -95,10 +95,13 @@ async def choose_key() -> str:
     if token is None:
         return 'Google Workspace key unchanged.'
     if not isinstance(token, KeyReference):
-        await asyncio.to_thread(save_key, name=TOKEN_LABEL, value=token)
+        await anyio.to_thread.run_sync(partial(save_key, name=TOKEN_LABEL, value=token), abandon_on_cancel=True)
         token = KeyReference(name=TOKEN_LABEL)
     connection = Connection(token=token)
-    await asyncio.to_thread(save_key_connection, account=ACCOUNT, token=token, value=connection.model_dump_json())
+    await anyio.to_thread.run_sync(
+        partial(save_key_connection, account=ACCOUNT, token=token, value=connection.model_dump_json()),
+        abandon_on_cancel=True,
+    )
     return f'Google Workspace uses the saved key {token.name} from the next turn.'
 
 

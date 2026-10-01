@@ -7,6 +7,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
+import anyio
 import pytest
 from rich.console import Console
 
@@ -113,7 +114,7 @@ async def test_stable_status_colors_without_spinner(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv('COLORTERM', 'truecolor' if truecolor else '')
     output = io.StringIO()
     frames: list[str] = []
-    original_sleep = asyncio.sleep
+    original_sleep = anyio.sleep
     now = [0.0]
 
     async def tick(delay: float) -> None:
@@ -123,7 +124,7 @@ async def test_stable_status_colors_without_spinner(monkeypatch: pytest.MonkeyPa
             raise asyncio.CancelledError
         await original_sleep(0)
 
-    monkeypatch.setattr('pydantic_clai2.ui.rendering.status.asyncio.sleep', tick)
+    monkeypatch.setattr('pydantic_clai2.ui.rendering.status.anyio.sleep', tick)
     async with StatusLine(
         Console(file=output, force_terminal=True, width=40, height=24),
         Status(model='test\x1b\n'),

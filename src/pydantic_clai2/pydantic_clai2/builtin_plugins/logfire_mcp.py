@@ -9,8 +9,10 @@ import os
 import threading
 from collections.abc import Sequence
 from dataclasses import replace
+from functools import partial
 from urllib.parse import urlsplit
 
+import anyio
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from keyring.errors import KeyringError
@@ -88,7 +90,9 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
 
     async def on_session_start(self, event: SessionStart) -> None:
         # A worker thread: `/keys` takes a lock another CLAI process can hold, and the keyring can block.
-        self.capability, missing = await asyncio.to_thread(_capability, settings=self.settings, announce=self._announce)
+        self.capability, missing = await anyio.to_thread.run_sync(
+            partial(_capability, settings=self.settings, announce=self._announce), abandon_on_cancel=True
+        )
         if missing is not None:
             # Loading anyway keeps the settings menu available; each run fails closed until the key is saved.
             self.host.console.print(
@@ -149,7 +153,7 @@ async def _command(args: list[str], *, settings: LogfireMCPSettings, announce: A
         return 'Logfire runs use this sign-in when no API key is chosen, set, or saved.'
     if args == ['logout']:
         try:
-            forgotten = await asyncio.to_thread(forget)
+            forgotten = await anyio.to_thread.run_sync(forget, abandon_on_cancel=True)
         except (KeyringError, OSError) as exc:
             raise ValueError(
                 f'Could not delete the saved Logfire browser sign-in ({type(exc).__name__}); run /logfire_mcp logout to retry.'
@@ -354,11 +358,13 @@ async def _choose_key() -> KeyReference | None | str:
         return None
     # Added only if absent, atomically, so a key another CLAI process just saved is never replaced unasked.
     try:
-        await asyncio.to_thread(save_key, name=KEY_NAME, value=value, replace=False)
+        await anyio.to_thread.run_sync(
+            partial(save_key, name=KEY_NAME, value=value, replace=False), abandon_on_cancel=True
+        )
     except KeyExistsError:
         if not await run_worker(_confirm_replace):
             return None
-        await asyncio.to_thread(save_key, name=KEY_NAME, value=value)
+        await anyio.to_thread.run_sync(partial(save_key, name=KEY_NAME, value=value), abandon_on_cancel=True)
     return KeyReference(name=KEY_NAME)
 
 

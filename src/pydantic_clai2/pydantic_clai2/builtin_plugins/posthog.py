@@ -15,9 +15,11 @@ import asyncio
 import re
 from collections.abc import AsyncGenerator, Generator, Sequence
 from dataclasses import replace
+from functools import partial
 from typing import Literal
 from urllib.parse import urlencode, urlsplit
 
+import anyio
 import httpx
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
@@ -174,7 +176,7 @@ class SavedKeyAuth(httpx.Auth):
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
         """The same lookup off the event loop: the keyring and the `/keys` lock can block."""
-        request.headers['Authorization'] = await asyncio.to_thread(_bearer)
+        request.headers['Authorization'] = await anyio.to_thread.run_sync(_bearer, abandon_on_cancel=True)
         yield request
 
 
@@ -219,13 +221,15 @@ class PostHogPlugin(Plugin[PostHogSettings]):
 
     async def _command(self, args: list[str]) -> str:
         if args == ['logout']:
-            await asyncio.to_thread(self.tokens.forget)
+            await anyio.to_thread.run_sync(self.tokens.forget, abandon_on_cancel=True)
             # The live sign-in still holds the tokens it loaded, so later runs need a fresh one.
             self.capability.client = client(self.host.settings(PostHogSettings))
             return 'Signed out of PostHog. The next prompt that uses browser sign-in opens the browser again.'
         if args:
             raise ValueError('Usage: /posthog [logout]; change settings with /plugins configure posthog')
-        return await asyncio.to_thread(_status, self.host.settings(PostHogSettings), self.tokens)
+        return await anyio.to_thread.run_sync(
+            _status, self.host.settings(PostHogSettings), self.tokens, abandon_on_cancel=True
+        )
 
 
 def client(settings: PostHogSettings) -> Client[StreamableHttpTransport]:
@@ -531,14 +535,18 @@ async def choose_key() -> str:
             return 'PostHog key unchanged.'
         try:
             # Checked and written under one /keys lock, so a key saved meanwhile elsewhere is not overwritten.
-            await asyncio.to_thread(save_key, name=KEY_NAME, value=token, replace=False)
+            await anyio.to_thread.run_sync(
+                partial(save_key, name=KEY_NAME, value=token, replace=False), abandon_on_cancel=True
+            )
         except KeyExistsError:
             if not await run_worker(_confirm_replace):
                 return 'PostHog key unchanged.'
-            await asyncio.to_thread(save_key, name=KEY_NAME, value=token)
+            await anyio.to_thread.run_sync(partial(save_key, name=KEY_NAME, value=token), abandon_on_cancel=True)
         token = KeyReference(name=KEY_NAME)
     saved = _Saved(token=token).model_dump_json()
-    await asyncio.to_thread(save_key_connection, account=ACCOUNT, token=token, value=saved)
+    await anyio.to_thread.run_sync(
+        partial(save_key_connection, account=ACCOUNT, token=token, value=saved), abandon_on_cancel=True
+    )
     return f'PostHog connects with {token.name} from /keys.'
 
 

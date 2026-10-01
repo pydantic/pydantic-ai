@@ -51,7 +51,7 @@ overrides only what it needs, and the agent asks for each contribution.
 | `AbstractCapability` | `Plugin` |
 |---|---|
 | constructor arguments | `Plugin[Settings]`, validated from the saved JSON into `self.settings` |
-| `get_toolset()`, `get_instructions()`, ... | `get_capabilities()`, `get_commands()`, `get_status_segments()`, `get_spinners()`, `get_model_providers()` |
+| `get_toolset()`, `get_instructions()`, ... | `get_capabilities()`, `get_commands()`, `get_status_segments()`, `get_spinners()`, `get_model_providers()`, `get_logins()` |
 | `before_run`, `after_tool_execute`, ... | `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end` |
 | `@on_event(EventClass)` | `render(event)` for display; `@on_event` / `Hooks` inside `get_capabilities` for observing |
 | `RunContext` | `self.host`, a `PluginHost` holding the console, conversation, status, full screen, and saved settings |

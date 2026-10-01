@@ -30,6 +30,8 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 - Use a custom model/provider: return ModelProvider(prefix=..., resolve=...,
   models=...) from get_model_providers, where resolve returns a Pydantic AI
   Model, or supply a Pydantic AI Agent to chat from a Python launcher.
+  If its models need a sign-in, return PluginLogin(name=..., handler=...)
+  values from get_logins to add /login NAME.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying
@@ -542,12 +544,19 @@ not enable fast mode. The stored values remain `service_tier=priority` and
 `service_tier=default`, so older CLAI versions can read them. A custom
 `service_tier` body parameter still takes precedence.
 
+While using an `openai-codex:` model, `/fast` toggles priority processing;
+`/fast on` and `/fast off` select explicitly. The service tier is saved for that
+model's next prompts and sessions. Reasoning effort is unchanged. Other models
+neither expose nor accept `/fast`. Remove a custom `service_tier` parameter with
+`/model_settings` before using `/fast`.
+
 To extend the built-in picker in a CLAI source change, add a source returning
 CatalogModel values in model_catalog.py and merge it in catalog(). Adding a
 catalog row does not implement provider support. Editable per-model settings
 are declared in ModelSettingsForm in model_settings.py; extend that form, not a
 second editor. Credentials belong in provider-supported storage, not model
-settings. /login currently covers Codex, not arbitrary provider authentication.
+settings. /login signs in to subscriptions: /login codex (the default),
+/login copilot, and any sign-in a plugin returns from get_logins.
 
 ## Test and verify
 

@@ -1,7 +1,7 @@
 """The declarative plugin API: subclass `Plugin` and override what it contributes, as with `AbstractCapability`."""
 
 import re
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import ClassVar, Generic, Literal, Protocol, TypeVar, cast, get_args, get_origin
@@ -19,7 +19,7 @@ from pydantic_ai.providers import infer_provider_class
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
-from pydantic_clai2.models import CLAI_PROVIDERS
+from pydantic_clai2.models import CLAI_PROVIDERS, LOGIN_ALIASES, LOGINS
 from pydantic_clai2.ui.rendering.spinners import Spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
 
@@ -139,11 +139,7 @@ class ModelProvider:
 
     def __post_init__(self) -> None:
         """Reject a malformed prefix, or one CLAI already runs, before any plugin can offer it."""
-        if not _PROVIDER_PREFIX.fullmatch(self.prefix):
-            raise ValueError(
-                f'Model prefix {self.prefix!r} must start with a lowercase letter, followed by lowercase letters, '
-                'digits, and hyphens.'
-            )
+        _require_name('Model prefix', self.prefix)
         if _runs_already(self.prefix):
             raise ValueError(f'Model prefix {self.prefix!r} is a provider CLAI already runs; choose your own.')
 
@@ -153,7 +149,36 @@ class ModelProvider:
         return tuple(f'{self.prefix}:{name}' for name in self.models)
 
 
+@dataclass(frozen=True, kw_only=True)
+class PluginLogin:
+    """A sign-in a plugin adds as `/login NAME`; return it from `Plugin.get_logins`.
+
+    For sign-ins that store credentials, such as the subscription behind a `ModelProvider`. Keep
+    secrets in the keyring, never in plugin settings, and raise `UserError` when signing in fails.
+    NAME cannot be a sign-in CLAI ships (`codex`, `copilot`, or their provider names); when two
+    plugins add one name, the later one wins. Unloading the plugin removes it.
+    """
+
+    name: str
+    handler: Callable[[], Awaitable[str]]
+    """Sign in and return the message to show."""
+
+    def __post_init__(self) -> None:
+        """Reject a malformed name, or one CLAI already signs in to, before any plugin can offer it."""
+        _require_name('Login name', self.name)
+        if self.name in LOGINS or self.name in LOGIN_ALIASES:
+            raise ValueError(f'Login name {self.name!r} is a sign-in CLAI already has; choose your own.')
+
+
 _PROVIDER_PREFIX = re.compile(r'[a-z][a-z0-9-]*')
+
+
+def _require_name(kind: str, name: str) -> None:
+    """Model prefixes and login names share one format: what users type after `/login` or before `:`."""
+    if not _PROVIDER_PREFIX.fullmatch(name):
+        raise ValueError(
+            f'{kind} {name!r} must start with a lowercase letter, followed by lowercase letters, digits, and hyphens.'
+        )
 
 
 def _runs_already(prefix: str) -> bool:
@@ -330,6 +355,10 @@ class Plugin(Generic[SettingsT, DepsT]):
         """Model prefixes this plugin runs, offered in `/add_model` and `/set model`."""
         return ()
 
+    def get_logins(self) -> Sequence[PluginLogin]:
+        """Sign-ins this plugin adds to `/login`, such as for the subscription behind a model provider."""
+        return ()
+
     def render(self, event: AgentStreamEvent) -> RenderableType | None:
         """Draw an event yourself; return `None` to fall back to the default display."""
         return None
@@ -389,6 +418,7 @@ class LoadedPlugin(Generic[DepsT]):
     status_segments: tuple[StatusSegment, ...]
     spinners: tuple[Spinner, ...]
     model_providers: tuple[ModelProvider, ...]
+    logins: tuple[PluginLogin, ...]
 
     @property
     def host(self) -> PluginHost[DepsT]:
@@ -419,6 +449,7 @@ def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:
         status_segments=tuple(plugin.get_status_segments()),
         spinners=tuple(replace(spinner, source='plugin') for spinner in plugin.get_spinners()),
         model_providers=tuple(plugin.get_model_providers()),
+        logins=tuple(plugin.get_logins()),
     )
 
 
