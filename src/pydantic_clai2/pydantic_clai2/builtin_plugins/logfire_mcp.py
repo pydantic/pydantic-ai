@@ -67,7 +67,7 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
     def __init__(self, host: PluginHost[None], settings: LogfireMCPSettings) -> None:
         super().__init__(host, settings)
         self.capability: LogfireMCP[None] | None = None
-        """Built by `on_session_start`; runs before it get no Logfire MCP tools."""
+        """Built by `on_session_start`; runs that start earlier get no Logfire MCP tools."""
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
         return (self._for_run,)
