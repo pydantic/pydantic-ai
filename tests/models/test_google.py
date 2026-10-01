@@ -64,7 +64,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import PeekableAsyncStream
 from pydantic_ai.agent import Agent
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import ImageGeneration, NativeTool
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
@@ -84,6 +84,7 @@ from pydantic_ai.native_tools import (
     WebSearchTool,
 )
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.settings import ModelSettings, ServiceTier
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -3870,12 +3871,69 @@ async def test_google_image_generation_tool(allow_model_requests: None, google_p
     agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
 
     with pytest.raises(
-        UserError,
-        match=re.escape(
-            "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
-        ),
+        UserError, match=re.escape("Native tool(s) ['ImageGenerationTool'] not supported by this model.")
     ):
         await agent.run('Generate an image of an axolotl.')
+
+
+async def test_google_image_generation_text_model_runs_local_fallback(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """A Gemini text model has no native image generation, so `ImageGeneration` sends its local tool instead."""
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    prompts: list[str] = []
+
+    def generate_image(prompt: str) -> str:
+        """Generate an image from a text prompt."""
+        prompts.append(prompt)
+        return 'The image was generated and shown to the user.'
+
+    agent = Agent(
+        GoogleModel('gemini-2.5-flash', provider=provider), capabilities=[ImageGeneration(local=generate_image)]
+    )
+    await agent.run('Generate an image of an axolotl.')
+
+    assert prompts == snapshot(['axolotl'])
+    body = request_capture.body(':generateContent')
+    assert body['tools'] == snapshot(
+        [
+            {
+                'functionDeclarations': [
+                    {
+                        'description': 'Generate an image from a text prompt.',
+                        'name': 'generate_image',
+                        'parameters_json_schema': {
+                            'additionalProperties': False,
+                            'properties': {'prompt': {'type': 'string'}},
+                            'required': ['prompt'],
+                            'type': 'object',
+                        },
+                    }
+                ]
+            }
+        ]
+    )
+    assert body['generationConfig'] == snapshot({'responseModalities': ['TEXT']})
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'profile', 'supports_native'),
+    [
+        ('gemini-2.5-flash', None, False),
+        ('gemini-3.1-flash-image', None, True),
+        ('gemini-2.5-flash', ModelProfile(supports_image_output=True), True),
+    ],
+)
+def test_google_image_generation_tool_follows_supports_image_output(
+    google_provider: GoogleProvider, model_name: str, profile: ModelProfile | None, supports_native: bool
+):
+    """`ImageGenerationTool` is supported exactly when the resolved `supports_image_output` is true.
+
+    Pinned on the profile because the flag is resolved there, including a user `profile=` override; the
+    request paths for both sides are recorded in the tests above.
+    """
+    model = GoogleModel(model_name, provider=google_provider, profile=profile)
+    assert (ImageGenerationTool in model.profile.get('supported_native_tools', frozenset())) is supports_native
 
 
 async def test_google_image_generation_tool_aspect_ratio(google_provider: GoogleProvider) -> None:

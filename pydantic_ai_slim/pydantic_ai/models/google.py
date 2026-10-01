@@ -45,6 +45,7 @@ from ..messages import (
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
     CodeExecutionTool,
     FileSearchTool,
@@ -599,8 +600,14 @@ class GoogleModel(Model[Client]):
         When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
         `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
         `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
+
+        `ImageGenerationTool` is only supported when `supports_image_output` is true, so a text model
+        falls back to the local tool an `ImageGeneration` capability provides.
         """
-        profile = cast(GoogleModelProfile, super().profile)
+        profile: GoogleModelProfile = cast(GoogleModelProfile, super().profile)
+        if not profile.get('supports_image_output', False):
+            native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ImageGenerationTool}
+            profile = {**profile, 'supported_native_tools': native_tools}
         # Google documents only `minimal` and `high` for this model on both APIs, but the Gemini API
         # alone enforces that: verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` for this
         # id and its `-preview`, while Vertex (`global`, `us`, `eu`) accepts them. So the level set
@@ -814,10 +821,6 @@ class GoogleModel(Model[Client]):
                     file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
                     tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
-                    if not self.profile.get('supports_image_output', False):
-                        raise UserError(
-                            "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
-                        )
                     image_config = self._build_image_config(tool)
                 else:  # pragma: no cover
                     raise UserError(
