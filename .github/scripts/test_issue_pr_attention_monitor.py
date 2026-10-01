@@ -330,6 +330,59 @@ def test_snapshot_skips_active_recent_and_escalated_items():
     assert [candidate['number'] for candidate in candidates] == [2]
 
 
+def test_snapshot_skips_signed_operational_incidents_but_keeps_human_items_and_bot_prs():
+    incident = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    incident['body'] = (
+        '<!-- pydantic-ai-provider-health:v1 '
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance",'
+        '"run_id":"123","reset_at":null} -->'
+    )
+    human_issue = item(10, labels=['pydanty:meta'])
+    bot_pr = {
+        **item(11, labels=['agentic-workflows', 'pydanty:meta']),
+        'pull_request': {'url': 'https://api.github.test/pulls/11'},
+    }
+    client = SnapshotClient({9: incident, 10: human_issue, 11: bot_pr})
+
+    candidates = monitor.build_snapshot(client, 'pydantic/pydantic-ai', now=NOW)['candidates']
+
+    assert [candidate['number'] for candidate in candidates] == [10, 11]
+    assert [candidate['kind'] for candidate in candidates] == ['issue', 'pull_request']
+
+
+@pytest.mark.parametrize(
+    'marker',
+    [
+        '{"version":true,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":1.0,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":2,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":1,"scope":"provider","key":"minimax"}',
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance","reset_at":"2026-08-25T00:00:00"}',
+    ],
+)
+def test_operational_labels_without_a_valid_controller_marker_are_not_filtered(marker: str):
+    issue = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    issue['body'] = f'<!-- pydantic-ai-provider-health:v1 {marker} -->'
+
+    assert not monitor._is_provider_health_incident(issue)
+    snapshot = monitor.build_snapshot(SnapshotClient({9: issue}), 'pydantic/pydantic-ai', now=NOW)
+    assert [candidate['number'] for candidate in snapshot['candidates']] == [9]
+
+
+def test_deeply_nested_operational_marker_does_not_abort_snapshot():
+    nested = '[' * 10_000 + '0' + ']' * 10_000
+    issue = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    issue['body'] = (
+        '<!-- pydantic-ai-provider-health:v1 '
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance",'
+        f'"extra":{nested}}} -->'
+    )
+
+    snapshot = monitor.build_snapshot(SnapshotClient({9: issue}), 'pydantic/pydantic-ai', now=NOW)
+
+    assert [candidate['number'] for candidate in snapshot['candidates']] == [9]
+
+
 def test_candidate_search_covers_recent_activity_and_the_backlog():
     client = SnapshotClient({})
     monitor._candidate_page(client, 'pydantic/pydantic-ai', now=NOW)
@@ -2824,10 +2877,7 @@ def test_compiled_lock_keeps_agent_read_only_and_stable_artifact_name():
     assert 'workflow_call:' in text
     assert "github.repository == 'pydantic/pydantic-ai-harness'" in text
     source_checkouts = [
-        step
-        for job in jobs.values()
-        for step in job.get('steps', [])
-        if step.get('uses', '').startswith('actions/checkout@de0fac2e')
+        step for step in jobs['agent'].get('steps', []) if step.get('uses', '').startswith('actions/checkout@de0fac2e')
     ]
     assert source_checkouts
     assert all(step['with']['repository'] == '${{ job.workflow_repository }}' for step in source_checkouts)

@@ -1,4 +1,6 @@
-"""The built-in `github` plugin: GitHub's hosted MCP tools, through harness `GitHub`.
+"""Work with GitHub through GitHub's hosted MCP tools.
+
+The built-in `github` plugin: GitHub's hosted MCP tools, through harness `GitHub`.
 
 The token comes from the GitHub CLI's browser sign-in, or from `/keys`. The plugin's settings hold only
 which one (and a key's name) plus the non-secret `GitHub` options, all edited in the settings menu that

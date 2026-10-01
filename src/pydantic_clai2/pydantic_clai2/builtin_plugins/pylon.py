@@ -1,4 +1,6 @@
-"""The built-in `pylon` plugin: Pylon's support issues, accounts, and contacts through harness `Pylon`.
+"""Look up Pylon support issues, accounts, and contacts.
+
+The built-in `pylon` plugin: Pylon's support issues, accounts, and contacts through harness `Pylon`.
 
 The settings menu is `PylonPlugin.configure`, so turning the plugin on opens it, as do `C` in
 `/plugins`, `/plugins configure pylon`, and `/pylon`. Each edit is saved to the plugin's settings at once and

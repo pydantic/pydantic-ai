@@ -1,4 +1,6 @@
-"""The built-in `posthog` plugin: PostHog's hosted MCP server through harness `PostHog`.
+"""Use PostHog through PostHog's hosted MCP server.
+
+The built-in `posthog` plugin: PostHog's hosted MCP server through harness `PostHog`.
 
 The personal API key is never kept in plugin settings, which are plaintext SQLite. It lives in `/keys`, and the
 plugin saves only the key's name, in the credential store beside the `vllm` and `openrouter` connections, so `/keys`

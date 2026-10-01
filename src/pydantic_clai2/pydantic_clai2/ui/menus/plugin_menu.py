@@ -1,21 +1,51 @@
 """The `/plugins` full-screen menu, built on termflow like Code Puppy's menus."""
 
 import asyncio
+import textwrap
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import Generic, Protocol
 
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu, MenuResult
+from termflow.tui.terminal import terminal_size
 
 from pydantic_clai2.plugins import DepsT
+from pydantic_clai2.plugins.describe import describe
 from pydantic_clai2.plugins.loader import PluginEntry, PluginError, PluginLoader
 from pydantic_clai2.ui.menus.field_menu import SAVE_AND_CLOSE_DETAILS, is_save_and_close, save_and_close_item
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
+from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 Apply = Callable[[Coroutine[object, object, object]], None]
-_HINT = 'Up/Down move - Space enable/disable - C configure - R reload - D remove - Enter/Q close'
+_HINT = '↑/↓ move · space on/off · c configure · r reload · d remove · enter/q close'
+_RESET = '\x1b[0m'
+_UNDIM = '\x1b[22m'
+"""Termflow dims row descriptions; the status word cancels that so its colour reads clearly."""
+_STATUS_WIDTH = len('failed')
+
+
+def _status(entry: PluginEntry[DepsT]) -> tuple[str, str]:
+    """A one-word status and the theme role that colours it."""
+    if entry.loaded is not None:
+        return 'on', theme.SUCCESS
+    if not entry.declaration.enabled:
+        return 'off', theme.MUTED
+    return ('failed', theme.ERROR) if entry.error else ('idle', theme.WARNING)
+
+
+def _origin(entry: PluginEntry[DepsT]) -> str:
+    """Where the declaration came from, short enough for the list."""
+    if entry.project:
+        return 'project'
+    if entry.builtin:
+        return 'built-in'
+    return 'drop-in' if entry.path is not None else 'installed'
+
+
+def _paint(role: str, text: str, *, bold: bool = False) -> str:
+    return f'{theme.sgr(role, bold=bold)}{text}{_RESET}'
 
 
 @dataclass(frozen=True)
@@ -41,17 +71,27 @@ class PluginMenu(Generic[DepsT]):
         self._loader = loader
         self._apply = apply
         self.notice: str | None = None
+        self._descriptions: dict[str, str] = {}
+        """Read once per plugin, since the panel repaints on every key; reload reads again."""
 
     def items(self) -> list[MenuItem]:
-        """One row per plugin, `[x]` when loaded, then Save & close."""
+        """One row per plugin, `●` when loaded, with a coloured status and origin; then Save & close."""
         entries = self._loader.entries()
         if not entries:
             hint = f'No plugins. Use /plugins add, or drop a file in {self._loader.plugins_dir}'
             return [MenuItem(hint, disabled=True), save_and_close_item()]
-        rows = [
-            MenuItem(f'[{"x" if entry.loaded else " "}] {entry.name:<16} {entry.source}', value=entry.name)
-            for entry in entries
-        ]
+        width = self._name_width()
+        rows: list[MenuItem] = []
+        for entry in entries:
+            word, role = _status(entry)
+            status = f'{_UNDIM}{theme.sgr(role)}{word:<{_STATUS_WIDTH}}{_RESET}'
+            rows.append(
+                MenuItem(
+                    f'{"●" if entry.loaded else "○"} {entry.name:<{width}}',
+                    value=entry.name,
+                    description=f'{status} {_paint(theme.MUTED, _origin(entry))}',
+                )
+            )
         return [*rows, save_and_close_item()]
 
     def details(self, item: MenuItem) -> str:
@@ -59,15 +99,23 @@ class PluginMenu(Generic[DepsT]):
         entry = self._find(item)
         if entry is None:
             done = SAVE_AND_CLOSE_DETAILS if is_save_and_close(item) else ''
-            return '\n'.join(line for line in (self.notice, done) if line)
+            return '\n'.join(line for line in (self._notice(), done) if line)
+        word, role = _status(entry)
         lines = [
-            f'source  {entry.source}',
-            f'state   {entry.state}',
-            f'adds    {entry.loaded.summary() if entry.loaded else "-"}',
-            f'error   {entry.error or "none"}',
+            _paint(theme.ACCENT, entry.name),
+            f'{_paint(role, word)}{_paint(theme.MUTED, f" · {_origin(entry)}")}',
+            '',
+            *self._description(entry),
+            self._field('source', entry.declaration.factory if entry.path is None else str(entry.path)),
+            self._field('provides', entry.loaded.summary() if entry.loaded else 'nothing while off'),
+            self._field('settings', self._settings_hint(entry)),
         ]
+        if entry.ignored:
+            lines += ['', _paint(theme.WARNING, 'notice', bold=True), *self._wrap(entry.ignored, theme.WARNING)]
+        if entry.error:
+            lines += ['', _paint(theme.ERROR, 'error', bold=True), *self._wrap(entry.error, theme.ERROR)]
         if self.notice:
-            lines.append(f'notice  {self.notice}')
+            lines += ['', self._notice()]
         return '\n'.join(lines)
 
     def toggle(self, menu: Redrawable, item: MenuItem) -> MenuResult | None:
@@ -85,6 +133,7 @@ class PluginMenu(Generic[DepsT]):
         """R: re-import and load again."""
         entry = self._find(item)
         if entry is not None:
+            self._descriptions.pop(entry.name, None)
             self._run(self._loader.reload(entry.name))
         menu.replace_items(self.items())
 
@@ -92,6 +141,7 @@ class PluginMenu(Generic[DepsT]):
         """D: unload and forget."""
         entry = self._find(item)
         if entry is not None:
+            self._descriptions.pop(entry.name, None)
             self._run(self._loader.remove(entry.name))
         menu.replace_items(self.items())
 
@@ -116,6 +166,7 @@ class PluginMenu(Generic[DepsT]):
             MenuBuilder('Plugins')
             .style(markdown_style())
             .items(self.items())
+            .list_width(self._list_width())
             .preview(self.details)
             .on_key(' ', self.toggle)
             .on_key('c', self.configure)
@@ -126,6 +177,37 @@ class PluginMenu(Generic[DepsT]):
             .key_source(menu_key)
             .build()
         )
+
+    def _name_width(self) -> int:
+        return max((len(entry.name) for entry in self._loader.entries()), default=0)
+
+    def _list_width(self) -> int:
+        """Pointer, glyph, name, status, and origin, with a little air before the divider."""
+        return max(30, 2 + 2 + self._name_width() + 2 + _STATUS_WIDTH + 1 + 10)
+
+    def _wrap(self, text: str, role: str) -> list[str]:
+        """Wrap long text to the details pane so errors and notices are read, not clipped."""
+        width = max(20, terminal_size()[0] - 1 - self._list_width() - 3)
+        return [_paint(role, line) for line in textwrap.wrap(text, width)]
+
+    def _description(self, entry: PluginEntry[DepsT]) -> list[str]:
+        """The plugin's docstring summary and a blank line, or nothing when it has none."""
+        if entry.name not in self._descriptions:
+            self._descriptions[entry.name] = describe(entry)
+        text = self._descriptions[entry.name]
+        return [*self._wrap(text, theme.SUGAR), ''] if text else []
+
+    def _notice(self) -> str:
+        return '\n'.join(self._wrap(self.notice, theme.WARNING)) if self.notice else ''
+
+    def _settings_hint(self, entry: PluginEntry[DepsT]) -> str:
+        if self._loader.configurable(entry.name):
+            return 'press c to configure'
+        return 'none' if entry.loaded else 'turn on to see'
+
+    @staticmethod
+    def _field(label: str, value: str) -> str:
+        return f'{_paint(theme.MUTED, f"{label:<9}")}{value}'
 
     def _find(self, item: MenuItem) -> PluginEntry[DepsT] | None:
         name = item.value
