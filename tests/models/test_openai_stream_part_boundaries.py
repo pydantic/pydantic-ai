@@ -349,7 +349,7 @@ RESUMED_CONTENT_CASES = [
         profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
     ),
     ResumedContentCase(
-        id='resumed-text-keeps-leading-whitespace-after-tool',
+        id='text-after-tool-drops-leading-whitespace',
         stream=lambda: [
             text_chunk('Checking now.'),
             struc_chunk('lookup', '{}'),
@@ -361,7 +361,47 @@ RESUMED_CONTENT_CASES = [
             [
                 TextPart(content='Checking now.'),
                 ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
-                TextPart(content='\n\nDone.'),
+                TextPart(content='Done.'),
+            ]
+        ),
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
+    ),
+    ResumedContentCase(
+        id='text-after-reasoning-then-tool-drops-leading-whitespace',
+        stream=lambda: [
+            text_chunk('Answer.'),
+            _reasoning_chunk('Think.'),
+            struc_chunk('lookup', '{}'),
+            text_chunk('\n\n'),
+            text_chunk('Done.'),
+            chunk([ChoiceDelta()], finish_reason='tool_calls'),
+        ],
+        expected_parts=snapshot(
+            [
+                TextPart(content='Answer.'),
+                ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
+                ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
+                TextPart(content='Done.'),
+            ]
+        ),
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
+    ),
+    ResumedContentCase(
+        id='text-after-tool-then-reasoning-drops-leading-whitespace',
+        stream=lambda: [
+            text_chunk('Checking now.'),
+            struc_chunk('lookup', '{}'),
+            _reasoning_chunk('Think.'),
+            text_chunk('\n\n'),
+            text_chunk('Done.'),
+            chunk([ChoiceDelta()], finish_reason='tool_calls'),
+        ],
+        expected_parts=snapshot(
+            [
+                TextPart(content='Checking now.'),
+                ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
+                ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
+                TextPart(content='Done.'),
             ]
         ),
         profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
@@ -404,7 +444,8 @@ RESUMED_CONTENT_CASES = [
 async def test_resumed_content_starts_a_new_part(allow_model_requests: None, case: ResumedContentCase):
     """Content resumed after another part gets its own part, never a delta after its part ended.
 
-    `ignore_streamed_leading_whitespace` still drops whitespace that no text follows, but resumed text keeps its separator.
+    `ignore_streamed_leading_whitespace` keeps the separator of text resumed after reasoning, and drops it after a tool
+    call or when no text follows.
     """
     model = OpenAIChatModel(
         'test',

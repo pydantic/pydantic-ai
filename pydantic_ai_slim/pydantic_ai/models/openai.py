@@ -4045,6 +4045,7 @@ class OpenAIStreamedResponse(StreamedResponse):
     _vendor_part_id: str = field(default='content', init=False)
     _thinking_vendor_part_generation: int = field(default=0, init=False)
     _held_text_whitespace: str = field(default='', init=False)
+    _hold_text_whitespace: bool = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
     _refusal_text: str = field(default='', init=False)
     _has_finish_reason: bool = field(default=False, init=False)
@@ -4190,6 +4191,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                     self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart
                 ):
                     self._vendor_part_id = f'{self._vendor_part_id}-{event.index}'
+                    self._hold_text_whitespace = True
                 yield event
             break
 
@@ -4218,9 +4220,10 @@ class OpenAIStreamedResponse(StreamedResponse):
                         event.part.content = self._held_text_whitespace + event.part.content
                         self._held_text_whitespace = ''
                 yield event
-            if not emitted and content.isspace() and self._vendor_part_id != 'content':
+            if not emitted and content.isspace() and self._hold_text_whitespace:
                 # `ignore_streamed_leading_whitespace` dropped the whitespace-only start of text resumed after
-                # another part. Hold it as the separator for the text that follows; if none follows, it stays dropped.
+                # reasoning. Hold it as the separator for the text that follows; if none follows, it stays dropped.
+                # Text resumed after a tool call drops it like any other new part.
                 self._held_text_whitespace += content
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
@@ -4238,6 +4241,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             if maybe_event is not None:
                 if isinstance(maybe_event, PartStartEvent):
                     self._thinking_vendor_part_generation += 1
+                    self._hold_text_whitespace = False
                     if isinstance(self._parts_manager.get_part_by_vendor_id(self._vendor_part_id), TextPart):
                         self._vendor_part_id = f'{self._vendor_part_id}-{maybe_event.index}'
                 yield maybe_event
