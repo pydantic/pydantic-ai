@@ -14,6 +14,7 @@ from dataclasses import field, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
+import anyio
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
@@ -165,7 +166,7 @@ _AGENT_GRAPH_SLEEP: ContextVar[AgentGraphSleepFunc | None] = ContextVar(
 def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Generator[None]:
     """Set a custom async sleep function for agent graph delays.
 
-    By default, the agent graph uses `asyncio.sleep` when it needs to wait during
+    By default, the agent graph uses `anyio.sleep` when it needs to wait during
     a run. Durable execution frameworks (Temporal, Prefect, DBOS, Restate, etc.)
     should use this context manager to register their own durable sleep so that
     delays survive workflow replays and don't waste activity time.
@@ -190,12 +191,12 @@ def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Generator[None]:
 
 
 async def _agent_graph_sleep(delay: float) -> None:
-    """Sleep using the registered agent graph sleep function, or asyncio.sleep."""
+    """Sleep using the registered agent graph sleep function, or anyio.sleep."""
     sleep_func = _AGENT_GRAPH_SLEEP.get()
     if sleep_func is not None:
         await sleep_func(delay)
     else:
-        await asyncio.sleep(delay)
+        await anyio.sleep(max(delay, 0))
 
 
 DepsT = TypeVar('DepsT')
