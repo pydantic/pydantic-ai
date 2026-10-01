@@ -321,6 +321,62 @@ async def test_settings_are_forwarded(allow_model_requests: None):
     assert captured.body['trace'] is True
 
 
+async def test_extra_body_question_override(allow_model_requests: None):
+    """Validate answers against the questions actually sent when `extra_body` changes them."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.91},
+            area={
+                'type': 'choice',
+                'choice': 'billing',
+                'confidence': 0.8,
+                'probabilities': {'billing': 0.9, 'bug': 0.1},
+            },
+            extra={'type': 'noul', 'noul': 0.5},
+        )
+
+    questions: dict[str, object] = {
+        'urgent': {'type': 'noul'},
+        'area': {'type': 'choice', 'criteria': {'billing': 'Billing', 'bug': 'Bug'}},
+        'extra': {'type': 'noul'},
+    }
+    result = await Agent(mock_model(handler), output_type=Ticket).run(
+        'Charged twice.', model_settings={'extra_body': {'questions': questions}}
+    )
+    assert result.output == Ticket(urgent=True, area='billing')
+
+
+async def test_extra_body_invalid_question_override(allow_model_requests: None):
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise AssertionError('Invalid questions must be rejected before an HTTP request')
+
+    with pytest.raises(UserError, match=r'`extra_body\.questions` override'):
+        await Agent(mock_model(handler), output_type=Ticket).run(
+            'Charged twice.', model_settings={'extra_body': {'questions': []}}
+        )
+
+
+async def test_rounded_probabilities_are_preserved(allow_model_requests: None):
+    """The API can round each probability to two decimals, leaving the displayed sum just below one."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            urgent={'type': 'noul', 'noul': 0.91},
+            area={
+                'type': 'choice',
+                'choice': 'billing',
+                'confidence': 0.8,
+                'probabilities': {'billing': 0.6, 'bug': 0.39},
+            },
+        )
+
+    result = await Agent(mock_model(handler), output_type=Ticket).run('Charged twice.')
+    assert result.output == Ticket(urgent=True, area='billing')
+    assert result.response.provider_details is not None
+    assert result.response.provider_details['probabilities']['area'] == {'billing': 0.6, 'bug': 0.39}
+
+
 @pytest.mark.parametrize('header_name', ['Authorization', 'authorization'])
 async def test_extra_headers_override_provider_api_key(allow_model_requests: None, header_name: str):
     captured = Captured(ticket_answers)
@@ -396,6 +452,124 @@ async def test_invalid_response(allow_model_requests: None):
         await agent.run('Charged twice.')
 
 
+@pytest.mark.parametrize(
+    ('name', 'answer'),
+    [
+        ('urgent', {'type': 'noul', 'noul': 1.2}),
+        ('area', {'type': 'noul', 'noul': 0.8}),
+        (
+            'area',
+            {'type': 'choice', 'choice': 'other', 'confidence': 0.8, 'probabilities': {'billing': 0.9, 'bug': 0.1}},
+        ),
+        (
+            'area',
+            {'type': 'choice', 'choice': 'billing', 'confidence': 2.0, 'probabilities': {'billing': 0.9, 'bug': 0.1}},
+        ),
+        (
+            'area',
+            {'type': 'choice', 'choice': 'billing', 'confidence': 0.8, 'probabilities': {'billing': -1, 'bug': 2}},
+        ),
+        ('area', {'type': 'choice', 'choice': 'billing', 'confidence': 0.8, 'probabilities': {'billing': 1.0}}),
+        (
+            'area',
+            {'type': 'choice', 'choice': 'billing', 'confidence': 0.8, 'probabilities': {'billing': 0.8, 'bug': 0.1}},
+        ),
+    ],
+)
+async def test_invalid_choice_response(name: str, answer: dict[str, object], allow_model_requests: None):
+    """A malformed ordinary field answer must not become a successful decision."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        fields: dict[str, Mapping[str, object]] = {
+            'urgent': {'type': 'noul', 'noul': 0.91},
+            'area': {
+                'type': 'choice',
+                'choice': 'billing',
+                'confidence': 0.8,
+                'probabilities': {'billing': 0.9, 'bug': 0.1},
+            },
+        }
+        fields[name] = answer
+        return answers(**fields)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the System One API'):
+        await Agent(mock_model(handler), output_type=Ticket).run('Charged twice.')
+
+
+@pytest.mark.parametrize('answer_names', [('urgent',), ('urgent', 'area', 'extra')])
+async def test_response_answer_names_match_questions(answer_names: tuple[str, ...], allow_model_requests: None):
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        fields: dict[str, Mapping[str, object]] = {
+            'urgent': {'type': 'noul', 'noul': 0.91},
+            'area': {
+                'type': 'choice',
+                'choice': 'billing',
+                'confidence': 0.8,
+                'probabilities': {'billing': 0.9, 'bug': 0.1},
+            },
+            'extra': {'type': 'noul', 'noul': 0.5},
+        }
+        return answers(**{name: fields[name] for name in answer_names})
+
+    with pytest.raises(UnexpectedModelBehavior, match='answer names do not match'):
+        await Agent(mock_model(handler), output_type=Ticket).run('Charged twice.')
+
+
+@pytest.mark.parametrize(
+    'change',
+    [
+        {'score': 3.0},
+        {'score': 0.0},
+        {'score': 0.51, 'probabilities': {'0': 0.51, '1': 0.49, '2': 0.0}},
+        {'score': 0.51, 'probabilities': {'0': 0.5101, '1': 0.4899, '2': 0.0}},
+        {'confidence': -0.1},
+        {'probabilities': {'0': 0.05, '1': 0.2}},
+        {'probabilities': {'0': 0.05, '1': -0.2, '2': 1.15}},
+        {'probabilities': {'0': 0.05, '1': 0.2, '2': 0.7}},
+        {'legend': {'0': 'Calm', '1': 'Frustrated'}},
+    ],
+)
+async def test_invalid_score_response(change: dict[str, object], allow_model_requests: None):
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        answer: dict[str, object] = {
+            'type': 'score',
+            'score': 1.7,
+            'confidence': 0.55,
+            'probabilities': {'0': 0.05, '1': 0.2, '2': 0.75},
+            'legend': {'0': 'Calm', '1': 'Frustrated', '2': 'Very angry'},
+        }
+        return answers(frustration=answer | change)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the System One API'):
+        await Agent(mock_model(handler), output_type=Mood).run('This is the third time I am asking. Fix it NOW.')
+
+
+@pytest.mark.parametrize(
+    'probabilities',
+    [
+        {'0': 0.51, '1': 0.49, '2': 0.0},
+        {'0': 0.51, '1': 0.49, '2': 0.0001},
+    ],
+)
+async def test_rounded_score_can_match_rounded_probabilities(
+    probabilities: dict[str, float], allow_model_requests: None
+):
+    """Independent two-decimal rounding can make the displayed score differ from the displayed mean."""
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return answers(
+            frustration={
+                'type': 'score',
+                'score': 0.5,
+                'confidence': 0.5,
+                'probabilities': probabilities,
+            }
+        )
+
+    result = await Agent(mock_model(handler), output_type=Mood).run('Slightly frustrating.')
+    assert result.output == Mood(frustration=1)
+
+
 async def test_provider_recreates_its_client():
     provider = SystemOneProvider(base_url=BASE_URL)
     first = provider.client
@@ -422,7 +596,7 @@ class Review(BaseModel):
 
 
 def eleven_levels(request: httpx2.Request) -> httpx2.Response:
-    probabilities = {str(level): 1 / 11 for level in range(11)}
+    probabilities = {str(level): 0.8 if level == 3 else 0.1 if level in (2, 4) else 0.0 for level in range(11)}
     if json.loads(request.content)['questions']['score']['type'] == 'score':
         return answers(score={'type': 'score', 'score': 3.0, 'confidence': 0.5, 'probabilities': probabilities})
     return answers(score={'type': 'choice', 'choice': '3', 'confidence': 0.5, 'probabilities': probabilities})

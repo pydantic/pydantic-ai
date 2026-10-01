@@ -2,10 +2,13 @@ from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from decimal import Decimal
+from math import isfinite
 from typing import Annotated, Literal, cast
 
 import httpx2
 from pydantic import Field, TypeAdapter, ValidationError
+from typing_extensions import assert_never
 
 from .._http import to_httpx2_timeout
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
@@ -15,11 +18,18 @@ from ..providers.system_one import SystemOneProvider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
 from .decision import (
+    ChoiceAnswer,
+    ChoiceQuestion,
     DecisionAnswer,
     DecisionModel,
     DecisionModelSettings,
+    DecisionQuestion,
     DecisionRequest,
     DecisionResponse,
+    NoulAnswer,
+    NoulQuestion,
+    ScoreAnswer,
+    ScoreQuestion,
     _wire,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -116,7 +126,7 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
         """The system / model provider."""
         return self._provider.name
 
-    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
+    async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:  # noqa: C901
         """Send one request to the `/v1/systemone` endpoint."""
         body: dict[str, object] = {
             'state': request.state,
@@ -129,6 +139,12 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
             if not isinstance(extra_body, Mapping):
                 raise UserError(f'`extra_body` must be a mapping to send it to the System One API; got {extra_body!r}.')
             body.update(cast('Mapping[str, object]', extra_body))
+        questions = request.questions
+        if extra_body is not None and 'questions' in extra_body:
+            try:
+                questions = _questions_adapter.validate_python(body['questions'])
+            except ValidationError as e:
+                raise UserError(f'Cannot validate the `extra_body.questions` override: {e}') from e
 
         timeout = model_settings.get('timeout')
         url = f'{self.base_url}/systemone' if self.base_url.endswith('/v1') else f'{self.base_url}/v1/systemone'
@@ -162,6 +178,77 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
             parsed = _response_adapter.validate_json(response.content)
         except ValidationError as e:
             raise UnexpectedModelBehavior(f'Invalid response from the System One API: {e}', response.text) from e
+        if parsed.answers.keys() != questions.keys():
+            raise UnexpectedModelBehavior(
+                'Invalid response from the System One API: answer names do not match the questions', response.text
+            )
+        for name, question in questions.items():
+            answer = parsed.answers[name]
+            if isinstance(question, NoulQuestion):
+                valid = isinstance(answer, NoulAnswer) and isfinite(answer.noul) and 0 <= answer.noul <= 1
+            elif isinstance(question, ChoiceQuestion):
+                valid = (
+                    isinstance(answer, ChoiceAnswer)
+                    and answer.choice in question.criteria
+                    and answer.probabilities.keys() == question.criteria.keys()
+                )
+            elif isinstance(question, ScoreQuestion):
+                levels = set(range(len(question.criteria)))
+                valid = (
+                    isinstance(answer, ScoreAnswer)
+                    and answer.probabilities.keys() == levels
+                    and (not answer.legend or answer.legend.keys() == levels)
+                    and isfinite(answer.score)
+                    and 0 <= answer.score <= len(question.criteria) - 1
+                )
+            else:
+                assert_never(question)
+            if isinstance(answer, (ChoiceAnswer, ScoreAnswer)):
+                probabilities = answer.probabilities.values()
+                # Jev displays probabilities to two decimal places, so each may differ by half a unit.
+                valid = (
+                    valid
+                    and isfinite(answer.confidence)
+                    and 0 <= answer.confidence <= 1
+                    and all(isfinite(p) and 0 <= p <= 1 for p in probabilities)
+                    and abs(sum(probabilities) - 1) <= 1e-6 + len(answer.probabilities) * 0.005
+                )
+                if valid and isinstance(question, ScoreQuestion) and isinstance(answer, ScoreAnswer):
+                    # A displayed score and its probabilities may each be rounded. Check whether any distribution
+                    # within their rounding intervals could produce that score, using at least Jev's two decimals.
+                    values: list[Decimal] = [
+                        Decimal(str(answer.probabilities[level])) for level in range(len(question.criteria))
+                    ]
+                    half_units: list[Decimal] = [
+                        Decimal(1).scaleb(-max(2, -int(value.as_tuple().exponent))) / 2 for value in values
+                    ]
+                    lower: list[Decimal] = [
+                        max(Decimal(0), value - half_unit) for value, half_unit in zip(values, half_units)
+                    ]
+                    upper: list[Decimal] = [
+                        min(Decimal(1), value + half_unit) for value, half_unit in zip(values, half_units)
+                    ]
+                    remaining = Decimal(1) - sum(lower, Decimal(0))
+                    valid = 0 <= remaining <= sum((high - low for low, high in zip(lower, upper)), Decimal(0))
+                    if valid:
+                        bounds: list[Decimal] = []
+                        for levels in (range(len(values)), reversed(range(len(values)))):
+                            rest = remaining
+                            mean = sum((level * low for level, low in enumerate(lower)), Decimal(0))
+                            for level in levels:
+                                taken = min(rest, upper[level] - lower[level])
+                                mean += level * taken
+                                rest -= taken
+                            bounds.append(mean)
+                        score = Decimal(str(answer.score))
+                        score_decimals = max(2, -int(score.as_tuple().exponent))
+                        score_half_unit = Decimal(1).scaleb(-score_decimals) / 2
+                        valid = score + score_half_unit >= bounds[0] and score - score_half_unit <= bounds[1]
+            if not valid:
+                raise UnexpectedModelBehavior(
+                    f'Invalid response from the System One API: answer {name!r} does not match its question: {answer!r}',
+                    response.text,
+                )
         return DecisionResponse(
             answers=parsed.answers,
             model_name=parsed.model,
@@ -185,6 +272,7 @@ class _SystemOneResponse:
 
 
 _response_adapter = TypeAdapter(_SystemOneResponse)
+_questions_adapter = TypeAdapter(dict[str, Annotated[DecisionQuestion, Field(discriminator='type')]])
 
 
 def _error_body(response: httpx2.Response) -> object:
