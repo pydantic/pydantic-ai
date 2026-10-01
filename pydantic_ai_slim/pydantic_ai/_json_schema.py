@@ -16,6 +16,14 @@ _JsonSchemaNode: TypeAlias = JsonSchema | bool
 _DEFS_REF_PREFIX = re.compile(r'^#/\$defs/')
 _OBJECT_KEYWORDS = ('properties', 'additionalProperties', 'patternProperties')
 _ARRAY_KEYWORDS = ('items', 'prefixItems')
+_CONTAINER_KEYWORDS: tuple[tuple[str, type[dict[str, JsonValue]] | type[list[JsonValue]]], ...] = (
+    ('properties', dict),
+    ('patternProperties', dict),
+    ('prefixItems', list),
+    ('allOf', list),
+    ('anyOf', list),
+    ('oneOf', list),
+)
 
 
 class UseEnumMemberDocstrings:
@@ -167,8 +175,9 @@ class JsonSchemaTransformer(ABC):
 
         Only a `$ref` into `$defs`, which `walk()` drops, needs it. Otherwise they're left exactly as written,
         since walking reshapes a subtree (single-member unions collapse, `transform()` runs). So are they when
-        a `$ref` under them, or in a definition one points at, can't be resolved, since walking raises on it.
-        When they are walked, it's all of them, exactly as under a matching `type`.
+        a `$ref` under them, or in a definition one points at, can't be resolved, or a node there isn't the shape
+        the walk expects, since walking raises on either. When they are walked, it's all of them, exactly as
+        under a matching `type`.
         """
         # Only the keywords the walk visits are followed, so a value like a `default` isn't read as a schema.
         pending: list[JsonValue] = [{keyword: schema[keyword] for keyword in keywords if keyword in schema}]
@@ -190,14 +199,18 @@ class JsonSchemaTransformer(ABC):
                 if key not in seen:
                     seen.add(key)
                     pending.append(definition)
-            for keyword in (*_OBJECT_KEYWORDS, *_ARRAY_KEYWORDS, 'allOf', 'anyOf', 'oneOf'):
-                value = node.get(keyword)
-                if keyword in ('properties', 'patternProperties') and isinstance(value, dict):
-                    pending.extend(value.values())
-                elif isinstance(value, list):
-                    pending.extend(value)
-                elif value is not None:
-                    pending.append(value)
+            # Each keyword must hold the container the walk iterates, or the walk raises on it.
+            for keyword, container in _CONTAINER_KEYWORDS:
+                if keyword in node:
+                    if not isinstance(value := node[keyword], container):
+                        return False
+                    pending.extend(value.values() if isinstance(value, dict) else value)
+            if isinstance(items := node.get('items'), list):
+                pending.extend(items)
+            elif items is not None:
+                pending.append(items)
+            if (additional_properties := node.get('additionalProperties')) is not None:
+                pending.append(additional_properties)
         return bool(seen)
 
     def _walked_def(self, key: str) -> JsonSchema:

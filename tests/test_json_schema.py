@@ -735,6 +735,16 @@ INTEGER: dict[str, Any] = {'type': 'integer'}
         pytest.param(
             {'$defs': {'Payload': PAYLOAD}, 'properties': {'k': 'string', 'p': PAYLOAD_REF}}, id='non-schema-value'
         ),
+        pytest.param(
+            {'$defs': {'Payload': PAYLOAD}, 'properties': {'k': {'anyOf': True}, 'p': PAYLOAD_REF}}, id='non-list-union'
+        ),
+        pytest.param(
+            {'$defs': {'Payload': PAYLOAD}, 'patternProperties': False, 'properties': {'p': PAYLOAD_REF}},
+            id='non-map-keyword',
+        ),
+        pytest.param(
+            {'$defs': {'Payload': PAYLOAD}, 'additionalProperties': [PAYLOAD_REF]}, id='list-additional-properties'
+        ),
     ],
 )
 def test_inline_defs_leaves_untyped_keywords_it_cannot_or_need_not_inline(schema: dict[str, Any]):
