@@ -349,7 +349,12 @@ not a second tracing instance. If both names were saved, the `observability`
 declaration takes precedence; edits and removal apply to that one shared entry.
 
 Manage it with `/plugins disable observability`, `/plugins enable observability`, or
-`/plugins reload observability`. To change its defaults:
+`/plugins reload observability`. `/plugins configure observability` (or `C` on
+`observability` in `/plugins`) opens its settings menu: **Logfire project** runs the
+setup described below, and the other rows edit the options listed here. Each edit
+saves at once, and the plugin is loaded again when you close the menu, so the next
+run uses it. Without a chosen project, that row notes whether `LOGFIRE_TOKEN` or a
+credentials file was found. Scripts can replace the declaration instead:
 
 ```text
 /plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
@@ -367,8 +372,9 @@ Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled.
 
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
-`LOGFIRE_BASE_URL`, else the region the token names. `/plugins configure observability`
-sets `token`, `base_url`, and `send_to_logfire` for you: it asks
+`LOGFIRE_BASE_URL`, else the region the token names. The **Logfire project** row
+sets `token`, `base_url`, and `send_to_logfire` for you (`R` on it clears `token`
+and `base_url` again): it asks
 where traces go, runs Logfire's own device sign-in there (the one behind
 `logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
 accepts), lists the projects you can write to, and saves a new write token for
