@@ -634,9 +634,9 @@ class GoogleModel(Model[Client]):
         # one for its local fallback, drops it when optional, or rejects it, so it never reaches the
         # wire beside output tools. A supported one is sent even when optional.
         supported_native_tools = tuple(self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))
-        user_native_tools = [t for t in model_request_parameters.native_tools if isinstance(t, supported_native_tools)]
+        sent_native_tools = [t for t in model_request_parameters.native_tools if isinstance(t, supported_native_tools)]
         if (
-            user_native_tools
+            sent_native_tools
             and model_request_parameters.output_tools
             and not self.profile.get('google_supports_tool_combination', False)
         ):
