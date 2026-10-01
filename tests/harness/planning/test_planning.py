@@ -1167,6 +1167,7 @@ class TestEndToEnd:
             if isinstance(message, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in message.parts):
                 assert not any(isinstance(part, UserPromptPart) for part in message.parts)
 
+    @pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed')
     async def test_anthropic_breakpoint_covers_everything_but_the_reminder(self, allow_model_requests: None) -> None:
         """On the bytes Anthropic receives: each request caches up to the block before the reminder (#9275).
 
