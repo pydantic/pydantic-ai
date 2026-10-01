@@ -1,4 +1,4 @@
-import cProfile
+import gc
 import json
 import os
 import re
@@ -10,6 +10,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+from types import FrameType
 from typing import Annotated, Any, Literal, cast, get_args, get_origin, overload
 
 import pytest
@@ -2007,15 +2008,14 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
     thousands of Rust→Python crossings, paid on every message-history load, UI adapter round-trip, and
     Temporal activity resolution and replay.
 
-    Counting Python calls rather than timing is what makes this pin usable in CI: the count is far
-    steadier than a wall-clock threshold, which would either flake on a noisy runner or be loose
-    enough to catch nothing. It is not perfectly machine-independent, though — the delta is 0 on a
-    developer machine but around 110 on some CI runners, from something ambient that has never been
-    tracked down — so the bound has to clear that. The gap it separates is enormous: a per-node
-    Python call costs ~2,770 extra calls here, one per JSON value node in the larger payload, so a
-    bound of 1,000 sits an order of magnitude above the noise and well under the regression. `cProfile` rather than a `sys.setprofile` callback
-    because the interpreter does not trace the callback's own body, leaving it unmeasurable by
-    coverage.
+    Counting Python calls rather than timing is what makes this pin usable in CI: a slow or loaded
+    runner changes how long the calls take, not how many there are. Only the (de)serializer's own
+    calls may count, though. The count comes from a `sys.setprofile` hook because that sees only
+    this thread, whereas `cProfile` also counts other threads' calls on Python 3.12+. Garbage
+    collection is held off during the measurement because a collection runs `gc.callbacks` (Hypothesis
+    installs one) and the finalizers of garbage that earlier tests left behind, all on this thread.
+    A per-node Python call costs over 2,000 extra calls here, about one per JSON value node in the
+    larger payload, so a bound of 1,000 catches it with headroom for anything ambient.
 
     `dump_json` is pinned alongside `validate_json` because it is the leg that notices the two ways
     the `_StrPassthrough` arm can be lost: `pydantic.InstanceOf[str]` builds the same validator but
@@ -2039,18 +2039,26 @@ def test_tool_return_content_json_paths_make_no_per_node_python_calls():
         messages = ModelMessagesTypeAdapter.validate_json(raw)  # build the (de)serializer outside the measurement
         ModelMessagesTypeAdapter.dump_json(messages)
 
-        profiler = cProfile.Profile()
-        profiler.enable()
+        calls = 0
+
+        def count_call(frame: FrameType, event: str, arg: object) -> None:
+            nonlocal calls
+            # The interpreter never traces a profile function, so coverage can't see this line.
+            calls += event == 'call'  # pragma: no cover
+
+        gc.disable()
+        sys.setprofile(count_call)
         try:
             if dump:
                 ModelMessagesTypeAdapter.dump_json(messages)
             else:
                 ModelMessagesTypeAdapter.validate_json(raw)
         finally:
-            profiler.disable()
-        return sum(entry.callcount for entry in profiler.getstats())
+            sys.setprofile(None)
+            gc.enable()
+        return calls
 
-    # 100x the nodes: a per-node Python call turns a handful of calls into tens of thousands.
+    # 100x the nodes: a per-node Python call adds thousands of calls.
     for dump in (False, True):
         small, large = python_calls(payload(2), dump), python_calls(payload(200), dump)
         direction = 'dump_json' if dump else 'validate_json'
