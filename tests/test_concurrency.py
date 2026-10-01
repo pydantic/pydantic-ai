@@ -512,6 +512,7 @@ class TestConcurrencyLimitedModel:
         assert model.system == 'test'
 
 
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
 class TestAgentWithSharedLimiter:
     """Tests for agent with shared ConcurrencyLimiter."""
 
@@ -524,6 +525,52 @@ class TestAgentWithSharedLimiter:
 
         # Both agents should share the same limiter
         assert agent1._concurrency_limiter is agent2._concurrency_limiter
+
+    @pytest.mark.parametrize('max_running', [1, 2])
+    @pytest.mark.parametrize('same_agent', [False, True])
+    async def test_agent_rejects_same_task_limiter_reentry(self, max_running: int, same_agent: bool):
+        limiter = ConcurrencyLimiter(max_running=max_running)
+        outer = Agent(TestModel(), max_concurrency=limiter)
+        inner = outer if same_agent else Agent(TestModel(), max_concurrency=limiter)
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with outer.iter('outer'):
+                with pytest.raises(RuntimeError, match='already holds'):
+                    await inner.run('inner')
+            await inner.run('after outer')
+
+        assert limiter.running_count == 0
+
+    async def test_agent_allows_distinct_limiter_on_same_task(self):
+        outer_limiter = ConcurrencyLimiter(max_running=1)
+        inner_limiter = ConcurrencyLimiter(max_running=1)
+        outer = Agent(TestModel(), max_concurrency=outer_limiter)
+        inner = Agent(TestModel(), max_concurrency=inner_limiter)
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with outer.iter('outer'):
+                await inner.run('inner')
+
+        assert outer_limiter.running_count == inner_limiter.running_count == 0
+
+    @pytest.mark.parametrize('model_limiter', [False, True])
+    async def test_nested_agent_allows_shared_parent_limiter_with_spare_capacity(self, model_limiter: bool):
+        limiter = ConcurrencyLimiter(max_running=2)
+        outer = Agent(TestModel(call_tools=['delegate']), max_concurrency=limiter)
+        inner = (
+            Agent(ConcurrencyLimitedModel(TestModel(), limiter=limiter))
+            if model_limiter
+            else Agent(TestModel(), max_concurrency=limiter)
+        )
+
+        @outer.tool_plain
+        async def delegate() -> str:
+            return (await inner.run('inner')).output
+
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await outer.run('outer')
+
+        assert limiter.running_count == 0
 
     @pytest.mark.parametrize(
         ('stream', 'wrapped'),
@@ -765,6 +812,18 @@ class TestConcurrencyLimiterWithTracer:
 
 
 class TestConcurrencyLimitedModelMethods:
+    async def test_compact_messages_rejects_nested_shared_limiter(self):
+        limiter = ConcurrencyLimiter(max_running=1, max_queued=0)
+        model = ConcurrencyLimitedModel(ConcurrencyLimitedModel(TestModel(), limiter=limiter), limiter=limiter)
+        context = ModelRequestContext(
+            model=model, messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+        )
+
+        with pytest.raises(UserError, match='Nested `ConcurrencyLimitedModel`'):
+            await model.compact_messages(context)
+
+        assert limiter.running_count == 0
+
     """Tests for concurrency limiting across model methods."""
 
     @pytest.mark.parametrize('raise_error', [False, True])
@@ -931,6 +990,7 @@ async def _break_node_stream(agent: Agent[None, str]) -> None:
         pytest.param(_break_node_stream, id='node-stream-break'),
     ],
 )
+@pytest.mark.parametrize('anyio_backend', ['asyncio'])
 async def test_streamed_request_releases_slot(consume: Callable[[Agent[None, str]], Awaitable[None]]):
     """A streamed request returns its slot however the consumer stops, and the same task can make another request.
 

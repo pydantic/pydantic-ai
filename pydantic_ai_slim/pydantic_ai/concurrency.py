@@ -102,6 +102,10 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
     This class wraps an anyio.Semaphore and tracks the number of waiting operations.
     When an operation has to wait to acquire a slot, a span is created for
     observability purposes.
+
+    Slots are not owned by tasks. Each successful `acquire()` must be paired with one
+    `release()`, which can run on a different task. Calling `acquire()` again consumes another
+    slot and waits if none is available.
     """
 
     def __init__(
