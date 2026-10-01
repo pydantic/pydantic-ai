@@ -348,13 +348,13 @@ async def test_extra_body_question_override(allow_model_requests: None):
 
 
 async def test_extra_body_invalid_question_override(allow_model_requests: None):
-    def handler(request: httpx2.Request) -> httpx2.Response:
-        raise AssertionError('Invalid questions must be rejected before an HTTP request')
+    captured = Captured(ticket_answers)
 
     with pytest.raises(UserError, match=r'`extra_body\.questions` override'):
-        await Agent(mock_model(handler), output_type=Ticket).run(
+        await Agent(mock_model(captured), output_type=Ticket).run(
             'Charged twice.', model_settings={'extra_body': {'questions': []}}
         )
+    assert captured.requests == []
 
 
 async def test_rounded_probabilities_are_preserved(allow_model_requests: None):
@@ -452,6 +452,19 @@ async def test_invalid_response(allow_model_requests: None):
         await agent.run('Charged twice.')
 
 
+@pytest.mark.parametrize('field', ['input_tokens', 'output_tokens'])
+async def test_negative_usage_response(field: str, allow_model_requests: None):
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        payload: dict[str, object] = ticket_answers(request).json()
+        usage: dict[str, int] = {'input_tokens': 42, 'output_tokens': 0}
+        usage[field] = -1
+        payload['usage'] = usage
+        return httpx2.Response(200, json=payload)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Invalid response from the System One API'):
+        await Agent(mock_model(handler), output_type=Ticket).run('Charged twice.')
+
+
 @pytest.mark.parametrize(
     ('name', 'answer'),
     [
@@ -526,6 +539,7 @@ async def test_response_answer_names_match_questions(answer_names: tuple[str, ..
         {'probabilities': {'0': 0.05, '1': 0.2}},
         {'probabilities': {'0': 0.05, '1': -0.2, '2': 1.15}},
         {'probabilities': {'0': 0.05, '1': 0.2, '2': 0.7}},
+        {'probabilities': {'0': 0.0501, '1': 0.2001, '2': 0.7398}},
         {'legend': {'0': 'Calm', '1': 'Frustrated'}},
     ],
 )

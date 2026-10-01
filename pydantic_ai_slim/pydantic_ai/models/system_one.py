@@ -258,8 +258,8 @@ class SystemOneModel(DecisionModel[httpx2.AsyncClient]):
 
 @dataclass(kw_only=True)
 class _Usage:
-    input_tokens: int = 0
-    output_tokens: int = 0
+    input_tokens: Annotated[int, Field(ge=0)] = 0
+    output_tokens: Annotated[int, Field(ge=0)] = 0
 
 
 @dataclass(kw_only=True)
