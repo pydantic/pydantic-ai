@@ -24,7 +24,6 @@ class AssetRoot(BaseModel):
     skills: list[str] = Field(default_factory=list, description='Paths to SKILL.md files found under skills/.')
     agents: list[str] = Field(default_factory=list, description='Paths to agent .md files found under agents/.')
     settings: str | None = Field(default=None, description='Path to settings.json (hooks), if present.')
-    notes: str | None = Field(default=None, description='Format or derivation notes for this root, if any.')
 
 
 class AgentContextInventory(BaseModel):

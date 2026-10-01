@@ -298,14 +298,13 @@ class TestScanAssets:
         assert claude.agents == ['.claude/agents/bar.md']
         assert claude.settings == '.claude/settings.json'
         assert by_root['.agents'].exists is False
-        assert by_root['.codex'].notes is None
-        assert by_root['.grok'].notes is None
+        # The inventory reports what is on disk; it carries no repo-specific notes about how roots relate.
+        assert 'notes' not in claude.model_dump()
 
     async def test_existing_root_without_settings(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / '.claude' / 'skills' / 'foo' / 'SKILL.md', 's')
         inv = await scan_assets(workspace, tmp_path, ('.claude',))
         assert inv.roots[0].settings is None
-        assert inv.roots[0].notes is None
 
     async def test_root_without_skills_directory(self, tmp_path: Path, workspace: Workspace) -> None:
         _write(tmp_path / '.claude' / 'agents' / 'helper.md', 'agent')
