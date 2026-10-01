@@ -27,7 +27,7 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._genai_prices import lookup_context_window, preload_pricing_data
-from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, legacy_httpx
+from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, ConnectPoolTimeoutCap, legacy_httpx
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -1850,6 +1850,8 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
+    A timeout passed with an individual request can shorten the client's `connect` timeout and its
+    pool timeout (`timeout`), but never lengthen them.
 
     Raises:
         ImportError: If legacy `httpx` is not installed.
@@ -1866,6 +1868,7 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
+        event_hooks={'request': [ConnectPoolTimeoutCap(connect=connect, pool=timeout)]},
     )
 
 

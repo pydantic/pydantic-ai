@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
 
 # Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
 # I/O if that happens inside the event loop.
@@ -15,6 +15,7 @@ from ._warnings import PydanticAIDeprecationWarning
 __all__ = (
     'DEFAULT_HTTP_TIMEOUT',
     'AsyncHTTPClient',
+    'ConnectPoolTimeoutCap',
     'HTTPAuth',
     'HTTPTimeout',
     'create_async_httpx2_client',
@@ -64,13 +65,56 @@ def create_async_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: 
 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
     the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
+
+    A timeout passed with an individual request can shorten the client's `connect` timeout and its
+    pool timeout (`timeout`), but never lengthen them; see `ConnectPoolTimeoutCap`.
     """
     from .models import get_user_agent
 
     return httpx2.AsyncClient(
         timeout=httpx2.Timeout(timeout=timeout, connect=connect),
         headers={'User-Agent': get_user_agent()},
+        event_hooks={'request': [ConnectPoolTimeoutCap(connect=connect, pool=timeout)]},
     )
+
+
+class ConnectPoolTimeoutCap:
+    """Request hook that keeps a per-request timeout from lengthening a client's connect and pool timeouts.
+
+    Provider SDKs send a timeout with every request: their own default, a number of seconds from
+    [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout], or (for google-genai) the
+    scalar the provider pins on `HttpOptions`. A scalar sets every phase, so a 600-second read
+    timeout would also allow 600 seconds to connect or to wait for a pooled connection. Installed on
+    the clients Pydantic AI creates, this hook takes the shorter of the requested and the client's own
+    connect and pool timeouts; it never lengthens one.
+
+    It is a request event hook rather than a custom transport because passing `transport=` to an HTTPX
+    client turns off the proxies it would otherwise pick up from the environment. Event hooks run for
+    every redirect hop, after the client has applied its default timeout to the request.
+    """
+
+    def __init__(self, *, connect: float, pool: float) -> None:
+        self._connect = connect
+        self._pool = pool
+
+    async def __call__(self, request: httpx2.Request | httpx.Request) -> None:
+        requested: dict[str, Any] | None = request.extensions.get('timeout')
+        if requested is None:
+            # `AsyncClient.send` sets one before hooks run; only a request handed to the hook directly lacks it.
+            return
+        request.extensions = {
+            **request.extensions,
+            'timeout': {
+                **requested,
+                'connect': _shorter_timeout(requested['connect'], self._connect),
+                'pool': _shorter_timeout(requested['pool'], self._pool),
+            },
+        }
+
+
+def _shorter_timeout(requested: float | None, cap: float) -> float:
+    # `None` disables a timeout, so any cap is shorter.
+    return cap if requested is None else min(requested, cap)
 
 
 def to_httpx2_timeout(timeout: float | LegacyTimeout | _NotGivenT) -> float | httpx2.Timeout | _NotGivenT:
