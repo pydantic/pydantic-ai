@@ -1068,6 +1068,12 @@ turns it off, `/compact` included:
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
 
+The status row shows compact used/max context tokens, such as `128k/1m`.
+The maximum comes from the request's model or the `context_window` override;
+it stays `?` until the plugin reports a known window. An unknown model's fallback
+compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
+larger counts round to whole thousands (`k`) or tenths of a million (`m`).
+
 The context figure turns yellow when a request still exceeds `threshold` after
 compaction, for example because the protected tail is too large. For windows smaller
 than 50,000 tokens, redeclare the plugin with a smaller `protected_tokens` value;
@@ -1577,6 +1583,21 @@ reload, and remove. Closing the menu returns to the prompt without printing the
 plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
 
 [PLUGINS.md](PLUGINS.md) has every method, event, and rule.
+
+Every CLAI on your machine shares one settings database, so another worktree or
+branch may have saved a plugin setting this one cannot run. When a saved setting
+names a feature this build lacks, CLAI skips just that setting, uses the default,
+and tells you once at startup:
+
+```text
+coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
+```
+
+Nothing is rewritten; the other build still sees your setting. If a plugin still
+rejects its settings when a turn starts, that turn fails with the plugin named, and
+CLAI leaves that plugin's capability out of later turns; `/plugins reload NAME` tries
+it again. CLAI builds from before this
+check apply every saved setting as they always did.
 
 `/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
 settings menu (`/plugins configure notion` reopens it). The token is picked from
