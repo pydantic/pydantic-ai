@@ -388,8 +388,11 @@ def test_terminal_row_outcomes(success: bool) -> None:
         duration_seconds=1.0,
     )
     row = task_row(event)
-    assert row is not None
-    assert '/tasks to inspect' in row.plain and 'untrusted' not in row.plain
+    if success:
+        assert row is None
+    else:
+        assert row is not None
+        assert '/tasks to inspect' in row.plain and 'untrusted' not in row.plain
 
 
 async def test_presentation_keeps_ordinary_tool_events() -> None:

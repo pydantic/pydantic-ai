@@ -82,10 +82,10 @@ def task_row(event: AgentStreamEvent) -> Text | None:
         name = 'general-purpose' if event.agent_name == 'self' else event.agent_name
         prompt = ' '.join(terminal_text(event.task).split())[:90]
         return Text(f'● {name}({prompt})  [{(event.task_id or "")[:8]}]', style=theme.color(theme.INFO))
-    if isinstance(event, DelegationEndEvent):
+    if isinstance(event, DelegationEndEvent) and event.outcome != 'ok':
         return Text(
             f'  └ {event.outcome} · {event.duration_seconds:.1f}s · /tasks to inspect',
-            style=theme.color(theme.SUCCESS if event.outcome == 'ok' else theme.WARNING),
+            style=theme.color(theme.WARNING),
         )
     return None
 
@@ -156,9 +156,7 @@ class Tasks:
             return
         if self.sink is not None:
             await self.sink(event)
-        else:
-            row = task_row(event)
-            assert row is not None
+        elif (row := task_row(event)) is not None:
             self.console.print(row)
 
     def _foreground_tasks(self) -> list[DelegationTask]:
