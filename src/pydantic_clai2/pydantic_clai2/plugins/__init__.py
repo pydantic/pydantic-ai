@@ -120,6 +120,10 @@ class TurnEnd:
     error: BaseException | None = None
 
 
+SettingsProvider = Literal['anthropic', 'google', 'openai', 'openai-chat']
+"""Providers whose `/model_settings` controls a plugin's models can take."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class ModelProvider:
     """Models a plugin runs under its own `PREFIX:`; return it from `Plugin.get_model_providers`.
@@ -129,6 +133,9 @@ class ModelProvider:
     cannot build the model. A prefix Pydantic AI or CLAI already runs is rejected; when two plugins
     offer one prefix, the later one wins. Unloading the plugin removes the prefix, and a run with
     a model under it then fails as an unknown provider until the plugin is enabled again.
+
+    When `resolve` returns that provider's model class, such as an `AnthropicModel` subclass, set
+    `settings_from` so `/model_settings` offers its controls (thinking, effort) for these models.
     """
 
     prefix: str
@@ -136,12 +143,18 @@ class ModelProvider:
     """Build the model for a name given without its prefix."""
     models: tuple[str, ...] = ()
     """Names without the prefix, offered by `/add_model` and `/set model`."""
+    settings_from: SettingsProvider | None = None
+    """The provider whose `/model_settings` controls these models take; `None` offers the generic ones."""
 
     def __post_init__(self) -> None:
-        """Reject a malformed prefix, or one CLAI already runs, before any plugin can offer it."""
+        """Reject a malformed prefix, one CLAI already runs, or an unknown `settings_from`."""
         _require_name('Model prefix', self.prefix)
         if _runs_already(self.prefix):
             raise ValueError(f'Model prefix {self.prefix!r} is a provider CLAI already runs; choose your own.')
+        if self.settings_from is not None and self.settings_from not in get_args(SettingsProvider):
+            raise ValueError(
+                f'settings_from must be one of {", ".join(get_args(SettingsProvider))}; got {self.settings_from!r}.'
+            )
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -156,12 +169,16 @@ class PluginLogin:
     For sign-ins that store credentials, such as the subscription behind a `ModelProvider`. Keep
     secrets in the keyring, never in plugin settings, and raise `UserError` when signing in fails.
     NAME cannot be a sign-in CLAI ships (`codex`, `copilot`, or their provider names); when two
-    plugins add one name, the later one wins. Unloading the plugin removes it.
+    plugins add one name, the later one wins. Unloading the plugin removes it. Once the sign-in
+    succeeds, `models` (as `PREFIX:NAME`, such as a `ModelProvider`'s `names`) are added to the saved
+    model list, so `/model` and `/model_settings` offer them without `/add_model`.
     """
 
     name: str
     handler: Callable[[], Awaitable[str]]
     """Sign in and return the message to show."""
+    models: tuple[str, ...] = ()
+    """Models, as `PREFIX:NAME`, added to the saved model list once the sign-in succeeds."""
 
     def __post_init__(self) -> None:
         """Reject a malformed name, or one CLAI already signs in to, before any plugin can offer it."""

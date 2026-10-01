@@ -30,8 +30,10 @@ methods, each defaulting to nothing; CLAI calls them once when the plugin loads.
 - Use a custom model/provider: return ModelProvider(prefix=..., resolve=...,
   models=...) from get_model_providers, where resolve returns a Pydantic AI
   Model, or supply a Pydantic AI Agent to chat from a Python launcher.
-  If its models need a sign-in, return PluginLogin(name=..., handler=...)
-  values from get_logins to add /login NAME.
+  If its models need a sign-in, return PluginLogin(name=..., handler=...,
+  models=...) values from get_logins to add /login NAME and save those models
+  once it succeeds. ModelProvider(settings_from='anthropic') gives its models
+  Anthropic's /model_settings controls.
 - Select colours: /theme opens the Termflow palette picker; /theme tokyo_night
   selects directly and persists display.theme. /theme default restores CLAI's
   existing appearance. Browsing previews a sample conversation without applying

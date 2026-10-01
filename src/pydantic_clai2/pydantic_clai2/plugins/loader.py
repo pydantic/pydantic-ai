@@ -301,6 +301,14 @@ class PluginLoader(Generic[DepsT]):
         """Every plugin-offered model, with its prefix, for menus and completions."""
         return [name for provider in self.model_providers().values() for name in provider.names]
 
+    def settings_model(self, model: str) -> str:
+        """The model whose `/model_settings` controls `model` takes: `PREFIX:NAME` as `settings_from:NAME`."""
+        prefix, separator, name = model.partition(':')
+        provider = self.model_providers().get(prefix) if separator else None
+        if provider is None or provider.settings_from is None:
+            return model
+        return f'{provider.settings_from}:{name}'
+
     async def load_all(self, *, fresh: bool = False) -> None:
         """Load enabled plugins, re-importing after a shell reload so host event types match.
 

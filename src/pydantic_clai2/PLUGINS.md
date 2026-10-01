@@ -2101,6 +2101,13 @@ wins. Unloading the plugin removes the prefix; a saved model under it stays in
 `/model`, and runs with it fail as an unknown provider until the plugin is enabled
 again.
 
+`/model_settings` offers generic controls (max tokens, temperature, custom
+parameters) for plugin models. When `resolve` returns a model class of a provider
+CLAI knows, such as an `AnthropicModel` subclass, set `settings_from='anthropic'`
+(or `'openai'`, `'openai-chat'`, `'google'`) on the `ModelProvider` and these
+models get that provider's controls instead, such as Claude's thinking mode and
+effort. Any other value raises `ValueError`.
+
 ### Add a sign-in to `/login`: `get_logins()`
 
 `/login NAME` signs in to a subscription: `codex` (bare `/login`) and `copilot`
@@ -2110,7 +2117,9 @@ models need a sign-in adds its own name next to them:
 ```python
 from collections.abc import Sequence
 
-from pydantic_clai2.plugins import Plugin, PluginLogin
+from pydantic_clai2.plugins import ModelProvider, Plugin, PluginLogin
+
+PROVIDER = ModelProvider(prefix='my-service', resolve=resolve, models=('fast', 'smart'))
 
 
 async def sign_in() -> str:
@@ -2119,8 +2128,11 @@ async def sign_in() -> str:
 
 
 class MyService(Plugin):
+    def get_model_providers(self) -> Sequence[ModelProvider]:
+        return (PROVIDER,)
+
     def get_logins(self) -> Sequence[PluginLogin]:
-        return (PluginLogin(name='my-service', handler=sign_in),)
+        return (PluginLogin(name='my-service', handler=sign_in, models=PROVIDER.names),)
 ```
 
 `/login my-service` awaits `sign_in` and shows the message it returns, and `/login`
@@ -2128,6 +2140,10 @@ completes the name. Raise `UserError` when signing in fails, and keep tokens in 
 keyring, never in plugin settings. The name uses the same format as a model prefix
 and cannot be one of CLAI's sign-ins, which raises `ValueError`; when two plugins
 add one name, the later one wins. Unloading the plugin removes it.
+
+Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as the provider's
+`names`) are added to the saved model list, so `/model` and `/model_settings`
+offer them without an `/add_model` first. A failed sign-in adds nothing.
 
 ## Rules that keep plugins predictable
 
