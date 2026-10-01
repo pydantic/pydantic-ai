@@ -1258,6 +1258,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _ChatCompletion.model_validate(response.model_dump())
 
+    def _missing_finish_reason(
+        self, choice: chat_completion.Choice
+    ) -> Literal['stop', 'length', 'tool_calls', 'content_filter', 'function_call']:
+        """Hook that picks the finish reason of a response that came without one.
+
+        This method may be overridden by subclasses of `OpenAIChatModel` whose model picks another one, along with
+        `OpenAIStreamedResponse._missing_finish_reason` for a stream that ends without one.
+        """
+        return 'stop'
+
     def _process_provider_details(self, response: chat.ChatCompletion) -> dict[str, Any] | None:
         """Hook that response content to provider details.
 
@@ -1283,13 +1293,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             response.created = 0
 
         # Some OpenAI-compatible providers omit the finish reason (e.g. local Ollama) or send an empty one (e.g. Snowflake
-        # Cortex), which fails validation. The response is treated as a `'stop'`, like a stream that ends without one
-        # (subclasses may pick another in `_validate_completion`), but that's not reported as the provider's value.
+        # Cortex), which fails validation. The response is treated as `_missing_finish_reason` says, like a stream that
+        # ends without one (subclasses may also handle an empty one in `_validate_completion`), but that's not reported
+        # as the provider's value.
         missing_finish_reason = False
         if response.choices and not (choice := response.choices[0]).finish_reason:
             missing_finish_reason = True
             if choice.finish_reason is None:
-                choice.finish_reason = 'stop'
+                choice.finish_reason = self._missing_finish_reason(choice)
 
         try:
             response = self._validate_completion(response)
@@ -4258,7 +4269,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         return provider_details or None
 
     def _missing_finish_reason(self) -> FinishReason:
-        """The finish reason of a stream that ended without one, matching `OpenAIChatModel._process_response`.
+        """The finish reason of a stream that ended without one, matching `OpenAIChatModel._missing_finish_reason`.
 
         This method may be overridden by subclasses of `OpenAIStreamResponse` whose model picks another one.
         """
