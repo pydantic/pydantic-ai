@@ -19,7 +19,7 @@ pip/uv-add "pydantic-ai-slim[openai-realtime]"
 ```
 
 Set `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY` as for the
-[Azure AI Foundry provider](../models/openai.md#azure-ai-foundry). Use the `azure:` prefix followed
+[Microsoft Azure / Foundry provider](../models/azure.md). Use the `azure:` prefix followed
 by your Azure deployment name:
 
 ```python

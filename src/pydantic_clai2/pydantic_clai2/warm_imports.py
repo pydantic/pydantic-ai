@@ -12,12 +12,12 @@ from collections.abc import Sequence
 from threading import Thread
 
 FIRST_USE_MODULES = (
-    'pydantic_clai2.model_settings',
+    'pydantic_clai2.models.model_settings',
     'pydantic_clai2.auth',
-    'pydantic_clai2.openrouter',
-    'pydantic_clai2.vllm',
-    'pydantic_clai2.github_copilot',
-    'pydantic_clai2.model_menu',
+    'pydantic_clai2.models.openrouter',
+    'pydantic_clai2.models.vllm',
+    'pydantic_clai2.models.github_copilot',
+    'pydantic_clai2.ui.menus.model_menu',
 )
 """Every turn loads `model_settings`; the rest serve model resolution, `/login`, and the model menus."""
 
