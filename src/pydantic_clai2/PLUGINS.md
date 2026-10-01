@@ -322,6 +322,22 @@ no notification-specific telemetry.
 to restore the built-in default. Normal plugin unloading discards its handlers;
 there are no background workers to stop.
 
+## Update notices
+
+The default-enabled `updates` plugin (`pydantic_clai2.builtin_plugins.updates`) starts one
+background request to `https://pypi.org/pypi/pydantic-clai2/json` on
+`session_start` and adds a status segment that reads `clai2 VERSION available`
+once PyPI reports a newer final release than the installed one. It registers no
+tools, instructions, commands, or settings, and it never runs an installer.
+Yanked releases, pre-releases, post-releases, and local versions are ignored; a
+source checkout, redirected output, and headless mode make no request. The
+request has a five-second timeout and does not follow redirects; any failure
+leaves the segment empty. `session_end` cancels a request still in flight.
+
+`/plugins disable updates` persists an off override. Use
+`/plugins enable updates` to load it again or `/plugins remove updates` to
+restore the built-in default.
+
 ## Logfire: default agent tracing
 
 The built-in `logfire` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in

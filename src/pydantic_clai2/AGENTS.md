@@ -261,6 +261,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/speculative_mode.py` | harness `CodeMode` wiring (native writes, read-only speculation allowlist, guidance), imported only while on |
 | `runtime/eager_timing.py` | eager `run_code` latency measurement and the nested-call id pattern |
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
+| `builtin_plugins/updates.py` | the default-enabled `updates` plugin: one background PyPI check, shown as a status segment |
 | `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()` |
 | `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
 | `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `host.spinner`, the user's `spinners.json`, `Spinners` |

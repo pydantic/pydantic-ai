@@ -107,6 +107,21 @@ resets the built-in default. Missing services, nonzero exits, and a two-second
 submission timeout do not fail the turn. No notification-specific telemetry is
 emitted.
 
+## Update notices
+
+The built-in `updates` plugin is enabled by default. Each interactive session
+asks PyPI once, in the background, for the latest `pydantic-clai2` release;
+startup never waits for it. When a newer release exists, the status row below
+the prompt shows `clai2 VERSION available`. Nothing is installed for you: run
+`uv tool upgrade pydantic-clai2` (or your installer's equivalent), or start with
+`uvx pydantic-clai2@latest`, then restart CLAI.
+
+Only final releases are compared, so pre-releases are never offered, and a
+source checkout (a `.dev` version) never checks. Headless mode and redirected
+output skip the check too. Network errors, timeouts, and unexpected responses
+are silent. `/plugins disable updates` turns the check off and
+`/plugins enable updates` restores it.
+
 ## Code highlighting
 
 Fenced code uses the fence's language for syntax highlighting. CLAI renders a
