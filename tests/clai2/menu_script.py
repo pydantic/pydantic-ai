@@ -8,10 +8,10 @@ from termflow.tui import MenuItem
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.textinput import TextInput, TextInputResult
 
-from pydantic_clai2.command_context import CommandContext
-from pydantic_clai2.field_menu import Runners
-from pydantic_clai2.menu_worker import worker_stopping
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.menus.field_menu import Runners
+from pydantic_clai2.ui.menus.menu_worker import worker_stopping
 
 
 def make_context(tmp_path: Path) -> tuple[CommandContext, list[str]]:

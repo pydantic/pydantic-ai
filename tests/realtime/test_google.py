@@ -2765,13 +2765,14 @@ def _dialer(*sessions: _RecordingSession) -> tuple[Any, list[str | None]]:
     return dial, handles
 
 
-async def test_reconnect_resumes_then_gives_up() -> None:
+@pytest.mark.parametrize('base_delay', [0.0, -0.5])
+async def test_reconnect_resumes_then_gives_up(base_delay: float) -> None:
     # s1 drops at once; reconnect resumes into s2 (one turn, then drops); reconnect then runs out.
     s1 = _RecordingSession([])
     s2 = _RecordingSession([[_turn('back')]])
     dial, handles = _dialer(s2)
     conn = GoogleRealtimeConnection(
-        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': 0.0, 'max_attempts': 2, 'jitter': False}
+        cast('AsyncSession', s1), dial=dial, reconnect={'base_delay': base_delay, 'max_attempts': 2, 'jitter': False}
     )
     conn._resumption_handle = 'h1'  # pyright: ignore[reportPrivateUsage]
     events = [e async for e in conn]
@@ -3352,10 +3353,10 @@ async def test_reconnect_applies_jitter(monkeypatch: pytest.MonkeyPatch) -> None
     async def record_sleep(delay: float) -> None:
         delays.append(delay)
 
-    # `reconnect_with_backoff` calls `random.random()` and `asyncio.sleep()` from these module
+    # `reconnect_with_backoff` calls `random.random()` and `anyio.sleep()` from these module
     # singletons, so patching them here controls the jitter factor and captures the resulting delay.
     monkeypatch.setattr(random, 'random', lambda: 0.4)
-    monkeypatch.setattr(asyncio, 'sleep', record_sleep)
+    monkeypatch.setattr(anyio, 'sleep', record_sleep)
 
     s1 = _RecordingSession([])
     dial, _ = _dialer(_RecordingSession([[_turn('hi')]]))

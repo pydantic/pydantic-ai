@@ -14,7 +14,7 @@ from keyring.errors import KeyringError
 from pydantic import JsonValue
 
 from pydantic_clai2 import logfire_oauth
-from pydantic_clai2.credential_store import save_codex_credentials
+from pydantic_clai2.config.credential_store import save_codex_credentials
 from pydantic_clai2.logfire_oauth import DeviceAuth, SignInError, Tokens, forget, load, sign_in, status
 
 ORIGIN = 'https://logfire.test'
@@ -143,10 +143,6 @@ def remember(tokens: Tokens) -> None:
 
 async def no_wait(seconds: float) -> None:
     pass
-
-
-def emptied(service: str, account: str) -> None:
-    keyring.set_password(service, account, '')  # conftest's fake keyring has no delete; empty reads as unset.
 
 
 class TestSignIn:
@@ -513,7 +509,6 @@ class TestDeviceAuth:
         assert not forget()
 
     async def test_logging_out_during_a_refresh_discards_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(keyring, 'delete_password', emptied)
         remember(stored(expires_in=-10))
         logfire = Logfire()
         logfire.valid = {'access-2'}
@@ -553,7 +548,6 @@ def test_an_unreadable_sign_in_does_not_discard_the_others() -> None:
 
 
 def test_status_forget_and_unreadable_storage(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(keyring, 'delete_password', emptied)
     assert status(resource=RESOURCE, read_only=True) == 'signed out'
     remember(stored(writable=False))
     assert status(resource=RESOURCE, read_only=True) == 'signed in'
