@@ -596,16 +596,15 @@ class GoogleModel(Model[Client]):
     def profile(self) -> GoogleModelProfile:
         """The model profile.
 
-        When the client talks to the Gemini API, `gemini-3.1-flash-image` models get
-        `google_thinking_levels` of `MINIMAL` and `HIGH`, unless the profile already sets a level set.
-        On Vertex AI they keep the full scale.
+        When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
+        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
+        `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
         """
         profile = cast(GoogleModelProfile, super().profile)
         # Google documents only `minimal` and `high` for this model on both APIs, but the Gemini API
         # alone enforces that: verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` for this
         # id and its `-preview`, while Vertex (`global`, `us`, `eu`) accepts them. So the level set
-        # follows the client's transport, which `google_model_profile` can't see from the model name,
-        # and a level set already on the profile (from the provider or a user `profile=`) wins.
+        # follows the client's transport, which `google_model_profile` can't see from the model name.
         # https://ai.google.dev/gemini-api/docs/image-generation
         # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
         if (
