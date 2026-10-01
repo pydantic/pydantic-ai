@@ -122,7 +122,8 @@ async def test_group_by_temporal_keeps_prefetch_after_timeout() -> None:
         yield 2
 
     with anyio.fail_after(5):
-        async with group_by_temporal(source(), soft_max_interval=0.01) as groups:
+        async with group_by_temporal(source(), soft_max_interval=0.01) as grouped:
+            groups = aiter(grouped)
             assert await anext(groups) == [1]
             await next_started.wait()
             release_next.set()
