@@ -6,6 +6,7 @@ from collections.abc import Callable, Coroutine
 from functools import partial
 from typing import TypeVar
 
+from anyio import to_thread
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, load_keys, prompt_api_key, save_key
@@ -55,7 +56,7 @@ async def choose_key(
     choice = await prompt_api_key(prompt=MaskedPrompt(runners, placeholder=placeholder), label=label)
     if choice is None:
         return None
-    keys = await asyncio.to_thread(load_keys)
+    keys = await to_thread.run_sync(load_keys, abandon_on_cancel=True)
     if isinstance(choice, KeyReference):
         if choice.name in keys:  # Deleted since the picker opened: saving the reference reports it.
             check(keys[choice.name].get_secret_value())
@@ -69,7 +70,9 @@ async def choose_key(
         if replace and not await run_worker(lambda: confirm_replace(name, runners)):
             return None
         try:
-            await finish_write(asyncio.to_thread(partial(save_key, name=name, value=value, replace=replace)))
+            await finish_write(
+                to_thread.run_sync(partial(save_key, name=name, value=value, replace=replace), abandon_on_cancel=True)
+            )
         except KeyExistsError:  # Another session saved `name` since `keys` was read: ask before replacing it.
             replace = True
         else:
