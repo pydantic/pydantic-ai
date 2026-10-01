@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
+from sqlite3 import Error as SQLiteError
 from typing import Generic, Literal
 
 from rich.console import Console
@@ -28,6 +29,11 @@ from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 def _display(text: str) -> str:
     return ''.join(char if char.isprintable() else repr(char)[1:-1] for char in text)
+
+
+def _safe_initial(text: str) -> str:
+    """Offer a replacement instead of emitting control characters from an existing path."""
+    return text if text.isprintable() else ''
 
 
 def _preview(text: str) -> str:
@@ -88,12 +94,21 @@ class DirectoryPicker:
             items.append(MenuItem(_display(problem or self.error), disabled=True))
         elif not children:
             items.append(MenuItem('No subdirectories. This directory can be used.', disabled=True))
+
+        def matches(query: str, item: MenuItem) -> bool:
+            query = query.casefold()
+            # Termflow only dispatches navigation shortcuts while filtered rows exist.
+            return query in item.label.casefold() or (
+                item.value == 'path' and not any(query in row.label.casefold() for row in items)
+            )
+
         return (
             MenuBuilder('Browse local directories')
             .size(_menu_size)
             .style(markdown_style())
             .items(items)
             .searchable(True)
+            .filter_fn(matches)
             .preview(
                 lambda item: _preview(
                     (f'{problem or self.error}\n\n' if problem or self.error else '')
@@ -126,7 +141,8 @@ class DirectoryPicker:
                     TextInputBuilder('Go to directory')
                     .style(markdown_style())
                     .prompt('Path: ')
-                    .initial(str(self.current))
+                    .initial(_safe_initial(str(self.current)))
+                    .placeholder('Enter a path; control characters are not copied')
                     .validator(self.path_problem)
                     .footer_hint('Enter open - Esc back')
                     .key_source(menu_key)
@@ -279,9 +295,14 @@ class FolderMenu(Generic[DepsT]):
                     continue
                 try:
                     other = existing if is_folder_name(existing) else self.path(existing)
+                    duplicate = (
+                        candidate.samefile(other)
+                        if isinstance(candidate, Path) and isinstance(other, Path)
+                        else candidate == other
+                    )
                 except (OSError, RuntimeError, ValueError):
                     continue
-                if candidate == other:
+                if duplicate:
                     return 'This folder is already in the list.'
             if not named:
                 return _directory_problem(self.path(value))
@@ -297,7 +318,7 @@ class FolderMenu(Generic[DepsT]):
             TextInputBuilder('Edit agent folder' if index is not None else 'Add agent folder')
             .style(markdown_style())
             .prompt('Name: ' if named else 'Path: ')
-            .initial(self.folders()[index] if index is not None else '')
+            .initial(_safe_initial(self.folders()[index]) if index is not None else '')
             .placeholder('agents or global' if named else './team-agents or ~/my-agents (relative to project)')
             .validator(lambda text: self.problem(text, named=named, index=index))
             .footer_hint('Enter save | Esc cancel | Empty never removes')
@@ -338,7 +359,7 @@ class FolderMenu(Generic[DepsT]):
                 data = self.source.host.settings(CoderSettings).model_dump(mode='json')
                 data['agent_folders'] = folders
                 self.source.host.save_settings(CoderSettings.model_validate(data))
-            except (OSError, RuntimeError, ValueError) as exc:
+            except (OSError, RuntimeError, ValueError, SQLiteError) as exc:
                 self.notice = f'Could not save: {exc}'
                 continue
             self.notice = (

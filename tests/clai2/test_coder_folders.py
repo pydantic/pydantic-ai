@@ -1,6 +1,7 @@
 """Drive Coder's folder settings through real widgets and temporary directories."""
 
 import io
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_clai2.builtin_plugins.coder import CoderSettings, CoderSource
 from pydantic_clai2.builtin_plugins.coder_folders import DirectoryPicker, FolderAction, FolderMenu, run_coder_flow
+from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.ui.menus.field_menu import Runners, save_and_close_item
 from tests.clai2.menu_script import Script, pick, typed
@@ -152,6 +155,10 @@ def test_duplicate_aliases_and_editing_current_entry(folders: FolderMenu[object]
     for spelling in ('shared', './shared', str(directory), './alias', './shared/../shared'):
         assert folders.problem(spelling, named=False, index=None) == 'This folder is already in the list.'
         assert folders.problem(spelling, named=False, index=0) is None
+    uppercase = directory.with_name('SHARED')
+    if uppercase.exists():
+        assert directory.samefile(uppercase)
+        assert folders.problem(str(uppercase), named=False, index=None) == 'This folder is already in the list.'
     assert folders.problem('agents', named=True, index=None) is None
     assert folders.value(' shared ', named=False) == './shared'
     assert folders.value('~', named=False) == str(Path.home())
@@ -285,8 +292,9 @@ def test_symlink_loop_does_not_block_other_edits(folders: FolderMenu[object]) ->
     loop = folders.project / 'loop'
     loop.symlink_to(loop, target_is_directory=True)
     folders.source.host.save_settings(CoderSettings(agent_folders=['./loop'], sub_agents=False))
-    assert 'Invalid directory' in (folders.problem('./loop', named=False, index=None) or '')
-    assert 'Cannot open directory' in folders.details(MenuItem('', value=0))
+    assert folders.problem('./loop', named=False, index=None) is not None
+    details = ' '.join(folders.details(MenuItem('', value=0)).split())
+    assert 'Cannot open directory' in details or 'not a directory' in details
     assert folders.problem('./home', named=False, index=None) is None
     script = Script(
         lists=[pick(FolderAction(kind='browse', index=0)), MenuResult(cancelled=True)],
@@ -345,3 +353,61 @@ def test_full_browser_page_keeps_title_and_footer_on_screen(
     assert 'Esc back' in frame[-1]
     assert len(frame) < 24
     assert all(len(line) < 50 for line in frame)
+
+
+@pytest.mark.parametrize('navigation', ['ctrl-l', 'left'])
+def test_browser_shortcuts_recover_when_search_has_no_matches(folders: FolderMenu[object], navigation: str) -> None:
+    picker = DirectoryPicker(start=Path.home(), project=folders.project)
+    keys = [*'no-matching-directory', navigation]
+    if navigation == 'ctrl-l':
+        keys += ['ctrl-u', *str(folders.project), 'enter']
+    keys += ['enter']
+    keyboard = Keyboard(keys)
+    assert picker.run(runners=keyboard.runners) == folders.project
+
+
+def test_existing_control_characters_never_reach_text_input(folders: FolderMenu[object]) -> None:
+    unsafe = './agent\x1b[2Jfolder'
+    directory = folders.project / unsafe
+    directory.mkdir()
+    folders.source.host.save_settings(CoderSettings(agent_folders=[unsafe]))
+    editor = folders.editor(named=False, index=0)
+    assert editor.text == ''
+    keyboard = Keyboard(['escape'])
+    assert keyboard.text(editor).cancelled
+    assert '\x1b[2J' not in keyboard.output.getvalue()
+    picker = DirectoryPicker(start=directory, project=folders.project)
+    keyboard = Keyboard(['ctrl-l', 'escape', 'escape'])
+    assert picker.run(runners=keyboard.runners) is None
+    assert '\x1b[2J' not in keyboard.output.getvalue()
+    assert folders.folders() == [unsafe]
+
+
+def test_sqlite_save_failure_keeps_menu_and_previous_settings(
+    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = SettingsStore(folders.project / 'settings.db')
+    declaration = PluginSettings(id='coder', factory='pydantic_clai2.builtin_plugins.coder', settings={})
+    store.save_plugin(declaration)
+
+    def persist(settings: dict[str, JsonValue]) -> None:
+        store.save_plugin(declaration.model_copy(update={'settings': settings}))
+
+    folders.source = CoderSource(
+        PluginHost[object](name='coder', console=Console(file=io.StringIO()), settings={}, save_settings=persist)
+    )
+    connect = sqlite3.connect
+
+    def readonly(path: Path, *, timeout: float) -> sqlite3.Connection:
+        connection = connect(path, timeout=timeout)
+        connection.execute('PRAGMA query_only = ON')
+        return connection
+
+    monkeypatch.setattr(sqlite3, 'connect', readonly)
+    script = Script(
+        lists=[pick(FolderAction(kind='name')), MenuResult(cancelled=True)], choices=[], texts=[typed('agents')]
+    )
+    assert folders.run(runners=script.runners) == []
+    assert 'readonly' in folders.notice
+    assert folders.folders() == []
+    assert store.plugins() == [declaration]
