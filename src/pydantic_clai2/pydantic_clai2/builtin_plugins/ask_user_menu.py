@@ -1,6 +1,6 @@
 """The built-in `ask_user` plugin: inline questions that keep the transcript visible."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from functools import partial
@@ -11,6 +11,8 @@ from rich.text import Text
 from termflow.tui.layout import truncate
 from termflow.tui.terminal import raw_mode
 
+from pydantic_ai import AgentStreamEvent
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.ask_user import (
     AskUser,
     AskUserAnswer,
@@ -19,7 +21,8 @@ from pydantic_ai_harness.ask_user import (
     AskUserResponse,
     Question,
 )
-from pydantic_clai2.plugins import FullScreen, PluginHost
+from pydantic_ai_harness.subagents import DelegationTasks
+from pydantic_clai2.plugins import FullScreen, Plugin
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
@@ -165,6 +168,9 @@ class TerminalAnswerer:
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Answer every question or decline the entire request."""
         async with self._terminal, self._full_screen():
+            child_id = DelegationTasks.child_id()
+            if child_id is not None:
+                self._console.print(f'Task [{child_id[:8]}] requests your input', markup=False)
             with question_input() if self._runner is None else nullcontext(None) as key_source:
                 return await self.answer_questions(request=request, key_source=key_source)
 
@@ -207,7 +213,11 @@ def render_answer(event: AskUserAnsweredEvent) -> RenderableType:
     return text
 
 
-def activate(host: PluginHost[None]) -> None:
-    """Register `AskUser` with the terminal answerer and a transcript line per answer."""
-    host.add(AskUser(answerer=TerminalAnswerer(full_screen=host.full_screen, console=host.console)))
-    host.render(AskUserAnsweredEvent)(render_answer)
+class AskUserPlugin(Plugin):
+    """`AskUser` with the terminal answerer, and a transcript line per answer."""
+
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        return (AskUser(answerer=TerminalAnswerer(full_screen=self.host.full_screen, console=self.host.console)),)
+
+    def render(self, event: AgentStreamEvent) -> RenderableType | None:
+        return render_answer(event) if isinstance(event, AskUserAnsweredEvent) else None

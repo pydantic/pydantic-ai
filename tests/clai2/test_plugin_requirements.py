@@ -18,7 +18,7 @@ from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Capabi
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.subagents import SubAgents
-from pydantic_clai2._app import DEFAULT_PLUGINS, _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
+from pydantic_clai2._app import _Shell, create_shell  # pyright: ignore[reportPrivateUsage]
 from pydantic_clai2.commands import Commands, plugins_command
 from pydantic_clai2.config import PluginSettings, features
 from pydantic_clai2.config.features import check_feature_name
@@ -43,7 +43,7 @@ CODER = 'pydantic_ai_harness.coder:Coder'
 
 FANCY = """
 from pydantic import BaseModel
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import Plugin, PluginHost
 
 SEEN = []
 
@@ -53,14 +53,18 @@ class Settings(BaseModel):
     color: str = 'blue'
 
 
-def activate(host: PluginHost) -> None:
-    settings = host.settings(Settings, requires={'mode': ['fancy-mode']})
-    SEEN.append(settings.model_dump())
-    host.console.print(f'mode={settings.mode} color={settings.color}')
+class Fancy(Plugin[Settings]):
+    @classmethod
+    def from_host(cls, host):
+        return cls(host, host.settings(Settings, requires={'mode': ['fancy-mode']}))
 
-    @host.configure
-    async def configure() -> str:
-        host.save_settings(settings.model_copy(update={'color': 'green'}))
+    def __init__(self, host, settings):
+        super().__init__(host, settings)
+        SEEN.append(settings.model_dump())
+        host.console.print(f'mode={settings.mode} color={settings.color}')
+
+    async def configure(self) -> str:
+        self.host.save_settings(self.settings.model_copy(update={'color': 'green'}))
         return 'saved'
 """
 
@@ -174,15 +178,17 @@ def test_tags_survive_writers_that_do_not_change_the_value() -> None:
 
 BAD_TAGS = """
 from pydantic import BaseModel
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import Plugin
 
 
 class Settings(BaseModel):
     mode: str = 'plain'
 
 
-def activate(host: PluginHost) -> None:
-    host.settings(Settings, requires={'mode': ['Not A Name']})
+class BadTags(Plugin[Settings]):
+    @classmethod
+    def from_host(cls, host):
+        return cls(host, host.settings(Settings, requires={'mode': ['Not A Name']}))
 """
 
 
@@ -361,17 +367,18 @@ def test_offline_add_uses_the_capability_table(tmp_path: Path, monkeypatch: pyte
 
 
 GATE = """
-from pydantic_ai.capabilities import Capability
+from pydantic_ai.capabilities import Capability, Hooks
 from pydantic_ai.exceptions import UserError
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import Plugin
 
 
-def activate(host: PluginHost) -> None:
-    host.add(Capability(instructions='Be brief.'))
+async def refuse(ctx, *, handler):
+    raise UserError('blocked by policy')
 
-    @host.on('run')
-    async def refuse(ctx, *, handler):
-        raise UserError('blocked by policy')
+
+class Gate(Plugin):
+    def get_capabilities(self):
+        return [Capability(instructions='Be brief.'), Hooks(run=refuse)]
 """
 
 
@@ -401,7 +408,7 @@ async def run_unguarded(tmp_path: Path, guarded: list[AgentCapability[None]]) ->
     assert reported == []
 
 
-async def test_hook_handlers_and_activate_capabilities_stay_unguarded(tmp_path: Path) -> None:
+async def test_plugin_hooks_and_contributions_stay_unguarded(tmp_path: Path) -> None:
     """Fail-soft covers only capabilities built from saved settings: a gate that raises still stops every run."""
     harness = Harness(tmp_path)
     (harness.store.plugins_dir / 'fancy.py').unlink()
@@ -431,10 +438,14 @@ async def test_settings_built_capability_with_nested_hooks_stays_unguarded(tmp_p
 
 def coder_shell(tmp_path: Path, output: io.StringIO, *, sub_agents_tags: str | None) -> _Shell[None, str]:
     store = SettingsStore(tmp_path / 'settings.db')
+    store.plugins_dir.mkdir(exist_ok=True)
+    path = store.plugins_dir / 'bare_coder.py'
+    path.write_text('from pydantic_ai_harness.coder import Coder\n')
+    factory = 'bare_coder:Coder'
     save_raw(
         store,
         'coder',
-        '{"id": "coder", "factory": "pydantic_ai_harness.coder:Coder", "settings": '
+        f'{{"id": "coder", "factory": "{factory}", "path": "{path}", "settings": '
         '{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true}}',
         sub_agents_tags,
     )
@@ -447,7 +458,7 @@ def coder_shell(tmp_path: Path, output: io.StringIO, *, sub_agents_tags: str | N
         project=ProjectSettings(),
         console=Console(file=output, width=300),
         store=store,
-        builtin_plugins=[plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'coder'],
+        builtin_plugins=[PluginSettings(id='coder', factory=factory, path=str(path), settings={'sub_agents': False})],
     )
 
 
@@ -486,6 +497,9 @@ async def test_untagged_setup_error_costs_one_turn_then_the_capability(tmp_path:
     await shell.loader.load_all()
     try:
         assert delegates(shell.loader.capabilities())
+        # Stock-agent binding compares capability identity; reading the snapshot must not rebuild guards.
+        guarded = shell.loader.run_capabilities()
+        assert guarded[0] is shell.loader.run_capabilities()[0]
         first = await shell.run_turn(TurnStart(text='hello'), headless=True)
         assert first.outcome == 'failed'
         assert isinstance(first.error, CapabilitySetupError)

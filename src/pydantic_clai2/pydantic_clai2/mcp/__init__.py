@@ -5,7 +5,9 @@ A repository's `.clai/mcp_servers.json` and Claude Code-style `.mcp.json` load a
 settings (`/plugins add mcp pydantic_clai2.mcp JSON`) still load, read-only.
 """
 
-from pydantic_ai.capabilities import Toolset
+from collections.abc import Sequence
+
+from pydantic_ai.capabilities import AgentCapability, Toolset
 from pydantic_ai.toolsets import DynamicToolset
 from pydantic_clai2.commands import Command
 from pydantic_clai2.mcp._command import HELP, MCPCommand
@@ -24,7 +26,7 @@ from pydantic_clai2.mcp._settings import (
 )
 from pydantic_clai2.mcp._store import CLAUDE_MCP_FILE, PROJECT_MCP_FILE, PROJECT_MCP_FILES, MCPStore, UserFile
 from pydantic_clai2.mcp._tokens import SignIn, TokenStore, oauth, sign_in
-from pydantic_clai2.plugins import PluginHost, SessionEnd
+from pydantic_clai2.plugins import Plugin, PluginHost, SessionEnd
 
 __all__ = [
     'CLAUDE_MCP_FILE',
@@ -35,6 +37,7 @@ __all__ = [
     'PROJECT_MCP_FILES',
     'HTTPServer',
     'MCPCommand',
+    'MCPPlugin',
     'MCPServers',
     'MCPSettings',
     'MCPStore',
@@ -49,7 +52,6 @@ __all__ = [
     'StdioServer',
     'TokenStore',
     'UserFile',
-    'activate',
     'edit_form',
     'edit_in_editor',
     'http_client',
@@ -60,21 +62,27 @@ __all__ = [
 ]
 
 
-def activate(host: PluginHost[None], *, store: MCPStore | None = None) -> None:
+class MCPPlugin(Plugin[MCPSettings]):
     """Offer enabled servers to every run; nothing connects until a run or `/mcp start`."""
-    servers = MCPServers(store or MCPStore(), host.settings(MCPSettings).servers)
-    host.add(Toolset(DynamicToolset(servers.toolset, per_run_step=False)))
-    command = MCPCommand(servers=servers)
 
-    @host.on('session_end')
-    async def release(_: SessionEnd) -> None:
-        await servers.close()
+    def __init__(self, host: PluginHost[None], settings: MCPSettings, *, store: MCPStore | None = None) -> None:
+        """`store` defaults to the user's `mcp.json`; tests pass their own."""
+        super().__init__(host, settings)
+        self.servers = MCPServers(store or MCPStore(), settings.servers)
 
-    host.commands.register(
-        Command(
-            name='mcp',
-            description='Manage MCP servers: install, start, stop, status, logs, and more (/mcp help).',
-            handler=command,
-            complete=command.complete,
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        return (Toolset(DynamicToolset(self.servers.toolset, per_run_step=False)),)
+
+    def get_commands(self) -> Sequence[Command]:
+        command = MCPCommand(servers=self.servers)
+        return (
+            Command(
+                name='mcp',
+                description='Manage MCP servers: install, start, stop, status, logs, and more (/mcp help).',
+                handler=command,
+                complete=command.complete,
+            ),
         )
-    )
+
+    async def on_session_end(self, event: SessionEnd) -> None:
+        await self.servers.close()

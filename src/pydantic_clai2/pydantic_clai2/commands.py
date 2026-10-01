@@ -15,7 +15,7 @@ from termflow.tui.completion import (
 )
 
 from pydantic_ai.models import known_model_names
-from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, PluginSettings
+from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, UPDATE_CHANNELS, PluginSettings
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
 from pydantic_clai2.ui import telemetry
@@ -225,6 +225,8 @@ def set_completions(args: list[str], *, plugin_models: Iterable[str] = ()) -> It
         return tuple(dict.fromkeys((*providers, *CODEX_MODELS, *names)))
     if len(args) == 2 and args[0] in ('display.thinking', 'display.splash'):
         return ('true', 'false')
+    if len(args) == 2 and args[0] == 'updates.channel':
+        return UPDATE_CHANNELS
     return ()
 
 

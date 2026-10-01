@@ -18,8 +18,9 @@ from pydantic_clai2.builtin_plugins import logfire as logfire_plugin, logfire_se
 from pydantic_clai2.builtin_plugins.logfire import LogfireSettings
 from pydantic_clai2.builtin_plugins.logfire_setup import Setup, SetupError, https_origin
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, load_keys, save_key
-from pydantic_clai2.plugins import PluginHost, SessionEnd
+from pydantic_clai2.plugins import PluginHost, SessionEnd, load_plugin
 from pydantic_clai2.ui.menus.field_menu import Runners
+from tests.clai2.menu_script import Script, pick
 from tests.clai2.test_logfire import Recorder
 
 US = 'https://logfire-us.pydantic.dev'
@@ -146,13 +147,15 @@ def configure(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> Configure:
             return setup
 
         monkeypatch.setattr(logfire_plugin, 'SETUP', scripted_setup)
-        logfire_plugin.activate(host)
+        # The settings menu: Enter on the project row runs setup, then Esc closes the menu.
+        menu = Script(lists=[pick(logfire_plugin.PROJECT), MenuResult(cancelled=True)], choices=[], texts=[])
+        monkeypatch.setattr(logfire_plugin, 'RUNNERS', menu.runners)
+        plugin = load_plugin(logfire_plugin.LogfirePlugin, host)
         try:
-            assert host.configurer is not None
-            return await host.configurer()
+            assert plugin.plugin.has_configure
+            return await plugin.plugin.configure()
         finally:
-            for handler in host.handlers:
-                await handler(SessionEnd(reason='exit'))
+            await plugin.dispatch(SessionEnd(reason='exit'))
 
     return run
 

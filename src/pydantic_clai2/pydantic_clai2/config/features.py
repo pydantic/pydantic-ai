@@ -17,7 +17,7 @@ SUPPORTED_FEATURES: frozenset[str] = frozenset()
 CAPABILITY_REQUIREMENTS: dict[str, dict[str, frozenset[str]]] = {}
 """Requirement tags for capability classes declared as `module:Class`, keyed by that factory.
 
-A capability class has no `activate` to call `host.settings(Model, requires=...)` from, so the
+A capability class has no `Plugin` subclass to call `host.settings(Model, requires=...)` from, so the
 build that ships a declaration for one lists its tagged settings here, for example
 `{'pydantic_ai_harness.coder:Coder': {'sub_agents': frozenset({'stock-bound-delegation'})}}`.
 """

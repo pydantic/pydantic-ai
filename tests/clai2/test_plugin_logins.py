@@ -1,6 +1,7 @@
 """Plugins add `/login NAME` sign-ins next to CLAI's own `codex` and `copilot`."""
 
 import io
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -18,20 +19,24 @@ from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import login_names
-from pydantic_clai2.plugins import PluginHost, PluginLogin, SessionStart
+from pydantic_clai2.plugins import Plugin, PluginHost, PluginLogin, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
 
 PromptT = TypeVar('PromptT')
 
 PLUGIN = """
-from pydantic_clai2.plugins import PluginHost
+from collections.abc import Sequence
+
+from pydantic_clai2.plugins import Plugin, PluginLogin
 
 
-def activate(host: PluginHost) -> None:
-    async def sign_in() -> str:
-        return '{MESSAGE}'
+async def sign_in() -> str:
+    return '{MESSAGE}'
 
-    host.login('claude', sign_in, models=('claude-test:a', 'claude-test:b'))
+
+class ClaudeLogin(Plugin):
+    def get_logins(self) -> Sequence[PluginLogin]:
+        return (PluginLogin(name='claude', handler=sign_in, models=('claude-test:a', 'claude-test:b')),)
 """
 
 
@@ -39,16 +44,15 @@ async def signed_in() -> str:
     return 'Signed in.'
 
 
-def host() -> PluginHost[None]:
-    return PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={})
+class ClaudeLogin(Plugin):
+    def get_logins(self) -> Sequence[PluginLogin]:
+        return (PluginLogin(name='claude', handler=signed_in),)
 
 
-async def test_host_records_a_login() -> None:
-    plugin = host()
-    login = plugin.login('claude', signed_in)
-    assert plugin.logins == [login]
-    assert login == PluginLogin(name='claude', handler=signed_in)
-    assert await login.handler() == 'Signed in.'
+async def test_loaded_plugin_keeps_its_logins() -> None:
+    loaded = load_plugin(ClaudeLogin, PluginHost[None](name='p', console=Console(file=io.StringIO()), settings={}))
+    assert loaded.logins == (PluginLogin(name='claude', handler=signed_in),)
+    assert await loaded.logins[0].handler() == 'Signed in.'
 
 
 async def test_a_plugin_login_saves_its_models_only_once_it_succeeds(tmp_path: Path) -> None:
@@ -56,12 +60,11 @@ async def test_a_plugin_login_saves_its_models_only_once_it_succeeds(tmp_path: P
         raise UserError('Sign-in refused.')
 
     store = SettingsStore(tmp_path / 'config.db')
-    plugin = host()
     plugins = {
         login.name: login
         for login in (
-            plugin.login('claude', signed_in, models=['claude-test:a', 'claude-test:b']),
-            plugin.login('refused', refused, models=['claude-test:c']),
+            PluginLogin(name='claude', handler=signed_in, models=('claude-test:a', 'claude-test:b')),
+            PluginLogin(name='refused', handler=refused, models=('claude-test:c',)),
         )
     }
     codex = CodexAuth(Console(file=io.StringIO()))
@@ -73,15 +76,15 @@ async def test_a_plugin_login_saves_its_models_only_once_it_succeeds(tmp_path: P
 
 
 @pytest.mark.parametrize('name', ['', 'Claude', '1claude', 'claude code', 'claude:code'])
-def test_host_rejects_a_malformed_login_name(name: str) -> None:
+def test_rejects_a_malformed_login_name(name: str) -> None:
     with pytest.raises(ValueError, match=r'Login name .* must start with a lowercase letter'):
-        host().login(name, signed_in)
+        PluginLogin(name=name, handler=signed_in)
 
 
 @pytest.mark.parametrize('name', ['codex', 'copilot', 'openai-codex', 'github-copilot'])
-def test_host_rejects_a_login_clai_already_has(name: str) -> None:
+def test_rejects_a_login_clai_already_has(name: str) -> None:
     with pytest.raises(ValueError, match='sign-in CLAI already has'):
-        host().login(name, signed_in)
+        PluginLogin(name=name, handler=signed_in)
 
 
 def test_login_names_list_clai_sign_ins_first_then_plugins_sorted() -> None:

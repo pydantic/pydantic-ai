@@ -39,6 +39,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().speculative_code_mode is False
     # Databases from before `/spinner` keep the braille they always showed.
     assert store.load().spinner == 'working'
+    # Databases from before `/update` follow stable releases.
+    assert store.load().update_channel == 'stable'
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []
@@ -191,7 +193,7 @@ def test_codex_speed_labels_preserve_existing_preferences(tmp_path: Path, tier: 
 
 
 def test_saved_coder_declarations_keep_delegation_off(tmp_path: Path) -> None:
-    """A `coder` saved before `sub_agents` existed still loads, since CLAI passes plugins to each run."""
+    """A `coder` saved before `sub_agents` existed keeps its previous delegation opt-out."""
     store = SettingsStore(tmp_path / 'settings.db')
     with closing(sqlite3.connect(store.path)) as connection, connection:
         connection.executemany(
