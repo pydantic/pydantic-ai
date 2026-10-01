@@ -27,7 +27,7 @@ pydantic-settings = false
 pydantic-monty-client = false
 genai-prices = false
 pydantic-monty = false
-termflow-md = "2026-09-30T15:58:29Z"
+termflow-md = "2026-09-24T16:36:46Z"
 anthropic = "2026-09-28T18:04:04Z"
 openai = "2026-09-23T00:08:49Z"
 google-genai = "2026-09-22T17:23:02Z"
@@ -1240,7 +1240,6 @@ requires-dist = [
     { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.19.0" },
     { name = "openai", marker = "extra == 'crusoe'", specifier = ">=3.19.0" },
     { name = "openai", marker = "extra == 'openai'", specifier = ">=3.19.0" },
-    { name = "openai", marker = "extra == 'openai-chatgpt'", specifier = ">=3.19.0" },
     { name = "openai", marker = "extra == 'openai-realtime'", specifier = ">=3.19.0" },
     { name = "openai", marker = "extra == 'openrouter'", specifier = ">=3.19.0" },
     { name = "openai", marker = "extra == 'snowflake'", specifier = ">=3.19.0" },
@@ -1254,7 +1253,6 @@ requires-dist = [
     { name = "pydantic-evals", marker = "extra == 'evals'", editable = "../../pydantic_evals" },
     { name = "pydantic-graph", editable = "../../pydantic_graph" },
     { name = "pydantic-handlebars", marker = "extra == 'spec'", specifier = ">=0.1.0" },
-    { name = "pyjwt", extras = ["crypto"], marker = "extra == 'openai-chatgpt'", specifier = ">=2.13.0" },
     { name = "pyperclip", marker = "extra == 'cli'", specifier = ">=1.9.0" },
     { name = "pyyaml", marker = "extra == 'cli'", specifier = ">=6.0.2" },
     { name = "pyyaml", marker = "extra == 'spec'", specifier = ">=6.0.2" },
@@ -1267,7 +1265,6 @@ requires-dist = [
     { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.27.0" },
     { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
     { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
-    { name = "tiktoken", marker = "extra == 'openai-chatgpt'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'openai-realtime'", specifier = ">=0.12.0" },
     { name = "tiktoken", marker = "extra == 'xai-realtime'", specifier = ">=0.12.0" },
     { name = "typesafe-sdk", marker = "extra == 'typesafe'", specifier = ">=0.6.0" },
@@ -1281,7 +1278,7 @@ requires-dist = [
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.16.0" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.16.0" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-chatgpt", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-core"
