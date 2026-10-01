@@ -37,7 +37,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.native_tools import WebSearchTool
+from pydantic_ai.native_tools import AbstractNativeTool, WebSearchTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.exa import ExaSearch, ExaSearchToolset
 
@@ -99,6 +99,27 @@ def _deep_response(
         auto_date=None,
         output=DeepSearchOutput(content=content, grounding=grounding),
     )
+
+
+async def _tools_sent(
+    capability: ExaSearch[None] | WebSearch[None], *, native_web_search: bool
+) -> tuple[list[str], list[AbstractNativeTool]]:
+    """The function and native tools one request carries, on a model with or without native web search."""
+    sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
+
+    def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(
+            (
+                [tool.name for tool in info.function_tools],
+                list(info.model_request_parameters.native_tools),
+            )
+        )
+        return ModelResponse(parts=[TextPart('done')])
+
+    supported = frozenset({WebSearchTool}) if native_web_search else frozenset[type[AbstractNativeTool]]()
+    model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=supported))
+    await Agent(model, capabilities=[capability]).run('Search the web.')
+    return sent[0]
 
 
 @dataclass
@@ -448,37 +469,6 @@ class TestExaSearch:
         assert instructions.startswith(base)
         assert 'escalate to `deep_search`' in instructions
 
-    async def test_native_web_search_replaces_exa_search(self) -> None:
-        seen_function_tools: list[str] = []
-        seen_native_tools: list[type[object]] = []
-
-        def respond(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            seen_function_tools.extend(tool.name for tool in info.function_tools)
-            seen_native_tools.extend(type(tool) for tool in info.model_request_parameters.native_tools)
-            return ModelResponse(parts=[TextPart('done')])
-
-        model = FunctionModel(respond, profile=ModelProfile(supported_native_tools=frozenset({WebSearchTool})))
-        agent = Agent(model, capabilities=[WebSearch(), ExaSearch(client=_FakeExaClient())])
-
-        result = await agent.run('Search the web.')
-
-        assert result.output == 'done'
-        assert seen_function_tools == ['get_page']
-        assert seen_native_tools == [WebSearchTool]
-
-    async def test_unsupported_constrained_native_search_still_raises(self) -> None:
-        model = FunctionModel(
-            lambda _messages, _info: ModelResponse(parts=[TextPart('done')]),
-            profile=ModelProfile(supported_native_tools=frozenset()),
-        )
-        agent = Agent(
-            model,
-            capabilities=[WebSearch(blocked_domains=['untrusted.example']), ExaSearch(client=_FakeExaClient())],
-        )
-
-        with pytest.raises(UserError, match='not supported by this model'):
-            await agent.run('Search the web.')
-
     def test_custom_guidance_replaces_default(self) -> None:
         capability = ExaSearch[None](include_deep_search=True, guidance='Research with the Exa tools.')
         assert capability.get_instructions() == 'Research with the Exa tools.'
@@ -539,13 +529,62 @@ class TestAgentSpec:
         schema = AgentSpec.model_json_schema_with_capabilities([ExaSearch])
         assert 'ExaSearch' in json.dumps(schema)
 
+    async def test_native_search_replaces_exa_search_where_supported(self) -> None:
+        tools, natives = await _tools_sent(ExaSearch(native=True, client=_FakeExaClient()), native_web_search=True)
+        assert tools == ['get_page']
+        assert natives == [WebSearchTool()]
+
+    async def test_exa_search_is_the_fallback_where_native_search_is_unsupported(self) -> None:
+        tools, natives = await _tools_sent(ExaSearch(native=True, client=_FakeExaClient()), native_web_search=False)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
+    def test_native_search_gets_the_domain_filters(self) -> None:
+        capability = ExaSearch[None](native=True, include_domains=['a.dev'], client=_FakeExaClient())
+        assert capability.get_native_tools() == [WebSearchTool(allowed_domains=['a.dev'])]
+        capability = ExaSearch[None](native=True, exclude_domains=['b.dev'], client=_FakeExaClient())
+        assert capability.get_native_tools() == [WebSearchTool(blocked_domains=['b.dev'])]
+
+    async def test_without_native_exa_search_is_always_sent(self) -> None:
+        tools, natives = await _tools_sent(ExaSearch(client=_FakeExaClient()), native_web_search=True)
+        assert tools == ['web_search', 'get_page']
+        assert natives == []
+
+    async def test_web_search_tool_is_a_core_web_search_fallback(self) -> None:
+        client = _FakeExaClient(search_response=_response(_result('https://a.dev', title='A', highlights=['alpha'])))
+        exa = ExaSearch[None](num_results=3, client=client)
+
+        tools, _ = await _tools_sent(WebSearch(local=exa.web_search_tool()), native_web_search=True)
+        assert tools == []
+        tools, _ = await _tools_sent(WebSearch(local=exa.web_search_tool()), native_web_search=False)
+        assert tools == ['web_search']
+
+        def search_once(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('web_search', {'query': 'q'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        model = FunctionModel(search_once, profile=ModelProfile(supported_native_tools=frozenset()))
+        result = await Agent(model, capabilities=[WebSearch(local=exa.web_search_tool())]).run('Search.')
+        returns = [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert len(returns) == 1 and 'URL: https://a.dev' in str(returns[0])
+        assert client.search_calls[0]['num_results'] == 3
+
     def test_from_spec_builds_capability(self) -> None:
         capability = ExaSearch[None].from_spec(
             num_results=3,
             text_summary=True,
             include_deep_search=True,
             include_domains=['a.dev'],
+            native=True,
         )
+        assert capability.native is True
         assert capability.num_results == 3
         assert capability.text_summary is True
         assert capability.include_deep_search is True

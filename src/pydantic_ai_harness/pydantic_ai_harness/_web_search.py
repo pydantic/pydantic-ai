@@ -1,22 +1,23 @@
-"""Shared preparation for provider-backed web search tools."""
+"""Shared support for search capabilities that can defer to the model's native web search."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 
-from pydantic_ai.models import Model
 from pydantic_ai.native_tools import WebSearchTool
-from pydantic_ai.realtime import RealtimeModel
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 
 
-def prefer_native_web_search(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
-    """Omit this search tool when the model supports native web search."""
-    # A run context rehydrated across a durable boundary may not carry the live model and raises on
-    # attribute access. In that case, leave the provider-backed search definition unchanged.
-    model = ctx.__dict__.get('model')
-    if isinstance(model, (Model, RealtimeModel)) and WebSearchTool in model.profile.get(
-        'supported_native_tools', frozenset()
-    ):
-        return replace(tool_def, unless_native='web_search')
-    return tool_def
+def native_web_search(include_domains: Sequence[str], exclude_domains: Sequence[str]) -> WebSearchTool:
+    """The native web search tool, restricted to the same domains as the provider-backed search."""
+    return WebSearchTool(allowed_domains=list(include_domains) or None, blocked_domains=list(exclude_domains) or None)
+
+
+def defer_to_native_web_search(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition:
+    """Mark a provider-backed `web_search` as the local fallback for the native web search tool.
+
+    Pydantic AI then leaves it out of requests to models that support native web search, and sends
+    it, instead of raising, to models that do not.
+    """
+    return replace(tool_def, unless_native=WebSearchTool.kind)

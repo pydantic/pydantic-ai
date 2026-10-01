@@ -21,11 +21,16 @@ fetching is acceptable. `WebSearch()` and `WebFetch()` with no arguments are nat
 models without native support; pass `local=True` for the fallback (needs `pydantic-ai-slim[duckduckgo]`
 and `pydantic-ai-slim[web-fetch]`).
 
-On models with native search, core `WebSearch()` composes with either `ExaSearch` or `YouSearch`: the
-native tool replaces the harness `web_search`, while `get_page` remains available. On other models,
-use the harness search capability without core `WebSearch`. `ExaSearch` and `YouSearch` still collide
-with each other because both expose `web_search` and `get_page`; wrap one in core
-`PrefixTools(wrapped=..., prefix='cb')`.
+Tool-name collisions: core `WebSearch` (its native tool on Anthropic models), `ExaSearch`, and `YouSearch` all expose a
+tool named `web_search`; `ExaSearch` and `YouSearch` both expose `get_page`. Use one search capability
+per agent, wrap extras in core `PrefixTools(wrapped=..., prefix='cb')`, or use `WebSearch(native=False, local=True)`
+(needs the `pydantic-ai-slim[duckduckgo]` extra) whose DuckDuckGo tool is `duckduckgo_search`. `Researcher` includes core `WebSearch`, so do not add
+`ExaSearch`/`YouSearch` next to it on Anthropic models without `PrefixTools`.
+
+To use the provider's native search where the model has one and Exa or You.com elsewhere, set
+`ExaSearch(native=True)` / `YouSearch(native=True)` (their `web_search` is then only sent to models without
+native search; `get_page` stays), or pass `WebSearch(local=ExaSearch().web_search_tool())` to keep core
+`WebSearch`'s native options.
 
 ## Researcher
 
