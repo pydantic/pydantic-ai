@@ -685,14 +685,15 @@ def _add_openai_prompt_cache_breakpoint(
     content[-1]['prompt_cache_breakpoint'] = cache_breakpoint
 
 
-def _is_leading_cache_breakpoint(part: object) -> bool:
-    """Whether `part` is the empty placeholder a leading `CachePoint` left at the start of a user message."""
-    return (
-        isinstance(part, dict)
-        and part.get('type') in ('text', 'input_text')  # pyright: ignore[reportUnknownMemberType]
-        and part.get('text') == ''  # pyright: ignore[reportUnknownMemberType]
-        and 'prompt_cache_breakpoint' in part
-    )
+def _leading_cache_breakpoint(item: dict[str, Any]) -> _OpenAIPromptCacheBreakpoint | None:
+    """The breakpoint a leading `CachePoint` left on an empty placeholder opening this user message, if any."""
+    content = item.get('content')
+    if item.get('role') != 'user' or not isinstance(content, list) or not content:
+        return None
+    first = cast('dict[str, Any]', content[0])
+    if first.get('type') in ('text', 'input_text') and first.get('text') == '' and 'prompt_cache_breakpoint' in first:
+        return cast(_OpenAIPromptCacheBreakpoint, first['prompt_cache_breakpoint'])
+    return None
 
 
 def _move_leading_cache_breakpoints(
@@ -710,16 +711,11 @@ def _move_leading_cache_breakpoints(
     index = 0
     while index < len(items):
         item = cast('dict[str, Any]', items[index])
-        content = item.get('content')
-        if (
-            item.get('role') == 'user'
-            and isinstance(content, list)
-            and content
-            and _is_leading_cache_breakpoint(content[0])
-        ):
-            breakpoint_value = content[0]['prompt_cache_breakpoint']
+        breakpoint_value = _leading_cache_breakpoint(item)
+        if breakpoint_value is not None:
             if not _attach_cache_breakpoint_before(items, index, breakpoint_value, text_type=text_type):
                 raise UserError(_LEADING_CACHE_POINT_ERROR)
+            content = cast('list[Any]', item['content'])
             if len(content) == 1:
                 del items[index]
                 continue
@@ -730,7 +726,7 @@ def _move_leading_cache_breakpoints(
 def _attach_cache_breakpoint_before(
     items: list[chat.ChatCompletionMessageParam] | list[responses.ResponseInputItemParam],
     index: int,
-    breakpoint_value: Any,
+    breakpoint_value: _OpenAIPromptCacheBreakpoint,
     *,
     text_type: Literal['text', 'input_text'],
 ) -> bool:
