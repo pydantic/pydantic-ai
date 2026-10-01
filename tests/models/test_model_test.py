@@ -25,6 +25,7 @@ from pydantic_ai import (
     RunContext,
     StructuredDict,
     TextPart,
+    Tool,
     ToolCallPart,
     ToolOutput,
     ToolReturn,
@@ -674,6 +675,29 @@ def test_falsy_const_tool_args() -> None:
 
     agent.run_sync('hello', model=TestModel())
     assert calls == snapshot([{'empty': '', 'flag': False, 'zero': 0}])
+
+
+def test_list_form_items_tool_args() -> None:
+    """A tool schema spelling a tuple as a draft-7 `items` list gets one generated value per element.
+
+    `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 tool schemas, emits this shape.
+    """
+    calls: list[dict[str, Any]] = []
+
+    def pair_tool(**kwargs: Any) -> str:
+        calls.append(kwargs)
+        return 'ok'
+
+    schema = {
+        'type': 'object',
+        'properties': {
+            'pair': {'type': 'array', 'minItems': 2, 'maxItems': 2, 'items': [{'type': 'string'}, {'type': 'integer'}]}
+        },
+        'required': ['pair'],
+    }
+    tool = Tool.from_schema(pair_tool, name='pair_tool', description='Takes a pair.', json_schema=schema)
+    Agent(TestModel(), tools=[tool]).run_sync('hello')
+    assert calls == snapshot([{'pair': ['a', 0]}])
 
 
 @pytest.mark.parametrize(

@@ -635,13 +635,19 @@ class _JsonSchemaTestData:
         """Generate an array from a JSON Schema array."""
         data: list[Any] = []
         unique_items = schema.get('uniqueItems')
-        if prefix_items := schema.get('prefixItems'):
+        prefix_items: list[dict[str, Any]] | None = schema.get('prefixItems')
+        items_schema: dict[str, Any] | list[dict[str, Any]] = schema.get('items', {})
+        if isinstance(items_schema, list):
+            # Drafts before 2020-12 spell a tuple as an `items` list; 2020-12 replaced it with `prefixItems`.
+            if not prefix_items:
+                prefix_items = items_schema[: schema.get('maxItems')]
+            items_schema = {}
+        if prefix_items:
             for item in prefix_items:
                 data.append(self._gen_any(item))
                 if unique_items:
                     self.seed += 1
 
-        items_schema = schema.get('items', {})
         min_items = schema.get('minItems', 0)
         if min_items > len(data):
             for _ in range(min_items - len(data)):
