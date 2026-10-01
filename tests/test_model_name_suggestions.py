@@ -52,6 +52,7 @@ class Case:
     expected_status_code: int
     expected_suggestion: str
     marks: tuple[pytest.MarkDecorator, ...]
+    id: str | None = None
 
 
 CASES = [
@@ -119,6 +120,25 @@ CASES = [
         expected_suggestion='google:gemini-3.6-flash',
         marks=(pytest.mark.skipif(not google_imports(), reason='google not installed'),),
     ),
+    # A resource name reaches the same endpoint as the bare id, so the 404 names the bare id.
+    Case(
+        provider='google',
+        model_name='models/gemini-3.6-flahs',
+        expected_request=('/v1beta/models/gemini-3.6-flahs:generateContent',),
+        expected_body=snapshot(
+            {
+                'error': {
+                    'code': 404,
+                    'message': 'models/gemini-3.6-flahs is not found for API version v1beta, or is not supported for generateContent. Call ModelService.ListModels to see the list of available models and their supported methods.',
+                    'status': 'NOT_FOUND',
+                }
+            }
+        ),
+        expected_status_code=404,
+        expected_suggestion='google:gemini-3.6-flash',
+        marks=(pytest.mark.skipif(not google_imports(), reason='google not installed'),),
+        id='google-resource-name',
+    ),
     Case(
         provider='bedrock',
         model_name='us.amazon.nova-micro-v1:O',
@@ -163,7 +183,7 @@ CASES = [
 ]
 
 
-@pytest.mark.parametrize('case', [pytest.param(case, id=case.provider, marks=case.marks) for case in CASES])
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id or case.provider, marks=case.marks) for case in CASES])
 async def test_model_name_suggestion(case: Case, request: pytest.FixtureRequest, allow_model_requests: None):
     requested_identifiers: list[str] = []
 

@@ -59,7 +59,7 @@ from ..profiles.google import (
     GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
     GoogleThinkingLevel,
-    _profile_model_name,  # pyright: ignore[reportPrivateUsage]
+    _bare_model_name,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
@@ -408,12 +408,14 @@ def _map_api_error(e: errors.APIError, model_name: str, model_id_namespace: str 
         suggested_model_id = None
         if _utils.is_str_dict(details) and _utils.is_str_dict(error := details.get('error')):
             message = error.get('message')
+            # A resource name like `models/X` reaches the same endpoint as `X`, so the API reports `models/X`.
+            bare_model_name = _bare_model_name(model_name)
             if (
                 error.get('status') == 'NOT_FOUND'
                 and isinstance(message, str)
-                and message.startswith(f'models/{model_name} is not found ')
+                and message.startswith(f'models/{bare_model_name} is not found ')
             ):
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, bare_model_name)
         return ModelHTTPError(
             status_code=status_code,
             model_name=model_name,
@@ -609,7 +611,7 @@ class GoogleModel(Model[Client]):
         # https://ai.google.dev/gemini-api/docs/image-generation
         # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
         if (
-            _profile_model_name(self._model_name).startswith('gemini-3.1-flash-image')
+            _bare_model_name(self._model_name).startswith('gemini-3.1-flash-image')
             and 'google_thinking_levels' not in profile
             and not self._is_google_cloud
         ):

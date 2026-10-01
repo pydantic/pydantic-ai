@@ -13,7 +13,7 @@ from pydantic_ai._http import (
 )
 from pydantic_ai.models import get_user_agent
 from pydantic_ai.profiles.google import (
-    _profile_model_name,  # pyright: ignore[reportPrivateUsage]
+    _bare_model_name,  # pyright: ignore[reportPrivateUsage]
     google_model_profile,
     google_realtime_model_profile,
 )
@@ -57,7 +57,7 @@ class BaseGoogleProvider(Provider[Client], ABC):
     def model_profile(model_name: str) -> ModelProfile | None:
         # Resource names are normalized here rather than in `google_model_profile`, which other
         # providers share and call with model names in their own formats.
-        return google_model_profile(_profile_model_name(model_name))
+        return google_model_profile(_bare_model_name(model_name))
 
     @staticmethod
     def realtime_model_profile(model_name: str) -> RealtimeModelProfile:

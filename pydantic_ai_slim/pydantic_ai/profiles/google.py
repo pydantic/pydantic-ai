@@ -213,8 +213,8 @@ _GOOGLE_PUBLISHER_MODEL_RESOURCE_NAME = re.compile(
 )
 
 
-def _profile_model_name(model_name: str) -> str:  # pyright: ignore[reportUnusedFunction]
-    """The model id that profile lookup matches on, taken from a Google publisher model's resource name.
+def _bare_model_name(model_name: str) -> str:  # pyright: ignore[reportUnusedFunction]
+    """The bare model id inside a Google publisher model's resource name, for matching the model by name.
 
     The Gemini API accepts `models/X` for the bare id `X`; Vertex accepts `publishers/P/models/X` (optionally
     under `projects/A/locations/B/`) and `P/X`. Tuned models, endpoints and full Model Registry paths carry an
