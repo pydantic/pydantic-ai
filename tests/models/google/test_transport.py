@@ -279,6 +279,9 @@ FLASH_IMAGE_THINKING_CASES = [
         expected=('LOW', 'MEDIUM'),
     ),
     FlashImageThinkingCase(
+        # Vertex keeps its full scale for a resource name too; this row holds with or without resource-name
+        # normalization. The Gemini API snap-down for a resource name is pinned on the wire in
+        # `tests/test_thinking_wire_contract.py`.
         id='google_cloud_resource_name',
         make_provider=lambda: GoogleCloudProvider(api_key='mock-api-key'),
         model_name='publishers/google/models/gemini-3.1-flash-image',
