@@ -1172,15 +1172,40 @@ def test_provider_health_identity_is_shared_and_stable_for_workflow_run_retries(
     engine = _write(
         shared / 'engine-minimax.md',
         f'engine:\n  env:\n    GITHUB_WORKFLOW: ${{{{ github.workflow }}}}\n'
-        f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n    PYDANTIC_AI_TASK_KEY: {task_key}\n',
+        f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n'
+        f'    PYDANTIC_AI_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}\n    PYDANTIC_AI_TASK_KEY: {task_key}\n',
     )
-    _write(shared / 'provider-health.md', f'job:\n  env:\n    PYDANTIC_AI_TASK_KEY: {task_key}\n')
+    health = _write(
+        shared / 'provider-health.md',
+        f'job:\n  env:\n    PYDANTIC_AI_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}\n'
+        f'    PYDANTIC_AI_TASK_KEY: {task_key}\n',
+    )
 
     assert check_provider_health_identity(workflows) == []
     expression = re.search(r'^\s*PYDANTIC_AI_TASK_KEY: (.*)$', engine.read_text(), re.MULTILINE)
     assert expression is not None
     assert expression.group(1).count('github.run_id') == 1
     assert "github.event_name == 'workflow_dispatch' && github.run_id" in expression.group(1)
+    assert 'github.run_attempt' not in expression.group(1)
+
+    health_text = health.read_text(encoding='utf-8')
+    _write(health, health_text.replace('    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}\n', '', 1))
+    assert [violation.check for violation in check_provider_health_identity(workflows)] == ['provider-health-identity']
+    _write(
+        health,
+        health_text.replace(
+            '    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}',
+            '    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}',
+            1,
+        ),
+    )
+    assert [violation.check for violation in check_provider_health_identity(workflows)] == ['provider-health-identity']
+    unstable_task_key = f'{task_key}:${{{{ github.run_attempt }}}}'
+    _write(engine, engine.read_text().replace(task_key, unstable_task_key, 1))
+    _write(health, health_text.replace(task_key, unstable_task_key, 1))
+    assert [violation.check for violation in check_provider_health_identity(workflows)] == [
+        'provider-health-task-stability'
+    ]
 
 
 def test_provider_health_identity_rejects_gate_shim_drift(tmp_path: Path):
@@ -1195,6 +1220,44 @@ def test_provider_health_identity_rejects_gate_shim_drift(tmp_path: Path):
     _write(shared / 'provider-health.md', 'job:\n  env:\n    PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}\n')
 
     assert [violation.check for violation in check_provider_health_identity(workflows)] == ['provider-health-identity']
+
+
+def test_provider_health_identity_requires_run_attempt_for_local_engine_config(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    shared = workflows / 'shared'
+    task_key = (
+        '${{ github.workflow }}:${{ github.event_name }}:${{ github.event.workflow_run.head_branch }}:'
+        "${{ github.event.workflow_run.head_sha }}:${{ (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}"
+    )
+    _write(
+        shared / 'engine-minimax.md',
+        f'engine:\n  env:\n    GITHUB_WORKFLOW: ${{{{ github.workflow }}}}\n'
+        f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n'
+        f'    PYDANTIC_AI_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}\n    PYDANTIC_AI_TASK_KEY: {task_key}\n',
+    )
+    _write(
+        shared / 'provider-health.md',
+        f'job:\n  env:\n    PYDANTIC_AI_RUN_ATTEMPT: ${{{{ github.run_attempt }}}}\n'
+        f'    PYDANTIC_AI_TASK_KEY: {task_key}\n',
+    )
+    local = _write(
+        workflows / 'pydantic-ai-local.md',
+        f'---\nengine:\n  env:\n    ANTHROPIC_BASE_URL: https://api.minimax.io/anthropic\n'
+        f'    GITHUB_WORKFLOW: ${{{{ github.workflow }}}}\n'
+        f'    PYDANTIC_AI_TRIGGER_EVENT: ${{{{ github.event_name }}}}\n'
+        f'    PYDANTIC_AI_TASK_KEY: {task_key}\n---\nPrompt\n',
+    )
+
+    assert [violation.path for violation in check_provider_health_identity(workflows)] == [str(local)]
+    local.write_text(
+        local.read_text(encoding='utf-8').replace(
+            '    PYDANTIC_AI_TASK_KEY:',
+            '    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}\n    PYDANTIC_AI_TASK_KEY:',
+            1,
+        ),
+        encoding='utf-8',
+    )
+    assert check_provider_health_identity(workflows) == []
 
 
 def test_provider_health_monitor_is_explicitly_scoped_and_cannot_recurse(tmp_path: Path):
@@ -1222,6 +1285,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   monitor:
+    env:
+      PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     permissions:
       actions: read
       contents: read
@@ -1244,8 +1309,10 @@ jobs:
       - if: github.event_name == 'workflow_run'
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
         run: >-
           python3 .github/scripts/agent_provider_health.py monitor
+          --run-attempt "$RUN_ATTEMPT"
           --agent-artifact agent/agent-stdio.log
       - if: github.event_name == 'schedule'
         env:
@@ -1301,6 +1368,28 @@ jobs:
         ),
     )
     assert 'provider-health-monitor-provider-event-scope' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+    _write(
+        monitor,
+        trusted_config.replace(
+            '    env:\n      PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}\n',
+            '',
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-run-attempt' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+    _write(
+        monitor,
+        trusted_config.replace(
+            'RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}',
+            'RUN_ATTEMPT: ${{ github.run_attempt }}',
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-source-run-attempt' in {
         violation.check for violation in check_provider_health_monitor(workflows)
     }
 

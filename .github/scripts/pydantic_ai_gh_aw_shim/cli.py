@@ -874,10 +874,22 @@ def emit_result(
             'cache_creation_input_tokens': usage.cache_write_tokens,
             'cache_read_input_tokens': usage.cache_read_tokens,
         }
+    run_attempt: int | None = None
+    raw_run_attempt = os.environ.get('PYDANTIC_AI_RUN_ATTEMPT')
+    if raw_run_attempt is not None:
+        try:
+            parsed_run_attempt = int(raw_run_attempt)
+        except ValueError:
+            pass
+        else:
+            if parsed_run_attempt > 0:
+                run_attempt = parsed_run_attempt
+
     provider_health: dict[str, object] = {
         'workflow': os.environ.get('GITHUB_WORKFLOW'),
         'task_key': os.environ.get('PYDANTIC_AI_TASK_KEY'),
         'trigger_event': os.environ.get('PYDANTIC_AI_TRIGGER_EVENT'),
+        'run_attempt': run_attempt,
     }
     if is_error:
         provider_health['failure'] = _failure_details(error)

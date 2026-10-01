@@ -743,12 +743,20 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
     assignment = re.compile(r'^\s*PYDANTIC_AI_TASK_KEY:\s*(.+?)\s*$', re.MULTILINE)
     engine_match = assignment.search(engine)
     health_match = assignment.search(health)
+    attempt_assignment = re.compile(r'^\s*PYDANTIC_AI_RUN_ATTEMPT:\s*(.+?)\s*$', re.MULTILINE)
+    engine_attempt_match = attempt_assignment.search(engine)
+    health_attempt_match = attempt_assignment.search(health)
     workflow_assignment = 'GITHUB_WORKFLOW: ${{ github.workflow }}'
     event_assignment = 'PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}'
+    expected_attempt = '${{ github.run_attempt }}'
     if (
         engine_match is None
         or health_match is None
         or engine_match.group(1) != health_match.group(1)
+        or engine_attempt_match is None
+        or health_attempt_match is None
+        or engine_attempt_match.group(1) != expected_attempt
+        or health_attempt_match.group(1) != expected_attempt
         or workflow_assignment not in engine
         or event_assignment not in engine
     ):
@@ -756,12 +764,17 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
             Violation(
                 str(engine_path),
                 'provider-health-identity',
-                'The agent and provider-health job must forward identical workflow, event, and task identities.',
+                'The agent and provider-health job must forward identical workflow, event, and task identities plus the current run attempt.',
             )
         ]
     task_key = engine_match.group(1)
     manual_run_id = "(github.event_name == 'workflow_dispatch' && github.run_id)"
-    if manual_run_id not in task_key or 'github.run_id' in task_key.replace(manual_run_id, ''):
+    if (
+        manual_run_id not in task_key
+        or 'github.run_id' in task_key.replace(manual_run_id, '')
+        or 'github.run_attempt' in task_key
+        or 'workflow_run.run_attempt' in task_key
+    ):
         return [
             Violation(
                 str(engine_path),
@@ -779,6 +792,7 @@ def check_provider_health_identity(workflows_dir: Path = WORKFLOWS_DIR) -> list[
         if (
             engine_env.get('GITHUB_WORKFLOW') != '${{ github.workflow }}'
             or engine_env.get('PYDANTIC_AI_TRIGGER_EVENT') != '${{ github.event_name }}'
+            or engine_env.get('PYDANTIC_AI_RUN_ATTEMPT') != expected_attempt
             or engine_env.get('PYDANTIC_AI_TASK_KEY') != expected_task_key
         ):
             return [
@@ -914,6 +928,33 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
     provider_keys: tuple[str, str] = ('MINIMAX_API_KEY', 'MINIMAX_QUOTA_RESOURCE')
     workflow_env: Mapping[str, object] = _as_mapping(monitor.get('env'))
     job_env: Mapping[str, object] = _as_mapping(monitor_job.get('env'))
+    if job_env.get('PYDANTIC_AI_RUN_ATTEMPT') != '${{ github.run_attempt }}':
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-run-attempt',
+                'Monitor job must pass its own positive run attempt to scheduled and manual reconciliation.',
+            )
+        )
+    source_reconcile_steps = [
+        step
+        for step in steps
+        if "github.event_name == 'workflow_run'" in str(step.get('if', ''))
+        and str(step.get('run', '')).strip().startswith('python3 .github/scripts/agent_provider_health.py monitor')
+    ]
+    if (
+        len(source_reconcile_steps) != 1
+        or _as_mapping(source_reconcile_steps[0].get('env')).get('RUN_ATTEMPT')
+        != '${{ github.event.workflow_run.run_attempt }}'
+        or '--run-attempt "$RUN_ATTEMPT"' not in str(source_reconcile_steps[0].get('run', ''))
+    ):
+        violations.append(
+            Violation(
+                str(monitor_path),
+                'provider-health-monitor-source-run-attempt',
+                'Completed workflow reconciliation must pass the source workflow run attempt from the workflow_run event.',
+            )
+        )
     provider_key_events: dict[str, set[str]] = {key: set() for key in provider_keys}
     if any(key in workflow_env or key in job_env for key in provider_keys):
         violations.append(

@@ -27,6 +27,7 @@ jobs:
           MINIMAX_QUOTA_RESOURCE: ${{ vars.MINIMAX_QUOTA_RESOURCE }}
           GITHUB_WORKFLOW: ${{ github.workflow }}
           PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
+          PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
           PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
         run: |
           mkdir -p provider-health

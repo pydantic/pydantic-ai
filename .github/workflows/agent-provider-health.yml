@@ -40,6 +40,8 @@ jobs:
     if: github.repository == 'pydantic/pydantic-ai'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     permissions:
       actions: read
       contents: read
@@ -85,11 +87,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         run: >-
           python3 .github/scripts/agent_provider_health.py monitor
           --repository "$GITHUB_REPOSITORY"
           --run-id "$RUN_ID"
+          --run-attempt "$RUN_ATTEMPT"
           --conclusion "$CONCLUSION"
           --health-artifact provider-health/provider-health.json
           --agent-artifact agent/agent-stdio.log

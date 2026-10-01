@@ -51,6 +51,7 @@ engine:
     ANTHROPIC_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
     GITHUB_WORKFLOW: ${{ github.workflow }}
     PYDANTIC_AI_TRIGGER_EVENT: ${{ github.event_name }}
+    PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}
     PYDANTIC_AI_TASK_KEY: ${{ github.workflow }}:${{ github.event_name }}:${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.head_branch || github.ref_name }}:${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.sha }}:${{ github.event.comment.id || github.event.issue.id || (github.event_name == 'workflow_dispatch' && github.run_id) || '' }}
     # The custom shim is stateless, so an outer retry repeats the whole task.
     GH_AW_HARNESS_MAX_RETRIES: "0"

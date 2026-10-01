@@ -52,10 +52,15 @@ class Health:
     workflow: str
     task_key: str
     trigger_event: str
+    run_attempt: int
     ready: bool
     reason: str
     checked_at: str
     quota: Quota
+
+    def __post_init__(self) -> None:
+        if _positive_attempt(self.run_attempt) is None:
+            raise ValueError('run_attempt must be a positive integer')
 
 
 @dataclass(frozen=True)
@@ -96,7 +101,12 @@ class RunResult:
     workflow: str
     task_key: str
     trigger_event: str
+    run_attempt: int
     failure: Failure | None
+
+    def __post_init__(self) -> None:
+        if _positive_attempt(self.run_attempt) is None:
+            raise ValueError('run_attempt must be a positive integer')
 
 
 def _mapping(value: object) -> dict[str, object] | None:
@@ -111,6 +121,22 @@ def _string(value: object) -> str | None:
 
 def _object_string(data: dict[str, object], key: str) -> str | None:
     return _string(data.get(key))
+
+
+def _positive_attempt(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return None
+    return value
+
+
+def _run_attempt_from_env() -> int:
+    value = os.environ.get('PYDANTIC_AI_RUN_ATTEMPT')
+    if value is None or not value.isascii() or not value.isdecimal():
+        raise ValueError('PYDANTIC_AI_RUN_ATTEMPT must be a positive integer')
+    attempt = int(value)
+    if attempt < 1:
+        raise ValueError('PYDANTIC_AI_RUN_ATTEMPT must be a positive integer')
+    return attempt
 
 
 def _now() -> dt.datetime:
@@ -134,11 +160,12 @@ def _iso_time(value: object) -> str | None:
 
 
 def _write_health(path: Path, health: Health) -> None:
-    payload = {
+    payload: dict[str, object] = {
         'version': 1,
         'workflow': health.workflow,
         'task_key': health.task_key,
         'trigger_event': health.trigger_event,
+        'run_attempt': health.run_attempt,
         'ready': health.ready,
         'reason': health.reason,
         'checked_at': health.checked_at,
@@ -166,6 +193,7 @@ def _health_from_json(value: object) -> Health:
     workflow = _object_string(data, 'workflow')
     task_key = _object_string(data, 'task_key')
     trigger_event = _object_string(data, 'trigger_event')
+    run_attempt = _positive_attempt(data.get('run_attempt'))
     reason = _object_string(data, 'reason')
     checked_at = _iso_time(data.get('checked_at'))
     status = quota_data.get('status')
@@ -201,6 +229,7 @@ def _health_from_json(value: object) -> Health:
         workflow is None
         or task_key is None
         or trigger_event is None
+        or run_attempt is None
         or reason is None
         or checked_at is None
         or not isinstance(ready, bool)
@@ -215,6 +244,7 @@ def _health_from_json(value: object) -> Health:
         workflow,
         task_key,
         trigger_event,
+        run_attempt,
         ready,
         reason,
         checked_at,
@@ -346,7 +376,7 @@ def _parse_balance(value: object) -> Quota:
 
 def _fetch_minimax_quota(api_key: str, resource: str | None = None) -> Quota:
     url = MINIMAX_BALANCE_URL if api_key.startswith('sk-api-') else MINIMAX_PLAN_URL
-    headers = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/json'}
+    headers: dict[str, str] = {'Authorization': f'Bearer {api_key}', 'Accept': 'application/json'}
     request = urllib.request.Request(url, headers=headers, method='GET')
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
@@ -480,6 +510,7 @@ def _health_decision(health: Health, issues: list[Issue]) -> Health:
             health.workflow,
             health.task_key,
             health.trigger_event,
+            health.run_attempt,
             False,
             f'Open operational incident #{incident.number} blocks inference',
             health.checked_at,
@@ -490,12 +521,20 @@ def _health_decision(health: Health, issues: list[Issue]) -> Health:
             'MiniMax quota is exhausted' if health.quota.status == 'exhausted' else 'MiniMax quota health is unknown'
         )
         return Health(
-            health.workflow, health.task_key, health.trigger_event, False, message, health.checked_at, health.quota
+            health.workflow,
+            health.task_key,
+            health.trigger_event,
+            health.run_attempt,
+            False,
+            message,
+            health.checked_at,
+            health.quota,
         )
     return Health(
         health.workflow,
         health.task_key,
         health.trigger_event,
+        health.run_attempt,
         True,
         'Provider health check passed',
         health.checked_at,
@@ -507,12 +546,15 @@ def check_health(
     workflow: str,
     task_key: str,
     trigger_event: str,
+    run_attempt: int,
     quota: Quota,
     issues: list[Issue],
     checked_at: dt.datetime | None = None,
 ) -> Health:
     """Return the inference gate decision from provider and incident state."""
-    base = Health(workflow, task_key, trigger_event, True, '', _timestamp(checked_at or _now()), quota)
+    if _positive_attempt(run_attempt) is None:
+        raise ValueError('run_attempt must be a positive integer')
+    base = Health(workflow, task_key, trigger_event, run_attempt, True, '', _timestamp(checked_at or _now()), quota)
     return _health_decision(base, issues)
 
 
@@ -542,13 +584,14 @@ def _run_result_from(value: object) -> RunResult | None:
     workflow = _object_string(data, 'workflow')
     task_key = _object_string(data, 'task_key')
     trigger_event = _object_string(data, 'trigger_event')
-    if workflow is None or task_key is None or trigger_event is None:
+    run_attempt = _positive_attempt(data.get('run_attempt'))
+    if workflow is None or task_key is None or trigger_event is None or run_attempt is None:
         return None
     failure_value = data.get('failure')
     failure = None if failure_value is None else _failure_from(failure_value)
     if failure_value is not None and failure is None:
         return None
-    return RunResult(workflow, task_key, trigger_event, failure)
+    return RunResult(workflow, task_key, trigger_event, run_attempt, failure)
 
 
 def _json_values(path: Path) -> list[object]:
@@ -601,7 +644,7 @@ def _scope_for(result: RunResult) -> tuple[Scope, str, str]:
 def _failure_reason(failure: Failure | None) -> str:
     if failure is None:
         return 'Agent execution failed before a typed provider result was available'
-    reasons = {
+    reasons: dict[FailureKind, str] = {
         'balance': 'MiniMax reported an insufficient balance',
         'authentication': 'MiniMax rejected the configured credentials',
         'rate_limit': 'MiniMax rate limits stopped the run',
@@ -614,7 +657,7 @@ def _failure_reason(failure: Failure | None) -> str:
 
 
 def _incident_body(marker: IncidentMarker, workflow: str, task_key: str, run_id: str, repo: str, reason: str) -> str:
-    marker_data = {
+    marker_data: dict[str, object] = {
         'version': 1,
         'scope': marker.scope,
         'key': marker.key,
@@ -647,7 +690,14 @@ def _create_or_reuse_incident(
         scope, key, kind, run_id, result.failure.retry_at if result.failure else None
     )
     matching_key = Health(
-        result.workflow, result.task_key, result.trigger_event, False, '', _timestamp(_now()), Quota('unknown')
+        result.workflow,
+        result.task_key,
+        result.trigger_event,
+        result.run_attempt,
+        False,
+        '',
+        _timestamp(_now()),
+        Quota('unknown'),
     )
     if marker_override is not None:
         existing = next(
@@ -690,6 +740,7 @@ def _check_command(args: argparse.Namespace) -> int:
     workflow = os.environ.get('GITHUB_WORKFLOW', '')
     task_key = os.environ.get('PYDANTIC_AI_TASK_KEY', '')
     trigger_event = os.environ.get('PYDANTIC_AI_TRIGGER_EVENT', '')
+    run_attempt = _run_attempt_from_env()
     api_key = os.environ.get('MINIMAX_API_KEY', '')
     repo = os.environ.get('GITHUB_REPOSITORY', '')
     token = os.environ.get('GITHUB_TOKEN', '')
@@ -698,13 +749,19 @@ def _check_command(args: argparse.Namespace) -> int:
     quota = _fetch_minimax_quota(api_key, os.environ.get('MINIMAX_QUOTA_RESOURCE')) if api_key else Quota('unknown')
     client = GitHubClient(repo, token)
     health = check_health(
-        workflow or 'unknown', task_key or 'unknown', trigger_event or 'unknown', quota, client.open_incidents()
+        workflow or 'unknown',
+        task_key or 'unknown',
+        trigger_event or 'unknown',
+        run_attempt,
+        quota,
+        client.open_incidents(),
     )
     if not workflow or not task_key or not trigger_event:
         health = Health(
             health.workflow,
             health.task_key,
             health.trigger_event,
+            health.run_attempt,
             False,
             'Workflow task identity is unavailable',
             health.checked_at,
@@ -770,12 +827,18 @@ def _monitor_command(args: argparse.Namespace) -> int:
         return _reconcile_recovery(client, args)
     if args.health_artifact is None:
         raise ValueError('--health-artifact is required with --run-id')
+    run_attempt = _positive_attempt(args.run_attempt)
+    if run_attempt is None:
+        raise ValueError('--run-attempt must be a positive integer with --run-id')
     health = _health_from_artifact(args.health_artifact)
+    if health.run_attempt != run_attempt:
+        raise ValueError('provider-health artifact run attempt does not match the triggering workflow_run attempt')
     result = parse_run_result(args.agent_artifact) if args.agent_artifact is not None else None
     if result is not None and (
         result.workflow != health.workflow
         or result.task_key != health.task_key
         or result.trigger_event != health.trigger_event
+        or result.run_attempt != run_attempt
     ):
         print('Agent result identity did not match the trusted provider-health artifact; treating it as untyped')
         result = None
@@ -797,7 +860,7 @@ def _monitor_command(args: argparse.Namespace) -> int:
                 return 0
             kind = 'quota_unknown' if health.quota.status == 'unknown' else 'quota_exhausted'
             marker = IncidentMarker('provider', 'minimax', kind, str(args.run_id), health.quota.reset_at)
-            result = RunResult(health.workflow, health.task_key, health.trigger_event, None)
+            result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
             existing = next(
                 (issue for issue in client.open_incidents() if _marker_from_body(issue.body) == marker),
                 None,
@@ -815,7 +878,7 @@ def _monitor_command(args: argparse.Namespace) -> int:
             else:
                 print(f'Reusing operational incident #{existing.number}: {existing.html_url}')
             return 0
-        result = RunResult(health.workflow, health.task_key, health.trigger_event, None)
+        result = RunResult(health.workflow, health.task_key, health.trigger_event, run_attempt, None)
     reason = health.reason if not health.ready else _failure_reason(result.failure)
     if health.ready and result.failure is not None:
         reason = _failure_reason(result.failure)
@@ -882,6 +945,7 @@ def _reconcile_recovery(client: GitHubClient, args: argparse.Namespace) -> int:
             os.environ.get('GITHUB_WORKFLOW', 'provider-health-recovery'),
             os.environ.get('PYDANTIC_AI_TASK_KEY', 'provider-health-recovery'),
             os.environ.get('PYDANTIC_AI_TRIGGER_EVENT', 'schedule'),
+            _run_attempt_from_env(),
             Failure('other', None, None),
         )
         existing = next(
@@ -929,6 +993,7 @@ def main(argv: list[str] | None = None) -> int:
     monitor = commands.add_parser('monitor', help='reconcile a completed agent workflow or provider recovery')
     monitor.add_argument('--repository')
     monitor.add_argument('--run-id', type=int)
+    monitor.add_argument('--run-attempt', type=int)
     monitor.add_argument('--conclusion')
     monitor.add_argument('--health-artifact', type=Path)
     monitor.add_argument('--agent-artifact', type=Path)

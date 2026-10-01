@@ -1960,6 +1960,7 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(shim, 'run', _hang)
     monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 0.01)
+    monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
     buf = io.StringIO()
     with redirect_stdout(buf):
         rc = asyncio.run(
@@ -1976,6 +1977,20 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     assert obj['usage']['cache_read_input_tokens'] == 3
     assert obj['num_turns'] == 2
     assert obj['provider_health']['failure']['kind'] == 'timeout'
+    assert obj['provider_health']['run_attempt'] is None
+
+
+@pytest.mark.parametrize('attempt', [None, '', 'not-an-int', '0', '-2'])
+def test_emit_result_uses_null_for_invalid_run_attempt(attempt: str | None, monkeypatch: pytest.MonkeyPatch):
+    if attempt is None:
+        monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
+    else:
+        monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', attempt)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        shim.emit_result('failed', usage=None, session_id='invalid-attempt', is_error=True)
+    result = json.loads(buf.getvalue().strip())
+    assert result['provider_health']['run_attempt'] is None
 
 
 # Both names the budget can come from. `PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is the one that
@@ -2163,7 +2178,8 @@ def test_mcp_allow_predicate_server_wildcard_vs_specific():
 # --------------------------------------------------------------------------- #
 # stream-json schema & structured-error guarantee
 # --------------------------------------------------------------------------- #
-def test_emit_result_matches_claude_stream_json_schema():
+def test_emit_result_matches_claude_stream_json_schema(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '3')
     buf = io.StringIO()
     with redirect_stdout(buf):
         shim.emit_result('answer', usage=None, session_id='run-1')
@@ -2172,6 +2188,8 @@ def test_emit_result_matches_claude_stream_json_schema():
     assert obj['subtype'] == 'success'
     assert obj['is_error'] is False
     assert obj['result'] == 'answer'
+    assert obj['provider_health']['run_attempt'] == 3
+    assert 'failure' not in obj['provider_health']
     for k in ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'):
         assert k in obj['usage']
 
@@ -2226,6 +2244,7 @@ def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch
     monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI CI Review')
     monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'pr-123')
     monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'pull_request')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '2')
     calls = 0
 
     def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -2271,6 +2290,7 @@ def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch
         'workflow': 'Pydantic AI CI Review',
         'task_key': 'pr-123',
         'trigger_event': 'pull_request',
+        'run_attempt': 2,
         'failure': {'kind': 'rate_limit', 'http_status': 429},
     }
     assert 'private detail' not in json.dumps(result['provider_health'])
@@ -2311,6 +2331,7 @@ def test_main_emits_structured_error_on_startup_failure(monkeypatch: pytest.Monk
         raise RuntimeError('kaboom')
 
     monkeypatch.setattr(shim, 'build_model', boom)
+    monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
     monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', '--print', 'hello'])
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -2322,6 +2343,7 @@ def test_main_emits_structured_error_on_startup_failure(monkeypatch: pytest.Monk
     assert 'kaboom' in obj['result']
     assert obj['usage']['input_tokens'] == 0
     assert obj['provider_health']['failure']['kind'] == 'other'
+    assert obj['provider_health']['run_attempt'] is None
 
 
 def test_main_emits_structured_error_on_argparse_rejection(monkeypatch: pytest.MonkeyPatch):
