@@ -11,6 +11,7 @@ from pydantic_ai_harness.subagents._events import (
     DelegationStartEvent,
 )
 from pydantic_ai_harness.subagents._models import ModelOption
+from pydantic_ai_harness.subagents._tasks import DelegationReports, DelegationTask, DelegationTaskEvent, DelegationTasks
 from pydantic_ai_harness.subagents._toolset import SubAgent, SubAgentToolset
 
 __all__ = [
@@ -21,6 +22,10 @@ __all__ = [
     'DelegationEndEvent',
     'DelegationOutcome',
     'DelegationStartEvent',
+    'DelegationReports',
+    'DelegationTask',
+    'DelegationTaskEvent',
+    'DelegationTasks',
     'ModelOption',
     'SubAgent',
     'SubAgentToolset',

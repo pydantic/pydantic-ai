@@ -744,7 +744,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             params, supports_tool_return_schema=self.profile.get('supports_tool_return_schema', False)
         )
 
-        # Resolve unified thinking setting and strip from model_settings
+        # Resolve unified thinking setting and strip from model_settings. GPT-Live resolves it the same way for
+        # its delegated backend (`realtime.openai_live._backend_reasoning_effort`): keep the two in step.
         if model_settings and 'thinking' in model_settings:
             thinking_value = model_settings['thinking']
             supports_thinking = self.profile.get('supports_thinking', False)
@@ -1811,6 +1812,13 @@ def infer_model(  # noqa: C901
         from .typesafe import TypeSafeModel
 
         return TypeSafeModel(model_name, provider=provider)
+    elif model_kind == 'system-one':
+        from ..providers.system_one import SystemOneProvider
+        from .system_one import SystemOneModel
+
+        if not isinstance(provider, SystemOneProvider):
+            raise UserError('System One models require a `SystemOneProvider`.')
+        return SystemOneModel(model_name, provider=provider)
     elif model_kind == 'anthropic':
         from .anthropic import AnthropicModel
 

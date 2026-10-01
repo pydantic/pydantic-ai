@@ -1107,7 +1107,7 @@ async def stale_thinking_block_history(model: AnthropicModel) -> list[ModelMessa
         if (effort := _HISTORY_EFFORTS.get(model.model_name))
         else None,
     )
-    result = await agent.run('Think about it, then say what 17*23 is.')
+    result = await agent.run('Think it through, then say what 4817 * 2963 is.')
     thought = message(result.all_messages(), ModelResponse, index=-1)
     assert any(isinstance(part, ThinkingPart) for part in thought.parts), 'no thinking block to invalidate'
     return result.all_messages()

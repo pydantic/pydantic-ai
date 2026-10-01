@@ -1,182 +1,221 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '585'
+      - "555"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the largest city in the user country?
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: any
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: get_user_country
-      - description: The final response which ends this conversation
-        input_schema:
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-          required:
-          - city
-          - country
-          title: CityLocation
-          type: object
-        name: final_result
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the largest city in the user country?
+            type: text
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: any
+        tools:
+        - name: get_user_country
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: final_result
+          description: The final response which ends this conversation
+          input_schema:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '476'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-4c36c443e1150d1c10654e397756bc9f-2eb503ff5b1964e6-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - id: toolu_01X9wcHKKAZD9tBC711xipPa
-        input: {}
-        name: get_user_country
-        type: tool_use
-      id: msg_012TXW181edhmR5JCsQRsBKx
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 445
-        output_tokens: 23
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3xfABGCBczzZYaZP54","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":711,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}    }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_017UNCdavs1wnorx882Leniq","name":"get_user_country","input":{},"caller":{"type":"direct"}}   }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}             }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0      }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":711,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":23}      }
+
+        event: message_stop
+        data: {"type":"message_stop"   }
+
+  recorded_at: 2026-09-29T16:32:40.133554+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '847'
+      - "842"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: What is the largest city in the user country?
-          type: text
-        role: user
-      - content:
-        - id: toolu_01X9wcHKKAZD9tBC711xipPa
-          input: {}
-          name: get_user_country
-          type: tool_use
-        role: assistant
-      - content:
-        - content: Mexico
-          is_error: false
-          tool_use_id: toolu_01X9wcHKKAZD9tBC711xipPa
-          type: tool_result
-        role: user
-      model: claude-sonnet-4-5
-      stream: false
-      tool_choice:
-        type: any
-      tools:
-      - description: ''
-        input_schema:
-          additionalProperties: false
-          properties: {}
-          type: object
-        name: get_user_country
-      - description: The final response which ends this conversation
-        input_schema:
-          properties:
-            city:
-              type: string
-            country:
-              type: string
-          required:
-          - city
-          - country
-          title: CityLocation
-          type: object
-        name: final_result
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: What is the largest city in the user country?
+            type: text
+        - role: assistant
+          content:
+          - id: toolu_017UNCdavs1wnorx882Leniq
+            type: tool_use
+            name: get_user_country
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_017UNCdavs1wnorx882Leniq
+            type: tool_result
+            content:
+            - text: Mexico
+              type: text
+            is_error: false
+        model: claude-sonnet-4-5
+        stream: true
+        tool_choice:
+          type: any
+        tools:
+        - name: get_user_country
+          description: ""
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+        - name: final_result
+          description: The final response which ends this conversation
+          input_schema:
+            properties:
+              city:
+                type: string
+              country:
+                type: string
+            required:
+            - city
+            - country
+            type: object
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '511'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-5a9fb5b932871555fb311d361da18cf1-8e738f5f6a5d96e0-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - id: toolu_01LZABsgreMefH2Go8D5PQbW
-        input:
-          city: Mexico City
-          country: Mexico
-        name: final_result
-        type: tool_use
-      id: msg_01K4Fzcf1bhiyLzHpwLdrefj
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: tool_use
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 497
-        output_tokens: 56
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3xjoVQd7HWbQKtKxgH","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":762,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":7,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01XLX8Tn3mJAQWVLKZzdkJXr","name":"final_result","input":{},"caller":{"type":"direct"}}    }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\""}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":": \"Mexi"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"co City"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\""}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":", \"coun"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"try\": \""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"Mexico\"}"}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":762,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":56}             }
+
+        event: message_stop
+        data: {"type":"message_stop"               }
+
+  recorded_at: 2026-09-29T16:32:41.502712+00:00
