@@ -374,9 +374,12 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
                 (url.scheme, url.netloc, url.path) == (target.scheme, target.netloc, target.path)
                 and not url.fragment
                 and all(len(v) == 1 for v in params.values())
-                and all(
-                    params.get(name) == values
-                    for name, values in parse_qs(target.query, keep_blank_values=True, strict_parsing=True).items()
+                and (
+                    not target.query
+                    or all(
+                        params.get(name) == values
+                        for name, values in parse_qs(target.query, keep_blank_values=True, strict_parsing=True).items()
+                    )
                 )
                 and secrets.compare_digest(params.get('state', [''])[0], self.state)
             )
