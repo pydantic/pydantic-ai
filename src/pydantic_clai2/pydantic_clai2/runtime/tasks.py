@@ -80,8 +80,12 @@ def task_row(event: AgentStreamEvent) -> Text | None:
     """Compact lifecycle rows, with child output reserved for the inspector."""
     if isinstance(event, DelegationStartEvent):
         name = 'general-purpose' if event.agent_name == 'self' else event.agent_name
-        prompt = ' '.join(terminal_text(event.task).split())[:90]
-        return Text(f'● {name}({prompt})  [{(event.task_id or "")[:8]}]', style=theme.color(theme.INFO))
+        prompt = ' '.join(terminal_text(event.task).split())
+        # Styled like a tool-call header: muted marker, accent name, then dim details on one line.
+        row = Text('● ', style=theme.color(theme.MUTED), no_wrap=True, overflow='ellipsis')
+        row.append(name, style=theme.color(theme.ACCENT))
+        row.append(f' [{(event.task_id or "")[:8]}] {prompt}', style=theme.color(theme.MUTED))
+        return row
     if isinstance(event, DelegationEndEvent) and event.outcome != 'ok':
         return Text(
             f'  └ {event.outcome} · {event.duration_seconds:.1f}s · /tasks to inspect',
@@ -188,7 +192,8 @@ class Tasks:
                     continue
             descendants = sum(self._descends(child, record.id) for child in records)
             activity = self.progress.get(record.id, Status(activity='starting')).activity
-            state = activity if record.status == 'running' else record.outcome
+            state = activity.removeprefix('running: ').removeprefix('tool: ')
+            state = state if record.status == 'running' else record.outcome
             elapsed = (record.finished_at or now) - record.started_at
             name = 'general-purpose' if record.agent_name == 'self' else record.agent_name
             mode = 'background' if record.background else 'foreground'

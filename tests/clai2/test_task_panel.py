@@ -40,6 +40,37 @@ def test_unsuccessful_outcomes_use_their_own_colour(outcome: Literal['failed', '
         assert theme.sgr(role) + outcome in ui.rows('*')[0]
 
 
+def test_start_row_is_styled_like_a_tool_call() -> None:
+    from pydantic_ai_harness.subagents import DelegationStartEvent
+    from pydantic_clai2.runtime.tasks import task_row
+
+    event = DelegationStartEvent(
+        agent_name='self', task='count\nthe files', truncated=False, inherits_tools=True, model=None
+    )
+    event.task_id = 'abcdef0123'
+    row = task_row(event)
+    assert row is not None
+    assert row.plain == '● general-purpose [abcdef01] count the files'
+    assert row.no_wrap and row.overflow == 'ellipsis'
+    assert [(row.plain[span.start : span.end], span.style) for span in row.spans] == [
+        ('general-purpose', theme.color(theme.ACCENT)),
+        (' [abcdef01] count the files', theme.color(theme.MUTED)),
+    ]
+
+
+@pytest.mark.parametrize('activity', ['running: run_code', 'tool: run_code'])
+def test_panel_shows_the_tool_name_without_a_prefix(activity: str) -> None:
+    from pydantic_clai2.ui.rendering.status import Status
+
+    ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
+    record = task()
+    ui.owner.records[record.id] = record
+    ui.progress[record.id] = Status(activity=activity)
+    row = ui.rows('*')[0]
+    assert f'{theme.sgr(theme.ACCENT)}run_code' in row
+    assert 'running:' not in row and 'tool:' not in row
+
+
 def test_non_backgroundable_foreground_task_has_no_background_hint() -> None:
     ui = Tasks(console=Console(file=io.StringIO()), conversation_id=lambda: 'root', directory=None)
     record = task()

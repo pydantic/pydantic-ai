@@ -550,7 +550,7 @@ async def test_managed_code_mode_delegation_has_one_typed_row(tmp_path: Path) ->
     assert len(starts) == 1
     assert SandboxCallOrder().tool_events(starts[0]) == []
     assert '● delegate_task' not in output.getvalue()
-    assert output.getvalue().count('general-purpose(child)') == 1
+    assert output.getvalue().count('general-purpose [') == 1
 
 
 @pytest.mark.parametrize('timing', ['idle', 'active', 'restored'])
