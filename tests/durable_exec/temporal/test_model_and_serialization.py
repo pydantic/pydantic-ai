@@ -47,6 +47,8 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -86,6 +88,7 @@ try:
         PayloadCodec,
         StorageDriver,
     )
+    from temporalio.exceptions import ActivityError, ApplicationError
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
@@ -110,6 +113,10 @@ try:
     from pydantic_ai.durable_exec.temporal._model import (
         TemporalModel,
         _CancelParams as _ModelCancelParams,  # pyright: ignore[reportPrivateUsage]
+    )
+    from pydantic_ai.durable_exec.temporal._model_errors import (
+        model_errors_as_application_errors,
+        rebuilt_model_errors,
     )
     from pydantic_ai.durable_exec.temporal._run_context import TemporalRunContext
 
@@ -2699,3 +2706,144 @@ async def test_pydantic_ai_plugin_rejects_bare_agent_without_durability(client: 
         ):
             # The error is raised before reaching here.
             pass  # pragma: no cover
+
+
+# --- Model errors crossing the activity boundary ---
+
+
+def _activity_error(cause: BaseException) -> ActivityError:
+    """An `ActivityError` caused by `cause`, as workflow code receives it."""
+    error = ActivityError(
+        'Activity task failed',
+        scheduled_event_id=1,
+        started_event_id=2,
+        identity='worker',
+        activity_type='model_request',
+        activity_id='1',
+        retry_state=None,
+    )
+    error.__cause__ = cause
+    return error
+
+
+def _crossed(error: ModelAPIError) -> BaseException:
+    """The error workflow code sees after a model activity raised `error`."""
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise error
+    with pytest.raises(BaseException) as rebuilt:
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+    return rebuilt.value
+
+
+def test_model_http_error_crosses_with_its_fields():
+    error = ModelHTTPError(
+        503,
+        'gpt-test',
+        body={'error': 'overloaded'},
+        headers={'Retry-After': '7'},
+        suggested_model_id='gpt-better',
+    )
+    rebuilt = _crossed(error)
+    assert isinstance(rebuilt, ModelHTTPError)
+    assert (rebuilt.status_code, rebuilt.model_name, rebuilt.body, rebuilt.headers, rebuilt.suggested_model_id) == (
+        503,
+        'gpt-test',
+        {'error': 'overloaded'},
+        {'retry-after': '7'},
+        'gpt-better',
+    )
+    assert rebuilt.retry_after == 7.0
+    assert str(rebuilt) == str(error)
+    assert isinstance(rebuilt.__cause__, ActivityError)
+
+
+def test_model_api_error_crosses_with_its_type():
+    rebuilt = _crossed(ModelAPIError('gpt-test', 'connection reset'))
+    assert type(rebuilt) is ModelAPIError
+    assert (rebuilt.model_name, rebuilt.message) == ('gpt-test', 'connection reset')
+
+
+def test_a_body_that_is_not_json_crosses_as_a_string():
+    class Opaque:
+        def __str__(self) -> str:
+            return 'opaque body'
+
+    rebuilt = _crossed(ModelHTTPError(500, 'gpt-test', body=Opaque()))
+    assert isinstance(rebuilt, ModelHTTPError)
+    assert rebuilt.body == 'opaque body'
+
+
+def test_a_body_that_cannot_be_encoded_is_raised_unchanged():
+    recursive: list[object] = []
+    recursive.append(recursive)
+    with pytest.raises(ModelHTTPError):
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(500, 'gpt-test', body=recursive)
+
+
+def test_the_application_error_keeps_the_type_temporal_retries_on():
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(503, 'gpt-test')
+    assert raised.value.type == 'ModelHTTPError'
+    assert not raised.value.non_retryable
+
+
+def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: pytest.MonkeyPatch):
+    class ApplicationModelError(ModelAPIError):
+        """Defined outside Pydantic AI, so the workflow couldn't import it by name."""
+
+    error = ApplicationModelError('gpt-test', 'boom')
+    with pytest.raises(ApplicationModelError):
+        with model_errors_as_application_errors():
+            raise error
+
+    monkeypatch.setattr(ModelAPIError, '__reduce__', lambda self: 'not a reduce tuple')
+    with pytest.raises(ModelAPIError):
+        with model_errors_as_application_errors():
+            raise ModelAPIError('gpt-test', 'boom')
+
+
+def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(ModelHTTPError, '__reduce__', lambda self: (ModelHTTPError, ('too', 'many', 'args', 'here')))
+    with pytest.raises(ModelHTTPError):
+        with model_errors_as_application_errors():
+            raise ModelHTTPError(503, 'gpt-test')
+
+
+@pytest.mark.parametrize(
+    'details',
+    [
+        pytest.param((), id='no-details'),
+        pytest.param(('text',), id='not-a-dict'),
+        pytest.param(({'other': 1},), id='no-model-error'),
+        pytest.param(({'pydantic_ai_model_error': {'module': 'os', 'qualname': 'error'}},), id='outside-pydantic-ai'),
+        pytest.param(({'pydantic_ai_model_error': {'module': 3, 'qualname': 'error'}},), id='malformed'),
+        pytest.param(
+            ({'pydantic_ai_model_error': {'module': 'pydantic_ai.exceptions', 'qualname': 'Missing'}},),
+            id='missing-class',
+        ),
+        pytest.param(
+            ({'pydantic_ai_model_error': {'module': 'pydantic_ai.exceptions', 'qualname': 'UserError'}},),
+            id='not-a-model-error',
+        ),
+    ],
+)
+def test_other_activity_failures_are_raised_unchanged(details: tuple[object, ...]):
+    activity_error = _activity_error(ApplicationError('failed', *details, type='Whatever'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_model_errors():
+            raise activity_error
+    assert raised.value is activity_error
+
+
+def test_an_activity_failure_without_an_application_error_is_raised_unchanged():
+    activity_error = _activity_error(TimeoutError('timed out'))
+    with pytest.raises(ActivityError) as raised:
+        with rebuilt_model_errors():
+            raise activity_error
+    assert raised.value is activity_error
