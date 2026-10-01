@@ -120,7 +120,7 @@ CASES = [
         expected_suggestion='google:gemini-3.6-flash',
         marks=(pytest.mark.skipif(not google_imports(), reason='google not installed'),),
     ),
-    # A resource name reaches the same endpoint as the bare id, so the 404 names the bare id.
+    # A `models/` resource name gets the same 404 as the bare id, so it gets the same suggestion.
     Case(
         provider='google',
         model_name='models/gemini-3.6-flahs',
