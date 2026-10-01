@@ -1,4 +1,5 @@
 ---
+name: pre-push-review
 description: Run a high-judgment local review of the current branch before pushing, both before a
   PR exists and between PR iterations
 allowed-tools:
