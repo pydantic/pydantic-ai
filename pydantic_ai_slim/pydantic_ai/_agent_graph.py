@@ -4,7 +4,6 @@ import asyncio
 import dataclasses
 import inspect
 import time
-import warnings
 from asyncio import Task
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Generator, Iterable, Sequence
@@ -16,7 +15,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
 from opentelemetry.trace import Tracer
-from typing_extensions import Self, TypeVar, assert_never
+from typing_extensions import TypeVar, assert_never
 
 from pydantic_ai._history_processor import HistoryProcessor
 from pydantic_ai._instrumentation import (
@@ -64,6 +63,7 @@ from ._deferred_capabilities import (
     registered_loaded_capability_ids,
 )
 from ._genai_prices import best_effort_price, fill_response_cost
+from ._history_mirroring import HistoryMirroringMessages
 from ._run_context import (
     AnchoredEvidence,
     EventStreamBuffer,
@@ -71,7 +71,6 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
-from ._warnings import PydanticAIDeprecationWarning
 from .exceptions import ToolRetryError
 
 # `_ContinuationStreamedResponse` is an intentionally-exported member of the private
@@ -1302,50 +1301,6 @@ def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDe
     )
 
 
-_PERSISTING_REQUEST_EDIT_WARNING = (
-    'Appending to `request_context.messages` in `before_model_request` to add messages to the history is deprecated. '
-    'Use `request_context.messages = [*request_context.messages, msg]` plus `ctx.messages.append(msg)` instead.'
-)
-
-
-class _HistoryMirroringMessages(list[_messages.ModelMessage]):
-    """The `ModelRequestContext.messages` list that `before_model_request` hooks receive.
-
-    Before hooks used to have their final request list written back to the message history, so code
-    that appended to `request_context.messages` also changed history. Messages appended here with
-    `append`, `extend` or `+=` are still added to the end of history, with a deprecation warning, until
-    the before-chain finishes and `detach()` turns this into a plain request-only list.
-    """
-
-    def __init__(self, messages: Iterable[_messages.ModelMessage], history: list[_messages.ModelMessage]):
-        super().__init__(messages)
-        self._history: list[_messages.ModelMessage] | None = history
-
-    def detach(self) -> None:
-        self._history = None
-
-    def _add_to_history(self, messages: list[_messages.ModelMessage]) -> None:
-        if self._history is not None and messages:
-            # stacklevel points at the hook's `append`/`extend`/`+=` call.
-            warnings.warn(_PERSISTING_REQUEST_EDIT_WARNING, PydanticAIDeprecationWarning, stacklevel=3)
-            self._history.extend(messages)
-
-    def append(self, message: _messages.ModelMessage) -> None:
-        super().append(message)
-        self._add_to_history([message])
-
-    def extend(self, messages: Iterable[_messages.ModelMessage]) -> None:
-        messages = list(messages)
-        super().extend(messages)
-        self._add_to_history(messages)
-
-    def __iadd__(self, messages: Iterable[_messages.ModelMessage]) -> Self:
-        messages = list(messages)
-        super().extend(messages)
-        self._add_to_history(messages)
-        return self
-
-
 @dataclasses.dataclass
 class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that makes a request to the model using the last message in state.message_history."""
@@ -1505,12 +1460,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if wrap_task.done() and not stream_ready.is_set():
             # wrap_model_request completed without calling handler — short-circuited or raised SkipModelRequest
             try:
-                result_or_exc: _messages.ModelResponse | Exception
                 try:
-                    result_or_exc = wrap_task.result()
-                except Exception as e:
-                    result_or_exc = e
-                model_response = self._resolve_wrap_result(result_or_exc)
+                    model_response = wrap_task.result()
+                except exceptions.SkipModelRequest as e:
+                    model_response = e.response
             except exceptions.ModelRetry as e:
                 self._did_stream = True
                 # Don't increment usage.requests — handler was never called (short-circuit)
@@ -1835,7 +1788,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> ModelRequestContext:
         """Apply `before_model_request` and finalize the request inside the wrapped lifecycle."""
         persistent_messages_before_processing = len(ctx.state.message_history)
-        mirrored_messages = _HistoryMirroringMessages(request_context.messages, history=ctx.state.message_history)
+        mirrored_messages = HistoryMirroringMessages(request_context.messages, ctx.state.message_history)
         request_context.messages = mirrored_messages
         try:
             processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
@@ -1990,7 +1943,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # view, putting the suspended continuation seed back at the tail. Trim the live
             # persistent history, never `request_context.messages`: request-only hook changes
             # must not cross the persistence boundary during resume bookkeeping.
-            messages = list(messages)
             model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
             request_context.model_request_parameters = model_request_parameters
             persistent_messages = ctx.state.message_history
@@ -2037,16 +1989,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._result = CallToolsNode(response)
 
         return self._result
-
-    @staticmethod
-    def _resolve_wrap_result(result_or_exc: _messages.ModelResponse | Exception) -> _messages.ModelResponse:
-        """Resolve a `wrap_model_request` result, converting only `SkipModelRequest`."""
-        if isinstance(result_or_exc, Exception):
-            exc = result_or_exc
-            if isinstance(exc, exceptions.SkipModelRequest):
-                return exc.response
-            raise exc
-        return result_or_exc
 
     @staticmethod
     async def _recover_model_request_error(

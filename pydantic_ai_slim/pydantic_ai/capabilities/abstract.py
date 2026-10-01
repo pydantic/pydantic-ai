@@ -694,9 +694,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Not called when `wrap_run` returns without calling its handler, or recovers an error by
         returning its own result. It is called when `on_run_error` recovers a run-body failure.
 
-        It is also called when the handler produces a result while a cancellation is pending or
-        absorbed upstream — but before the backstop's cancellation re-check, so the cancellation
-        still propagates after this hook returns and the run still ends cancelled.
+        It is also called when the handler produces a result while a cancellation is pending, but
+        the run still ends cancelled after this hook returns.
         Put cancellation-safe cleanup in [`wrap_run`][pydantic_ai.capabilities.AbstractCapability.wrap_run]
         (a `try`/`finally` around `handler()`), which does observe the `CancelledError`.
 
@@ -916,8 +915,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         is the source of truth for instructions: rewriting them changes what the model receives.
 
         Exceptions propagate through the wrap chain and are not passed to `on_model_request_error`. A
-        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] is converted to a retry prompt by the
-        outer model-request dispatcher.
+        [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] requests another model attempt and counts
+        against the output retry budget.
         """
         return request_context
 

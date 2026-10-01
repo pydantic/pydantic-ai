@@ -100,7 +100,7 @@ Important hook families:
 
 For each stage, the entire `wrap_*` chain encloses the `before_*` chain, the core operation with `on_*_error` recovery, and the `after_*` chain. A wrapper that returns without calling its handler skips everything inside, so mandatory authorization belongs in an outer wrapper or outside a short-circuitable cache. Recovered core failures are hidden from wrappers; hook failures and unrecovered core failures propagate through them. The exception is `agent.run_stream()` node handling: `before_node_run` fires before streaming, non-final nodes wrap only later graph advancement, and the final streamed `ModelRequestNode` skips `wrap_node_run`/`after_node_run`.
 
-In streamed runs, the model request lifecycle runs in a separate asyncio task. `ContextVar` writes made by an async `before_model_request` hook are copied back when the stream opens, so later tool, output, and run hooks observe them as they do in non-streamed runs. Writes made later in the model request task stay task-local; use a mutable attribute on `ctx.deps` for state that must be shared bidirectionally.
+In `run_stream()`, `ContextVar` values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in non-streamed runs. Values set later in that model request may not be; use a mutable attribute on `ctx.deps` for state that must be shared throughout the run.
 
 From tool-validation and tool-execution hooks you can raise `ModelRetry` (the model should retry the call) or `ToolFailed` (the call is done and failed — the model sees the result and adapts, without consuming the retry budget) to redirect a tool call in one place instead of per tool.
 

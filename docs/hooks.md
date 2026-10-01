@@ -9,6 +9,16 @@ Hooks let you intercept and modify agent behavior at every stage of a run — mo
 
 The [`Hooks`][pydantic_ai.capabilities.Hooks] capability is the recommended way to add [lifecycle hooks](capabilities/custom.md#hooking-into-the-lifecycle) for application-level concerns like logging, metrics, and lightweight validation. For reusable capabilities that combine hooks with tools, instructions, or model settings, subclass [`AbstractCapability`][pydantic_ai.capabilities.AbstractCapability] instead — see [Building custom capabilities](capabilities/custom.md).
 
+## Hook lifecycle
+
+Every stage of a run (the run itself, each node, model request, tool call, and output) has the same hook lifecycle:
+
+```text
+wrap_* enter → before_* → operation (on_*_error if it fails) → after_* → wrap_* exit
+```
+
+A `wrap_*` hook that returns without calling its handler skips everything inside it. [`run_stream()` handles node hooks differently](#node-hooks), and [Hook ordering](#hook-ordering) covers how several hooks and capabilities combine.
+
 ## Quick start
 
 Create a [`Hooks`][pydantic_ai.capabilities.Hooks] instance, register hooks via `@hooks.on.*` decorators, and pass it to your agent:
@@ -164,7 +174,7 @@ Model request hooks fire around each LLM call. [`ModelRequestContext`][pydantic_
 [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] and compaction deliberately update both, preserving their existing history-rewriting contract. Because a history processor transforms the current request view and makes its whole result persistent, its position relative to other message hooks remains significant.
 
 !!! warning "Message objects may still be shared"
-    [`ModelRequestContext.messages`][pydantic_ai.models.ModelRequestContext.messages] is an independent shallow top-level list, not an independent object graph. Appending, filtering, reordering, or assigning that outer list is request-only. Retained messages and their nested parts may be the same objects as those in `ctx.messages`, so mutating a contained message or part in place can also change persistent history and later requests. For an isolated change below the list level, construct replacement messages and parts down to the level being changed, for example with [`dataclasses.replace`](https://docs.python.org/3/library/dataclasses.html#dataclasses.replace).
+    [`ModelRequestContext.messages`][pydantic_ai.models.ModelRequestContext.messages] is an independent shallow top-level list, not an independent object graph. Apart from the deprecated appends above, changing that outer list only affects the current request. Retained messages and their nested parts may be the same objects as those in `ctx.messages`, so mutating a contained message or part in place can also change persistent history and later requests. For an isolated change below the list level, construct replacement messages and parts down to the level being changed, for example with [`dataclasses.replace`](https://docs.python.org/3/library/dataclasses.html#dataclasses.replace).
 
 To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_ai.exceptions.SkipModelRequest] from `before_model_request` or `model_request` (wrap).
 
@@ -174,7 +184,7 @@ To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_a
     When a run resumes a suspended turn from [`message_history`](message-history.md), `before_model_request` and `wrap_model_request` see that suspended [`ModelResponse`][pydantic_ai.messages.ModelResponse] as the last entry in `request_context.messages`: it's the continuation seed that will be echoed back to the provider, mirroring what actually goes over the wire.
 
 !!! note "Context variables in streamed model requests"
-    In a [streamed run][pydantic_ai.models.ModelRequestContext.streaming], the model request lifecycle runs in a separate asyncio task. Context-variable writes made by an async `before_model_request` hook are copied back when the stream opens, so later tool, output, and run hooks observe them just as they do in a non-streamed run. Writes made later in the model request task (for example, after a wrapper's handler returns) remain local to that task. Use mutable [dependencies](dependencies.md) for state that must be shared bidirectionally throughout the lifecycle.
+    In [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], context-variable values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in a non-streamed run. Values set later in that model request (for example, after a wrapper's handler returns) may not be. Use mutable [dependencies](dependencies.md) for state that must be shared throughout the run.
 
 ### Tool validation hooks
 
@@ -461,11 +471,7 @@ print(wrap_log)
 
 ## Hook ordering
 
-For every stage, the entire `wrap_*` chain is the outermost layer. Its innermost handler runs the complete lifecycle (apart from the [`run_stream()` node-hook split](#node-hooks) described above):
-
-```text
-wrap_* enter → before_* → core / on_*_error → after_* → wrap_* exit
-```
+For every stage, the `wrap_*` hooks enclose the rest of the [hook lifecycle](#hook-lifecycle).
 
 Within a single [`Hooks`][pydantic_ai.capabilities.Hooks] instance, `before_*`, `after_*`, and `on_*_error` functions fire in **registration order** (the order they were defined or passed to the constructor). Registered `wrap_*` functions nest as middleware, with the first registered wrapper outermost.
 
@@ -494,7 +500,7 @@ Hooks can raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to ask the mod
 **Model request hooks** (`before_model_request`, `after_model_request`, `wrap_model_request`, `on_model_request_error`):
 
 - The retry message is sent back to the model as a [`RetryPromptPart`][pydantic_ai.messages.RetryPromptPart]
-- `before_model_request`: the retry fires before the model answered, so the model sees only the retry message — and the before-chain runs again on the retry request, so a hook that raises unconditionally exhausts the retry budget
+- `before_model_request`: no response is saved, since the model wasn't called. The next request adds the retry message to the existing history, and `before_model_request` hooks run again for it, so a hook that always raises uses up the retry budget
 - `after_model_request`: the original response is preserved in message history so the model can see what it said
 - `wrap_model_request`: the response is preserved only if the handler was called
 - Retries count against the output side of the agent's retry budget

@@ -1619,7 +1619,6 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         active_model = await model_scope.enter_async_context(managed_model_scope(request_context.model, owned=owned))
         request_context.model = active_model
         model_id = self._model_id_for_request(ctx, request_context)
-        self._validate_model_request_parameters(request_context.model_request_parameters)
         model_name = request_context.model.model_name
         backend = self.get_durable_operation_backend()
         operations = self._bound_model_operations or self._bind_model_operations(

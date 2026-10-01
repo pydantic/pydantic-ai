@@ -9,17 +9,18 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import ReinjectSystemPrompt
+from pydantic_ai.capabilities import Hooks, ReinjectSystemPrompt
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, UserPromptPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 
 pytestmark = pytest.mark.anyio
 
 
-def _contains_marker(messages: list[ModelMessage]) -> bool:
-    return any(
+def _count_markers(messages: list[ModelMessage]) -> int:
+    return sum(
         isinstance(message, ModelRequest)
         and any(isinstance(part, UserPromptPart) and part.content == 'hook marker' for part in message.parts)
         for message in messages
@@ -84,8 +85,8 @@ async def test_model_request_message_persistence_depends_on_context(
         assert result.output == 'done'
         result_messages = result.all_messages()
 
-    assert _contains_marker(model_messages[0]) is not persistent
-    assert _contains_marker(result_messages) is persistent
+    assert _count_markers(model_messages[0]) == (0 if persistent else 1)
+    assert _count_markers(result_messages) == (1 if persistent else 0)
 
 
 async def test_wrap_model_request_list_mutation_is_request_only() -> None:
@@ -114,16 +115,8 @@ async def test_wrap_model_request_list_mutation_is_request_only() -> None:
     assert result.output == 'done'
 
     # The in-place list edit reached the wire but not persistent history.
-    assert _contains_marker(model_messages[0])
-    assert not _contains_marker(result.all_messages())
-
-
-def _count_markers(messages: list[ModelMessage]) -> int:
-    return sum(
-        isinstance(message, ModelRequest)
-        and any(isinstance(part, UserPromptPart) and part.content == 'hook marker' for part in message.parts)
-        for message in messages
-    )
+    assert _count_markers(model_messages[0]) == 1
+    assert _count_markers(result.all_messages()) == 0
 
 
 Edit = Literal['append', 'extend', 'iadd']
@@ -234,6 +227,28 @@ async def test_before_model_request_migrated_edit_persists_once_without_warning(
     assert _count_markers(result.all_messages()) == 1
 
 
+@pytest.mark.parametrize('chain', ['capabilities', 'hooks'])
+async def test_before_model_request_appends_persist_after_an_earlier_hook_replaces_the_list(chain: str) -> None:
+    """An earlier hook that replaces the request list, like `ProcessHistory`, keeps later appends reaching history."""
+    marker = ModelRequest(parts=[UserPromptPart(content='hook marker')])
+
+    async def replace_list(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        return replace(request_context, messages=list(request_context.messages))
+
+    async def append_marker(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        request_context.messages.append(marker)
+        return request_context
+
+    first, second = Hooks[Any](), Hooks[Any]()
+    first.on.before_model_request(replace_list)
+    (first if chain == 'hooks' else second).on.before_model_request(append_marker)
+
+    with pytest.warns(PydanticAIDeprecationWarning):
+        result = await Agent(TestModel(), capabilities=[first, second]).run('hello')
+
+    assert _count_markers(result.all_messages()) == 1
+
+
 @pytest.mark.parametrize('edit', ['append', 'extend', 'iadd'])
 async def test_before_model_request_list_stops_persisting_after_the_before_chain(edit: Edit) -> None:
     """A list kept from `before_model_request` and edited later changes neither history nor raises a warning."""
@@ -258,8 +273,8 @@ async def test_before_model_request_list_stops_persisting_after_the_before_chain
         capabilities=[KeepMessages()],
     ).run('hello')
 
-    assert _contains_marker(saved[0])
-    assert not _contains_marker(result.all_messages())
+    assert _count_markers(saved[0]) == 1
+    assert _count_markers(result.all_messages()) == 0
 
 
 async def test_reinject_system_prompt_preserves_the_persistent_existing_prompt_after_request_only_filtering() -> None:

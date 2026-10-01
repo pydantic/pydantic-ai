@@ -381,13 +381,11 @@ class ModelRequestContext:
 
     @property
     def usage_responses(self) -> tuple[ModelResponse, ...]:
-        """Provider-boundary responses whose usage was committed for this lifecycle.
+        """The model responses whose usage was counted for this request.
 
-        This remains empty until the wrapped handler reaches a provider response. It can contain
-        more than one response when a continuation produced billable partial output before an
-        error hook recovered. Contexts produced with `dataclasses.replace()` share this ledger, so
-        outer wrappers still observe usage committed through an inner wrapper's copy. This is
-        read-only: it exposes the agent's accounting decisions while only the agent runtime updates it.
+        Empty until the model responds. It includes responses a hook later replaced, and can hold more
+        than one response when a continued response was partly billed before an error hook recovered.
+        Request contexts copied with `dataclasses.replace()` see the same responses.
         """
         return tuple(self._usage_response_ledger.responses)
 
