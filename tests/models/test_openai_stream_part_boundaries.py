@@ -422,6 +422,26 @@ RESUMED_CONTENT_CASES = [
         profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
     ),
     ResumedContentCase(
+        id='whitespace-held-after-reasoning-carries-past-a-tool-call',
+        stream=lambda: [
+            text_chunk('Answer.'),
+            _reasoning_chunk('Think.'),
+            text_chunk('\n\n'),
+            struc_chunk('lookup', '{}'),
+            text_chunk('Done.'),
+            chunk([ChoiceDelta()], finish_reason='tool_calls'),
+        ],
+        expected_parts=snapshot(
+            [
+                TextPart(content='Answer.'),
+                ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
+                ToolCallPart(tool_name='lookup', args='{}', tool_call_id=IsStr()),
+                TextPart(content='\n\nDone.'),
+            ]
+        ),
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
+    ),
+    ResumedContentCase(
         id='text-after-think-tags-following-reasoning-drops-leading-whitespace',
         stream=lambda: [
             text_chunk('Answer.'),
@@ -482,8 +502,9 @@ RESUMED_CONTENT_CASES = [
 async def test_resumed_content_starts_a_new_part(allow_model_requests: None, case: ResumedContentCase):
     """Content resumed after another part gets its own part, never a delta after its part ended.
 
-    `ignore_streamed_leading_whitespace` keeps the separator of text resumed after reasoning, and drops it after a tool
-    call or when no text follows.
+    `ignore_streamed_leading_whitespace` holds the whitespace-only start of text right after reasoning that interrupted
+    a text part and prepends it to the next text part; it drops all other leading whitespace, and held whitespace that
+    no text follows.
     """
     model = OpenAIChatModel(
         'test',

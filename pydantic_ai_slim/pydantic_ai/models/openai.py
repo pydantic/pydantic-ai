@@ -4222,9 +4222,10 @@ class OpenAIStreamedResponse(StreamedResponse):
                         self._held_text_whitespace = ''
                 yield event
             if not emitted and content.isspace() and self._awaiting_text_after_reasoning:
-                # `ignore_streamed_leading_whitespace` dropped the whitespace-only start of text resumed right after
-                # reasoning. Hold it as the separator for the text that follows; if none follows, it stays dropped.
-                # Once any other part starts, a dropped chunk is the start of a new part like any other.
+                # `ignore_streamed_leading_whitespace` dropped the whitespace-only start of text right after reasoning
+                # that interrupted a text part. Hold it for the next text part, even across a tool call or `<think>`
+                # part, so the joined text keeps the separator; if no text follows, it stays dropped. Leading
+                # whitespace anywhere else is dropped as usual.
                 self._held_text_whitespace += content
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
