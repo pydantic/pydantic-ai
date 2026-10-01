@@ -73,16 +73,20 @@ _BACKEND = 'openai:gpt-5.6-sol'
 _TRAILING_SILENCE_FRAMES = 150
 
 
-async def _stream(session: Any, pcm: bytes, cassette: RealtimeCassette, *, paced: bool) -> None:
+async def _stream(
+    session: Any, pcm: bytes, cassette: RealtimeCassette, *, paced: bool, frame_bytes: int = 4800
+) -> None:
     """Feed a clip, then a fixed tail of silence, in the ~100 ms frames a microphone would produce.
+
+    `frame_bytes` is 100 ms of audio at the session's rate: the default is 24 kHz PCM16.
 
     `paced` sends them at a microphone's pace. Sent in one burst, the whole tail lands at once, Live's
     timeline runs ahead of the conversation and then stops, and the model never gets to voice a
     delegated answer — so a recording made that way captures no reply at all. Replay sends as fast as
     it can instead, letting each frame wait for its recorded turn among the session's own sends.
     """
-    frames = [pcm[start : start + 4800] for start in range(0, len(pcm), 4800)]
-    frames += [b'\x00' * 4800] * _TRAILING_SILENCE_FRAMES
+    frames = [pcm[start : start + frame_bytes] for start in range(0, len(pcm), frame_bytes)]
+    frames += [b'\x00' * frame_bytes] * _TRAILING_SILENCE_FRAMES
     for frame in frames:
         await cassette.before_audio_send()
         await session.send_audio(frame)
@@ -405,6 +409,59 @@ async def test_the_backend_searches_the_web(
         'What number did you just give me? Answer with digits only.', message_history=messages
     )
     assert '936' in follow_up.output
+
+
+async def test_an_image_a_tool_returns_reaches_the_backend(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    image_content: BinaryImage,
+    realtime_recording: bool,
+) -> None:
+    """An image a tool returns follows its output to the delegated backend, and Live speaks for it.
+
+    The session runs at 16 kHz, set through the profile, because that is the rate the recorded question is in.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=_FAST_TURN,
+        profile={'audio_input_sample_rate': 16000, 'audio_output_sample_rate': 16000},
+    )
+    agent = Agent(
+        _BACKEND,
+        instructions=(
+            "The user's image is only available through the `get_image` tool. Call it when they ask about the "
+            'image, then say what is in it in one short sentence.'
+        ),
+    )
+
+    @agent.tool_plain
+    async def get_image() -> BinaryImage:
+        """Get the image the user is asking about."""
+        return image_content
+
+    pcm = assets_path.joinpath('what_fruit_is_in_the_image_16khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording, frame_bytes=3200)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    # The image is recorded on the tool's return, as in a standard run.
+    tool_return = next(part for message in messages for part in message.parts if isinstance(part, ToolReturnPart))
+    assert tool_return.tool_name == 'get_image'
+    assert tool_return.content == image_content
+    spoken = ' '.join(
+        part.transcript or ''
+        for message in messages
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'kiwi' in spoken.lower()
 
 
 # `(offer_sdp, connect(answer_sdp), speak())`: the browser side of a WebRTC call.

@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from pydantic_clai2.image_input import clipboard_images, read_image
+from pydantic_clai2.ui.prompt.image_input import clipboard_images, read_image
 
 
 @pytest.mark.skipif(os.environ.get('CLAI_TEST_CLIPBOARD') != '1', reason='requires an isolated desktop clipboard')
