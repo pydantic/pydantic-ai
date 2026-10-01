@@ -44,7 +44,8 @@ def db_dsn() -> str:
 
     dsn = os.environ.get('ABSURD_TEST_DATABASE_URL')
     if not dsn:
-        pytest.skip('ABSURD_TEST_DATABASE_URL is not set')
+        # CI always supplies a database for the Absurd tests.
+        pytest.skip('ABSURD_TEST_DATABASE_URL is not set')  # pragma: no cover
     try:
         with psycopg.connect(dsn, autocommit=True, connect_timeout=5) as conn:
             # xdist workers share the database, and the schema script is not re-runnable.
