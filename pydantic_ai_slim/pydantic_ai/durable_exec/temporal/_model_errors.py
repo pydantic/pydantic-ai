@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
 
 from pydantic_core import to_jsonable_python
 from temporalio.exceptions import ActivityError, ApplicationError
@@ -70,8 +70,9 @@ def _decode(encoded: dict[str, Any]) -> ModelAPIError | None:
         return None
     if (error_type := _model_error_class(module_name, encoded.get('qualname'))) is None:
         return None
+    args: list[Any] = encoded.get('args') or []
     try:
-        error = error_type(*encoded.get('args') or [])
+        error = error_type(*args)
         if (state := encoded.get('state')) is not None:
             error.__setstate__(state)
     except Exception:
@@ -121,7 +122,7 @@ def _rebuild(application_error: ApplicationError) -> ModelAPIError | None:
     details = application_error.details
     if not details or not isinstance(details[0], dict):
         return None
-    encoded: Any = details[0].get(_DETAILS_KEY)  # pyright: ignore[reportUnknownMemberType]
+    encoded = cast(dict[str, Any], details[0]).get(_DETAILS_KEY)
     if not isinstance(encoded, dict):
         return None
-    return _decode(encoded)  # pyright: ignore[reportUnknownArgumentType]
+    return _decode(cast(dict[str, Any], encoded))

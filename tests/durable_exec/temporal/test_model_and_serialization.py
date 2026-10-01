@@ -2800,7 +2800,10 @@ def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: p
         with model_errors_as_application_errors():
             raise error
 
-    monkeypatch.setattr(ModelAPIError, '__reduce__', lambda self: 'not a reduce tuple')
+    def reduce_to_a_name(self: ModelAPIError) -> str:
+        return 'not a reduce tuple'
+
+    monkeypatch.setattr(ModelAPIError, '__reduce__', reduce_to_a_name)
     with pytest.raises(ModelAPIError):
         with model_errors_as_application_errors():
             raise ModelAPIError('gpt-test', 'boom')
@@ -2809,7 +2812,10 @@ def test_model_errors_that_cannot_be_rebuilt_are_raised_unchanged(monkeypatch: p
 def test_a_subclass_whose_constructor_does_not_match_its_reduce_is_raised_unchanged(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    monkeypatch.setattr(ModelHTTPError, '__reduce__', lambda self: (ModelHTTPError, ('too', 'many', 'args', 'here')))
+    def reduce_to_wrong_args(self: ModelHTTPError) -> tuple[type[ModelHTTPError], tuple[str, ...]]:
+        return ModelHTTPError, ('too', 'many', 'args', 'here')
+
+    monkeypatch.setattr(ModelHTTPError, '__reduce__', reduce_to_wrong_args)
     with pytest.raises(ModelHTTPError):
         with model_errors_as_application_errors():
             raise ModelHTTPError(503, 'gpt-test')
