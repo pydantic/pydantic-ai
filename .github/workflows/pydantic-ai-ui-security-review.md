@@ -159,7 +159,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           LABELS: repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels
-          FAILED: ${{ needs.agent.result == 'failure' || needs.safe_outputs.result == 'failure' || needs.agent.outputs.output_types == '' }}
+          FAILED: ${{ needs.agent.result != 'success' || needs.safe_outputs.result != 'success' || needs.agent.outputs.output_types == '' }}
         run: |
           if [ "$FAILED" = true ]; then
             gh api "$LABELS" -f 'labels[]=ui-security-review-failed' --silent

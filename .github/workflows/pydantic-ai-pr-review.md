@@ -375,7 +375,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           LABELS: repos/${{ github.repository }}/issues/${{ needs.eligibility.outputs.pr_number }}/labels
-          FAILED: ${{ needs.agent.result == 'failure' || needs.safe_outputs.result == 'failure' || needs.agent.outputs.output_types == '' }}
+          FAILED: ${{ needs.agent.result != 'success' || needs.safe_outputs.result != 'success' || needs.agent.outputs.output_types == '' }}
         run: |
           if [ "$FAILED" = true ]; then
             gh api "$LABELS" -f 'labels[]=ci-review-failed' --silent
