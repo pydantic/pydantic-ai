@@ -307,10 +307,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             # Honor a first-party cancellation (`cancel()` on this run, possibly from the caller's
             # previous loop body) before yielding another node the caller would go on to run. The
             # first node is yielded before it runs, so unlike `self.next(previous)` this boundary
-            # has no awaited step to carry the pending `task.cancel()`: yield to the event loop so
+            # has no awaited step to carry the pending `task.cancel()`: yield to the scheduler so
             # it's delivered here on every Python version (`raise_if_cancelling` only re-asserts on
             # 3.11+, and neither path awaits).
-            await anyio.sleep(0)
+            await anyio.lowlevel.checkpoint()
         _utils.raise_if_cancelling()
 
         if previous is None:
