@@ -139,6 +139,7 @@ class PluginMenu(Generic[DepsT]):
         """D: unload and forget."""
         entry = self._find(item)
         if entry is not None:
+            self._descriptions.pop(entry.name, None)
             self._run(self._loader.remove(entry.name))
         menu.replace_items(self.items())
 

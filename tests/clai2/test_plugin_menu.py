@@ -109,7 +109,7 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
     assert text('clai_described:Tool') == 'The tool.'
     assert text('clai_described:Plain') == 'The module.'
     assert text('clai_described:missing') == 'The module.'
-    assert text('clai_described', project=True) == '', 'unapproved project modules are not looked up'
+    assert text('clai_described', project=True) == 'The module.'
     assert text('x', project=True, path=tmp_path / 'clai_described.py') == 'The module.'
     assert text('clai_broken_source') == ''
     assert text('clai_missing_package.plugin') == ''
@@ -117,6 +117,40 @@ def test_describe_reads_source_without_importing_it(tmp_path: Path, monkeypatch:
     assert text('clai_namespace') == ''
     assert text('sys') == ''
     assert 'clai_described' not in sys.modules
+    package = tmp_path / 'clai_parent_must_not_run'
+    package.mkdir()
+    (package / '__init__.py').write_text('raise RuntimeError("parent imported")')
+    (package / 'tools.py').write_text('class Tool:\n    """A safe description."""\n')
+    assert text('clai_parent_must_not_run.tools:Tool') == 'A safe description.'
+    assert text('clai_parent_must_not_run.tools:Tool', project=True) == 'A safe description.'
+    assert 'clai_parent_must_not_run' not in sys.modules
+    injected = tmp_path / 'injected.py'
+    injected.write_text('"""Before\\x1b]52;c;payload\\x07 after."""')
+    assert text('x', path=injected) == 'Before]52;c;payload after.'
+
+
+def test_remove_refreshes_the_restored_description(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    package = tmp_path / 'clai_description_cache'
+    package.mkdir()
+    (package / '__init__.py').write_text('')
+    (package / 'custom.py').write_text('"""Custom tools."""')
+    (package / 'stock.py').write_text('"""Stock tools."""')
+    monkeypatch.setattr(sys, 'path', [str(tmp_path), *sys.path])
+    store = SettingsStore(tmp_path / 'cache.db')
+    store.save_plugin(PluginSettings(id='tools', factory='clai_description_cache.custom', enabled=False))
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(PluginSettings(id='tools', factory='clai_description_cache.stock', enabled=False),),
+    )
+    menu = PluginMenu(loader, apply=run_now)
+    item = menu.items()[0]
+    assert 'Custom tools.' in unstyled(menu.details(item))
+    menu.remove(FakeMenu(), item)
+    assert 'Stock tools.' in unstyled(menu.details(item))
+    assert 'Custom tools.' not in unstyled(menu.details(item))
 
 
 def test_rows_details_and_keys(tmp_path: Path) -> None:

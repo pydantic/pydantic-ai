@@ -1,7 +1,7 @@
 """A plugin's one-paragraph description, read from its docstring without running its code."""
 
 import ast
-import importlib.util
+import sys
 from pathlib import Path
 
 from pydantic_clai2.plugins import DepsT
@@ -30,10 +30,12 @@ def describe(entry: PluginEntry[DepsT]) -> str:
 def _source(entry: PluginEntry[DepsT]) -> Path | None:
     if entry.path is not None:
         return entry.path
-    if entry.project:
-        return None  # Finding a module imports its parent packages; a project plugin must not run before approval.
-    try:
-        spec = importlib.util.find_spec(entry.declaration.factory.partition(':')[0])
-    except (ImportError, ValueError):
-        return None
-    return Path(spec.origin) if spec is not None and spec.origin else None
+    # Only inspect ordinary source files. Import finders may execute parent packages or custom loaders.
+    # Zip imports and custom import hooks deliberately get no description.
+    parts = entry.declaration.factory.partition(':')[0].split('.')
+    for directory in sys.path:
+        module = Path(directory).joinpath(*parts)
+        for source in (module / '__init__.py', module.with_suffix('.py')):
+            if source.is_file():
+                return source
+    return None
