@@ -738,6 +738,16 @@ jobs:
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
 
+      - name: cover Absurd without a database URL
+        if: matrix.python-version == '3.14' && matrix.shard == 1
+        run: >-
+          env -u ABSURD_TEST_DATABASE_URL
+          uv run --all-packages --all-extras --no-extra mcp-tasks
+          coverage run --append -m pytest
+          tests/harness/absurd/test_absurd.py::TestDurability::test_replay_serves_cached_model_response
+        env:
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
+
       # See the matching step in the `test` job.
       - name: combine coverage files
         if: env.COLLECT_COVERAGE == 'true'
