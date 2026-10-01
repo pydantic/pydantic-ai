@@ -19,6 +19,7 @@ would keep them in memory, so every launch would sign in again.
 import asyncio
 import os
 import sys
+from collections.abc import Sequence
 from dataclasses import replace
 from functools import partial
 from typing import Generic, Literal
@@ -29,6 +30,7 @@ from fastmcp.client.transports import StreamableHttpTransport
 from pydantic import BaseModel, ConfigDict, ValidationError
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import RunContext
 from pydantic_ai_harness.ordinal import Ordinal
@@ -44,7 +46,7 @@ from pydantic_clai2.config.api_keys import (
 )
 from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials
 from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore, http_client, sign_in
-from pydantic_clai2.plugins import DepsT, PluginHost
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker
 from pydantic_clai2.ui.rendering._rendering import markdown_style
@@ -161,34 +163,41 @@ class OrdinalAuth(Generic[DepsT]):
         return Ordinal[DepsT](client=client, include_instructions=self.settings.include_instructions)
 
 
-def activate(host: PluginHost[DepsT]) -> None:
-    """Add `Ordinal` and its settings menu, or refuse to load when no one could sign in."""
-    settings = host.settings(OrdinalSettings)
-    tokens = TokenStore(TOKENS)
-    if not sys.stdin.isatty() and not ready(settings.sign_in, tokens):
-        raise UserError(f'Ordinal has no credential for sign-in `{settings.sign_in}` and no terminal. {SETUP}')
-    auth = OrdinalAuth[DepsT](settings, tokens)
-    host.add(auth)
-    host.configure(partial(configure, OrdinalSource(host)))
+class OrdinalPlugin(Plugin[OrdinalSettings, DepsT]):
+    """`Ordinal` and its settings menu; refuses to load when no one could sign in."""
 
-    async def command(args: list[str]) -> str:
+    def __init__(self, host: PluginHost[DepsT], settings: OrdinalSettings) -> None:
+        super().__init__(host, settings)
+        self.tokens = TokenStore(TOKENS)
+        if not sys.stdin.isatty() and not ready(settings.sign_in, self.tokens):
+            raise UserError(f'Ordinal has no credential for sign-in `{settings.sign_in}` and no terminal. {SETUP}')
+        self.auth = OrdinalAuth[DepsT](settings, self.tokens)
+
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        return (self.auth,)
+
+    def get_commands(self) -> Sequence[Command]:
+        return (
+            Command(
+                name='ordinal',
+                description='Show how Ordinal signs in, or end its browser session (/ordinal logout).',
+                handler=self._command,
+                complete=lambda args: ['logout'] if len(args) <= 1 else [],
+            ),
+        )
+
+    async def configure(self) -> str:
+        return await configure(OrdinalSource(self.host))
+
+    async def _command(self, args: list[str]) -> str:
         match args:
             case []:
-                return await to_thread.run_sync(status, settings, tokens)
+                return await to_thread.run_sync(status, self.settings, self.tokens)
             case ['logout']:
-                await to_thread.run_sync(auth.logout)
+                await to_thread.run_sync(self.auth.logout)
                 return 'Signed out of the Ordinal browser session; a /keys entry or the environment is unaffected.'
             case _:
                 return USAGE
-
-    host.commands.register(
-        Command(
-            name='ordinal',
-            description='Show how Ordinal signs in, or end its browser session (/ordinal logout).',
-            handler=command,
-            complete=lambda args: ['logout'] if len(args) <= 1 else [],
-        )
-    )
 
 
 def status(settings: OrdinalSettings, tokens: TokenStore) -> str:

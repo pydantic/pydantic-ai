@@ -300,6 +300,7 @@ COMBINE_POLICY: dict[str, Policy] = {
     'OutputGuardrail': Anonymous('several guards is the design'),
     'PromptInjectionDefender': Anonymous('one per `tool_filter`; several scopes compose'),
     'ToolGuardrail': Anonymous('several guards is the design'),
+    'ToolCallJudge': Anonymous('one per risk question; stacked judges must all allow a call'),
     'ManagedPrompt': Anonymous('one per prompt name'),
     'LogfireMCP': Narrows(
         'one Logfire connection per id; two that differ need their own ids and PrefixTools',
@@ -316,6 +317,10 @@ COMBINE_POLICY: dict[str, Policy] = {
     'TrajectoryJudge': Anonymous('each judge independently evaluates and steers the run'),
     'RenderWorkflows': Rejected('Only one durability capability can be attached to an agent.'),
     'AWSLambdaDurability': Rejected(
+        'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
+        'itself up, before any id is consulted'
+    ),
+    'AbsurdDurability': Rejected(
         'a durability engine is one per agent; `from_agent` rejects a second when the engine looks '
         'itself up, before any id is consulted'
     ),

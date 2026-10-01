@@ -22,11 +22,14 @@ from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
-from pydantic_clai2.builtin_plugins.logfire import activate
+from pydantic_clai2.builtin_plugins.logfire import LogfirePlugin
 from pydantic_clai2.commands import Commands
+from pydantic_clai2.config import Settings
+from pydantic_clai2.config.api_keys import save_key
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart
+from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, TurnEnd, load_plugin
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.ui import telemetry
 
 
 class Exporter(InMemorySpanExporter):
@@ -43,6 +46,7 @@ class Recorder:
         self.exporters: list[Exporter] = []
         self.instances: list[logfire.Logfire] = []
         self.options: list[dict[str, object]] = []
+        self.tokens: list[str | None] = []
 
     def configure(
         self,
@@ -53,7 +57,11 @@ class Recorder:
         console: Literal[False],
         config_dir: Path,
         data_dir: Path,
+        token: str | None,
+        scrubbing: logfire.ScrubbingOptions | None,
+        advanced: logfire.AdvancedOptions | None,
     ) -> logfire.Logfire:
+        self.tokens.append(token)
         self.options.append(
             {
                 'local': local,
@@ -62,6 +70,7 @@ class Recorder:
                 'console': console,
                 'config_dir': config_dir,
                 'data_dir': data_dir,
+                'base_url': advanced.base_url if advanced else None,
             }
         )
         exporter = Exporter()
@@ -72,6 +81,8 @@ class Recorder:
             console=console,
             config_dir=config_dir,
             data_dir=data_dir,
+            token=token,
+            scrubbing=scrubbing,
             metrics=False,
             additional_span_processors=[SimpleSpanProcessor(exporter)],
             advanced=logfire.AdvancedOptions(emit_configuration_span=False),
@@ -96,12 +107,15 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> Generator[Recorder]:
 
 
 def make_host(**settings: JsonValue) -> PluginHost[None]:
-    return PluginHost(name='logfire', console=Console(file=io.StringIO()), settings=settings)
+    return PluginHost(name='observability', console=Console(file=io.StringIO()), settings=settings)
 
 
-async def close_host(host: PluginHost[None]) -> None:
-    for handler in host.handlers:
-        await handler(SessionEnd(reason='exit'))
+def load_logfire(host: PluginHost[None]) -> LoadedPlugin[None]:
+    return load_plugin(LogfirePlugin, host)
+
+
+async def close(plugin: LoadedPlugin[None]) -> None:
+    await plugin.dispatch(SessionEnd(reason='exit'))
 
 
 def operation(span: ReadableSpan) -> object:
@@ -112,7 +126,7 @@ async def test_default_content_images_tools_and_usage_are_traced(recorder: Recor
     tracer, meter = trace.get_tracer_provider(), metrics.get_meter_provider()
     propagator = propagate.get_global_textmap()
     host = make_host()
-    activate(host)
+    plugin = load_logfire(host)
     agent = Agent(TestModel(custom_output_text='The image shows a button'), deps_type=type(None), name='clai_test')
 
     @agent.tool_plain
@@ -121,10 +135,10 @@ async def test_default_content_images_tools_and_usage_are_traced(recorder: Recor
 
     image = BinaryContent(data=b'example image bytes', media_type='image/png')
     try:
-        result = await agent.run(['describe the screenshot', image], capabilities=host.capabilities)
+        result = await agent.run(['describe the screenshot', image], capabilities=plugin.capabilities)
         assert result.output == 'The image shows a button'
     finally:
-        await close_host(host)
+        await close(plugin)
     spans = recorder.spans()
     assert [operation(span) for span in spans].count('invoke_agent') == 1
     assert [operation(span) for span in spans].count('execute_tool') == 1
@@ -147,6 +161,7 @@ async def test_default_content_images_tools_and_usage_are_traced(recorder: Recor
             'console': False,
             'config_dir': tmp_path / 'config/pydantic-clai2/logfire',
             'data_dir': tmp_path / 'config/pydantic-clai2/logfire',
+            'base_url': None,
         }
     ]
     assert all(exporter.closed for exporter in recorder.exporters)
@@ -161,14 +176,14 @@ async def test_content_settings(recorder: Recorder, content: bool) -> None:
     host = make_host(
         include_content=content, include_binary_content=False, service_name='custom-clai', send_to_logfire=False
     )
-    activate(host)
+    plugin = load_logfire(host)
     try:
         await Agent(TestModel(custom_output_text='plain answer'), deps_type=type(None)).run(
             ['visible caption', BinaryContent(data=b'image bytes', media_type='image/png')],
-            capabilities=host.capabilities,
+            capabilities=plugin.capabilities,
         )
     finally:
-        await close_host(host)
+        await close(plugin)
     spans = recorder.spans()
     serialized = json.dumps([dict(span.attributes or {}) for span in spans])
     assert ('visible caption' in serialized) == content
@@ -194,7 +209,7 @@ async def test_disable_reload_and_existing_agent_instrumentation(
     if not explicit:
         agent.instrument = original
     store = SettingsStore(tmp_path / 'config.db')
-    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'logfire')
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability')
     assert builtin.enabled
     loader: PluginLoader[None] = PluginLoader(
         store=store,
@@ -209,15 +224,15 @@ async def test_disable_reload_and_existing_agent_instrumentation(
         await agent.run('first', capabilities=loader.capabilities())
         assert len([span for span in recorder.spans() if operation(span) == 'invoke_agent']) == 1
         assert not existing_exporter.get_finished_spans()
-        await loader.disable('logfire')
+        await loader.disable('observability')
         assert not loader.capabilities()
         assert recorder.exporters[0].closed
         before = len(recorder.spans())
         await agent.run('disabled', capabilities=loader.capabilities())
         assert len(recorder.spans()) == before
         assert len([span for span in existing_exporter.get_finished_spans() if operation(span) == 'invoke_agent']) == 1
-        await loader.enable('logfire')
-        await loader.reload('logfire')
+        await loader.enable('observability')
+        await loader.reload('observability')
         assert recorder.exporters[1].closed
         await agent.run('reloaded', capabilities=loader.capabilities())
         assert len([span for span in recorder.spans() if operation(span) == 'invoke_agent']) == 2
@@ -233,17 +248,17 @@ async def test_disable_reload_and_existing_agent_instrumentation(
 )
 def test_settings_validate_before_configuring(recorder: Recorder, settings: dict[str, JsonValue]) -> None:
     with pytest.raises(ValidationError) as error:
-        activate(make_host(**settings))
+        load_logfire(make_host(**settings))
     assert 'do-not-store' not in str(error.value)
     assert not recorder.instances
 
 
 async def test_unload_finishes_inside_outer_cancellation(recorder: Recorder) -> None:
     host = make_host()
-    activate(host)
+    plugin = load_logfire(host)
     with anyio.CancelScope() as scope:
         scope.cancel()
-        await close_host(host)
+        await close(plugin)
         assert recorder.exporters[0].closed
         await anyio.sleep(0)
     assert scope.cancelled_caught
@@ -251,7 +266,7 @@ async def test_unload_finishes_inside_outer_cancellation(recorder: Recorder) -> 
 
 async def test_shutdown_timeout_is_reported(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
     host = make_host()
-    activate(host)
+    plugin = load_logfire(host)
     instance = recorder.instances[0]
     shutdown = instance.shutdown
 
@@ -260,7 +275,7 @@ async def test_shutdown_timeout_is_reported(recorder: Recorder, monkeypatch: pyt
         return False
 
     monkeypatch.setattr(instance, 'shutdown', timeout)
-    await close_host(host)
+    await close(plugin)
     output = host.console.file
     assert isinstance(output, io.StringIO)
     assert 'Logfire shutdown timed out' in output.getvalue()
@@ -272,17 +287,17 @@ def test_activation_failure_closes_local_providers(recorder: Recorder, monkeypat
 
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.Instrumentation', fail)
     with pytest.raises(RuntimeError, match='cannot construct'):
-        activate(make_host())
+        load_logfire(make_host())
     assert recorder.exporters[0].closed
 
 
 async def test_no_credentials_needs_no_setup_or_console_output(capsys: pytest.CaptureFixture[str]) -> None:
     host = make_host()
-    activate(host)
+    plugin = load_logfire(host)
     try:
-        await Agent(TestModel(), deps_type=type(None)).run('hello', capabilities=host.capabilities)
+        await Agent(TestModel(), deps_type=type(None)).run('hello', capabilities=plugin.capabilities)
     finally:
-        await close_host(host)
+        await close(plugin)
     captured = capsys.readouterr()
     assert captured.out == captured.err == ''
 
@@ -290,7 +305,7 @@ async def test_no_credentials_needs_no_setup_or_console_output(capsys: pytest.Ca
 @pytest.mark.parametrize('cancelled', [False, True])
 async def test_failed_and_cancelled_runs_finish_their_spans(recorder: Recorder, cancelled: bool) -> None:
     host = make_host()
-    activate(host)
+    plugin = load_logfire(host)
     started = anyio.Event()
     cleaned = anyio.Event()
     agent = Agent(TestModel(), deps_type=type(None), name='failure_test')
@@ -306,7 +321,7 @@ async def test_failed_and_cancelled_runs_finish_their_spans(recorder: Recorder, 
             cleaned.set()
 
     async def run() -> None:
-        await agent.run('run the tool', capabilities=host.capabilities)
+        await agent.run('run the tool', capabilities=plugin.capabilities)
 
     try:
         if cancelled:
@@ -320,7 +335,7 @@ async def test_failed_and_cancelled_runs_finish_their_spans(recorder: Recorder, 
                 await run()
         assert cleaned.is_set()
     finally:
-        await close_host(host)
+        await close(plugin)
     spans = recorder.spans()
     assert any(operation(span) == 'invoke_agent' for span in spans)
     assert any(operation(span) == 'execute_tool' for span in spans)
@@ -331,13 +346,13 @@ async def test_failed_and_cancelled_runs_finish_their_spans(recorder: Recorder, 
 
 async def test_flush_timeout_still_stops_providers(recorder: Recorder, monkeypatch: pytest.MonkeyPatch) -> None:
     host = make_host()
-    activate(host)
+    plugin = load_logfire(host)
 
     def timeout(*, timeout_millis: int) -> bool:
         return False
 
     monkeypatch.setattr(recorder.instances[0], 'force_flush', timeout)
-    await close_host(host)
+    await close(plugin)
     assert recorder.exporters[0].closed
     output = host.console.file
     assert isinstance(output, io.StringIO)
@@ -350,8 +365,8 @@ async def test_relative_config_home_does_not_read_the_checkout(
 ) -> None:
     monkeypatch.setenv('XDG_CONFIG_HOME', xdg)
     host = make_host()
-    activate(host)
-    await close_host(host)
+    plugin = load_logfire(host)
+    await close(plugin)
     assert recorder.options[0]['config_dir'] == tmp_path / 'home/.config/pydantic-clai2/logfire'
     assert recorder.options[0]['data_dir'] == recorder.options[0]['config_dir']
 
@@ -371,8 +386,8 @@ async def test_repository_cannot_select_telemetry_destination(
     monkeypatch.setenv('LOGFIRE_CONFIG_DIR', str(repo))
     monkeypatch.setenv('LOGFIRE_CREDENTIALS_DIR', str(credentials))
     host = make_host()
-    activate(host)
-    await close_host(host)
+    plugin = load_logfire(host)
+    await close(plugin)
     assert recorder.options[0]['config_dir'] == tmp_path / 'config/pydantic-clai2/logfire'
     assert recorder.options[0]['data_dir'] == recorder.options[0]['config_dir']
     assert recorder.instances[0].config.token is None
@@ -384,34 +399,110 @@ async def test_interrupted_startup_shuts_down_plugin_providers(
 ) -> None:
     started = anyio.Event()
 
-    def start(host: PluginHost[None]) -> None:
-        activate(host)
+    async def wait(self: object, event: SessionStart) -> None:
+        started.set()
+        if cancel:
+            await anyio.sleep_forever()
+        raise RuntimeError('startup failed')
 
-        @host.on('session_start')
-        async def wait(event: SessionStart) -> None:
-            started.set()
-            if cancel:
-                await anyio.sleep_forever()
-            raise RuntimeError('startup failed')
-
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.activate', start)
+    # A string path: an earlier `loader.reload('logfire')` may have replaced the module's class.
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.logfire.LogfirePlugin.on_session_start', wait)
     store = SettingsStore(tmp_path / 'config.db')
     loader: PluginLoader[None] = PluginLoader(
         store=store,
         console=Console(file=io.StringIO()),
         commands=Commands(),
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
-        builtin=(next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'logfire'),),
+        builtin=(next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability'),),
     )
     if cancel:
         with anyio.fail_after(10):
             async with anyio.create_task_group() as tasks:
-                tasks.start_soon(loader.load, 'logfire')
+                tasks.start_soon(loader.load, 'observability')
                 await started.wait()
                 tasks.cancel_scope.cancel()
     else:
         with pytest.raises(PluginError, match='startup failed'):
-            await loader.load('logfire')
+            await loader.load('observability')
     assert recorder.exporters[0].closed
     assert not loader.capabilities()
-    assert loader.entries()[0].host is None
+    assert loader.entries()[0].loaded is None
+
+
+def messages(recorder: Recorder) -> list[object]:
+    return [(span.attributes or {}).get('logfire.msg') for span in recorder.spans()]
+
+
+async def test_ui_events_are_off_by_default(recorder: Recorder) -> None:
+    plugin = load_logfire(make_host())
+    telemetry.record('setting {setting} changed', setting='display.theme', value='default')
+    await close(plugin)
+    assert messages(recorder) == []
+
+
+async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Recorder) -> None:
+    plugin = load_logfire(make_host(ui_events=True))
+    try:
+        for event in (
+            SessionStart(agent=Agent(TestModel()), settings=Settings()),
+            SessionStart(agent=Agent(TestModel()), settings=Settings(model=None)),
+            TurnEnd(text='a private prompt', outcome='cancelled'),
+        ):
+            await plugin.dispatch(event)
+        telemetry.record('setting {setting} changed', setting='sessions.naming', value='password123')
+        recorder.instances[0].info('not a UI event', setting='password123')
+    finally:
+        await close(plugin)
+    telemetry.record('after the plugin unloaded')
+    assert messages(recorder) == [
+        'session started',
+        'session started',
+        'turn cancelled',
+        'setting sessions.naming changed',
+        'not a UI event',
+    ]
+    started, default, _, changed, other = recorder.spans()
+    # The exemption covers only UI records: another span's `setting` is scrubbed as usual.
+    assert (other.attributes or {})['setting'] == "[Scrubbed due to 'password']"
+    assert (started.attributes or {})['model'] == Settings().model
+    assert (default.attributes or {})['model'] == 'agent default'
+    # Names are exempt from scrubbing; any other attribute that looks like a secret is still scrubbed.
+    assert (changed.attributes or {})['value'] == "[Scrubbed due to 'password']"
+    assert 'a private prompt' not in json.dumps([dict(span.attributes or {}) for span in recorder.spans()])
+
+
+@pytest.mark.parametrize(
+    ('saved', 'send', 'token', 'sent'),
+    [
+        (True, 'if-token-present', 'lf-shared-write-token', 'if-token-present'),
+        (False, 'if-token-present', None, False),
+        (False, False, None, False),
+    ],
+)
+async def test_token_from_keys_chooses_the_project(
+    recorder: Recorder,
+    saved: bool,
+    send: Literal[False, 'if-token-present'],
+    token: str | None,
+    sent: Literal[False, 'if-token-present'],
+) -> None:
+    if saved:
+        save_key(name='CLAI2_LOGFIRE_TOKEN', value='lf-shared-write-token')
+    host = make_host(token={'name': 'CLAI2_LOGFIRE_TOKEN'}, send_to_logfire=send)
+    await close(load_logfire(host))
+    assert recorder.tokens == [token]
+    assert recorder.options[0]['send_to_logfire'] == sent
+    output = host.console.file
+    assert isinstance(output, io.StringIO)
+    assert ('CLAI2_LOGFIRE_TOKEN is not in /keys' in output.getvalue()) == (not saved and send is not False)
+
+
+async def test_self_hosted_base_url_reaches_the_sdk(recorder: Recorder) -> None:
+    await close(load_logfire(make_host(base_url='logfire.example.com/')))
+    assert recorder.options[0]['base_url'] == 'https://logfire.example.com'
+
+
+def test_base_url_must_be_an_https_origin(recorder: Recorder) -> None:
+    with pytest.raises(ValidationError, match='https URL with no path'):
+        load_logfire(make_host(base_url='http://logfire.example.com'))
+    assert not recorder.instances

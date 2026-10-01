@@ -23,9 +23,9 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ConversationSummary,
     SqliteConversationStore,
 )
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.runtime._session import Session
-from pydantic_clai2.runtime.sessions import activate
+from pydantic_clai2.runtime.sessions import PersistencePlugin
 
 
 def saved_session(tmp_path: Path) -> Session[None, str]:
@@ -173,9 +173,9 @@ async def test_cancellation_persists_and_live_session_cannot_resume(tmp_path: Pa
 async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
     session = saved_session(tmp_path)
     host = PluginHost(name='persistence', console=Console(file=StringIO()), settings={}, conversation=session)
-    activate(host)
-    assert any(isinstance(cap, StepPersistence) for cap in host.capabilities)
-    session.plugins = host.capabilities
+    plugin = load_plugin(PersistencePlugin, host)
+    assert any(isinstance(cap, StepPersistence) for cap in plugin.capabilities)
+    session.plugins = list(plugin.capabilities)
     await session.prompt('hello')
     assert session.step_store is not None and session.summary.run_id is not None
     snapshot = await session.step_store.latest_snapshot(run_id=session.summary.run_id)
@@ -183,8 +183,7 @@ async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
     assert snapshot.messages == session.messages
     assert snapshot.conversation_id == session.summary.id
     bare = PluginHost(name='persistence', console=Console(file=StringIO()), settings={})
-    activate(bare)
-    assert not bare.capabilities
+    assert not load_plugin(PersistencePlugin, bare).capabilities
 
 
 async def test_cancellation_still_propagates_when_saving_fails(

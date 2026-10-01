@@ -5,7 +5,6 @@ import io
 from collections.abc import Coroutine, Sequence
 from pathlib import Path
 
-import keyring
 import pytest
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
@@ -23,11 +22,11 @@ from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import google_workspace
 from pydantic_clai2.builtin_plugins.google_workspace import GoogleWorkspaceSettings
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.config import PluginSettings, api_keys
+from pydantic_clai2.config import PluginSettings, Settings, api_keys
 from pydantic_clai2.config.api_keys import KeyReference
 from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, SessionStart
+from pydantic_clai2.plugins import PluginHost, SessionStart, load_plugin
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu
 from tests.clai2.menu_script import Script, pick
@@ -55,29 +54,12 @@ def host(settings: dict[str, JsonValue] | None = None) -> PluginHost[None]:
     return PluginHost(name='google_workspace', console=Console(file=io.StringIO()), settings=settings or {})
 
 
-def deletable_keyring(monkeypatch: pytest.MonkeyPatch) -> None:
-    entries: dict[tuple[str, str], str] = {}
-
-    def get(service: str, account: str) -> str | None:
-        return entries.get((service, account))
-
-    def set_value(service: str, account: str, value: str) -> None:
-        entries[service, account] = value
-
-    def delete(service: str, account: str) -> None:
-        del entries[service, account]
-
-    monkeypatch.setattr(keyring, 'get_password', get)
-    monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
-
-
 def context() -> RunContext[None]:
     return RunContext(deps=None, model=TestModel(), usage=RunUsage())
 
 
 def loaded(plugin: PluginHost[None]) -> GoogleWorkspace[None]:
-    [factory] = plugin.capabilities
+    [factory] = load_plugin(google_workspace.GoogleWorkspacePlugin, plugin).capabilities
     assert not isinstance(factory, AbstractCapability)
     capability = factory(context())
     assert is_workspace(capability)
@@ -98,11 +80,11 @@ async def configure(plugin: PluginHost[None], *lists: MenuResult, choices: Seque
     return await google_workspace.configure(plugin, [], runners=script.runners)
 
 
-def test_the_conventional_key_is_resolved_on_every_run(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_the_conventional_key_is_resolved_on_every_run(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('GOOGLE_ACCESS_TOKEN', 'env-token')
     api_keys.save_key(name='GOOGLE_ACCESS_TOKEN', value='saved-token')
     plugin = host()
-    activate_quietly(plugin)
+    await activate_quietly(plugin)
     capability = loaded(plugin)
     assert capability.services == ('gmail', 'calendar', 'drive')
     assert capability.read_only is True
@@ -116,26 +98,29 @@ def test_the_conventional_key_is_resolved_on_every_run(monkeypatch: pytest.Monke
     assert 'env-token' not in str(error.value)
 
 
-def activate_quietly(plugin: PluginHost[None]) -> str:
+async def activate_quietly(plugin: PluginHost[None]) -> str:
+    """Load the plugin and start a session, returning what it printed."""
     output = io.StringIO()
     plugin.console = Console(file=output)
-    google_workspace.activate(plugin)
+    loaded = load_plugin(google_workspace.GoogleWorkspacePlugin, plugin)
+    await loaded.dispatch(SessionStart(agent=Agent(TestModel()), settings=Settings()))
     return output.getvalue()
 
 
-def test_activate_without_a_key_warns_and_fails_closed_on_use() -> None:
+async def test_activate_without_a_key_warns_and_fails_closed_on_use() -> None:
     plugin = host()
-    warning = activate_quietly(plugin)
+    warning = await activate_quietly(plugin)
     assert 'Run /google_workspace' in warning
-    assert [command.name for command in plugin.commands] == ['google_workspace']
+    commands = load_plugin(google_workspace.GoogleWorkspacePlugin, plugin).commands
+    assert [command.name for command in commands] == ['google_workspace']
     with pytest.raises(UserError) as error:
         run_token(loaded(plugin))
     assert str(error.value) == google_workspace.missing('GOOGLE_ACCESS_TOKEN')
 
 
-def test_settings_choose_services_and_writable_tools() -> None:
+async def test_settings_choose_services_and_writable_tools() -> None:
     plugin = host({'services': ['gmail'], 'read_only': False})
-    activate_quietly(plugin)
+    await activate_quietly(plugin)
     capability = loaded(plugin)
     assert capability.services == ('gmail',)
     assert capability.read_only is False
@@ -154,12 +139,12 @@ def test_settings_choose_services_and_writable_tools() -> None:
 )
 def test_settings_reject_bad_values_and_credentials(settings: dict[str, JsonValue]) -> None:
     with pytest.raises(ValidationError):
-        google_workspace.activate(host(settings))
+        google_workspace.GoogleWorkspacePlugin.from_host(host(settings))
 
 
 async def test_menu_saves_an_entered_token_under_the_conventional_label(monkeypatch: pytest.MonkeyPatch) -> None:
     plugin = host()
-    activate_quietly(plugin)
+    await activate_quietly(plugin)
     prompt = Prompt(values=['entered-token'])
     monkeypatch.setattr(google_workspace, 'PromptSession', lambda: prompt)
     result = await configure(plugin, pick('token'))
@@ -173,10 +158,9 @@ async def test_menu_saves_an_entered_token_under_the_conventional_label(monkeypa
 
 
 async def test_menu_repicks_a_shared_saved_key_and_resets_to_the_label(monkeypatch: pytest.MonkeyPatch) -> None:
-    deletable_keyring(monkeypatch)
     api_keys.save_key(name='WORK_GOOGLE', value='shared-token')
     plugin = host()
-    activate_quietly(plugin)
+    await activate_quietly(plugin)
     pressed = iter(['enter'])
     monkeypatch.setattr(api_keys, 'menu_key', lambda: next(pressed))
     monkeypatch.setattr(google_workspace, 'PromptSession', lambda: Prompt(values=[]))
@@ -200,7 +184,7 @@ async def test_key_cancel_and_empty_entry_leave_no_key(
     monkeypatch: pytest.MonkeyPatch, value: str | BaseException
 ) -> None:
     plugin = host()
-    activate_quietly(plugin)
+    await activate_quietly(plugin)
     monkeypatch.setattr(google_workspace, 'PromptSession', lambda: Prompt(values=[value]))
     if isinstance(value, str):
         with pytest.raises(ValueError, match='required'):
@@ -210,7 +194,9 @@ async def test_key_cancel_and_empty_entry_leave_no_key(
     assert api_keys.load_keys() == {}
     assert load_codex_credentials(account='google-workspace') is None
     with pytest.raises(ValueError, match='Usage'):
-        await plugin.commands.execute_async('/google_workspace secret')
+        await load_plugin(google_workspace.GoogleWorkspacePlugin, plugin).commands.execute_async(
+            '/google_workspace secret'
+        )
 
 
 async def test_menu_edits_options_and_saves_each_one_immediately(tmp_path: Path) -> None:
@@ -218,8 +204,8 @@ async def test_menu_edits_options_and_saves_each_one_immediately(tmp_path: Path)
     plugins = loader(store)
     await plugins.enable('google_workspace')
     [entry] = [entry for entry in plugins.entries() if entry.name == 'google_workspace']
-    assert entry.host is not None
-    plugin = entry.host
+    assert entry.loaded is not None
+    plugin = entry.loaded.host
 
     result = await configure(
         plugin,
@@ -267,7 +253,7 @@ async def test_menu_edits_options_and_saves_each_one_immediately(tmp_path: Path)
 
 async def test_the_last_product_cannot_be_removed() -> None:
     plugin = host({'services': ['gmail']})
-    activate_quietly(plugin)
+    await activate_quietly(plugin)
     result = await configure(plugin, pick('services'), choices=[pick('gmail'), pick('not-a-product')])
     assert result == 'Google Workspace needs at least one product.'
     assert plugin.settings(GoogleWorkspaceSettings).services == ['gmail']
@@ -284,10 +270,10 @@ def test_a_key_deleted_before_saving_the_choice_points_to_google_workspace() -> 
     assert load_codex_credentials(account='google-workspace') is None
 
 
-def test_an_invalid_saved_choice_fails_closed() -> None:
+async def test_an_invalid_saved_choice_fails_closed() -> None:
     save_codex_credentials(account='google-workspace', value='{"token": ["inline-secret"]}')
     plugin = host()
-    assert 'Run /google_workspace again' in activate_quietly(plugin)
+    assert 'Run /google_workspace again' in await activate_quietly(plugin)
     with pytest.raises(UserError) as error:
         run_token(loaded(plugin))
     assert 'inline-secret' not in str(error.value)

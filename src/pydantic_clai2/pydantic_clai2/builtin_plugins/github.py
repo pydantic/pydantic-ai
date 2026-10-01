@@ -9,20 +9,22 @@ import asyncio
 import concurrent.futures
 import re
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Generic, Literal
 from urllib.parse import urlsplit
 
+import anyio
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, field_validator
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu, MenuResult
 
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
 from pydantic_clai2.config.api_keys import KeyExistsError, KeyReference, SavedKey, load_keys, prompt_api_key, save_key
 from pydantic_clai2.gh_cli import GhLogin, GhToken, gh_host, gh_token, start_login
-from pydantic_clai2.plugins import DepsT, PluginHost, SessionStart
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost, SessionStart
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, FieldMenu, FieldRow, Runners, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import menu_key, run_worker, worker_stopping
 from pydantic_clai2.ui.rendering import theme
@@ -75,35 +77,35 @@ class GitHubSettings(BaseModel):
         return groups
 
 
-def activate(host: PluginHost[DepsT]) -> None:
-    """Add `GitHub` with a token resolved from `gh` or `/keys` on every run, and offer the settings menu."""
-    settings = host.settings(GitHubSettings)
-    auth = (
-        GhToken(hostname=gh_host(settings.url), setup=SETUP)
-        if settings.login == 'gh'
-        else SavedKey(name=settings.token.name, setup=SETUP)
-    )
-    host.add(
-        GitHub[DepsT](
-            auth=auth,
-            url=settings.url,
-            read_only=settings.read_only,
-            toolsets=settings.toolsets,
-            include_instructions=settings.include_instructions,
+class GitHubPlugin(Plugin[GitHubSettings, DepsT]):
+    """`GitHub` with a token resolved from `gh` or `/keys` on every run, and a settings menu."""
+
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        settings = self.settings
+        auth = (
+            GhToken(hostname=gh_host(settings.url), setup=SETUP)
+            if settings.login == 'gh'
+            else SavedKey(name=settings.token.name, setup=SETUP)
         )
-    )
+        return (
+            GitHub[DepsT](
+                auth=auth,
+                url=settings.url,
+                read_only=settings.read_only,
+                toolsets=settings.toolsets,
+                include_instructions=settings.include_instructions,
+            ),
+        )
 
-    @host.configure
-    async def configure() -> str:
-        return await _configure(GitHubSource(host))
+    async def configure(self) -> str:
+        return await _configure(GitHubSource(self.host))
 
-    @host.on('session_start')
-    async def warn_without_token(event: SessionStart) -> None:
+    async def on_session_start(self, event: SessionStart) -> None:
         # Loading anyway keeps the settings menu available; each run fails closed until there is a token.
         # A worker thread, because `gh` and the `/keys` lock can take a while.
-        problem = await asyncio.to_thread(_token_problem, settings)
+        problem = await anyio.to_thread.run_sync(_token_problem, self.settings, abandon_on_cancel=True)
         if problem is not None:
-            host.console.print(
+            self.host.console.print(
                 f'GitHub has no token: {problem} {SETUP}', style=theme.color(theme.WARNING), markup=False
             )
 

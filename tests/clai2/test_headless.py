@@ -65,16 +65,16 @@ async def test_failure_is_nonzero_and_silent_stdout(
 ) -> None:
     plugin = tmp_path / 'guard.py'
     plugin.write_text(
-        'def activate(host):\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Guard(Plugin):\n'
         + (
-            '    raise RuntimeError("load failed")\n'
+            '    def __init__(self, host, settings):\n        raise RuntimeError("load failed")\n'
             if mode == 'load'
-            else '    @host.on("turn_start")\n'
-            '    async def guard(event):\n'
+            else '    async def on_turn_start(self, event):\n'
             + {
                 'cancel': '        event.cancel("declined")\n',
                 'raise': '        raise RuntimeError("guard failed")\n',
-                'screen': '        async with host.full_screen():\n            pass\n',
+                'screen': '        async with self.host.full_screen():\n            pass\n',
                 'model': '        pass\n',
             }[mode]
         )
@@ -160,12 +160,11 @@ async def test_cancel_saves_history_and_closes_plugins(
     plugin = tmp_path / 'lifecycle.py'
     plugin.write_text(
         'from pathlib import Path\n'
-        'def activate(host):\n'
-        '    @host.on("turn_end")\n'
-        '    async def ended(event):\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Lifecycle(Plugin):\n'
+        '    async def on_turn_end(self, event):\n'
         f'        Path({str(log)!r}).write_text(event.outcome)\n'
-        '    @host.on("session_end")\n'
-        '    async def closed(event):\n'
+        '    async def on_session_end(self, event):\n'
         f'        p = Path({str(log)!r})\n'
         '        p.write_text(p.read_text() + ":" + event.reason)\n'
     )

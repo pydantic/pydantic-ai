@@ -68,8 +68,66 @@ An `Answerer` is one async callable: it takes an `AskUserRequest` and returns an
   and raises `ValueError`, which fails the run. `check_response` is exported so an answerer can
   validate before returning.
 
-The run waits inside the tool call for the answerer to return, so a web front end that
-collects the answer on another request should hold the run open until it arrives.
+## Bounding the wait
+
+The run waits inside the tool call for the answerer to return. Set `timeout`, in seconds, so a
+user who walked away or disconnected cannot hold the run forever. When it runs out, the answerer
+is cancelled, `AskUserAnsweredEvent` fires with `timed_out=True` and a cancelled response, and the
+model is told the user did not answer in time (the `TIMED_OUT` result) and continues.
+
+```python {test="skip"}
+AskUser(answerer=pick_first, timeout=300)
+```
+
+## Pausing the run until the user answers
+
+A web server or a durable worker often cannot hold a run open while a person decides. Pass
+`answerer=None` and every `ask_user_question` call is [deferred](../deferred-tools.md) instead:
+the run ends with `DeferredToolRequests` output, so your `output_type` must include it, and you
+answer in a later run, from the same process or another one.
+
+- `AskUserRequest.from_tool_call(call)` rebuilds the validated request from a pending call. Its
+  `id` is the call's `tool_call_id`, the same request `AskUserRequestedEvent` carried before the
+  run paused.
+- `ask_user_result(request, response)` checks the response like an answerer's (raising
+  `ValueError` if it does not fit) and renders the tool result the model would have got inline.
+  Pass it in `DeferredToolResults.calls` under the call's ID.
+- No `AskUserAnsweredEvent` fires for a deferred call: the answer comes from you, in the next run.
+
+```python
+from pydantic_ai import Agent, AgentRunResult, DeferredToolRequests, DeferredToolResults, ModelMessage
+from pydantic_ai_harness import AskUser
+from pydantic_ai_harness.ask_user import TOOL_NAME, AskUserRequest, AskUserResponse, ask_user_result
+
+agent = Agent(
+    'anthropic:claude-fable-5',
+    output_type=[str, DeferredToolRequests],
+    capabilities=[AskUser(answerer=None)],
+)
+
+
+def pending_questions(requests: DeferredToolRequests) -> dict[str, AskUserRequest]:
+    """What the paused run is waiting on, keyed by tool call ID: show these to the user."""
+    return {
+        call.tool_call_id: AskUserRequest.from_tool_call(call)
+        for call in requests.calls
+        if call.tool_name == TOOL_NAME
+    }
+
+
+async def resume(
+    messages: list[ModelMessage],
+    questions: dict[str, AskUserRequest],
+    responses: dict[str, AskUserResponse],
+) -> AgentRunResult[str | DeferredToolRequests]:
+    """Answer the paused run's questions and carry on."""
+    calls = {call_id: ask_user_result(request, responses[call_id]) for call_id, request in questions.items()}
+    return await agent.run(message_history=messages, deferred_tool_results=DeferredToolResults(calls=calls))
+```
+
+Keep the paused run's `all_messages()` and its pending questions wherever you keep sessions,
+then call `resume` when the answers arrive. `timeout` needs an answerer to bound, so combining it
+with `answerer=None` raises `UserError`.
 
 ## Watching without answering
 
@@ -77,8 +135,8 @@ Two `CapabilityEvent`s let anything else in the run observe the exchange:
 
 | Event | When | Fields |
 | --- | --- | --- |
-| `AskUserRequestedEvent` | before the answerer is called | `request` |
-| `AskUserAnsweredEvent` | after it returns, before the response is checked or the model sees the result | `request_id`, `response` |
+| `AskUserRequestedEvent` | before the answerer is called, or before a deferred call pauses the run | `request` |
+| `AskUserAnsweredEvent` | after it returns or times out, before the response is checked or the model sees the result | `request_id`, `response`, `timed_out` |
 
 Both dispatch immediately, so a listener that shows a "waiting for you" state sees the wait
 start and end in step with the run. Subscribe with `@on_event` on a capability or through the
@@ -115,6 +173,7 @@ validated the questions are frozen: what the answerer sees is what the model ask
 
 The result is a JSON object mapping each header to the list of picked labels (or one custom answer), or the sentence
 `The user declined to answer. Continue without the answer, or ask differently if it is essential.`
+When `timeout` runs out, it is the `TIMED_OUT` sentence instead.
 
 The capability adds one instruction: ask when the task is ambiguous and the answer is not in
 the workspace, offer concrete options, batch related questions, and make a stated choice if
@@ -137,8 +196,8 @@ to name.
 
 ## API reference
 
-`check_response`, `TOOL_NAME`, `DECLINED`, and `MAX_QUESTIONS` are also exported from
-`pydantic_ai_harness.ask_user`.
+`check_response`, `ask_user_result`, `TOOL_NAME`, `DECLINED`, `TIMED_OUT`, and `MAX_QUESTIONS` are also
+exported from `pydantic_ai_harness.ask_user`.
 
 ::: pydantic_ai_harness.ask_user.AskUser
 
