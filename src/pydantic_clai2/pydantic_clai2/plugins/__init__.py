@@ -471,12 +471,16 @@ class LoadedPlugin(Generic[DepsT]):
         await getattr(self.plugin, _HANDLERS[type(event)])(event)
 
     def summary(self) -> str:
-        """One line for the `/plugins` menu."""
-        return (
-            f'{len(list(self.commands))} commands, {self.plugin.hook_count} hooks, '
-            f'{len(self.capabilities)} capabilities, {int(self.plugin.has_render)} renderers, '
-            f'{len(self.status_segments)} status segments'
+        """One line for the `/plugins` menu, naming only what the plugin contributes."""
+        counts = (
+            (len(list(self.commands)), 'command', 'commands'),
+            (self.plugin.hook_count, 'hook', 'hooks'),
+            (len(self.capabilities), 'capability', 'capabilities'),
+            (int(self.plugin.has_render), 'renderer', 'renderers'),
+            (len(self.status_segments), 'status segment', 'status segments'),
         )
+        parts = [f'{count} {one if count == 1 else many}' for count, one, many in counts if count]
+        return ', '.join(parts) or 'nothing yet'
 
 
 def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:

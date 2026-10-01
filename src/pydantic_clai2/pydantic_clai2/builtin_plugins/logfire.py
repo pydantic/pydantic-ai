@@ -1,4 +1,6 @@
-"""The default-enabled `observability` plugin: Logfire instrumentation owned by the plugin, not the process.
+"""Send traces of your agent runs to Logfire.
+
+The default-enabled `observability` plugin: Logfire instrumentation owned by the plugin, not the process.
 
 With `ui_events` on, the same instance also records CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
