@@ -1,129 +1,354 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '582'
+      - "540"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: 'Review `def add(a, b): return a + b`.'
-          type: text
-        role: user
-      - content:
-        - text: Looks fine.
-          type: text
-        role: assistant
-      - content:
-        - text: Review it again.
-          type: text
-        role: user
-      - content:
-        - text: Review it once more.
-          type: text
-        role: user
-      - content:
-        - text: From now on, every suggestion must include explicit type annotations.
-          type: text
-        role: system
-      model: claude-opus-4-8
-      stream: false
-      system: You are a code reviewer.
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: "Review `def add(a, b): return a + b`."
+            type: text
+        - role: assistant
+          content:
+          - text: Looks fine.
+            type: text
+        - role: user
+          content:
+          - text: Review it again.
+            type: text
+        - role: user
+          content:
+          - text: Review it once more.
+            type: text
+        - role: system
+          content:
+          - text: From now on, every suggestion must include explicit type annotations.
+            type: text
+        model: claude-opus-4-8
+        stream: true
+        system: You are a code reviewer.
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '1957'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-c77be7109dcafc5566b559e7d4aea491-a0ca9334ed1224d3-01
+      - 00-d1e48a683d7aa21ccf561dffb3c812f6-2118b713e6fe5ce8-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      content:
-      - text: |-
-          Sure. Here's my review with explicit type annotations as requested:
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-4-8","id":"msg_011CfY3oeZDWzjHVjZY1yKQQ","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":75,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":2,"service_tier":"standard","inference_geo":"global"},"diagnostics":null} }
 
-          ```python
-          def add(a: int, b: int) -> int:
-              return a + b
-          ```
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
 
-          A few notes on this suggestion:
+        event: ping
+        data: {"type": "ping"}
 
-          - I've annotated `a` and `b` as `int` and the return as `int`, which covers the common case. But be aware this is a *narrowing* assumption--your original `def add(a, b)` would happily add floats, strings, lists, etc.
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Here"}         }
 
-          - If you want to preserve that generality while still being explicit, a couple of options:
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s my"}               }
 
-          ```python
-          from typing import TypeVar
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" review of `def"}  }
 
-          T = TypeVar("T")
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" add(a, b): return a"}             }
 
-          def add(a: T, b: T) -> T:
-              return a + b
-          ```
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" + b`:\n\nPer the"}           }
 
-          This says "both arguments are the same type, and the result is that type." It's honest about the fact that `add` works on more than just ints, though it doesn't actually constrain `T` to types that support `+`.
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" type"}          }
 
-          - For a stricter version that requires the `+` operator, you'd need a Protocol:
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" ann"}    }
 
-          ```python
-          from typing import Protocol, TypeVar
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"otation requirement, my"}         }
 
-          class Addable(Protocol):
-              def __add__(self: "T", other: "T") -> "T": ...
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" suggestion:\n\n```python"}           }
 
-          T = TypeVar("T", bound="Addable")
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\ndef add(a: int,"}         }
 
-          def add(a: T, b: T) -> T:
-              return a + b
-          ```
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" b: int) -> int:"}         }
 
-          This is more precise but arguably overkill for a one-line helper.
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n    return a + b\n```"}  }
 
-          My recommendation: use the plain `int` version if this is genuinely numeric code, or the `TypeVar` version if it's meant to be generic. The Protocol approach is correct but usually more machinery than a trivial function warrants.
-        type: text
-      id: msg_011CdX6gsscnLah1aeFg2R5o
-      model: claude-opus-4-8
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 75
-        output_tokens: 492
-        output_tokens_details:
-          thinking_tokens: 0
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nA few notes:\n\n1"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". **Type ann"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"otations added"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** — `"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"a: int`, `b:"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" int`, and return type `-"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"> int`,"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" as"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" required"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\n\n2. **"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Caveat on the types I"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" chose:** I"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" annotated with"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" `int`"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", but your"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" original function act"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ually works for any type"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" supporting `+`"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" (flo"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ats, strings, l"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ists, etc.). If you"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" int"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ended broader use"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", a"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" more acc"}          }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"urate annotation would be:"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n```python\nfrom typing import"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" TypeVar\n\nT ="}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" TypeVar(\"T\")"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\ndef add(a: T,"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" b: T) -> T:"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n    return a + b\n```"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\nThough strictly, even"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" `TypeVar` do"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"esn't const"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"rain to"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" \""} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"sup"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ports `+`\"."}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" For that"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" you'd want a `Prot"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ocol`"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":":\n\n```python\nfrom typing"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" import Protocol,"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" TypeVar\n\nclass"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" S"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"upportsAdd("}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Protocol):\n    def __"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"add__(self, other: object"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":", /) -> object: "}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"...\n\nT = TypeV"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ar(\"T\", bound=S"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"upportsAdd)"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\ndef add(a: T, b"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":": T) -> T:"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n    return a + b\n```"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n\n3. **Rec"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ommendation:** P"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ick the annotation mat"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ching your actual intent. If"} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" it's a"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" numeric hel"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"per, go"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with the sim"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ple `int` ("}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"or `float`) version."}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Don't over"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"-engineer with"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" `"}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Protocol` unless you"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" genuinely need the"}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" generality"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\n\nThe logic it"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"self rem"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ains correct and need"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"s no change"}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"."}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0             }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":75,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":470,"output_tokens_details":{"thinking_tokens":0}}              }
+
+        event: message_stop
+        data: {"type":"message_stop"           }
+
+  recorded_at: 2026-09-29T16:30:43.351461+00:00

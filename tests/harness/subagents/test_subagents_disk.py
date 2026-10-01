@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -219,13 +221,215 @@ class TestDiskLoading:
         with pytest.raises(UserError, match='`SubAgents` needs a workspace'):
             await _listing(cap, None)
 
-    async def test_undecodable_file_is_skipped_with_warning(self, tmp_path: Path) -> None:
-        # A non-UTF-8 `.md` file must not abort loading: every valid definition in the folder still loads.
-        (tmp_path / 'broken.md').write_bytes(b'---\nname: broken\n---\n\xff\xfe not utf-8')
+    @pytest.mark.parametrize('suffix', ['.md', '.toml'])
+    async def test_undecodable_file_is_skipped_with_warning(self, tmp_path: Path, suffix: str) -> None:
+        # A non-UTF-8 definition must not abort loading: every valid definition in the folder still loads.
+        (tmp_path / f'broken{suffix}').write_bytes(b'---\nname: broken\n---\n\xff\xfe not utf-8')
         _write_agent(tmp_path, 'valid.md', '---\nname: valid\n---\nWork.')
         with pytest.warns(UserWarning, match='Skipping unreadable disk sub-agent file'):
             listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
         assert listing is not None and '- valid' in listing and 'broken' not in listing
+
+
+async def test_toml_on_python310_warns_and_keeps_markdown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write_agent(tmp_path, 'worker.toml', 'name = "worker"')
+    _write_agent(tmp_path, 'valid.md', 'Work.')
+    monkeypatch.setattr('pydantic_ai_harness.subagents._disk.sys', SimpleNamespace(version_info=(3, 10)))
+    with pytest.warns(UserWarning, match=r'TOML disk agents require Python 3.11\+'):
+        listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
+    assert listing is not None and '- valid' in listing and 'worker' not in listing
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason='stdlib tomllib requires Python 3.11+')
+class TestCodexDiskLoading:
+    async def test_standalone_toml_instructions_and_tools(self, tmp_path: Path) -> None:
+        _write_agent(
+            tmp_path / '.codex' / 'workers',
+            'different-stem.toml',
+            'name = " researcher "\ndescription = " Researches topics "\n'
+            'developer_instructions = """\nResearch carefully.\nReport sources.\n"""\n'
+            'allowed-tools = [" search ", "Read"]\n',
+        )
+        toolset: FunctionToolset[object] = FunctionToolset()
+        resolved: list[str] = []
+
+        def resolver(name: str) -> Sequence[AgentToolset[object]]:
+            resolved.append(name)
+            return [toolset]
+
+        cap: SubAgents[object] = SubAgents(agent_folders='workers', tool_resolver=resolver)
+        seen: list[tuple[str | None, list[str]]] = []
+        parent: Agent[object, str] = Agent(_recording_model(seen, delegate_to='researcher'), capabilities=[cap])
+        await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+        assert seen[0][0] is not None and '- researcher: Researches topics' in seen[0][0]
+        assert seen[1][0] == 'Research carefully.\nReport sources.'
+        assert resolved == ['search', 'Read']
+        assert toolset in _built(cap)['researcher'].toolsets
+        assert _built(cap)['researcher'].model is None
+
+    @pytest.mark.parametrize(
+        'tools', ['', 'tools = []', 'tools = ["Read"]', 'tools = " Read , Grep "', 'allowed-tools = "Read"']
+    )
+    async def test_optional_tools(self, tmp_path: Path, tools: str) -> None:
+        _write_agent(
+            tmp_path,
+            'worker.toml',
+            'name = "worker"\ndescription = "Works"\ndeveloper_instructions = "Work."\n' + tools,
+        )
+        resolved: list[str] = []
+
+        def resolver(name: str) -> Sequence[AgentToolset[object]]:
+            resolved.append(name)
+            return []
+
+        listing = await _listing(
+            SubAgents(agent_folders=['.'], tool_resolver=resolver), LocalWorkspaceBackend(tmp_path)
+        )
+        assert listing is not None and '- worker: Works' in listing
+        assert resolved == ([] if tools in ('', 'tools = []') else ['Read', 'Grep'] if 'Grep' in tools else ['Read'])
+
+    @pytest.mark.parametrize('field', ['name', 'description', 'developer_instructions'])
+    @pytest.mark.parametrize('value', [None, '""', '"  "', '42', 'true', '[]', '{}'])
+    async def test_invalid_required_fields_skip_only_one_file(
+        self, tmp_path: Path, field: str, value: str | None
+    ) -> None:
+        fields = {'name': '"broken"', 'description': '"Works"', 'developer_instructions': '"Work."'}
+        if value is None:
+            del fields[field]
+        else:
+            fields[field] = value
+        text = '\n'.join(f'{key} = {item}' for key, item in fields.items())
+        _write_agent(tmp_path, 'broken.toml', text)
+        _write_agent(tmp_path, 'valid.md', 'Valid.')
+        with pytest.warns(UserWarning, match=f'`{field}` must be a nonempty string') as record:
+            listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1 and 'broken.toml' in str(record[0].message)
+        assert listing is not None and '- valid' in listing and 'broken' not in listing
+
+    @pytest.mark.parametrize(
+        'tools',
+        [
+            'tools = 42',
+            'allowed-tools = true',
+            'tools = {}',
+            'tools = ["Read", 1]',
+            'tools = [" "]',
+            'tools = ""',
+            'tools = "Read,,Grep"',
+            'tools = ["Read"]\nallowed-tools = ["Grep"]',
+        ],
+    )
+    async def test_invalid_tools_skip_file(self, tmp_path: Path, tools: str) -> None:
+        _write_agent(
+            tmp_path,
+            'broken.toml',
+            'name = "broken"\ndescription = "Works"\ndeveloper_instructions = "Work."\n' + tools,
+        )
+        with pytest.warns(UserWarning, match='Skipping invalid disk sub-agent file'):
+            assert await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path)) is None
+
+    @pytest.mark.parametrize(
+        'text', ['name =', 'name = "first"\nname = "second"', '[agents.worker]\nconfig_file = "worker.toml"']
+    )
+    async def test_malformed_and_legacy_toml_skip_only_one_file(self, tmp_path: Path, text: str) -> None:
+        _write_agent(tmp_path, 'broken.toml', text)
+        _write_agent(tmp_path, 'valid.toml', 'name = "valid"\ndescription = "Works"\ndeveloper_instructions = "Work."')
+        with pytest.warns(UserWarning, match='Skipping invalid disk sub-agent file') as record:
+            listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1 and 'broken.toml' in str(record[0].message)
+        assert listing is not None and '- valid' in listing and 'broken' not in listing
+
+    @pytest.mark.parametrize(
+        'setting',
+        [
+            'sandbox_mode = "read-only"',
+            'approval_policy = "never"',
+            'permissions = "restricted"',
+            'unknown_future_security_setting = true',
+            '[sandbox_workspace_write]\nnetwork_access = false',
+            '[mcp_servers.example]\ncommand = "never-execute-this"',
+        ],
+    )
+    async def test_unsupported_settings_fail_closed(self, tmp_path: Path, setting: str) -> None:
+        _write_agent(
+            tmp_path,
+            'broken.toml',
+            'name = "broken"\ndescription = "Works"\ndeveloper_instructions = "Work."\n' + setting,
+        )
+        with pytest.warns(UserWarning, match='unsupported TOML settings'):
+            assert await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path)) is None
+
+    async def test_nonsecurity_settings_warn_and_do_not_change_model_or_effort(self, tmp_path: Path) -> None:
+        _write_agent(
+            tmp_path,
+            'worker.toml',
+            'name = "worker"\ndescription = "Works"\ndeveloper_instructions = "Work."\n'
+            'model = "not-a-model"\neffort = "high"\nmodel_reasoning_effort = "high"\ncolor = "blue"',
+        )
+        cap: SubAgents[object] = SubAgents(agent_folders=['.'])
+        with pytest.warns(UserWarning, match='Ignoring TOML disk sub-agent settings') as record:
+            listing = await _listing(cap, LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1 and 'agent_overrides' in str(record[0].message)
+        assert listing is not None and '- worker' in listing
+        assert _built(cap)['worker'].model is None
+        assert _built(cap)['worker'].model_settings == {'thinking': MINIMUM_EFFORT_FLOOR}
+
+    @pytest.mark.parametrize('toml_first', [False, True])
+    async def test_mixed_formats_are_sorted_and_first_definition_wins(self, tmp_path: Path, toml_first: bool) -> None:
+        _write_agent(
+            tmp_path,
+            'a.toml' if toml_first else 'b.toml',
+            'name = "worker"\ndescription = "toml"\ndeveloper_instructions = "Work."',
+        )
+        _write_agent(tmp_path, 'b.md' if toml_first else 'a.md', '---\nname: worker\ndescription: markdown\n---\nWork.')
+        (tmp_path / 'directory.toml').mkdir()
+        with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
+            listing = await _listing(SubAgents(agent_folders=['.']), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1
+        assert listing is not None
+        assert f'- worker: {"toml" if toml_first else "markdown"}' in listing
+        assert f': {"markdown" if toml_first else "toml"}' not in listing
+
+    async def test_conventional_precedence(self, tmp_path: Path) -> None:
+        for root in ('.agents', '.claude', '.codex'):
+            _write_agent(
+                tmp_path / root / 'agents',
+                'worker.toml',
+                f'name = "worker"\ndescription = "{root}"\ndeveloper_instructions = "Work."',
+            )
+        with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
+            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 2
+        assert listing is not None and '- worker: .agents' in listing
+        assert '.claude' not in listing and '.codex' not in listing
+        with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed"):
+            listing = await _listing(
+                SubAgents(agent_folders=['.claude/agents', '.codex/agents']), LocalWorkspaceBackend(tmp_path)
+            )
+        assert listing is not None and '- worker: .claude' in listing and '.codex' not in listing
+
+    async def test_codex_symlink_is_deduplicated(self, tmp_path: Path) -> None:
+        _write_agent(
+            tmp_path / '.agents' / 'agents',
+            'worker.toml',
+            'name = "worker"\ndescription = "Works"\ndeveloper_instructions = "Work."',
+        )
+        (tmp_path / '.codex').symlink_to(tmp_path / '.agents', target_is_directory=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        assert listing is not None and '- worker' in listing
+
+    async def test_codex_discovery_stays_off_by_default(self, tmp_path: Path) -> None:
+        _write_agent(
+            tmp_path / '.codex' / 'agents',
+            'worker.toml',
+            'name = "worker"\ndescription = "Works"\ndeveloper_instructions = "Work."',
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            assert await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path)) is None
+            assert await _listing(SubAgents(agent_folders=None), LocalWorkspaceBackend(tmp_path)) is None
 
 
 class TestOverrides:
@@ -355,21 +559,50 @@ class TestWorkspaceDiscovery:
         # later step sees the same listing and tool as its first.
         assert seen[2] == seen[0]
 
-    async def test_claude_fallback_and_stem_name(self, tmp_path: Path) -> None:
+    async def test_claude_folder_and_stem_name(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan things.')
         seen: list[tuple[str | None, list[str]]] = []
         parent: Agent[object, str] = Agent(_recording_model(seen), capabilities=[SubAgents(agent_folders='agents')])
         await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
         assert seen[0][0] is not None and '- planner' in seen[0][0]
 
-    async def test_agents_root_without_the_leaf_folder(self, tmp_path: Path) -> None:
-        # `.agents/` exists, so `.claude/` is not consulted even though only it has the leaf.
+    async def test_claude_folder_loads_when_agents_root_exists(self, tmp_path: Path) -> None:
+        # A workspace that uses `.agents/` for something else still loads agents from `.claude/`.
         (tmp_path / '.agents').mkdir()
         _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan.')
         seen: list[tuple[str | None, list[str]]] = []
         parent: Agent[object, str] = Agent(_recording_model(seen), capabilities=[SubAgents(agent_folders='agents')])
         await parent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
-        assert seen[0] == (None, [])
+        assert seen[0][0] is not None and '- planner' in seen[0][0]
+
+    async def test_agents_folder_shadows_claude_folder(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / '.agents' / 'agents', 'worker.md', '---\nname: worker\ndescription: agents\n---\nWork.')
+        _write_agent(tmp_path / '.claude' / 'agents', 'worker.md', '---\nname: worker\ndescription: claude\n---\nWork.')
+        _write_agent(tmp_path / '.claude' / 'agents', 'planner.md', 'Plan.')
+        with pytest.warns(UserWarning, match="Disk sub-agent 'worker' is shadowed") as record:
+            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        assert len(record) == 1
+        assert listing is not None
+        assert '- worker: agents' in listing and 'claude' not in listing
+        assert '- planner' in listing
+
+    async def test_claude_symlinked_to_agents_loads_once_without_warning(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
+        (tmp_path / '.claude').symlink_to(tmp_path / '.agents', target_is_directory=True)
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(tmp_path))
+        assert listing is not None and '- planner' in listing
+
+    async def test_explicit_folder_resolves_parent_segments_before_symlinks(self, tmp_path: Path) -> None:
+        _write_agent(tmp_path / 'agents', 'expected.md', 'Expected.')
+        (tmp_path / 'target' / 'child').mkdir(parents=True)
+        _write_agent(tmp_path / 'target' / 'agents', 'wrong.md', 'Wrong.')
+        (tmp_path / 'link').symlink_to(tmp_path / 'target' / 'child', target_is_directory=True)
+
+        listing = await _listing(SubAgents(agent_folders=['link/../agents']), LocalWorkspaceBackend(tmp_path))
+
+        assert listing is not None and '- expected' in listing and 'wrong' not in listing
 
     async def test_no_workspace_skips_convention_discovery(self) -> None:
         # Neither the home root nor the host's cwd stands in for a missing workspace, but a folder
@@ -403,7 +636,7 @@ class TestWorkspaceDiscovery:
         listing = await _listing(SubAgents(agent_folders='agents'), LocalWorkspaceBackend(Path.home()))
         assert listing is not None and '- planner' in listing
 
-    async def test_no_workspace_warns_about_the_claude_fallback(self) -> None:
+    async def test_no_workspace_warns_about_the_claude_folder(self) -> None:
         _write_agent(Path.cwd() / '.claude' / 'agents', 'planner.md', 'Plan.')
         with pytest.warns(HarnessDeprecationWarning, match=r'\.claude') as record:
             assert await _listing(SubAgents(agent_folders='agents'), None) is None

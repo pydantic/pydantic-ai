@@ -122,4 +122,3 @@ Run this final metadata check after CI, comments, and any selected `douwebot` re
 5. Apply every correction. Code changes restart the post-push loop; metadata-only changes do not.
 6. After a replacement, repeat the check with another fresh subagent.
 7. Hand the PR back only after the check reports `current`.
-8. Report the human-only AI-code checkbox separately.
