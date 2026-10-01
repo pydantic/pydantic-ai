@@ -208,7 +208,7 @@ _REALTIME_MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]
 """Live model name prefixes mapped to the thinking levels they accept."""
 
 
-_GOOGLE_PUBLISHER_MODEL_RESOURCE_NAME = re.compile(
+_GOOGLE_PUBLISHER_MODEL_RESOURCE_NAME_RE = re.compile(
     r'(?:(?:projects/[^/]+/locations/[^/]+/)?publishers/[^/]+/models/|(?!tunedModels/)[^/]+/)([^/]+)'
 )
 
@@ -221,7 +221,7 @@ def _bare_model_name(model_name: str) -> str:  # pyright: ignore[reportUnusedFun
     opaque id rather than a model name, so they are returned unchanged. A short Vertex Model Registry id
     (`models/N`) reduces to `N`, which names no publisher model.
     """
-    match = _GOOGLE_PUBLISHER_MODEL_RESOURCE_NAME.fullmatch(model_name)
+    match = _GOOGLE_PUBLISHER_MODEL_RESOURCE_NAME_RE.fullmatch(model_name)
     return match.group(1) if match else model_name
 
 

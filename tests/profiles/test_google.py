@@ -197,7 +197,7 @@ def test_model_profile_gemini_2():
 def test_model_profile_gemini_3():
     """Gemini 3.x models support tool combination AND server-side tool invocations.
 
-    The two flags happen to flip on together for Gemini 3+ but are separately named so future
+    The two flags flip on together for Gemini 3+ text models but are separately named so future
     models that gain one capability without the other don't force a model-name proxy flag.
     """
     profile = google_model_profile('gemini-3.0-pro')

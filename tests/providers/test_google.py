@@ -370,8 +370,9 @@ def test_google_cloud_model_string_uses_adc_from_env(env: TestEnv):
 def test_google_provider_model_profile_matches_resource_name_by_model_id(model_name: str):
     """A resource name gets the profile of the model id it names.
 
-    A unit test because recording the Vertex forms needs Google Cloud credentials; the `models/` form is
-    pinned on the wire in `tests/test_thinking_wire_contract.py`.
+    A unit test because the profile is resolved from the name before any request is built, and the
+    `image-gen-prod` case names a project no cassette can be recorded under; the `models/` form is pinned on
+    the wire in `tests/test_thinking_wire_contract.py`.
     """
     profile = BaseGoogleProvider.model_profile(model_name)
     assert profile == google_model_profile('gemini-3.7-flash')
