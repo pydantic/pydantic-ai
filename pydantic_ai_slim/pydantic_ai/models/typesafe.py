@@ -12,6 +12,10 @@ from .._http import to_httpx2_timeout
 from .._warnings import PydanticAIDeprecationWarning
 from ..exceptions import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, UserError
 from ..profiles import ModelProfileSpec
+from ..profiles.typesafe import (
+    _JEV_MAX_CHOICE_OPTIONS,  # pyright: ignore[reportPrivateUsage]
+    _JEV_MAX_SCORE_LEVELS,  # pyright: ignore[reportPrivateUsage]
+)
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings
 from ..usage import RequestUsage
@@ -126,13 +130,10 @@ class TypeSafeModel(DecisionModel[AsyncTypeSafeClient]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    # Jev picks from at most this many options in one question; a 256th is a 400 from the API.
-    # https://docs.typesafe.ai/model-jaggedness/jev-1.13
-    max_choice_options: ClassVar[int | None] = 255
-
-    # Jev scores against at most this many rubric levels; an 11th is a 400 from the API.
-    # https://docs.typesafe.ai/primitives/score
-    max_score_levels: ClassVar[int | None] = 10
+    # Jev's caps come with its profile, whichever class reaches it; these keep them for a provider whose profile
+    # leaves them out.
+    max_choice_options: ClassVar[int | None] = _JEV_MAX_CHOICE_OPTIONS
+    max_score_levels: ClassVar[int | None] = _JEV_MAX_SCORE_LEVELS
 
     _model_name: TypeSafeModelName = field(repr=False)
     _provider: Provider[AsyncTypeSafeClient] = field(repr=False)

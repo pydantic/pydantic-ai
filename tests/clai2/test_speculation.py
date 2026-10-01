@@ -21,16 +21,17 @@ from rich.text import Text
 
 from pydantic_ai import PartStartEvent
 from pydantic_ai.messages import AgentStreamEvent, FunctionToolCallEvent, TextPart, ToolCallPart
-from pydantic_clai2 import StreamRenderer, theme
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2 import StreamRenderer
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import Settings, resolve_settings
-from pydantic_clai2.image_input import ImageInput
-from pydantic_clai2.interrupts import Interrupts
-from pydantic_clai2.live_prompt import LivePrompt
-from pydantic_clai2.sandbox_calls import SandboxCallOrder, SandboxCallStartedEvent
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.speculation import Speculation, SpeculationCounters
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.sandbox_calls import SandboxCallOrder, SandboxCallStartedEvent
+from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
+from pydantic_clai2.ui.prompt.image_input import ImageInput
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.rendering import theme
 
 
 def plain(row: str) -> str:
@@ -76,7 +77,7 @@ class TestSwitch:
         output = io.StringIO()
         switch = speculation(tmp_path, Console(file=output, width=200))
         switch.toggle()
-        monkeypatch.setitem(sys.modules, 'pydantic_clai2.speculative_mode', None)
+        monkeypatch.setitem(sys.modules, 'pydantic_clai2.runtime.speculative_mode', None)
         assert switch.capabilities([]) == []
         assert 'Speculative execution is unavailable' in output.getvalue()
 
