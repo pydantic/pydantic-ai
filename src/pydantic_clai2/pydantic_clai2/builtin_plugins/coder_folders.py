@@ -8,6 +8,7 @@ from typing import Generic, Literal
 from rich.console import Console
 from rich.text import Text
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
+from termflow.tui.layout import collapsed
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput
@@ -40,11 +41,18 @@ def _preview(text: str) -> str:
     """Wrap paths by terminal cells rather than silently clipping their ends."""
     columns = max(10, terminal_size()[0] - 1)
     width = max(12, columns - max(20, columns // 2) - 3)
-    return '\n'.join(line.plain for line in Text(_display_lines(text)).wrap(Console(), width, overflow='fold'))
+    return '\n'.join(_wrap(text, width=width))
 
 
-def _display_lines(text: str) -> str:
-    return '\n'.join(_display(line) for line in text.split('\n'))
+def _wrap(text: str, *, width: int) -> list[str]:
+    safe = '\n'.join(_display(line) for line in text.split('\n'))
+    return [line.plain for line in Text(safe).wrap(Console(), width, overflow='fold')]
+
+
+def _notice_items(text: str) -> list[MenuItem]:
+    columns = max(10, terminal_size()[0] - 1)
+    width = columns if collapsed(columns) else max(20, columns // 2)
+    return [MenuItem(line, disabled=True) for line in _wrap(text, width=width - 3)]
 
 
 def _menu_size() -> tuple[int, int]:
@@ -91,9 +99,9 @@ class DirectoryPicker:
             *[MenuItem(_display(child.name) + '/', value=child) for child in children],
         ]
         if problem or self.error:
-            items.append(MenuItem(_display(problem or self.error), disabled=True))
+            items.extend(_notice_items(problem or self.error))
         elif not children:
-            items.append(MenuItem('No subdirectories. This directory can be used.', disabled=True))
+            items.extend(_notice_items('No subdirectories. This directory can be used.'))
 
         def matches(query: str, item: MenuItem) -> bool:
             query = query.casefold()
@@ -221,23 +229,22 @@ class FolderMenu(Generic[DepsT]):
             for index, value in enumerate(folders)
         ]
         if not folders:
-            items.append(MenuItem('No folders selected. Disk agents are off.', disabled=True))
+            items.extend(_notice_items('No folders selected. Disk agents are off.'))
         if not self.source.host.settings(CoderSettings).sub_agents:
-            items.append(MenuItem('Sub-agents are disabled in Coder settings.', disabled=True))
+            items.extend(_notice_items('Sub-agents are disabled in Coder settings.'))
         items += [
             MenuItem('+ Add directory path...', value=FolderAction(kind='path')),
             MenuItem('+ Browse local directories...', value=FolderAction(kind='browse')),
             MenuItem('+ Add folder name...', value=FolderAction(kind='name')),
             save_and_close_item(),
         ]
-        if self.notice:
-            items.insert(0, MenuItem(_display(self.notice), disabled=True))
+        notices = _notice_items(self.notice) if self.notice else []
         return (
             MenuBuilder('Agent folders')
             .size(_menu_size)
             .style(markdown_style())
-            .items(items)
-            .initial_index(min(initial + bool(self.notice), len(items) - 1))
+            .items([*notices, *items])
+            .initial_index(min(initial, len(items) - 1) + len(notices))
             .preview(self.details)
             .on_key('a', lambda _menu, _item: MenuResult(item=MenuItem('', value=FolderAction(kind='path'))))
             .on_key('b', lambda _menu, _item: MenuResult(item=MenuItem('', value=FolderAction(kind='browse'))))

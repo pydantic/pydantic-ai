@@ -61,6 +61,15 @@ class Keyboard:
         return Runners(run_list=self.menu, run_choice=self.menu, run_text=self.text)
 
 
+def render_frame(menu: Menu) -> list[str]:
+    output = io.StringIO()
+    menu._use_alt_screen = False  # pyright: ignore[reportPrivateUsage]
+    menu._read_key = lambda: 'escape'  # pyright: ignore[reportPrivateUsage]
+    menu._output = output  # pyright: ignore[reportPrivateUsage]
+    assert menu.run().cancelled
+    return Text.from_ansi(output.getvalue()).plain.splitlines()
+
+
 def test_configure_flow_preserves_order_preferences_and_updates_summary(folders: FolderMenu[object]) -> None:
     for name in ('first', 'replacement'):
         (folders.project / name).mkdir()
@@ -342,13 +351,7 @@ def test_full_browser_page_keeps_title_and_footer_on_screen(
     for index in range(30):
         (folders.project / f'directory-{index}').mkdir()
     monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (50, 24))
-    menu = DirectoryPicker(start=folders.project, project=folders.project).build()
-    output = io.StringIO()
-    menu._use_alt_screen = False  # pyright: ignore[reportPrivateUsage]
-    menu._read_key = lambda: 'escape'  # pyright: ignore[reportPrivateUsage]
-    menu._output = output  # pyright: ignore[reportPrivateUsage]
-    assert menu.run().cancelled
-    frame = Text.from_ansi(output.getvalue()).plain.splitlines()
+    frame = render_frame(DirectoryPicker(start=folders.project, project=folders.project).build())
     assert frame[0] == 'Browse local directories'
     assert 'Esc back' in frame[-1]
     assert len(frame) < 24
@@ -387,14 +390,21 @@ def test_sqlite_save_failure_keeps_menu_and_previous_settings(
     folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = SettingsStore(folders.project / 'settings.db')
-    declaration = PluginSettings(id='coder', factory='pydantic_clai2.builtin_plugins.coder', settings={})
+    saved_folders = [f'group{index}' for index in range(20)]
+    declaration = PluginSettings(
+        id='coder',
+        factory='pydantic_clai2.builtin_plugins.coder',
+        settings=CoderSettings(agent_folders=saved_folders).model_dump(mode='json'),
+    )
     store.save_plugin(declaration)
 
     def persist(settings: dict[str, JsonValue]) -> None:
         store.save_plugin(declaration.model_copy(update={'settings': settings}))
 
     folders.source = CoderSource(
-        PluginHost[object](name='coder', console=Console(file=io.StringIO()), settings={}, save_settings=persist)
+        PluginHost[object](
+            name='coder', console=Console(file=io.StringIO()), settings=declaration.settings, save_settings=persist
+        )
     )
     connect = sqlite3.connect
 
@@ -409,5 +419,12 @@ def test_sqlite_save_failure_keeps_menu_and_previous_settings(
     )
     assert folders.run(runners=script.runners) == []
     assert 'readonly' in folders.notice
-    assert folders.folders() == []
+    assert folders.folders() == saved_folders
     assert store.plugins() == [declaration]
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (50, 24))
+    frame = render_frame(folders.build())
+    assert frame[0] == 'Agent folders'
+    assert 'Esc' in frame[-1]
+    assert folders.notice in ' '.join(line.strip() for line in frame)
+    assert len(frame) < 24
+    assert all(len(line) < 50 for line in frame)
