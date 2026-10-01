@@ -815,12 +815,13 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     instructions are sent as leading input messages instead. That only happens on requests that
     don't continue server-side state: when `openai_previous_response_id` or `openai_conversation_id`
     is set, or the history has been compacted, this setting leaves the instructions where they would
-    otherwise go (normally the top-level field) and adds no breakpoint. That includes `openai_previous_response_id='auto'` on the first request of a
-    chain: a stored response keeps its input, so relocated instructions would be replayed alongside
-    every later request's own.
+    otherwise go (normally the top-level field) and adds no breakpoint. That includes
+    `openai_previous_response_id='auto'` on the first request of a chain: a stored response keeps
+    its input, so relocated instructions would be replayed alongside every later request's own.
 
     No breakpoint is added when a dynamic system prompt precedes the instructions either, since its
-    per-request content would sit inside the cached prefix and miss the cache on every run.
+    per-request content would sit inside the cached prefix and miss the cache on every run, nor when
+    the system prompt role is `'user'` or the model merges leading system messages.
 
     See the [OpenAI prompt caching documentation](https://developers.openai.com/api/docs/guides/prompt-caching)
     for more information.
@@ -2911,7 +2912,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         The top-level `instructions` field cannot carry a breakpoint. Mutates `openai_messages` and
         returns what's left of the top-level `instructions`.
         """
-        # An `additional_tools` item also has the `'developer'` role, but it's not a system prompt.
+        # An `additional_tools` item also has the `'developer'` role, but it's not a system prompt. Kept
+        # apart from `_leading_system_message_count`, whose other callers predate this setting.
         system_prompt_count = next(
             (
                 i

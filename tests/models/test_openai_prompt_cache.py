@@ -1118,9 +1118,55 @@ async def test_openai_responses_cache_instructions_not_relocated_after_compactio
     )
 
 
-@pytest.mark.parametrize('api', ['chat', 'responses'])
+@pytest.mark.parametrize(
+    'api, expected',
+    [
+        pytest.param(
+            'chat',
+            snapshot(
+                [
+                    {
+                        'role': 'system',
+                        'content': [
+                            {
+                                'type': 'text',
+                                'text': 'Support policies.',
+                                'prompt_cache_breakpoint': {'mode': 'explicit'},
+                            }
+                        ],
+                    },
+                    {'role': 'system', 'content': 'Today is 2026-08-18.'},
+                    {'role': 'system', 'content': 'Refund rules.'},
+                    {'role': 'user', 'content': 'Where is order 1234?'},
+                ]
+            ),
+            id='chat',
+        ),
+        pytest.param(
+            'responses',
+            snapshot(
+                [
+                    {
+                        'role': 'system',
+                        'content': [
+                            {
+                                'type': 'input_text',
+                                'text': 'Support policies.',
+                                'prompt_cache_breakpoint': {'mode': 'explicit'},
+                            }
+                        ],
+                    },
+                    {'role': 'system', 'content': 'Today is 2026-08-18.'},
+                    {'role': 'system', 'content': 'Refund rules.'},
+                    {'role': 'user', 'content': 'Where is order 1234?'},
+                ]
+            ),
+            id='responses',
+        ),
+    ],
+)
 async def test_openai_cache_instructions_unsorted_parts_keep_dynamic_out_of_prefix(
-    allow_model_requests: None, api: Literal['chat', 'responses']
+    allow_model_requests: None, api: Literal['chat', 'responses'], expected: list[dict[str, Any]]
 ):
     """The breakpoint goes after the leading static parts, never on a dynamic part or past one.
 
@@ -1132,43 +1178,84 @@ async def test_openai_cache_instructions_unsorted_parts_keep_dynamic_out_of_pref
         InstructionPart(content='Refund rules.'),
     ]
     messages: list[ModelMessage] = [ModelRequest.user_text_prompt('Where is order 1234?')]
+    parameters = ModelRequestParameters(instruction_parts=instruction_parts)
     if api == 'chat':
         chat_client = MockOpenAI.create_mock(chat_completion())
         chat_model = OpenAIChatModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=chat_client))
-        await chat_model.request(
-            messages,
-            OpenAIChatModelSettings(openai_cache_instructions=True),
-            ModelRequestParameters(instruction_parts=instruction_parts),
-        )
+        await chat_model.request(messages, OpenAIChatModelSettings(openai_cache_instructions=True), parameters)
         sent = get_mock_chat_completion_kwargs(chat_client)[0]['messages']
-        breakpoint_type = 'text'
     else:
         responses_client = MockOpenAIResponses.create_mock(responses_completion())
         responses_model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=responses_client))
         await responses_model.request(
-            messages,
-            OpenAIResponsesModelSettings(openai_cache_instructions=True),
-            ModelRequestParameters(instruction_parts=instruction_parts),
+            messages, OpenAIResponsesModelSettings(openai_cache_instructions=True), parameters
         )
         sent = get_mock_responses_kwargs(responses_client)[0]['input']
-        breakpoint_type = 'input_text'
 
-    assert sent == [
-        {
-            'role': 'system',
-            'content': [
-                {'type': breakpoint_type, 'text': 'Support policies.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
-            ],
-        },
-        {'role': 'system', 'content': 'Today is 2026-08-18.'},
-        {'role': 'system', 'content': 'Refund rules.'},
-        {'role': 'user', 'content': 'Where is order 1234?'},
-    ]
+    assert sent == expected
 
 
-@pytest.mark.parametrize('has_instructions', [True, False])
+@pytest.mark.parametrize(
+    'has_instructions, expected',
+    [
+        pytest.param(
+            True,
+            snapshot(
+                [
+                    {
+                        'role': 'developer',
+                        'content': [
+                            {
+                                'type': 'input_text',
+                                'text': 'Support policies.',
+                                'prompt_cache_breakpoint': {'mode': 'explicit'},
+                            }
+                        ],
+                    },
+                    {
+                        'type': 'additional_tools',
+                        'role': 'developer',
+                        'tools': [
+                            {
+                                'name': 'lookup_refund_policy',
+                                'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False},
+                                'type': 'function',
+                                'description': None,
+                                'strict': False,
+                            }
+                        ],
+                    },
+                    {'role': 'user', 'content': 'Where is order 1234?'},
+                ]
+            ),
+            id='with-instructions',
+        ),
+        pytest.param(
+            False,
+            snapshot(
+                [
+                    {
+                        'type': 'additional_tools',
+                        'role': 'developer',
+                        'tools': [
+                            {
+                                'name': 'lookup_refund_policy',
+                                'parameters': {'type': 'object', 'properties': {}, 'additionalProperties': False},
+                                'type': 'function',
+                                'description': None,
+                                'strict': False,
+                            }
+                        ],
+                    },
+                    {'role': 'user', 'content': 'Where is order 1234?'},
+                ]
+            ),
+            id='without-instructions',
+        ),
+    ],
+)
 async def test_openai_responses_cache_instructions_with_leading_tool_reveal(
-    allow_model_requests: None, has_instructions: bool
+    allow_model_requests: None, has_instructions: bool, expected: list[dict[str, Any]]
 ):
     """An `additional_tools` item shares the `'developer'` role but is not a system prompt, so the
     instructions go ahead of it, and without instructions it's left alone instead of being marked.
@@ -1205,26 +1292,7 @@ async def test_openai_responses_cache_instructions_with_leading_tool_reveal(
         ),
     )
 
-    request_input = get_mock_responses_kwargs(mock_client)[0]['input']
-    assert [(item.get('type'), item['role'], item.get('content')) for item in request_input] == (
-        [
-            (
-                None,
-                'developer',
-                [
-                    {
-                        'type': 'input_text',
-                        'text': 'Support policies.',
-                        'prompt_cache_breakpoint': {'mode': 'explicit'},
-                    }
-                ],
-            ),
-            ('additional_tools', 'developer', None),
-            (None, 'user', 'Where is order 1234?'),
-        ]
-        if has_instructions
-        else [('additional_tools', 'developer', None), (None, 'user', 'Where is order 1234?')]
-    )
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == expected
 
 
 async def test_openai_responses_cache_instructions_skipped_for_user_system_prompt_role(allow_model_requests: None):
