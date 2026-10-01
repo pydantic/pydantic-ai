@@ -477,8 +477,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
 
-    pending_immediate_dispatches: dict[int, list[asyncio.Event]] = dataclasses.field(
-        default_factory=dict[int, list[asyncio.Event]], repr=False
+    pending_immediate_dispatches: dict[int, list[anyio.Event]] = dataclasses.field(
+        default_factory=dict[int, list[anyio.Event]], repr=False
     )
     """Settlement signals for buffered events dispatched immediately, keyed by `id(event)`.
 
@@ -1364,8 +1364,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # 3. This coroutine waits for stream_ready (or early task completion), yields the stream
         #    to the caller, and sets stream_done when the caller is finished consuming it.
         # 4. The handler resumes, the stream context manager closes, and the task completes.
-        stream_ready = asyncio.Event()
-        stream_done = asyncio.Event()
+        stream_ready = anyio.Event()
+        stream_done = anyio.Event()
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
