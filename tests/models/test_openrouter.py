@@ -112,6 +112,20 @@ What can I help you with today?\
     assert response.provider_details['finish_reason'] == 'stop'
 
 
+async def test_openrouter_provider_quantization_and_sort(
+    allow_model_requests: None, openrouter_api_key: str, request_capture: RequestCapture
+) -> None:
+    """`nvfp4` and `exacto` are accepted by OpenRouter's provider routing and must type-check here too."""
+    provider = OpenRouterProvider(api_key=openrouter_api_key, http_client=request_capture.client)
+    model = OpenRouterModel('z-ai/glm-5.3-flash', provider=provider)
+    settings = OpenRouterModelSettings(
+        max_tokens=300,
+        openrouter_provider={'quantizations': ['nvfp4'], 'sort': 'exacto'},
+    )
+    await model_request(model, [ModelRequest.user_text_prompt('Who are you? One sentence.')], model_settings=settings)
+    assert request_capture.body()['provider'] == {'quantizations': ['nvfp4'], 'sort': 'exacto'}
+
+
 async def test_openrouter_stream_with_native_options(allow_model_requests: None, openrouter_api_key: str) -> None:
     provider = OpenRouterProvider(api_key=openrouter_api_key)
     model = OpenRouterModel('google/gemini-2.0-flash-exp:free', provider=provider)
@@ -633,6 +647,28 @@ async def test_openrouter_with_provider_details_but_no_parent_details(openrouter
             'timestamp': datetime.datetime(2024, 1, 1, 0, 0, tzinfo=datetime.timezone.utc),
         }
     )
+
+
+@pytest.mark.parametrize('native_finish_reason', ['end_turn', 'stop'])
+async def test_openrouter_missing_finish_reason_keeps_native_finish_reason(
+    openrouter_api_key: str, native_finish_reason: str
+) -> None:
+    """A missing finish reason is treated as `'stop'`, without hiding the downstream provider's own one."""
+    model = OpenRouterModel('anthropic/claude-sonnet-4.6', provider=OpenRouterProvider(api_key=openrouter_api_key))
+
+    choice = Choice.model_construct(
+        index=0,
+        message={'role': 'assistant', 'content': 'test'},
+        finish_reason=None,
+        native_finish_reason=native_finish_reason,
+    )
+    response = ChatCompletion.model_construct(
+        id='test', choices=[choice], created=0, object='chat.completion', model='test', provider='TestProvider'
+    )
+    result = model._process_response(response)  # type: ignore[reportPrivateUsage]
+
+    assert result.finish_reason == 'stop'
+    assert result.provider_details == {'downstream_provider': 'TestProvider', 'finish_reason': native_finish_reason}
 
 
 async def test_openrouter_map_messages_reasoning(allow_model_requests: None, openrouter_api_key: str) -> None:

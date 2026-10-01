@@ -18,13 +18,13 @@ from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2.interrupts import Interrupts
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.shell_passthrough import (
+from pydantic_clai2.cli.shell_passthrough import (
     _taskkill_path,  # pyright: ignore[reportPrivateUsage]
     run_shell_command,
     shell_command,
 )
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from tests.clai2.test_app_edges import inputs
 
 
@@ -118,9 +118,9 @@ class TestShellPassthrough:
         async def kill_process_tree(_process: Process) -> None:
             cleanup_calls.append('kill')
 
-        monkeypatch.setattr('pydantic_clai2.shell_passthrough.asyncio.create_subprocess_shell', delayed_spawn)
-        monkeypatch.setattr('pydantic_clai2.shell_passthrough._interrupt', interrupt)
-        monkeypatch.setattr('pydantic_clai2.shell_passthrough._kill_process_tree', kill_process_tree)
+        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.asyncio.create_subprocess_shell', delayed_spawn)
+        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._interrupt', interrupt)
+        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._kill_process_tree', kill_process_tree)
         output = io.StringIO()
         interrupts = Interrupts()
         command = asyncio.create_task(
@@ -160,7 +160,7 @@ class TestShellPassthrough:
             os.kill(os.getpid(), signal.SIGINT)
             return process
 
-        monkeypatch.setattr('pydantic_clai2.shell_passthrough.asyncio.create_subprocess_shell', spawn_then_ctrl_c)
+        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.asyncio.create_subprocess_shell', spawn_then_ctrl_c)
         command = "trap 'printf cleaned > cleanup.txt; exit 130' INT; : > ready; while :; do :; done"
         text = await shell_session(tmp_path, monkeypatch, [f'!{command}', '/exit'])
         assert 'Interrupted (' in text
@@ -200,7 +200,7 @@ class TestShellPassthrough:
         async def unavailable(command: str, **kwargs: object) -> None:
             raise FileNotFoundError('no shell')
 
-        monkeypatch.setattr('pydantic_clai2.shell_passthrough.asyncio.create_subprocess_shell', unavailable)
+        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.asyncio.create_subprocess_shell', unavailable)
         text = await shell_session(tmp_path, monkeypatch, ['!ls', '/exit'])
         assert 'Shell error: no shell' in text
 
