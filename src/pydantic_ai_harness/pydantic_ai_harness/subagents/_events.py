@@ -28,7 +28,7 @@ DelegationOutcome = Literal['ok', 'timeout', 'budget', 'failed', 'contained']
 - `ok`: the child finished and its output went back to the parent.
 - `timeout`: the child exceeded `SubAgent.timeout_seconds`; the parent got a steering message.
 - `budget`: the child reached its own `SubAgent.usage_limits`; the parent got a steering message.
-- `failed`: the child raised a soft model error; the parent got `SubAgent.on_failure` or a `ModelRetry`.
+- `failed`: the child raised a soft model error; the parent got a `ModelRetry` or a returned message, per `SubAgent.child_failure`.
 - `contained`: the child crashed with `contain_errors` on; the parent got a `ModelRetry`.
 """
 

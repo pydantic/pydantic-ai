@@ -87,7 +87,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     Sub-agents are passed as a sequence of `SubAgent` entries, each pairing an
     agent with its per-delegate run controls (a `usage_limits` budget, a
     wall-clock `timeout_seconds`, a per-run `max_calls` budget, an `on_failure`
-    steering message, and optional `name`/`description` overrides). A delegate's
+    steering message, a `child_failure` policy, and optional `name`/`description` overrides). A delegate's
     name is its `SubAgent.name`, or the agent's own `name` when unset; two
     explicitly-passed delegates resolving to the same name is an error.
 
