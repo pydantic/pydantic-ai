@@ -101,8 +101,13 @@ class LogfireMCPPlugin(Plugin[LogfireMCPSettings]):
                 markup=False,
             )
 
-    def _for_run(self, _ctx: RunContext[None]) -> LogfireMCP[None] | None:
-        return self.capability
+    async def _for_run(self, ctx: RunContext[None]) -> LogfireMCP[None] | None:
+        capability = self.capability
+        if capability is None or not callable(capability.auth):
+            return capability
+        # Resolved here, not by `LogfireMCP`: a run would not set up its per-run toolset nested in this factory's.
+        token = await anyio.to_thread.run_sync(capability.auth, ctx, abandon_on_cancel=True)
+        return replace(capability, auth=token)
 
     def _announce(self, line: str) -> None:
         # Links, codes, and notices can carry text from a self-hosted server, so terminal controls are made inert.
