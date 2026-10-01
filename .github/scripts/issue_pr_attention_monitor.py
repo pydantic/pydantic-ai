@@ -1885,6 +1885,26 @@ def _override_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> lis
     return lines
 
 
+def _agentic_failure_lines(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[str]:
+    """List scheduled gh-aw workflows whose runs failed in the past week.
+
+    These report here instead of opening an `[aw] …` issue per failed run. PR-triggered
+    reviewers are left out: they label the PR they failed to review instead.
+    """
+    since = (now - dt.timedelta(days=7)).date().isoformat()
+    runs = client.get(f'/repos/{repo}/actions/runs?status=failure&created=%3E%3D{since}&per_page=100')
+    failed: dict[str, list[dict[str, Any]]] = {}
+    for run in runs['workflow_runs']:
+        if str(run['path']).endswith('.lock.yml') and run['event'] in ('schedule', 'workflow_dispatch'):
+            failed.setdefault(str(run['name']), []).append(run)
+    lines: list[str] = []
+    for name, workflow_runs in sorted(failed.items()):
+        latest = max(workflow_runs, key=lambda run: str(run['created_at']))
+        noun = 'run' if len(workflow_runs) == 1 else 'runs'
+        lines.append(f'• {_slack_escape(name)} — {len(workflow_runs)} failed {noun} · <{latest["html_url"]}|latest>')
+    return lines
+
+
 def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
     """Build a bounded Monday view of every ownership lane."""
     if repo not in REPOSITORIES:
@@ -1961,6 +1981,8 @@ def weekly_digest(client: GitHubClient, repo: str, *, now: dt.datetime) -> str:
     )
     lines.extend(['', '*Maintainer corrections this week*'])
     lines.extend(_override_lines(client, repo, now=now) or ['• none recorded'])
+    lines.extend(['', '*Agentic workflow failures this week*'])
+    lines.extend(_agentic_failure_lines(client, repo, now=now) or ['• none'])
     text = '\n'.join(lines)
     if len(text.encode()) > _WEEKLY_TEXT_LIMIT:
         raise RuntimeError('Weekly digest exceeds the Slack payload limit')

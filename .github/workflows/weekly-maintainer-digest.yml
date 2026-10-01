@@ -23,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      # Lists failed agentic workflow runs for the weekly digest.
+      actions: read
       contents: read
       issues: read
       pull-requests: read

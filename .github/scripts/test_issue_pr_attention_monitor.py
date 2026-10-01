@@ -1536,8 +1536,12 @@ class WeeklyClient(FakeClient):
     def __init__(self, items: dict[int, dict[str, Any]] | None = None) -> None:
         super().__init__(items)
         self.permissions = {owner: 'write' for owner in TRIAGE_OWNERS}
+        self.workflow_runs: list[dict[str, Any]] = []
 
     def get(self, path: str) -> Any:
+        if '/actions/runs?' in path:
+            self.calls.append(('GET', path, None))
+            return {'total_count': len(self.workflow_runs), 'workflow_runs': self.workflow_runs}
         if not path.startswith('/search/issues?'):
             return super().get(path)
         self.calls.append(('GET', path, None))
@@ -2067,6 +2071,46 @@ def test_weekly_digest_records_no_corrections_without_maintainer_events():
     report = monitor.weekly_digest(WeeklyClient(), 'pydantic/pydantic-ai', now=NOW)
 
     assert '*Maintainer corrections this week*\n• none recorded' in report
+
+
+def workflow_run(name: str, run_id: int, *, path: str, event: str = 'schedule') -> dict[str, Any]:
+    return {
+        'name': name,
+        'path': f'.github/workflows/{path}',
+        'event': event,
+        'created_at': f'2026-07-{15 + run_id % 5:02d}T00:00:00Z',
+        'html_url': f'https://github.com/pydantic/pydantic-ai/actions/runs/{run_id}',
+    }
+
+
+def test_weekly_digest_lists_failed_scheduled_agentic_workflows():
+    client = WeeklyClient()
+    client.workflow_runs = [
+        workflow_run('Pydantic AI Bug Hunter', 1, path='pydantic-ai-bug-hunter.lock.yml'),
+        workflow_run('Pydantic AI Bug Hunter', 3, path='pydantic-ai-bug-hunter.lock.yml', event='workflow_dispatch'),
+        workflow_run('Pydantic AI Docs Drift', 2, path='pydantic-ai-docs-drift.lock.yml'),
+        # Labelled on the PR it reviews instead.
+        workflow_run('CI Review', 4, path='pydantic-ai-pr-review.lock.yml', event='workflow_run'),
+        # Not an agentic workflow.
+        workflow_run('CI', 5, path='ci.yml'),
+    ]
+
+    report = monitor.weekly_digest(client, 'pydantic/pydantic-ai', now=NOW)
+
+    section = report.split('*Agentic workflow failures this week*\n', 1)[1]
+    assert section.splitlines() == [
+        '• Pydantic AI Bug Hunter — 2 failed runs · <https://github.com/pydantic/pydantic-ai/actions/runs/3|latest>',
+        '• Pydantic AI Docs Drift — 1 failed run · <https://github.com/pydantic/pydantic-ai/actions/runs/2|latest>',
+    ]
+    runs_query = next(path for _, path, _ in client.calls if '/actions/runs?' in path)
+    assert 'status=failure' in runs_query
+    assert 'created=%3E%3D2026-07-13' in runs_query
+
+
+def test_weekly_digest_reports_no_agentic_failures():
+    report = monitor.weekly_digest(WeeklyClient(), 'pydantic/pydantic-ai', now=NOW)
+
+    assert report.endswith('*Agentic workflow failures this week*\n• none')
 
 
 def test_weekly_digest_rejects_a_foreign_repository():
@@ -2989,7 +3033,12 @@ def test_weekly_digest_workflow_is_monday_or_manual_read_only_and_secret_isolate
 
     assert "- cron: '23 14 * * 1'" in text
     assert 'workflow_dispatch' in text
-    assert jobs['build']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
+    assert jobs['build']['permissions'] == {
+        'actions': 'read',
+        'contents': 'read',
+        'issues': 'read',
+        'pull-requests': 'read',
+    }
     assert jobs['notify']['permissions'] == {}
     assert jobs['alert']['permissions'] == {}
     assert "github.event.schedule == '23 14 * * 1'" in jobs['build']['if']

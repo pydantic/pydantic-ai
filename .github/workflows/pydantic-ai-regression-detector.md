@@ -15,9 +15,12 @@ tools:
     mode: gh-proxy
     toolsets: [default]
 safe-outputs:
+  # Failures and noop messages stay in the run rather than in public `[aw]` issues.
+  report-failure-as-issue: false
   footer: false
   activation-comments: false
   noop:
+    report-as-issue: false
   create-issue:
     max: 1
     title-prefix: "[regression-detector] "
@@ -45,6 +48,7 @@ imports:
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
   - shared/issue-filing-context.md
+  - shared/security-findings.md
 
 jobs:
   fetch_dynamic_prompt:

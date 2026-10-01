@@ -22,6 +22,7 @@ safe-outputs:
   # `instrument_pydantic_ai`, so we don't also file an auto-generated failure issue.
   report-failure-as-issue: false
   noop:
+    report-as-issue: false
   create-issue:
     max: 1
     title-prefix: "[roundtrip-sweep] "
@@ -53,6 +54,7 @@ imports:
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
   - shared/issue-filing-context.md
+  - shared/security-findings.md
 
 jobs:
   fetch_dynamic_prompt:

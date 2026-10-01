@@ -63,6 +63,8 @@ tools:
     # PR-scoped surface: read the PR, related issues, repo, and search.
     toolsets: [pull_requests, repos, search, issues]
 safe-outputs:
+  # Failures and noop messages stay in the run rather than in public `[aw]` issues.
+  report-failure-as-issue: false
   # `workflow_run` carries no PR, so the PR-targeting outputs below default to a
   # triggering PR that does not exist and silently discard the review. `target:`
   # is the supported way to name one.
@@ -75,6 +77,7 @@ safe-outputs:
   footer: false
   activation-comments: false
   noop:
+    report-as-issue: false
   create-pull-request-review-comment:
     max: 30
     target: ${{ needs.eligibility.outputs.pr_number }}
@@ -358,6 +361,27 @@ jobs:
             details_url: $url,
             output: { title: $reason, summary: "This commit was not reviewed: \($reason)." }
           }' | gh api "repos/${REPO}/check-runs" --input -
+
+  flag_failed_review:
+    # Labels the PR when no review came out of this run (failed, or ended with no
+    # output), and clears the label once a later run reviews it.
+    needs: [agent, safe_outputs, eligibility]
+    if: always() && (needs.agent.result == 'success' || needs.agent.result == 'failure')
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LABELS: repos/${{ github.repository }}/issues/${{ needs.eligibility.outputs.pr_number }}/labels
+          FAILED: ${{ needs.agent.result == 'failure' || needs.safe_outputs.result == 'failure' || needs.agent.outputs.output_types == '' }}
+        run: |
+          if [ "$FAILED" = true ]; then
+            gh api "$LABELS" -f 'labels[]=ci-review-failed' --silent
+          else
+            gh api -X DELETE "$LABELS/ci-review-failed" --silent || true
+          fi
 
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest

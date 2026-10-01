@@ -52,9 +52,12 @@ tools:
     # PR-scoped surface: read the PR, related issues, repo, and search.
     toolsets: [pull_requests, repos, search, issues]
 safe-outputs:
+  # Failures and noop messages stay in the run rather than in public `[aw]` issues.
+  report-failure-as-issue: false
   footer: false
   activation-comments: false
   noop:
+    report-as-issue: false
   create-pull-request-review-comment:
     max: 30
   # Non-voting by design, because both this workflow and pydantic-ai-pr-review
@@ -87,6 +90,7 @@ imports:
   - shared/engine-minimax.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
+  - shared/security-findings.md
 pre-agent-steps:
   # Pre-fetch PR context into `$GITHUB_WORKSPACE/.review-context/` (pr-details, diffs,
   # comments, review threads, related issues, AGENTS.md excerpts). The agent
@@ -142,6 +146,27 @@ jobs:
           else
             echo 'touched=false' >> "$GITHUB_OUTPUT"
           fi
+  flag_failed_review:
+    # Labels the PR when no review came out of this run (failed, or ended with no
+    # output), and clears the label once a later run reviews it.
+    needs: [agent, safe_outputs]
+    if: always() && github.event.pull_request.number && (needs.agent.result == 'success' || needs.agent.result == 'failure')
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          LABELS: repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels
+          FAILED: ${{ needs.agent.result == 'failure' || needs.safe_outputs.result == 'failure' || needs.agent.outputs.output_types == '' }}
+        run: |
+          if [ "$FAILED" = true ]; then
+            gh api "$LABELS" -f 'labels[]=ui-security-review-failed' --silent
+          else
+            gh api -X DELETE "$LABELS/ui-security-review-failed" --silent || true
+          fi
+
   fetch_dynamic_prompt:
     runs-on: ubuntu-latest
     timeout-minutes: 5
