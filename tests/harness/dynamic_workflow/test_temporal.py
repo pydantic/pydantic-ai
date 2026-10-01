@@ -37,7 +37,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
-from tests.harness.conftest import ignore_source_reads_left_open
+from tests.harness._temporal import ignore_source_reads_left_open
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
