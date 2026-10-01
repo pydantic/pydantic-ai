@@ -18,14 +18,16 @@ from termflow.tui.menu import MenuResult
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2 import api_keys, chat, key_menu, theme
+from pydantic_clai2 import chat
 from pydantic_clai2.auth import CodexAuth
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command
-from pydantic_clai2.config import Settings
-from pydantic_clai2.field_menu import FieldMenu, Runners
-from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_command, open_add_model_menu
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config import Settings, api_keys
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.menus import key_menu
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, open_add_model_menu
+from pydantic_clai2.ui.rendering import theme
 from tests.clai2.menu_script import Script, pick, typed
 
 PromptT = TypeVar('PromptT')
@@ -119,7 +121,7 @@ async def test_connected_provider_resolution(tmp_path: Path, monkeypatch: pytest
         assert name == f'{provider}:test'
         return TestModel(custom_output_text='Connected response')
 
-    monkeypatch.setattr(f'pydantic_clai2.{provider.replace("-", "_")}.model', model)
+    monkeypatch.setattr(f'pydantic_clai2.models.{provider.replace("-", "_")}.model', model)
     output = io.StringIO()
     await chat(
         Agent(TestModel()),
@@ -192,7 +194,7 @@ async def test_invalid_saved_model_settings_can_be_repaired_without_exiting(
     async def edit_settings(context: CommandContext, args: list[str]) -> str:
         return await model_settings_command(context, args, runners=script.runners)
 
-    monkeypatch.setattr('pydantic_clai2.model_menu.model_settings_command', edit_settings)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_menu.model_settings_command', edit_settings)
 
     class Repair(AbstractCapability[None]):
         async def before_model_request(
@@ -226,7 +228,7 @@ async def test_codex_login_and_turns_share_lazy_auth(tmp_path: Path, monkeypatch
     instances: list[CodexAuth] = []
 
     async def login(self: CodexAuth, args: list[str]) -> str:
-        assert args == ['openai-codex']
+        assert args == []  # /login resolved the name; Codex gets no arguments
         instances.append(self)
         return 'Signed in.'
 
@@ -257,7 +259,7 @@ async def test_lazy_add_model_menu_and_named_selection(tmp_path: Path, monkeypat
     async def add_model(context: CommandContext) -> str:
         return await open_add_model_menu(context, run=lambda menu: [])
 
-    monkeypatch.setattr('pydantic_clai2.model_menu.open_add_model_menu', add_model)
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_menu.open_add_model_menu', add_model)
     output = io.StringIO()
     store = SettingsStore(tmp_path / 'config.db')
     await chat(

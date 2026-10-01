@@ -53,6 +53,7 @@ from ..messages import (
     CompactionPart,
     DocumentUrl,
     FilePart,
+    FinishReason,
     ImageUrl,
     ModelMessage,
     ModelRequest,
@@ -85,6 +86,7 @@ from ..models import ModelRequestParameters, download_item
 # native tool parts are byte-identical in shape to a classic request's, rather than duplicating the
 # mapping and risking drift.
 from ..models.google import (
+    _FINISH_REASON_MAP,  # pyright: ignore[reportPrivateUsage]
     _map_api_error,  # pyright: ignore[reportPrivateUsage]
     _map_code_execution_result,  # pyright: ignore[reportPrivateUsage]
     _map_executable_code,  # pyright: ignore[reportPrivateUsage]
@@ -437,6 +439,47 @@ _TURN_COVERAGE = {
     'all_input': genai_types.TurnCoverage.TURN_INCLUDES_ALL_INPUT,
     'all_video': genai_types.TurnCoverage.TURN_INCLUDES_AUDIO_ACTIVITY_AND_ALL_VIDEO,
 }
+
+# Live's refusals of prohibited input or unsafe generated content, which end the turn the way a content
+# filter ends a standard response. The names Live shares with a standard response's finish reason (a
+# malformed function call, a blocklist match) are looked up in `GoogleModel`'s table instead.
+_CONTENT_FILTER_TURN_COMPLETE_REASONS = frozenset(
+    {
+        genai_types.TurnCompleteReason.PROHIBITED_INPUT_CONTENT,
+        genai_types.TurnCompleteReason.IMAGE_PROHIBITED_INPUT_CONTENT,
+        genai_types.TurnCompleteReason.INPUT_TEXT_CONTAIN_PROMINENT_PERSON_PROHIBITED,
+        genai_types.TurnCompleteReason.INPUT_IMAGE_CELEBRITY,
+        genai_types.TurnCompleteReason.INPUT_IMAGE_PHOTO_REALISTIC_CHILD_PROHIBITED,
+        genai_types.TurnCompleteReason.INPUT_TEXT_NCII_PROHIBITED,
+        genai_types.TurnCompleteReason.INPUT_IP_PROHIBITED,
+        genai_types.TurnCompleteReason.UNSAFE_PROMPT_FOR_IMAGE_GENERATION,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_CONTENT_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_AUDIO_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_VIDEO_SAFETY,
+        genai_types.TurnCompleteReason.GENERATED_CONTENT_PROHIBITED,
+        genai_types.TurnCompleteReason.GENERATED_CONTENT_BLOCKLIST,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_PROHIBITED,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_CELEBRITY,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_PROMINENT_PEOPLE_DETECTED_BY_REWRITER,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_IDENTIFIABLE_PEOPLE,
+        genai_types.TurnCompleteReason.GENERATED_IMAGE_MINORS,
+        genai_types.TurnCompleteReason.OUTPUT_IMAGE_IP_PROHIBITED,
+    }
+)
+
+
+def _turn_complete_finish_reason(reason: genai_types.TurnCompleteReason) -> FinishReason | None:
+    """Map why Gemini Live ended a turn to a [`FinishReason`][pydantic_ai.messages.FinishReason].
+
+    A reason with no clear counterpart (`NEED_MORE_INPUT`, `RESPONSE_REJECTED`, the `*_OTHER` catch-alls)
+    maps to `None`, as `OTHER` does on a standard response; its raw value is still kept in
+    `provider_details`.
+    """
+    if reason.value in _FINISH_REASON_MAP:
+        return _FINISH_REASON_MAP[reason.value]
+    return 'content_filter' if reason in _CONTENT_FILTER_TURN_COMPLETE_REASONS else None
+
 
 _WS_CONNECT_LOCK: RunVar[Lock] = RunVar('gemini_live_ws_connect_lock')
 
@@ -1989,7 +2032,17 @@ class GoogleRealtimeConnection(RealtimeConnection):
             if closes_answered_tool_call_turn:
                 self._turn_open = True
             else:
-                events.append(ResponseDone(interrupted=interrupted, more_expected=more_expected))
+                # When Gemini says why it ended a turn (a malformed function call, refused input or output),
+                # it's reported like a standard response's `finish_reason`, with the raw reason kept alongside.
+                reason = message.server_content.turn_complete_reason
+                events.append(
+                    ResponseDone(
+                        interrupted=interrupted,
+                        more_expected=more_expected,
+                        finish_reason=_turn_complete_finish_reason(reason) if reason is not None else None,
+                        provider_details={'finish_reason': reason.value} if reason is not None else None,
+                    )
+                )
                 if not more_expected:
                     self._mark_oldest_typed_turn_answered()
                 self._turn_interrupted = False

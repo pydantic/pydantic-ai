@@ -312,15 +312,29 @@ class _ProtocolAudioTranscriptDoneEvent(BaseModel):
     type: Literal['response.output_audio_transcript.done', 'response.audio_transcript.done']
 
 
+class ProtocolResponseStatus(BaseModel):
+    """SDK `RealtimeResponseStatus` with open `type` and `reason` strings.
+
+    The SDK closes both to the values documented today, so a value the server adds later would fail
+    validation of the whole `response.done`, losing the only terminal (and usage) the response gets.
+    """
+
+    model_config = ConfigDict(extra='allow')
+
+    error: RealtimeResponseStatusError | None = None
+    reason: str | None = None
+    type: str | None = None
+
+
 class ProtocolRealtimeResponse(BaseModel):
-    """SDK response with cassette-proven xAI extensions kept typed."""
+    """SDK response with cassette-proven xAI extensions kept typed, and its closed enums left open."""
 
     model_config = ConfigDict(extra='allow')
 
     id: str | None = None
     output: list[ConversationItem | _ProtocolResponseOutputItem] | None = None
-    status: Literal['completed', 'cancelled', 'failed', 'incomplete', 'in_progress'] | None = None
-    status_details: RealtimeResponseStatus | str | None = None
+    status: str | None = None
+    status_details: ProtocolResponseStatus | str | None = None
     usage: RealtimeResponseUsage | None = None
     metadata: dict[str, Any] | None = None
 
@@ -745,7 +759,9 @@ def _is_function_call_only(output: Sequence[ConversationItem | _ProtocolResponse
 def _response_status_reason(response: ProtocolResponse) -> str | None:
     """Return the raw terminal `status_details.reason`, when present."""
     status_details = response.status_details
-    return status_details.reason if isinstance(status_details, RealtimeResponseStatus) else None
+    return (
+        status_details.reason if isinstance(status_details, RealtimeResponseStatus | ProtocolResponseStatus) else None
+    )
 
 
 def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
@@ -773,7 +789,7 @@ def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
 def _response_status_error(response: ProtocolResponse) -> RealtimeResponseStatusError | None:
     """Return the `status_details.error` of a failed response, when present."""
     status_details = response.status_details
-    return status_details.error if isinstance(status_details, RealtimeResponseStatus) else None
+    return status_details.error if isinstance(status_details, RealtimeResponseStatus | ProtocolResponseStatus) else None
 
 
 def response_failed_error(response: ProtocolResponse) -> RealtimeSessionErrorEvent | None:

@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from pydantic import field_validator
 from typing_extensions import TypedDict, override
 
-from ..messages import ModelResponseStreamEvent, ThinkingPart
+from ..messages import FinishReason, ModelResponseStreamEvent, ThinkingPart, ToolCallPart
 from ..profiles import ModelProfileSpec
 from ..providers import Provider
 from ..settings import ModelSettings, ThinkingLevel
@@ -263,6 +263,13 @@ class SnowflakeStreamedResponse(OpenAIStreamedResponse):
     async def _validate_response(self) -> AsyncIterable[chat.ChatCompletionChunk]:
         async for chunk in self._response:
             yield _SnowflakeChatCompletionChunk.model_validate(chunk.model_dump())
+
+    @override
+    def _missing_finish_reason(self) -> FinishReason:
+        # Cortex streams from Claude models have no finish reason; as in `SnowflakeModel._validate_completion`.
+        return (
+            'tool_call' if any(isinstance(part, ToolCallPart) for part in self._parts_manager.get_parts()) else 'stop'
+        )
 
     @override
     def _map_thinking_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:

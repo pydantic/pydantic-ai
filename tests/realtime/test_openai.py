@@ -527,12 +527,44 @@ def test_map_response_done_without_response_object() -> None:
         map_event({'type': 'response.done'})
 
 
-def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
+def test_map_response_done_failed() -> None:
     assert map_event(_response_done({'status': 'failed'})) == ResponseDone(
         interrupted=False, finish_reason='error', provider_details={'status': 'failed'}
     )
-    with pytest.raises(ValueError):
-        map_event(_response_done({'status': 'incomplete', 'status_details': {'reason': 'network'}}))
+
+
+@pytest.mark.parametrize(
+    ('response', 'provider_details'),
+    [
+        pytest.param(
+            {'status': 'incomplete', 'status_details': {'type': 'incomplete', 'reason': 'network'}},
+            {'status': 'incomplete', 'finish_reason': 'network'},
+            id='reason',
+        ),
+        pytest.param(
+            {'status': 'incomplete', 'status_details': {'type': 'truncated'}},
+            {'status': 'incomplete'},
+            id='details-type',
+        ),
+        pytest.param({'status': 'expired'}, {'status': 'expired'}, id='status'),
+    ],
+)
+async def test_response_done_with_unknown_status_values_still_ends_the_response(
+    response: dict[str, Any], provider_details: dict[str, Any]
+) -> None:
+    """The SDK closes `status`, `status_details.type` and `.reason` to today's values; one the server adds later
+    must still end the response and report its usage, with the raw value kept and no finish reason guessed."""
+    done = _response_done({'id': 'resp-1', 'output': [], 'usage': {'input_tokens': 3, 'output_tokens': 2}, **response})
+    conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(done)]))  # type: ignore[arg-type]
+
+    assert await collect_codec_events(conn) == [
+        SessionUsage(
+            usage=RequestUsage(input_tokens=3, output_tokens=2),
+            provider_response_id='resp-1',
+            provider_details=provider_details,
+        ),
+        ResponseDone(provider_response_id='resp-1', provider_details=provider_details),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -2130,6 +2162,22 @@ async def test_connect_captures_server_reported_model(monkeypatch: pytest.Monkey
     # the session can stamp it on `ModelResponse.model_name` (it can differ from the requested id).
     created = json.dumps({'type': 'session.created', 'session': {'model': 'gpt-realtime-2025-06-03'}})
     ws = FakeWebSocket([created, _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x') as conn:
+        assert conn.model_name == 'gpt-realtime-2025-06-03'
+
+
+async def test_connect_accepts_session_values_the_sdk_does_not_know(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The SDK's session models close their enums to today's values; a server default added later must not
+    # fail the handshake, which only needs the model name.
+    session = {
+        'type': 'realtime',
+        'model': 'gpt-realtime-2025-06-03',
+        'output_modalities': ['audio'],
+        'truncation': 'retention_ratio_v2',
+        'audio': {'input': {'turn_detection': {'type': 'neural_vad'}}},
+    }
+    ws = FakeWebSocket([json.dumps({'type': 'session.created', 'session': session}), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x') as conn:
         assert conn.model_name == 'gpt-realtime-2025-06-03'

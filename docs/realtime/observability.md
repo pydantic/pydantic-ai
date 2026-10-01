@@ -86,8 +86,11 @@ logfire.configure()
 logfire.instrument_pydantic_ai()
 ```
 
-The session creates an `invoke_agent` span with cumulative usage and conversation content, subject
-to the normal content-redaction setting. Nested provider-response spans have the OpenTelemetry name
+The session creates an `invoke_agent` span with the session's usage and conversation content, subject
+to the normal content-redaction setting. Like a [classic agent run span](../logfire.md#aggregated-usage-attribute-names),
+it reports only what the session itself spent: a total carried in with `usage=` and a delegated run's tokens
+still count toward `session.usage`, but not toward the span, so agent run spans can be added up without
+counting anything twice. Nested provider-response spans have the OpenTelemetry name
 `chat {model}` but display as `response {model}` in Logfire. `execute_tool` spans represent tools;
 a delegated run adds its own `invoke_agent` span inside `execute_tool`. `model turn complete` and `interrupt`
 spans mark those boundaries. A tool round can produce several response spans within one turn.
