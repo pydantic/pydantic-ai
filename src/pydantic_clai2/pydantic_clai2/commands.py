@@ -58,6 +58,8 @@ class Command:
     description: str
     handler: Callable[[list[str]], str | Awaitable[str]]
     complete: Callable[[list[str]], Iterable[str]] = lambda _: ()
+    available: Callable[[], bool] = lambda: True
+    """Whether dispatch, help, and completion expose this command in the current session."""
     raw: bool = False
     """Pass the argument text unparsed, as one element, so free-form prompts keep quotes and apostrophes."""
     during_turn: bool = False
@@ -109,7 +111,7 @@ class Commands(Completer):
             return self.help([])
         name, rest = parts[0], parts[1] if len(parts) > 1 else ''
         command = self._commands.get(name)
-        if command is None:
+        if command is None or not command.available():
             raise ValueError(f'Unknown command /{name}. Use /help.')
         if command.raw:
             return command.handler([rest] if rest else [])
@@ -121,7 +123,7 @@ class Commands(Completer):
         if len(words) != 1 or not is_command_input(text):
             return False
         command = self._commands.get(words[0][1:])
-        return command is not None and command.during_turn
+        return command is not None and command.available() and command.during_turn
 
     async def execute_async(self, text: str) -> str:
         """Await asynchronous plugin commands without blocking the event loop.
@@ -155,7 +157,7 @@ class Commands(Completer):
         if len(words) <= 1 and not text.endswith(' '):
             prefix = text[1:]
             for command in list(self._commands.values()):
-                if prefix in command.name:
+                if prefix in command.name and command.available():
                     yield Completion(
                         command.name,
                         start_position=-len(prefix),
@@ -166,7 +168,7 @@ class Commands(Completer):
         if not words:
             return
         command = self._commands.get(words[0])
-        if command is None:
+        if command is None or not command.available():
             return
         args = words[1:]
         if text.endswith(' '):
@@ -178,7 +180,9 @@ class Commands(Completer):
 
     def help(self, _: list[str]) -> str:
         """Generate help from the same registry used for completion."""
-        return '\n'.join(f'/{command.name}: {command.description}' for command in self._commands.values())
+        return '\n'.join(
+            f'/{command.name}: {command.description}' for command in self._commands.values() if command.available()
+        )
 
 
 def config_command(store: SettingsStore, args: list[str]) -> str:
