@@ -743,7 +743,7 @@ jobs:
         run: >-
           env -u ABSURD_TEST_DATABASE_URL
           uv run --all-packages --all-extras --no-extra mcp-tasks
-          coverage run --append -m pytest
+          coverage run -m pytest
           tests/harness/absurd/test_absurd.py::TestDurability::test_replay_serves_cached_model_response
         env:
           COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.${{ matrix.python-version }}-all-extras-${{ matrix.shard }}
