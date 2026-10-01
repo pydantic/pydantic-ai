@@ -639,9 +639,7 @@ class _JsonSchemaTestData:
         items_schema: dict[str, Any] | list[dict[str, Any]] = schema.get('items', {})
         if isinstance(items_schema, list):
             # Drafts before 2020-12 spell a tuple as an `items` list; 2020-12 replaced it with `prefixItems`.
-            if not prefix_items:
-                prefix_items = items_schema[: schema.get('maxItems')]
-            items_schema = {}
+            prefix_items, items_schema = prefix_items or items_schema[: schema.get('maxItems')], {}
         if prefix_items:
             for item in prefix_items:
                 data.append(self._gen_any(item))

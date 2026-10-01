@@ -678,7 +678,7 @@ def test_falsy_const_tool_args() -> None:
 
 
 def test_list_form_items_tool_args() -> None:
-    """A tool schema spelling a tuple as a draft-7 `items` list gets one generated value per element.
+    """A tool schema spelling a tuple as a draft-7 `items` list gets one generated value per element, up to `maxItems`.
 
     `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 tool schemas, emits this shape.
     """
@@ -691,13 +691,14 @@ def test_list_form_items_tool_args() -> None:
     schema = {
         'type': 'object',
         'properties': {
-            'pair': {'type': 'array', 'minItems': 2, 'maxItems': 2, 'items': [{'type': 'string'}, {'type': 'integer'}]}
+            'pair': {'type': 'array', 'minItems': 2, 'maxItems': 2, 'items': [{'type': 'string'}, {'type': 'integer'}]},
+            'head': {'type': 'array', 'maxItems': 1, 'items': [{'type': 'string'}, {'type': 'integer'}]},
         },
-        'required': ['pair'],
+        'required': ['pair', 'head'],
     }
     tool = Tool.from_schema(pair_tool, name='pair_tool', description='Takes a pair.', json_schema=schema)
     Agent(TestModel(), tools=[tool]).run_sync('hello')
-    assert calls == snapshot([{'pair': ['a', 0]}])
+    assert calls == snapshot([{'pair': ['a', 0], 'head': ['a']}])
 
 
 @pytest.mark.parametrize(
