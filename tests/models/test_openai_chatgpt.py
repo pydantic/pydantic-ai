@@ -20,7 +20,10 @@ from ..conftest import try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.openai import OpenAIResponsesModelSettings
-    from pydantic_ai.models.openai_chatgpt import OpenAIChatGPTModel
+    from pydantic_ai.models.openai_chatgpt import (
+        OpenAIChatGPTModel,
+        _CompletedStream,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
 
     from ..providers.test_openai_chatgpt import credentials
@@ -150,8 +153,9 @@ async def test_authenticated_tool_roundtrip(allow_model_requests: None, stream: 
 
 
 @pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize('local_tools', [False, True])
 @pytest.mark.filterwarnings('ignore:Sampling parameters.*:UserWarning')
-async def test_preview_dialect_and_usage(allow_model_requests: None, stream: bool):
+async def test_preview_dialect_and_usage(allow_model_requests: None, stream: bool, local_tools: bool):
     bodies: list[dict[str, Any]] = []
 
     def respond(request: httpx2.Request) -> httpx2.Response:
@@ -162,7 +166,9 @@ async def test_preview_dialect_and_usage(allow_model_requests: None, stream: boo
         model = OpenAIChatGPTModel('gpt-6.1-sol', provider=OpenAIChatGPTProvider(credentials(), http_client=client))
         messages: list[ModelMessage] = [ModelRequest(parts=[SystemPromptPart('Be helpful.'), UserPromptPart('Hi')])]
         parameters = ModelRequestParameters(
-            function_tools=[ToolDefinition(name='test', parameters_json_schema={'type': 'object'})],
+            function_tools=[ToolDefinition(name='test', parameters_json_schema={'type': 'object'})]
+            if local_tools
+            else [],
             native_tools=[WebSearchTool()],
         )
         settings: OpenAIResponsesModelSettings = {
@@ -184,7 +190,7 @@ async def test_preview_dialect_and_usage(allow_model_requests: None, stream: boo
         assert {'max_output_tokens', 'temperature', 'top_p', 'previous_response_id'}.isdisjoint(body)
         assert body['stream'] is True and body['store'] is False
         assert body['tools'][0]['type'] in ('web_search', 'web_search_preview')
-        assert body['input'][0]['type'] == 'additional_tools'
+        assert (body['input'][0].get('type') == 'additional_tools') is local_tools
         assert all(item.get('role') != 'system' for item in body['input'])
         with pytest.raises(UserError, match='CodeExecutionTool'):
             await model.request(messages, None, ModelRequestParameters(native_tools=[CodeExecutionTool()]))
@@ -209,3 +215,28 @@ async def test_unsuccessful_terminal_event(allow_model_requests: None, stream: b
                         pass
             else:
                 await model.request([], None, ModelRequestParameters())
+
+
+async def test_failed_stream_without_error(allow_model_requests: None):
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200, headers={'content-type': 'text/event-stream'}, content=events(terminal='response.failed')
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        model = OpenAIChatGPTModel('gpt-6.1-sol', provider=OpenAIChatGPTProvider(credentials(), http_client=client))
+        with pytest.raises(ModelAPIError, match='ChatGPT inference failed'):
+            await model.request([], None, ModelRequestParameters())
+
+
+async def test_completed_stream_delegates_close():
+    """Pin the internal SDK stream interface; request contexts normally close the original stream."""
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=events())
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        provider = OpenAIChatGPTProvider(credentials(), http_client=client)
+        source = await provider.client.responses.create(model='gpt-6.1-sol', input=[], store=False, stream=True)
+        await _CompletedStream(source, 'gpt-6.1-sol').close()
+        assert source.response.is_closed

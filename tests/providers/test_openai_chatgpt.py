@@ -255,6 +255,10 @@ async def test_provisioned_client(signing_key: rsa.RSAPrivateKey, method: Any):
     )
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(issuer)) as client:
         flow = OpenAIChatGPTOAuthFlow(ext_agent_host_id='host', agent_name='App', client=config, http_client=client)
+        params = parse_qs(urlsplit(flow.authorization_url()).query)
+        assert params['client_id'] == [config.client_id]
+        assert params['redirect_uri'] == [config.redirect_uri]
+        assert {'agent_name_hint', 'id_token_hint'}.isdisjoint(params)
         issuer.nonce = flow.nonce
         result = await flow.exchange_code('code')
         assert result.redirect_uri == config.redirect_uri
@@ -673,3 +677,44 @@ async def test_source_cannot_switch_registration(signing_key: rsa.RSAPrivateKey)
         with pytest.raises(UserError, match='changed the selected registration'):
             await client.get(RESOURCE + '/models')
         assert not issuer.forms
+
+
+@pytest.mark.parametrize('azp', [None, 'oaiapp_test'])
+async def test_multiple_id_token_audiences(signing_key: rsa.RSAPrivateKey, azp: str | None):
+    issuer = Issuer(signing_key)
+    issuer.claims = {'aud': ['oaiapp_test', 'other'], 'azp': azp}
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(issuer)) as client:
+        flow = OpenAIChatGPTOAuthFlow(ext_agent_host_id='host', agent_name='App', http_client=client)
+        issuer.nonce = flow.nonce
+        if azp is None:
+            with pytest.raises(ModelAPIError, match='ID token could not be verified'):
+                await flow.exchange_callback(callback(flow))
+        else:
+            assert (await flow.exchange_callback(callback(flow))).subject == 'subject'
+
+
+def test_authorization_custom_scope_and_account_hint():
+    flow = OpenAIChatGPTOAuthFlow(
+        ext_agent_host_id='host', agent_name='App', credentials=replace(credentials(), email='test@example.com')
+    )
+    params = parse_qs(urlsplit(flow.authorization_url(scope='openid', extra_params={'prompt': 'login'})).query)
+    assert params['login_hint'] == ['test@example.com']
+    assert params['scope'] == ['openid']
+    assert params['prompt'] == ['login']
+
+
+async def test_oauth_owned_http_client(signing_key: rsa.RSAPrivateKey, monkeypatch: pytest.MonkeyPatch):
+    issuer = Issuer(signing_key)
+    clients: list[httpx2.AsyncClient] = []
+
+    def create_client() -> httpx2.AsyncClient:
+        client = httpx2.AsyncClient(transport=httpx2.MockTransport(issuer))
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr('pydantic_ai.providers._openai_chatgpt_oauth.create_async_httpx2_client', create_client)
+    flow = OpenAIChatGPTOAuthFlow(ext_agent_host_id='host', agent_name='App')
+    issuer.nonce = flow.nonce
+    assert (await flow.exchange_callback(callback(flow))).client_id == 'oaiapp_test'
+    assert len(clients) == 3
+    assert all(client.is_closed for client in clients)

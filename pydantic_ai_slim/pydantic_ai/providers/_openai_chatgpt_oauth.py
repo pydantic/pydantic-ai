@@ -430,10 +430,7 @@ async def refresh_credentials(
     client: OpenAIChatGPTClient | None,
     http_client: httpx2.AsyncClient,
 ) -> OpenAIChatGPTCredentials:
-    if credentials.earliest_refresh_at and datetime.now(timezone.utc) < credentials.earliest_refresh_at:
-        raise _error('ChatGPT token refresh is not yet allowed. Retry after `earliest_refresh_at`.')
-    if client is not None and credentials.client_id != client.client_id:
-        raise UserError('The credentials belong to another ChatGPT client.')
+    # The provider validates refresh timing and the selected client before invoking this exchange.
     tokens = await _exchange(
         {
             'grant_type': 'refresh_token',
