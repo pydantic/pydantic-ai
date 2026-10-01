@@ -1,4 +1,6 @@
-"""The built-in `slack` plugin: harness `Slack`, set up in the settings menu that `/plugins configure slack` opens.
+"""Use Slack as yourself, signed in in the browser or with a token from /keys.
+
+The built-in `slack` plugin: harness `Slack`, set up in the settings menu that `/plugins configure slack` opens.
 
 It connects as the user in one of two ways. A browser sign-in through the user's own CLAI Slack app (`slack_app`)
 keeps rotating tokens in the credential store. A user token from `/keys` is referenced by name only, so `/keys`

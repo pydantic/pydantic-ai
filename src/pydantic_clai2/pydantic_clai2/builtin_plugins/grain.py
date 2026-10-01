@@ -1,4 +1,6 @@
-"""The built-in `grain` plugin: harness's `Grain` capability, with no secret in plugin settings.
+"""Use Grain meeting recordings, with its token kept in /keys.
+
+The built-in `grain` plugin: harness's `Grain` capability, with no secret in plugin settings.
 
 `/grain` (or `C` in `/plugins`, and turning the plugin on) opens a menu for the token source and the non-secret settings; each change is saved at once and applies
 to the next prompt. The token comes from, in order: the `GRAIN_ACCESS_TOKEN` environment variable; a named key from

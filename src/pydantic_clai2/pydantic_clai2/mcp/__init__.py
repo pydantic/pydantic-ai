@@ -1,4 +1,6 @@
-"""The built-in `mcp` plugin: `/mcp` manages MCP servers the way Code Puppy's `/mcp` does.
+"""Connect MCP servers and manage them with /mcp.
+
+The built-in `mcp` plugin: `/mcp` manages MCP servers the way Code Puppy's `/mcp` does.
 
 Servers live in `mcp.json` in the CLAI config folder, written by the `/mcp install` and `/mcp edit` form.
 A repository's `.clai/mcp_servers.json` and Claude Code-style `.mcp.json` load after `/mcp trust accept`. Servers given as plugin

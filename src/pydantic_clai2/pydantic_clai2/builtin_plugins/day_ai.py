@@ -1,4 +1,6 @@
-"""The built-in `day_ai` plugin: harness `DayAI`, with a token from `/keys` or a browser sign-in.
+"""Use Day AI, signed in with a token from /keys or in the browser.
+
+The built-in `day_ai` plugin: harness `DayAI`, with a token from `/keys` or a browser sign-in.
 
 Settings hold `DayAI`'s non-secret options and at most the name of a `/keys` entry, never a token; the menu that
 `/plugins configure day_ai` opens edits them. The browser sign-in works the way `/mcp` does for an OAuth server:
