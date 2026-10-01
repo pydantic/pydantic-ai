@@ -156,6 +156,10 @@ class TurnEnd:
     error: BaseException | None = None
 
 
+SettingsProvider = Literal['anthropic', 'google', 'openai', 'openai-chat']
+"""Providers whose `/model_settings` controls a plugin's models can take."""
+
+
 @dataclass(frozen=True, kw_only=True)
 class ModelProvider:
     """Models a plugin runs under its own `PREFIX:`; see `PluginHost.model_provider`."""
@@ -165,6 +169,8 @@ class ModelProvider:
     """Build the model for a name given without its prefix."""
     models: tuple[str, ...] = ()
     """Names without the prefix, offered by `/add_model` and `/set model`."""
+    settings_from: SettingsProvider | None = None
+    """The provider whose `/model_settings` controls these models take; `None` offers the generic ones."""
 
     @property
     def names(self) -> tuple[str, ...]:
@@ -179,6 +185,8 @@ class PluginLogin:
     name: str
     handler: Callable[[], Awaitable[str]]
     """Sign in and return the message to show."""
+    models: tuple[str, ...] = ()
+    """Models, as `PREFIX:NAME`, added to the saved model list once the sign-in succeeds."""
 
 
 _PROVIDER_PREFIX = re.compile(r'[a-z][a-z0-9-]*')
@@ -436,7 +444,13 @@ class PluginHost(Generic[DepsT]):
         return spinner
 
     def model_provider(
-        self, prefix: str, resolve: Callable[[str], Model], /, *, models: Iterable[str] = ()
+        self,
+        prefix: str,
+        resolve: Callable[[str], Model],
+        /,
+        *,
+        models: Iterable[str] = (),
+        settings_from: SettingsProvider | None = None,
     ) -> ModelProvider:
         """Run `PREFIX:NAME` models with `resolve`, and offer `models` in `/add_model` and `/set model`.
 
@@ -445,26 +459,34 @@ class PluginHost(Generic[DepsT]):
         cannot build the model. A prefix Pydantic AI or CLAI already runs is rejected; when two plugins
         register one prefix, the later one wins. Unloading the plugin removes the prefix, and a run with
         a model under it then fails as an unknown provider until the plugin is enabled again.
+
+        When `resolve` returns that provider's model class, such as an `AnthropicModel` subclass, pass
+        `settings_from` so `/model_settings` offers its controls (thinking, effort) for these models.
         """
         _require_name('Model prefix', prefix)
         if _runs_already(prefix):
             raise ValueError(f'Model prefix {prefix!r} is a provider CLAI already runs; choose your own.')
-        provider = ModelProvider(prefix=prefix, resolve=resolve, models=tuple(models))
+        if settings_from is not None and settings_from not in get_args(SettingsProvider):
+            raise ValueError(f'settings_from must be one of {", ".join(get_args(SettingsProvider))}.')
+        provider = ModelProvider(prefix=prefix, resolve=resolve, models=tuple(models), settings_from=settings_from)
         self._model_providers.append(provider)
         return provider
 
-    def login(self, name: str, handler: Callable[[], Awaitable[str]], /) -> PluginLogin:
+    def login(self, name: str, handler: Callable[[], Awaitable[str]], /, *, models: Iterable[str] = ()) -> PluginLogin:
         """Add `/login NAME`, which awaits `handler` and shows the message it returns.
 
         For sign-ins that store credentials, such as the subscription behind a `model_provider`. Keep
         secrets in the keyring, never in plugin settings, and raise `UserError` when signing in fails.
         NAME cannot be a sign-in CLAI ships (`codex`, `copilot`, or their provider names); when two
         plugins add one name, the later one wins. Unloading the plugin removes it.
+
+        Once the sign-in succeeds, `models` (as `PREFIX:NAME`, such as a provider's `names`) are added
+        to the saved model list, so `/model` and `/model_settings` offer them without `/add_model`.
         """
         _require_name('Login name', name)
         if name in LOGINS or name in LOGIN_ALIASES:
             raise ValueError(f'Login name {name!r} is a sign-in CLAI already has; choose your own.')
-        login = PluginLogin(name=name, handler=handler)
+        login = PluginLogin(name=name, handler=handler, models=tuple(models))
         self._logins.append(login)
         return login
 

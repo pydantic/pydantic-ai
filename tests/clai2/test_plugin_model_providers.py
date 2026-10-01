@@ -2,10 +2,11 @@
 
 import io
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Generic, TypeVar, cast
 
 import pytest
 from rich.console import Console
+from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
@@ -16,9 +17,10 @@ from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Commands, set_completions
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import ModelProvider, PluginHost, SessionStart
+from pydantic_clai2.plugins import ModelProvider, PluginHost, SessionStart, SettingsProvider
 from pydantic_clai2.plugins.loader import PluginLoader
-from pydantic_clai2.ui.menus.model_menu import ModelMenu
+from pydantic_clai2.ui.menus.model_menu import ModelMenu, model_settings_command
+from tests.clai2.menu_script import Script, pick
 
 PromptT = TypeVar('PromptT')
 
@@ -78,6 +80,50 @@ def test_host_rejects_a_known_provider_whose_sdk_is_missing(monkeypatch: pytest.
     monkeypatch.setattr('pydantic_clai2.plugins.infer_provider_class', missing_sdk)
     with pytest.raises(ValueError, match='provider CLAI already runs'):
         host().model_provider('echo-test', echo)
+
+
+def test_host_rejects_an_unknown_settings_from() -> None:
+    with pytest.raises(ValueError, match='settings_from must be one of anthropic, google'):
+        host().model_provider('echo-test', echo, settings_from=cast(SettingsProvider, 'bedrock'))
+
+
+async def test_plugin_models_take_the_settings_from_providers_controls(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.plugins_dir.mkdir(parents=True, exist_ok=True)
+    (store.plugins_dir / 'claude.py').write_text(
+        'from pydantic_ai.models.test import TestModel\n\n\n'
+        'def activate(host):\n'
+        "    host.model_provider('claude-test', lambda name: TestModel(), settings_from='anthropic')\n"
+    )
+    loader: PluginLoader[None] = PluginLoader(
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+    )
+    await loader.load_all()
+    model = 'claude-test:claude-fable-5-1'
+    assert loader.settings_model(model) == 'anthropic:claude-fable-5-1'
+    assert loader.settings_model('claude-test') == 'claude-test'
+    assert loader.settings_model('echo-test:x') == 'echo-test:x'
+
+    context = CommandContext(
+        settings=Settings(model=None),
+        store=store,
+        clear_history=lambda: None,
+        apply_setting=lambda key, settings: None,
+        settings_model=loader.settings_model,
+    )
+    store.add_model(name=model)
+    direct = Script(lists=[pick('anthropic_effort'), MenuResult(cancelled=True)], choices=[pick('high')], texts=[])
+    assert 'Saved anthropic_effort' in await model_settings_command(context, [model], runners=direct.runners)
+    picked = Script(
+        lists=[pick(model), pick('anthropic_effort'), MenuResult(cancelled=True), MenuResult(cancelled=True)],
+        choices=[pick('low')],
+        texts=[],
+    )
+    assert 'Saved anthropic_effort' in await model_settings_command(context, [], runners=picked.runners)
+    assert store.model_settings(model) == {'anthropic_effort': 'low'}
 
 
 async def test_resolver_routes_only_prefixed_names_to_plugins() -> None:
