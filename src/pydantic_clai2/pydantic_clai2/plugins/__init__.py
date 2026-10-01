@@ -284,6 +284,34 @@ class NoSettings(BaseModel):
 SettingsT = DefaultTypeVar('SettingsT', bound=BaseModel, default=NoSettings, covariant=True)
 
 
+def _settings_argument(cls: type) -> object:
+    """`Plugin`'s settings argument as `cls` binds it, in terms of `cls`'s own type parameters."""
+    bases = ((base, get_origin(base) or base) for base in get_original_bases(cls))
+    base, origin = next(
+        (base, origin) for base, origin in bases if isinstance(origin, type) and Plugin in origin.__mro__
+    )
+    settings = SettingsT if origin is Plugin else _settings_argument(origin)
+    parameters: tuple[object, ...] = getattr(origin, '__parameters__', ())
+    return _bind(settings, dict(zip(parameters, get_args(base))))
+
+
+def _bind(argument: object, bound: dict[object, object]) -> object:
+    """Substitute `bound` type parameters into `argument`, including a generic settings model's own."""
+    model = _as_model(argument)
+    if model is None:
+        return bound.get(argument, argument)
+    parameters = model.__pydantic_generic_metadata__['parameters']
+    arguments = tuple(_bind(parameter, bound) for parameter in parameters)
+    if arguments == parameters:
+        return model
+    specialized: object = model[arguments]
+    return specialized
+
+
+def _as_model(argument: object) -> type[BaseModel] | None:
+    return argument if isinstance(argument, type) and issubclass(argument, BaseModel) else None
+
+
 class Plugin(Generic[SettingsT, DepsT]):
     """A CLAI plugin, declared by overriding what it contributes, as an `AbstractCapability` is.
 
@@ -303,13 +331,9 @@ class Plugin(Generic[SettingsT, DepsT]):
     def __init_subclass__(cls, **kwargs: object) -> None:
         """Record the settings model named in `Plugin[SettingsModel, ...]`."""
         super().__init_subclass__(**kwargs)
-        for base in get_original_bases(cls):
-            origin = get_origin(base)
-            if isinstance(origin, type) and issubclass(origin, Plugin):
-                settings = next(iter(get_args(base)), None)
-                if isinstance(settings, type) and issubclass(settings, BaseModel):
-                    cls.settings_type = settings
-                return
+        settings = _as_model(_settings_argument(cls))
+        if settings is not None:
+            cls.settings_type = settings
 
     def __init__(self, host: PluginHost[DepsT], settings: SettingsT) -> None:
         """Keep the host and validated settings; override to set up state the `get_*` methods share."""

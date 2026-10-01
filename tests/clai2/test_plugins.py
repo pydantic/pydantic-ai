@@ -3,6 +3,7 @@
 import io
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Generic, TypeVar
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, RootModel, ValidationError
@@ -74,6 +75,68 @@ def test_settings_model_is_inherited_by_subclasses() -> None:
         pass
 
     assert LoudGreeter.settings_type is Options
+
+
+class ServiceSettings(BaseModel):
+    endpoint: str
+
+
+class RequestDeps(BaseModel):
+    user_id: int
+
+
+ServiceDepsT = TypeVar('ServiceDepsT')
+
+
+class ServicePlugin(Plugin[ServiceSettings, ServiceDepsT]):
+    pass
+
+
+class RequestServicePlugin(ServicePlugin[RequestDeps]):
+    pass
+
+
+def test_specializing_only_the_deps_keeps_the_settings_model() -> None:
+    assert RequestServicePlugin.settings_type is ServiceSettings
+    loaded = load_plugin(
+        RequestServicePlugin,
+        PluginHost[RequestDeps](
+            name='test', console=Console(file=io.StringIO()), settings={'endpoint': 'https://example.com'}
+        ),
+    )
+    assert loaded.plugin.settings == ServiceSettings(endpoint='https://example.com')
+
+
+ValueT = TypeVar('ValueT')
+ChosenT = TypeVar('ChosenT', bound=BaseModel)
+
+
+class Value(BaseModel, Generic[ValueT]):
+    value: ValueT
+
+
+class ValuePlugin(Plugin[Value[ValueT]], Generic[ValueT]):
+    pass
+
+
+class NumberPlugin(ValuePlugin[int]):
+    pass
+
+
+class ChosenPlugin(Plugin[ChosenT], Generic[ChosenT]):
+    pass
+
+
+class ChosenNumberPlugin(ChosenPlugin[Value[int]]):
+    pass
+
+
+@pytest.mark.parametrize('plugin', [NumberPlugin, ChosenNumberPlugin])
+def test_a_generic_settings_model_is_specialized_by_the_plugin(plugin: type[Plugin[Value[int]]]) -> None:
+    assert plugin.settings_type is Value[int]
+    assert plugin.from_host(host(value='123')).settings == Value[int](value=123)
+    with pytest.raises(ValidationError):
+        load_plugin(plugin, host(value='not-an-int'))
 
 
 def test_settings_validate_against_plugin_model() -> None:
