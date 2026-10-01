@@ -278,7 +278,7 @@ CASES = [
         present={'generationConfig.thinkingConfig.thinking_level': 'HIGH'},
         match_body=True,
     ),
-    # A `models/` resource name gets the bare id's level set; the request keeps the name as written.
+    # A `models/` resource name gets the bare id's level set.
     WireCase(
         id='google-gemini-31-flash-image-resource-name-low-snaps-down',
         provider='google',

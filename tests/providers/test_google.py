@@ -368,6 +368,11 @@ def test_google_cloud_model_string_uses_adc_from_env(env: TestEnv):
     ],
 )
 def test_google_provider_model_profile_matches_resource_name_by_model_id(model_name: str):
+    """A resource name gets the profile of the model id it names.
+
+    A unit test because recording the Vertex forms needs Google Cloud credentials; the `models/` form is
+    pinned on the wire in `tests/test_thinking_wire_contract.py`.
+    """
     profile = BaseGoogleProvider.model_profile(model_name)
     assert profile == google_model_profile('gemini-3.7-flash')
     assert profile is not None
@@ -383,5 +388,8 @@ def test_google_provider_model_profile_matches_resource_name_by_model_id(model_n
     ],
 )
 def test_google_provider_model_profile_leaves_opaque_ids_unchanged(model_name: str):
-    """Endpoints, Model Registry models and tuned models have no model name to match a profile on."""
+    """Endpoints, Model Registry models and tuned models have no model name to match a profile on.
+
+    A unit test because these ids name private deployments no cassette can be recorded against.
+    """
     assert BaseGoogleProvider.model_profile(model_name) == google_model_profile(model_name)

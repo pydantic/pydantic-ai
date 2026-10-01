@@ -216,9 +216,9 @@ _GOOGLE_PUBLISHER_MODEL_RESOURCE_NAME = re.compile(
 def _profile_model_name(model_name: str) -> str:  # pyright: ignore[reportUnusedFunction]
     """The model id that profile lookup matches on, taken from a Google publisher model's resource name.
 
-    Google accepts `models/X` and `publishers/P/models/X` (optionally under `projects/A/locations/B/`) for the
-    same model as the bare id, and Vertex also takes `P/X`. Tuned models, Model Registry models and endpoints
-    carry an opaque id rather than a model name, so they are returned unchanged.
+    The Gemini API accepts `models/X` for the bare id `X`; Vertex accepts `publishers/P/models/X` (optionally
+    under `projects/A/locations/B/`) and `P/X`. Tuned models, Model Registry models and endpoints carry an
+    opaque id rather than a model name, so they are returned unchanged.
     """
     match = _GOOGLE_PUBLISHER_MODEL_RESOURCE_NAME.fullmatch(model_name)
     return match.group(1) if match else model_name
@@ -275,7 +275,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         thinking_always_enabled=thinking_always_enabled,
         google_supports_tool_combination=is_modern_gemini,
         # Verified live 2026-10-01 on the Gemini API: every Gemini 3 image model 400s on the field
-        # (`Tool call context circulation is not enabled`) and accepts `googleSearch` without it.
+        # (`Tool call context circulation is not enabled`).
         google_supports_server_side_tool_invocations=is_modern_gemini and not is_image_model,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_modern_gemini else (),
         google_supports_thinking_level=google_supports_thinking_level,

@@ -261,7 +261,12 @@ def test_model_profile_gemini_2_disables_tool_combination_capabilities():
     ],
 )
 def test_model_profile_server_side_tool_invocations(model_name: str, expected: bool):
-    """Gemini 3 image models reject `include_server_side_tool_invocations`, unlike Gemini 3 text models."""
+    """Gemini 3 image models reject `include_server_side_tool_invocations`, unlike Gemini 3 text models.
+
+    Pins the profile flag on both sides. The request field it gates is covered on the wire by
+    `test_google_image_generation_with_web_search` and
+    `test_google_gemini_api_sets_include_server_side_tool_invocations`.
+    """
     profile = google_model_profile(model_name)
     assert profile is not None
     assert profile.get('google_supports_server_side_tool_invocations', False) is expected
