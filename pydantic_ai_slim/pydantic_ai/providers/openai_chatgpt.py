@@ -239,6 +239,8 @@ class OpenAIChatGPTProvider(_OpenAICompatibleProvider):
                 self._credentials = updated
                 self._refresh_error = None
             except Exception as exc:
-                self._refresh_error = exc
+                # Before exchange starts, a storage/lock error has not spent a rotating token.
+                if self._refresh_error is not None:
+                    self._refresh_error = exc
                 raise
             return self.credentials

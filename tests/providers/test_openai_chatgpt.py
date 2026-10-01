@@ -718,3 +718,49 @@ async def test_oauth_owned_http_client(signing_key: rsa.RSAPrivateKey, monkeypat
     assert (await flow.exchange_callback(callback(flow))).client_id == 'oaiapp_test'
     assert len(clients) == 3
     assert all(client.is_closed for client in clients)
+
+
+async def test_source_recovers_before_refresh_dispatch(signing_key: rsa.RSAPrivateKey, monkeypatch: pytest.MonkeyPatch):
+    issuer = Issuer(signing_key)
+    source = MemorySource(credentials(-1))
+    rotate = source.rotate
+    calls = 0
+
+    async def unavailable_once(
+        expected: OpenAIChatGPTCredentials,
+        refresh: Callable[[OpenAIChatGPTCredentials], Awaitable[OpenAIChatGPTCredentials]],
+    ) -> OpenAIChatGPTCredentials:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError('Storage temporarily unavailable')
+        return await rotate(expected, refresh)
+
+    monkeypatch.setattr(source, 'rotate', unavailable_once)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(issuer)) as client:
+        provider = OpenAIChatGPTProvider(credential_source=source, http_client=client)
+        with pytest.raises(RuntimeError, match='temporarily unavailable'):
+            await client.get(RESOURCE + '/models')
+        assert not issuer.forms
+        await client.get(RESOURCE + '/models')
+        assert calls == 2
+        assert len(issuer.forms) == 1
+        assert provider.credentials == source.value
+
+
+@pytest.mark.parametrize('mode', ['code', 'callback', 'changed_query'])
+async def test_provisioned_callback_query(signing_key: rsa.RSAPrivateKey, mode: str):
+    issuer = Issuer(signing_key)
+    config = OpenAIChatGPTClient(client_id='oaiapp_test', redirect_uri='https://app.example/callback?tenant=demo')
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(issuer)) as client:
+        flow = OpenAIChatGPTOAuthFlow(ext_agent_host_id='host', agent_name='App', client=config, http_client=client)
+        issuer.nonce = flow.nonce
+        callback_url = config.redirect_uri + '&' + urlencode({'state': flow.state, 'code': 'code'})
+        if mode == 'changed_query':
+            with pytest.raises(UserError, match='does not match'):
+                await flow.exchange_callback(callback_url.replace('tenant=demo', 'tenant=other'))
+            assert not issuer.forms
+            return
+        result = await flow.exchange_code('code') if mode == 'code' else await flow.exchange_callback(callback_url)
+        assert result.redirect_uri == config.redirect_uri
+        assert issuer.forms[0]['redirect_uri'] == [config.redirect_uri]

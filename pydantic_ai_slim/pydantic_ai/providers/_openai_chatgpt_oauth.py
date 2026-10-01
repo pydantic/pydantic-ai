@@ -360,7 +360,10 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
         """Exchange a code for an existing client; new registrations must use `exchange_callback`."""
         if self._client_id == _DYNAMIC_CLIENT_ID:
             raise UserError('New ChatGPT registrations require `exchange_callback` with the issued client ID.')
-        return await self.exchange_callback(f'{self.redirect_uri}?{urlencode({"state": self.state, "code": code})}')
+        separator = '&' if urlsplit(self.redirect_uri).query else '?'
+        return await self.exchange_callback(
+            f'{self.redirect_uri}{separator}{urlencode({"state": self.state, "code": code})}'
+        )
 
     async def exchange_callback(self, callback_url: str) -> OpenAIChatGPTCredentials:
         """Validate the full callback and exchange once. Never fetches the supplied URL."""
@@ -371,6 +374,10 @@ class OpenAIChatGPTOAuthFlow(OAuthFlow[OpenAIChatGPTCredentials]):
                 (url.scheme, url.netloc, url.path) == (target.scheme, target.netloc, target.path)
                 and not url.fragment
                 and all(len(v) == 1 for v in params.values())
+                and all(
+                    params.get(name) == values
+                    for name, values in parse_qs(target.query, keep_blank_values=True, strict_parsing=True).items()
+                )
                 and secrets.compare_digest(params.get('state', [''])[0], self.state)
             )
         except ValueError:
