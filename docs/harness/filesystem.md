@@ -65,7 +65,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. Binary files are detected and not dumped. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it; other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -268,8 +268,13 @@ applies the same rule to absolute symlink targets.
 - **Bounded walks.** `search_files` and `find_files` stop after 10,000
   directories or 100,000 entries and end their result with a
   `[... walk cut short ...]` line.
-- **Binary detection.** `read_file` returns a placeholder instead of dumping
-  binary bytes into the model context.
+- **Binary detection.** `read_file` does not decode binary bytes into the model
+  context. It returns an image or PDF as `BinaryContent` (recognized by its
+  leading bytes, not its extension), which Pydantic AI sends
+  [inside the tool result or on the user channel](../tools-advanced.md#tool-return-file-provenance)
+  depending on the model. Audio and video are described rather than returned,
+  because some providers reject them in a tool result. A file over 5 MB, the
+  strictest mainstream per-image limit, is described too.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than silently overwriting newer content.
