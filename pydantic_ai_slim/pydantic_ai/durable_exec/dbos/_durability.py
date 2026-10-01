@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from dbos import DBOS
-from dbos._error import DBOSWorkflowCancelledError
+from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 
 from pydantic_ai.agent import EventStreamHandler, ParallelExecutionMode
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -65,8 +65,11 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         journal_discovery=True,
         sequential_tools_in_durable_context=False,
         tool_config_key=None,
-        # `DBOS.cancel_workflow()` aborts the run with this `BaseException` rather than a `CancelledError`.
-        cancellation_error_types=(DBOSWorkflowCancelledError,),
+        # `DBOS.cancel_workflow()` aborts the run with one of these `BaseException`s rather than a
+        # `CancelledError`: `DBOSWorkflowCancelledError` when a step starts (or a preemptible step is
+        # aborted), and, since dbos 3.2, `DBOSWorkflowConflictIDError` when a step that was running as
+        # the workflow was cancelled tries to record its result after the cancel handed ownership off.
+        cancellation_error_types=(DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError),
     )
     # No `tool_config_key`: DBOS takes no per-tool config, and tool metadata is ignored (as it was
     # before this capability existed). It can't be supported without changing durable history: a step
