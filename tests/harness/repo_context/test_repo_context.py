@@ -245,15 +245,7 @@ class TestInstructions:
 
     @pytest.mark.parametrize('autoload_instructions', [True, False])
     async def test_no_workspace_fails_the_run(self, autoload_instructions: bool) -> None:
-        agent = Agent(
-            TestModel(),
-            capabilities=[
-                RepoContext[object](
-                    autoload_instructions=autoload_instructions,
-                    expose_inventory_tool=not autoload_instructions,
-                )
-            ],
-        )
+        agent = Agent(TestModel(), capabilities=[RepoContext[object](autoload_instructions=autoload_instructions)])
 
         with pytest.raises(UserError, match='`RepoContext` needs a workspace'):
             await agent.run('go')
