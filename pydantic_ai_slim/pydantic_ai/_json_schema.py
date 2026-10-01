@@ -175,9 +175,14 @@ class JsonSchemaTransformer(ABC):
         seen: set[str] = set()
         while pending:
             node = pending.pop()
-            if not isinstance(node, dict):
+            if isinstance(node, bool):
                 continue
-            if isinstance(ref := node.get('$ref'), str):
+            # The walk raises on anything else in a schema position, and on a `$ref` that isn't a string.
+            if not isinstance(node, dict):
+                return False
+            if ref := node.get('$ref'):
+                if not isinstance(ref, str):
+                    return False
                 key = _DEFS_REF_PREFIX.sub('', ref)
                 # A boolean definition is valid JSON Schema, but `_walk_def` can only merge a dict.
                 if not isinstance(definition := self.defs.get(key), dict):
