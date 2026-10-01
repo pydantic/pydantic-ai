@@ -13,7 +13,6 @@ import functools
 import time
 import traceback
 import warnings
-from builtins import ExceptionGroup
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
@@ -732,7 +731,8 @@ class Dataset(BaseModel, Generic[InputsT, OutputT, MetadataT], extra='forbid', a
             row.evaluators = evaluators
             cases.append(row)
         if errors:
-            raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])
+            # Ruff still targets Python 3.10 across the repository.
+            raise ExceptionGroup(f'{len(errors)} error(s) loading evaluators from registry', errors[:3])  # noqa: F821
         name = dataset_model.name if dataset_model.name is not None else default_name
         if name is None:
             raise ValueError('Dataset name is required: provide one in the serialized data or via `default_name`.')
