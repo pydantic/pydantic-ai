@@ -5,7 +5,7 @@ description: "Give a Pydantic AI agent a todo list it plans and updates itself, 
 
 # Planning
 
-`Planning` gives the model a structured, self-updating task list through a small toolset -- and surfaces the current plan back to the model every turn without ever invalidating the prompt cache. It can stay in memory for a single run or persist to SQLite/Postgres, break steps into subtasks with dependencies, and emit events from granular changes.
+`Planning` gives the model a structured, self-updating task list through a small toolset -- and surfaces the current plan back to the model every turn while each request reads everything before the reminder from the prompt cache. It can stay in memory for a single run or persist to SQLite/Postgres, break steps into subtasks with dependencies, and emit events from granular changes.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
@@ -30,14 +30,14 @@ Long agentic runs drift: the model loses track of what it set out to do and what
 
 ## The solution
 
-The model owns the plan through the `planning` toolset. The current plan is surfaced back as an ephemeral reminder appended to the tail of each request, with the single cache breakpoint anchored on the last durable user content:
+The model owns the plan through the `planning` toolset. The current plan is surfaced back as an ephemeral reminder appended to the tail of each request, behind a single cache breakpoint:
 
-- The reminder is added after the durable history is persisted, so it reaches the model but is never written to `message_history`. No reminders accumulate across turns.
-- The `CachePoint` sits on the last durable user content, so the prefix it saves is a prefix of the next request and cache hits survive turn over turn. The reminder carries no breakpoint, so re-sending its mutable content never invalidates the cache.
+- The reminder is added after the durable history is persisted, so it reaches the model but is never written to `message_history`. No reminders accumulate across turns, and stored history never has text right after a tool result, a pattern that makes some models end their turn without a reply.
+- The reminder leads with a `CachePoint`, which providers attach to the content right before it: the last tool result or user prompt. Everything up to there is what the next request starts with, so each request reads the previous one's content from cache, tool turns included. Only the reminder itself is re-sent uncached.
 
-As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit cache control, and with no durable user content to anchor on the reminder is sent without a breakpoint.
+As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit cache control, and a request with no content before the reminder (an instructions-only first request) gets no breakpoint.
 
-Note that the anchor lands on the last `UserPromptPart` present in the request. A capability listed before `Planning` that appends user content each request (for example `SystemReminders`) displaces the anchor onto that part, so the prefix stays cache-stable only while that content is stable across turns.
+A capability listed before `Planning` that also appends a tail part each request (for example `SystemReminders`) puts its content between the durable history and the plan reminder. The `Planning` breakpoint then covers that content too, so the entry it writes holds until that content changes, while the earlier capability's own breakpoint still marks the durable history.
 
 ## Usage
 
@@ -186,7 +186,7 @@ from pydantic_ai_harness import Planning
 
 Planning(
     guidance=None,           # static system-prompt guidance; None = default, '' = omit
-    cache_ttl='5m',          # TTL for the cache breakpoint anchored on the last durable user content ('5m' | '1h')
+    cache_ttl='5m',          # TTL for the cache breakpoint leading the reminder ('5m' | '1h')
     store=None,              # None = fresh in-memory plan per run; or a PlanStore to persist
     enable_subtasks=False,   # add subtask/dependency tools and the 'blocked' status
     inject=True,             # surface the current plan as a cache-safe tail reminder

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import replace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,7 +17,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    TextContent,
+    RetryPromptPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -51,7 +52,15 @@ from pydantic_ai_harness.planning._toolset import (
     status_icon,
     validate_hierarchy,
 )
+from tests.conftest import try_import
 from tests.harness._recording_durability import RecordingDurability
+
+with try_import() as anthropic_imports:
+    import httpx2
+    from anthropic import AsyncAnthropic
+
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
+    from pydantic_ai.providers.anthropic import AnthropicProvider
 
 pytestmark = [
     pytest.mark.filterwarnings('ignore::pydantic_ai_harness.HarnessDeprecationWarning'),
@@ -1054,39 +1063,36 @@ class TestReminder:
         seen, _ = await self._run_hook(cap, [original])
         assert seen[-1] is original
 
-    async def test_reminder_behind_cachepoint(self) -> None:
+    async def test_reminder_leads_with_cachepoint(self) -> None:
         store = InMemoryPlanStore()
         cap = Planning[None](store=store, cache_ttl='1h')
         await store.add_item(PlanItem(content='Do X', status=TaskStatus.in_progress))
         original = ModelRequest(parts=[UserPromptPart('hi')])
         seen, _ = await self._run_hook(cap, [original])
-        assert len(original.parts) == 1  # append-only
-        anchor = cast(UserPromptPart, seen[-1].parts[0])
-        assert anchor is not original.parts[0]  # durable content is copied, never mutated
-        anchor_content = anchor.content
-        assert isinstance(anchor_content, list)
-        assert anchor_content[0] == 'hi'
-        assert isinstance(anchor_content[1], CachePoint)
-        assert anchor_content[1].ttl == '1h'
+        assert len(original.parts) == 1  # the history's request is copied, never mutated
+        assert seen[-1].parts[0] is original.parts[0]
         reminder = cast(UserPromptPart, seen[-1].parts[-1])
         content = reminder.content
         assert isinstance(content, list)
-        assert content[0] == '<plan-reminder>\n'
-        assert not any(isinstance(item, CachePoint) for item in content)
-        assert 'Do X' in cast(str, content[1])
+        assert content[0] == CachePoint(ttl='1h')
+        assert content[1] == '<plan-reminder>\n'
+        assert 'Do X' in cast(str, content[2])
 
-    async def test_breakpoint_anchors_list_content(self) -> None:
+    @pytest.mark.parametrize(
+        'tool_result',
+        [
+            ToolReturnPart('lookup', 'result', tool_call_id='c1'),
+            RetryPromptPart('try again', tool_name='lookup', tool_call_id='c1'),
+        ],
+    )
+    async def test_breakpoint_follows_tool_results(self, tool_result: ToolReturnPart | RetryPromptPart) -> None:
+        """In a tool loop the reminder's breakpoint marks the tool results, the last content the next request keeps."""
         store = InMemoryPlanStore()
-        cap = Planning[None](store=store)
         await store.add_item(PlanItem(content='Do X'))
-        seen, _ = await self._run_hook(cap, [ModelRequest(parts=[UserPromptPart(content=['hello world'])])])
-        anchor = cast(UserPromptPart, seen[-1].parts[0])
-        anchor_content = anchor.content
-        assert isinstance(anchor_content, list)
-        assert anchor_content[0] == 'hello world'
-        assert isinstance(anchor_content[1], CachePoint)
+        seen, _ = await self._run_hook(Planning[None](store=store), [ModelRequest(parts=[tool_result])])
+        assert seen[-1].parts[0] is tool_result
         reminder = cast(UserPromptPart, seen[-1].parts[-1])
-        assert not any(isinstance(item, CachePoint) for item in reminder.content)
+        assert reminder.content[0] == CachePoint(ttl='5m')
 
     async def test_last_not_model_request_passthrough(self) -> None:
         store = InMemoryPlanStore()
@@ -1096,30 +1102,17 @@ class TestReminder:
         seen, _ = await self._run_hook(cap, [prior])
         assert seen[-1] is prior
 
-    async def test_breakpoint_omitted_without_durable_user_content(self) -> None:
+    async def test_breakpoint_omitted_without_content_to_attach_to(self) -> None:
         store = InMemoryPlanStore()
         cap = Planning[None](store=store)
         await store.add_item(PlanItem(content='Do X'))
-
-        def cache_points(messages: list[ModelMessage]) -> list[CachePoint]:
-            return [
-                item
-                for message in messages
-                for part in message.parts
-                if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-                for item in part.content
-                if isinstance(item, CachePoint)
-            ]
-
-        histories: list[list[ModelMessage]] = [
-            [ModelRequest(parts=[])],
-            [ModelRequest(parts=[UserPromptPart('')])],
-            [ModelRequest(parts=[UserPromptPart(content=[''])])],
-            [ModelRequest(parts=[UserPromptPart(content=[CachePoint(ttl='5m')])])],
-        ]
-        for history in histories:
-            seen, _ = await self._run_hook(cap, history)
-            assert cache_points(seen) == cache_points(history)
+        for parts in [
+            [],
+            [UserPromptPart('')],
+            [UserPromptPart(content=[''])],
+            [UserPromptPart(content=[CachePoint(ttl='5m')])],
+        ]:
+            seen, _ = await self._run_hook(cap, [ModelRequest(parts=parts)])
             reminder = cast(UserPromptPart, seen[-1].parts[-1])
             content = reminder.content
             assert isinstance(content, list)
@@ -1159,111 +1152,108 @@ class TestEndToEnd:
         agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[Planning()])
         result = await agent.run('go')
         assert result.output == 'done'
-        sent = '\n'.join(
-            c
-            for msg in captured['messages']
-            for part in msg.parts
-            if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-            for c in part.content
-            if isinstance(c, str)
-        )
-        assert '<plan-reminder>' in sent
-        assert 'Step A' in sent
-        reminder = next(
-            part
-            for message in captured['messages']
-            for part in message.parts
-            if isinstance(part, UserPromptPart)
-            and isinstance(part.content, list)
-            and '<plan-reminder>\n' in part.content
-        )
-        assert reminder.content[0] == '<plan-reminder>\n'
-        assert not any(isinstance(item, CachePoint) for item in reminder.content)
-        assert 'Step A' in cast(str, reminder.content[1])
-        # ephemeral: never written to durable history
-        durable = '\n'.join(
-            part.content
-            for msg in result.all_messages()
-            for part in msg.parts
-            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
-        )
-        assert '<plan-reminder>' not in durable
-
-    async def test_plan_reminder_prefix_stable_across_turns(self) -> None:
-        captured: list[list[ModelMessage]] = []
-        calls = 0
-
-        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            nonlocal calls
-            calls += 1
-            if calls in (1, 3):
-                item = 'Step A' if calls == 1 else 'Step B'
-                return ModelResponse(
-                    parts=[
-                        ToolCallPart(
-                            'write_plan',
-                            {'items': [{'content': item, 'status': 'in_progress'}]},
-                            tool_call_id=f'c{calls}',
-                        )
-                    ]
-                )
-            captured.append(messages)
-            return ModelResponse(parts=[TextPart('done')])
-
-        agent: Agent[None, str] = Agent(FunctionModel(model_fn), capabilities=[Planning()])
-        result_1 = await agent.run('go')
-        assert result_1.output == 'done'
-        result_2 = await agent.run('continue', message_history=result_1.all_messages())
-        assert result_2.output == 'done'
-        assert calls == 4
-
-        def breakpoints(messages: list[ModelMessage]) -> list[CachePoint]:
-            return [
-                item
-                for message in messages
-                for part in message.parts
-                if isinstance(part, UserPromptPart) and not isinstance(part.content, str)
-                for item in part.content
-                if isinstance(item, CachePoint)
-            ]
-
-        def durable_prefix(messages: list[ModelMessage]) -> list[str]:
-            prefix: list[str] = []
-            for message in messages:
-                for part in message.parts:
-                    if not isinstance(part, UserPromptPart):
-                        continue
-                    for item in [part.content] if isinstance(part.content, str) else list(part.content):
-                        if isinstance(item, CachePoint):
-                            return prefix
-                        if isinstance(item, str):
-                            prefix.append(item)
-            raise AssertionError('request carries no CachePoint')
-
-        for messages in captured:
-            assert len(breakpoints(messages)) == 1
-            reminder = next(
-                part
-                for message in messages
-                for part in message.parts
-                if isinstance(part, UserPromptPart)
-                and isinstance(part.content, list)
-                and '<plan-reminder>\n' in part.content
+        last = captured['messages'][-1]
+        assert isinstance(last.parts[0], ToolReturnPart)
+        reminder = last.parts[-1]
+        assert isinstance(reminder, UserPromptPart) and isinstance(reminder.content, list)
+        assert reminder.content[:2] == [CachePoint(ttl='5m'), '<plan-reminder>\n']
+        assert 'Step A' in cast(str, reminder.content[2])
+        # Never persisted, so stored history has no text after a tool result. A text block right after
+        # tool results, on some turns and not others, makes Claude Haiku/Sonnet 4.x end turns empty.
+        for message in result.all_messages():
+            assert not any(
+                isinstance(part, UserPromptPart) and '<plan-reminder>' in str(part.content) for part in message.parts
             )
-            assert not any(isinstance(item, CachePoint) for item in reminder.content)
+            if isinstance(message, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in message.parts):
+                assert not any(isinstance(part, UserPromptPart) for part in message.parts)
 
-        prefixes = [durable_prefix(messages) for messages in captured]
-        assert prefixes[0] == ['go']
-        assert prefixes[1] == ['go', 'continue']
-        assert prefixes[1][: len(prefixes[0])] == prefixes[0]
-        prefix = durable_prefix(
-            [
-                ModelRequest(
-                    parts=[UserPromptPart(content=[TextContent(content='tagged'), 'after', CachePoint(ttl='5m')])]
-                )
+    async def test_anthropic_breakpoint_covers_everything_but_the_reminder(self, allow_model_requests: None) -> None:
+        """On the bytes Anthropic receives: each request caches up to the block before the reminder (#9275).
+
+        That block is the last one the next request keeps, so the next request reads its whole
+        prefix from cache. Anchoring on the last user prompt instead left every tool turn since it
+        uncached, which is what automatic caching then kept re-writing.
+        """
+        bodies: list[dict[str, Any]] = []
+        script: list[tuple[str, dict[str, Any]] | None] = [
+            ('write_plan', {'items': [{'content': 'inspect'}]}),
+            ('lookup', {'n': 1}),
+            ('lookup', {'n': 2}),
+            None,
+        ]
+
+        def handler(request: httpx2.Request) -> httpx2.Response:
+            body = json.loads(request.content)
+            bodies.append(body)
+            step = script[len(bodies) - 1]
+            block: dict[str, Any] = (
+                {'type': 'text', 'text': 'done'}
+                if step is None
+                else {'type': 'tool_use', 'id': f't{len(bodies)}', 'name': step[0], 'input': step[1]}
+            )
+            message: dict[str, Any] = {
+                'id': f'msg_{len(bodies)}',
+                'type': 'message',
+                'role': 'assistant',
+                'model': 'claude-sonnet-4-6',
+                'content': [block],
+                'stop_reason': 'end_turn' if step is None else 'tool_use',
+                'stop_sequence': None,
+                'usage': {'input_tokens': 1, 'output_tokens': 1},
+            }
+            start_block: dict[str, Any]
+            delta: dict[str, Any]
+            if step is None:
+                start_block, delta = {'type': 'text', 'text': ''}, {'type': 'text_delta', 'text': 'done'}
+            else:
+                start_block = {**block, 'input': {}}
+                delta = {'type': 'input_json_delta', 'partial_json': json.dumps(step[1])}
+            events: list[dict[str, Any]] = [
+                {'type': 'message_start', 'message': {**message, 'content': [], 'stop_reason': None}},
+                {'type': 'content_block_start', 'index': 0, 'content_block': start_block},
+                {'type': 'content_block_delta', 'index': 0, 'delta': delta},
+                {'type': 'content_block_stop', 'index': 0},
+                {
+                    'type': 'message_delta',
+                    'delta': {'stop_reason': message['stop_reason'], 'stop_sequence': None},
+                    'usage': {'output_tokens': 1},
+                },
+                {'type': 'message_stop'},
             ]
+            sse = ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events)
+            return httpx2.Response(200, content=sse.encode(), headers={'content-type': 'text/event-stream'})
+
+        client = AsyncAnthropic(api_key='test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)))
+        model = AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=client))
+        agent: Agent[None, str] = Agent(
+            model, capabilities=[Planning()], model_settings=AnthropicModelSettings(anthropic_cache=True)
         )
-        assert prefix == ['after']
-        with pytest.raises(AssertionError, match='no CachePoint'):
-            durable_prefix([ModelRequest(parts=[UserPromptPart('no breakpoint')])])
-        assert breakpoints([*result_1.all_messages(), *result_2.all_messages()]) == []
+
+        @agent.tool_plain
+        def lookup(n: int) -> str:
+            return f'result {n}'
+
+        # Streamed, so the mock needs one response shape whether or not a capability with an event hook
+        # elsewhere in the process would have made `agent.run` stream anyway.
+        async with agent.run_stream('Fix the bug.') as streamed:
+            assert await streamed.get_output() == 'done'
+
+        def blocks(body: dict[str, Any]) -> list[dict[str, Any]]:
+            return [{'role': message['role'], **block} for message in body['messages'] for block in message['content']]
+
+        def without_cache_control(block: dict[str, Any]) -> str:
+            return json.dumps({k: v for k, v in block.items() if k != 'cache_control'}, sort_keys=True)
+
+        sent = [blocks(body) for body in bodies]
+        assert len(sent) == 4
+        cached_prefixes: list[list[str]] = []
+        # The first request precedes the plan, so it carries no reminder and no breakpoint.
+        assert not any('cache_control' in block for block in sent[0])
+        for request in sent[1:]:
+            marked = [i for i, block in enumerate(request) if 'cache_control' in block]
+            reminder_start = next(i for i, block in enumerate(request) if block.get('text') == '<plan-reminder>\n')
+            assert marked == [reminder_start - 1]  # the block right before the reminder
+            cached_prefixes.append([without_cache_control(block) for block in request[: marked[0] + 1]])
+        for cached, later in zip(cached_prefixes, sent[2:]):
+            assert [without_cache_control(block) for block in later[: len(cached)]] == cached
+        assert all(sent[i][len(cached) - 1]['type'] == 'tool_result' for i, cached in enumerate(cached_prefixes, 1))
