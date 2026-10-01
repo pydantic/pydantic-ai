@@ -17,7 +17,7 @@ from pydantic import SecretStr
 
 from pydantic_ai.exceptions import UserError
 from pydantic_clai2 import pkce
-from pydantic_clai2.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
 from pydantic_clai2.pkce import REFRESH_MARGIN, PKCEFlow, PKCESignIn, PublicClient, Tokens, refresh
 
 pytestmark = pytest.mark.anyio

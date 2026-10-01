@@ -11,10 +11,10 @@ import pytest
 
 import pydantic_clai2
 import pydantic_clai2.__main__
-import pydantic_clai2._cli
+import pydantic_clai2.cli._cli
 from pydantic_clai2.commands import config_completions
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.splash import Splash
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.rendering.splash import Splash
 
 
 def test_public_errors(tmp_path: Path) -> None:
@@ -65,7 +65,7 @@ def test_entry_point_quiets_user_warnings_unless_requested(
     monkeypatch.setenv('PYDANTIC_AI_NO_BANNER', '1')
     monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
     monkeypatch.setattr(sys, 'warnoptions', warnoptions)
-    monkeypatch.setattr(pydantic_clai2._cli, 'run', run)
+    monkeypatch.setattr(pydantic_clai2.cli._cli, 'run', run)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         filters = list(warnings.filters)
