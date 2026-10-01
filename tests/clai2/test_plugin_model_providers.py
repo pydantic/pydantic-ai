@@ -83,7 +83,7 @@ def test_host_rejects_a_known_provider_whose_sdk_is_missing(monkeypatch: pytest.
 
 
 def test_host_rejects_an_unknown_settings_from() -> None:
-    with pytest.raises(ValueError, match='settings_from must be one of anthropic, google'):
+    with pytest.raises(ValueError, match=r"settings_from must be one of anthropic, google.*; got 'bedrock'"):
         host().model_provider('echo-test', echo, settings_from=cast(SettingsProvider, 'bedrock'))
 
 

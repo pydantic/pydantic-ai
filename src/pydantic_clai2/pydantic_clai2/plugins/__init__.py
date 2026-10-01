@@ -467,7 +467,9 @@ class PluginHost(Generic[DepsT]):
         if _runs_already(prefix):
             raise ValueError(f'Model prefix {prefix!r} is a provider CLAI already runs; choose your own.')
         if settings_from is not None and settings_from not in get_args(SettingsProvider):
-            raise ValueError(f'settings_from must be one of {", ".join(get_args(SettingsProvider))}.')
+            raise ValueError(
+                f'settings_from must be one of {", ".join(get_args(SettingsProvider))}; got {settings_from!r}.'
+            )
         provider = ModelProvider(prefix=prefix, resolve=resolve, models=tuple(models), settings_from=settings_from)
         self._model_providers.append(provider)
         return provider
