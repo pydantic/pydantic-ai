@@ -97,16 +97,24 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     one of the menu's keys, so the parent routes each task to the model that fits
     it. A `SubAgent` can restrict which keys it accepts (`SubAgent.models`).
 
-    Sub-agents can also be loaded from disk: each markdown agent definition under
+    Sub-agents can also be loaded from disk: each Markdown or standalone TOML definition under
     `agent_folders` in the run's workspace becomes a delegate, built with the
     parent's model. Folders are read at the start of every run, through
     `ctx.workspace`, or through `workspace` when set. Disk delegates get no tools
     by default; pass a `tool_resolver` to map their frontmatter tool names.
     Disk delegates coexist with explicitly-passed ones; explicitly-passed agents take
-    precedence. Convention folders use `.agents/` before `.claude/`; explicit folder sequences use
+    precedence. Convention folders use `.agents/`, then `.claude/`, then `.codex/`; explicit folder sequences use
     earlier folders before later ones. A disk delegate whose
     name is already taken is skipped with a warning. Configure or disable this with
     `agent_folders`; see also `agent_overrides` and `tool_resolver`.
+
+    Standalone TOML requires Python 3.11+ and nonempty string `name`, `description`,
+    and `developer_instructions`. Optional `tools` or `allowed-tools` accepts a list
+    of nonempty strings or a comma-separated string, resolved by `tool_resolver`.
+    Model/effort/display fields (`model`, `effort`, `model_reasoning_effort`, `color`)
+    are ignored with a warning. Other TOML fields cause the file to be skipped,
+    including unsupported permission/sandbox settings and legacy `[agents.name]`
+    `config_file` declarations. Malformed files warn without blocking valid files.
 
     With `include_self=True`, the roster also lists the running agent itself, as `self`:
     a delegation starts a fresh run of `RunContext.agent`, so the delegate has every
@@ -159,13 +167,13 @@ class SubAgents(AbstractCapability[AgentDepsT]):
     """
 
     agent_folders: str | Sequence[str | Path] | None = _UNSET_FOLDERS
-    """Where to load markdown agent definitions from, in addition to `agents`.
+    """Where to load Markdown and standalone Codex TOML definitions from, in addition to `agents`.
     Off by default: only `agents` are exposed unless this is set. Every folder is
     read at the start of each run through the run's workspace (`ctx.workspace`),
     or through `workspace` when set.
 
     - a folder-name `str` (`'agents'` is the conventional layout): load
-      from both `.agents/<name>/` and `.claude/<name>/` under the workspace's working
+      from `.agents/<name>/`, `.claude/<name>/`, and `.codex/<name>/` under the workspace's working
       directory, in that order. Skipped when the run has no workspace.
     - a sequence of paths in the workspace, absolute or relative to its working
       directory: load from exactly those folders, in order. A run with no workspace

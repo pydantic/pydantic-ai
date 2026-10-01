@@ -200,7 +200,7 @@ The sub-agents are listed in the system prompt via `get_instructions`, using eac
 
 ## Loading sub-agents from disk
 
-A repo's markdown agent definitions can become delegates without writing any `Agent` code. With `agent_folders` set, every `*.md` file under those folders is loaded as a sub-agent, alongside the explicitly-passed `agents`.
+A repo's agent definitions can become delegates without writing any `Agent` code. With `agent_folders` set, every Claude-style `*.md` file and Codex-style `*.toml` file under those folders is loaded as a sub-agent, alongside the explicitly-passed `agents`. Files are read in sorted filename order.
 
 ```python
 from pydantic_ai import Agent
@@ -216,7 +216,7 @@ Definitions are read at the start of every run from the run's [workspace](https:
 
 `agent_folders` controls which folders are read:
 
-- A folder-name `str` (`'agents'` is the conventional layout): load from both `.agents/<name>/` and `.claude/<name>/` under the workspace's working directory, so a workspace that uses `.agents/` for something else (such as skills) still loads agents from `.claude/`. A run without a workspace skips them.
+- A folder-name `str` (`'agents'` is the conventional layout): load from `.agents/<name>/`, `.claude/<name>/`, and `.codex/<name>/` under the workspace's working directory, in that order, so a workspace that uses `.agents/` for something else (such as skills) still loads agents from the others. A run without a workspace skips them.
 - A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
 - `None`, the default, disables disk loading, exposing only the explicitly-passed `agents`.
 
@@ -226,7 +226,7 @@ Until this release, the folders were read from this machine, including the home 
 
 ### Definition format
 
-A definition is a markdown file with optional frontmatter:
+A definition is a Claude-style markdown file with optional frontmatter, or a Codex-style TOML file. Markdown:
 
 ```markdown
 ---
@@ -244,6 +244,23 @@ You research topics. Report your findings, each with a source.
 - `model` and `color` are ignored: the model is inherited from the parent (see below), and `color` has no pyai equivalent.
 
 Frontmatter is read by a small, dependency-free parser limited to those keys (`pyyaml` is not a harness dependency). Full YAML frontmatter is not supported.
+
+A Codex-style standalone TOML file:
+
+```toml
+name = "reviewer"
+description = "Reviews code for bugs"
+developer_instructions = "Inspect the code and report findings. Do not edit files."
+tools = ["Read", "Grep"]
+```
+
+- `name`, `description`, and `developer_instructions` are required nonempty strings.
+- `tools` (or `allowed-tools`) is optional: a list of strings or a comma-separated string, not both keys.
+- `model`, `effort`, `model_reasoning_effort`, and `color` are ignored with a warning; use `agent_overrides` for models and effort.
+- Any other key, including sandbox or permission settings, skips that file with a warning rather than silently granting broader tools. The older `[agents.<name>] config_file` layout is not supported.
+- TOML is parsed with the standard library `tomllib`, so it needs Python 3.11 or newer; on 3.10 TOML files are skipped with a warning.
+
+Nothing in a definition file is executed. A malformed or invalid file is skipped with a warning without blocking the others.
 
 ### Models and effort
 

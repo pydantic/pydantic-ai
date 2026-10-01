@@ -1075,8 +1075,31 @@ arriving during a turn use that run's queue; completed reports are not replayed.
 Nested children join their descendants and receive their reports before settling.
 
 - **Ctrl+B** moves foreground children of the main run to the background without
-  restarting them. In tmux, send Ctrl+B through to the application or change the
+  restarting them. The hint appears only while a foreground child can be
+  backgrounded. In tmux, send Ctrl+B through to the application or change the
   tmux prefix.
+
+Task rows use the selected `/theme`: foreground and background modes, running
+activity, and failures each have their own role colour.
+
+### Agent folders
+
+CLAI loads custom agents from disk, in Claude Markdown (`*.md`) or Codex TOML
+(`*.toml`) format. Choose folders in `/plugins configure coder` under
+**Agent folders**, as a JSON list. Each entry is a folder name or a path:
+
+- A name such as `agents` searches `.agents/agents`, `.claude/agents`, and
+  `.codex/agents`, first in the project, then in your home directory. Project
+  definitions win over personal ones with the same name.
+- Add more names, for example `["agents", "global"]`, to also load
+  `.claude/global` and its siblings.
+- A path such as `./team-agents` or `~/my-agents` loads exactly that folder.
+- `[]` turns disk agents off.
+
+The stock CLI starts with `["agents"]`, so existing `.claude/agents` and
+`.codex/agents` definitions work without setup. If you saved Coder settings
+before this existed, disk agents stay off until you set **Agent folders**.
+Definition files are read as data and never executed.
 - **`/tasks`** opens the live picker during a turn or between turns. Enter opens
   a full-width transcript with in-flight text; Esc returns to the picker, then
   closes it. Arrow keys scroll the transcript; End follows its tail. Completing

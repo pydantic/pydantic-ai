@@ -98,8 +98,13 @@ _PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unch
 DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(
         id='coder',
-        factory='pydantic_ai_harness.coder:Coder',
-        settings={'unrestricted_filesystem': True, 'repo_context': False, 'sub_agents': False},
+        factory='pydantic_clai2.builtin_plugins.coder',
+        settings={
+            'unrestricted_filesystem': True,
+            'repo_context': False,
+            'sub_agents': False,
+            'agent_folders': ['agents'],
+        },
     ),
     PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu:activate'),
     PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),

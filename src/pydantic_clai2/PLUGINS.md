@@ -623,7 +623,7 @@ settings using the former import paths are redirected to the new modules.
 
 | Id | Backed by | Settings | Does |
 |---|---|---|---|
-| `coder` | `pydantic_ai_harness.coder:Coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true}` | the file and shell tools, plus task delegation |
+| `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, plus task delegation and disk agents |
 | `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu:activate` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
@@ -678,7 +678,7 @@ read. To run a built-in with different options, add your own declaration under
 the same name and it takes the built-in's place:
 
 ```text
-/plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": false, "repo_context": false}'
+/plugins add coder pydantic_clai2.builtin_plugins.coder '{"unrestricted_filesystem": false, "repo_context": false}'
 /plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
 ```
 
@@ -697,6 +697,15 @@ compatibility. Set `"sub_agents": true` in `/plugins configure coder` to opt in;
 explicit `false` remains an opt-out. Supplied agents are not rebuilt: their plugins
 are still run-level capabilities, so self-delegation requires binding `Coder` and
 the capabilities it should carry when constructing that agent.
+
+`agent_folders` is a JSON list of folder names or paths for disk-defined agents
+(Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
+`.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
+project definitions win. A path loads exactly that folder; `[]` disables disk
+agents. The stock CLI uses `["agents"]`. Saved `coder` declarations that omit
+`agent_folders` keep disk agents off, so an upgrade never loads new definitions
+without your say. Old `pydantic_ai_harness.coder:Coder` declarations load
+through this module and are not rewritten.
 
 Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
 host hooks. The shell keeps plugin resources alive until children settle; `/plugins`

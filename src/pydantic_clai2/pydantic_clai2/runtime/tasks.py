@@ -161,9 +161,12 @@ class Tasks:
             assert row is not None
             self.console.print(row)
 
+    def _foreground_tasks(self) -> list[DelegationTask]:
+        return [r for r in self.records() if r.status == 'running' and not r.background and r.parent_id is None]
+
     def promote(self) -> str:
         """Ctrl+B backgrounds all foreground siblings directly delegated by the main run."""
-        running = [r for r in self.records() if r.status == 'running' and not r.background and r.parent_id is None]
+        running = self._foreground_tasks()
         if not running:
             return 'No foreground tasks. /tasks opens the task inspector.'
         for record in running:
@@ -193,11 +196,20 @@ class Tasks:
             mode = 'background' if record.background else 'foreground'
             label = f'{"  " * depth}{glyph if record.status == "running" else "!"} {name} [{record.id[:8]}]'
             suffix = f' · {descendants} descendants' if descendants else ''
+            mode_color = theme.SUCCESS if record.background else theme.WARNING
+            state_color = theme.INFO if record.status == 'running' else theme.ERROR
+            if record.outcome in ('cancelled', 'interrupted'):
+                state_color = theme.WARNING
             rows.append(
-                f'{theme.sgr(theme.INFO)}{label}\x1b[0m {elapsed:.0f}s · {mode} · {terminal_text(state or "")}{suffix}'
+                f'{theme.sgr(theme.INFO)}{label}{theme.sgr(theme.MUTED)} {elapsed:.0f}s · '
+                f'{theme.sgr(mode_color)}{mode}{theme.sgr(theme.MUTED)} · '
+                f'{theme.sgr(state_color)}{terminal_text(state or "")}{theme.sgr(theme.MUTED)}{suffix}\x1b[0m'
             )
         if rows or recent:
-            rows.append(f'{theme.sgr(theme.MUTED)}/tasks inspect · Ctrl+B background\x1b[0m')
+            hint = f'{theme.sgr(theme.ACCENT)}/tasks{theme.sgr(theme.MUTED)} inspect'
+            if any(record.backgroundable for record in self._foreground_tasks()):
+                hint += f' · {theme.sgr(theme.ACCENT)}Ctrl+B{theme.sgr(theme.MUTED)} background'
+            rows.append(hint + '\x1b[0m')
         return tuple(rows)
 
     def _descends(self, record: DelegationTask, ancestor: str) -> bool:

@@ -43,6 +43,8 @@ _FOLDER_PACKAGE = 'pydantic_clai2_plugins'
 
 # Local settings databases from before the package move can still name the old factories.
 _MOVED_FACTORIES = {
+    'pydantic_ai_harness.coder:Coder': 'pydantic_clai2.builtin_plugins.coder',
+    'pydantic_ai_harness:Coder': 'pydantic_clai2.builtin_plugins.coder',
     'pydantic_clai2.sessions': 'pydantic_clai2.runtime.sessions',
     **{
         f'pydantic_clai2.{name}': f'pydantic_clai2.builtin_plugins.{name}'
