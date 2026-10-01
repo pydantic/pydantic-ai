@@ -564,7 +564,7 @@ async def test_remove_restores_a_project_plugin_that_names_a_file(tmp_path: Path
         'repo_context',
         'compaction',
         'persistence',
-        'logfire',
+        'observability',
         'notifications',
         'github',
         'slack',
