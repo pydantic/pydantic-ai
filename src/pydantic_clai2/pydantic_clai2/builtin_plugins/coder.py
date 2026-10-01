@@ -22,10 +22,15 @@ from pydantic import (
 from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.coder import Coder
 from pydantic_clai2.plugins import DepsT, Plugin, PluginHost
-from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow
+from pydantic_clai2.ui.menus.field_menu import FieldRow, first_error
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 
 _FOLDER_NAME = re.compile(r'[A-Za-z0-9_-]+')
+
+
+def is_folder_name(value: str) -> bool:
+    """Whether an entry expands to project and home folders rather than a single path."""
+    return _FOLDER_NAME.fullmatch(value) is not None
 
 
 class CoderSettings(BaseModel):
@@ -65,7 +70,7 @@ class CoderSettings(BaseModel):
         project: list[str] = []
         personal: list[str] = []
         for value in self.agent_folders:
-            if _FOLDER_NAME.fullmatch(value):
+            if is_folder_name(value):
                 for prefix in ('.agents', '.claude', '.codex'):
                     folder = f'{prefix}/{value}'
                     project.append(folder)
@@ -84,6 +89,7 @@ class CoderSource(Generic[DepsT]):
         self.host = host
 
     def rows(self) -> tuple[FieldRow, ...]:
+        folders = self.host.settings(CoderSettings).agent_folders
         return (
             FieldRow(
                 key='sub_agents',
@@ -96,8 +102,12 @@ class CoderSource(Generic[DepsT]):
             FieldRow(
                 key='agent_folders',
                 label='Agent folders',
-                description=CoderSettings.model_fields['agent_folders'].description or '',
+                description='Manage sub-agent definition folders.\nEnter opens the folder list.\nAn empty list turns disk agents off.',
                 default='[]',
+                choice_labels={
+                    '[]': 'None (off)',
+                    **({json.dumps(folders): f'{len(folders)} selected'} if folders else {}),
+                },
             ),
         )
 
@@ -147,5 +157,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
     async def configure(self) -> str:
         if not self.host.console.is_terminal:
             return 'Configure agent folders from a terminal: /plugins configure coder'
-        messages = await run_worker(lambda: run_flow(FieldMenu(CoderSource(self.host))))
+        from .coder_folders import run_coder_flow
+
+        messages = await run_worker(lambda: run_coder_flow(CoderSource(self.host)))
         return '\n'.join(messages) or 'No Coder settings changed.'
