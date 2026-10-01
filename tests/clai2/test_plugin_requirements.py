@@ -440,18 +440,22 @@ async def test_coder_delegation_saved_by_another_build_is_ignored(tmp_path: Path
         await shell.loader.close('exit')
 
 
-async def test_untagged_setup_error_costs_the_capability_not_the_turn(tmp_path: Path) -> None:
-    """Fail-soft: the same setting saved untagged makes `Coder` refuse the run; the turn goes on without it."""
+async def test_untagged_setup_error_costs_one_turn_then_the_capability(tmp_path: Path) -> None:
+    """Fail-soft: the same setting saved untagged makes `Coder` refuse the run. That turn fails closed;
+    later turns run without `Coder` until it is reloaded."""
     output = io.StringIO()
     shell = coder_shell(tmp_path, output, sub_agents_tags=None)
     await shell.loader.load_all()
     try:
         assert delegates(shell.loader.capabilities())
         first = await shell.run_turn(TurnStart(text='hello'), headless=True)
+        assert first.outcome == 'failed'
+        assert isinstance(first.error, CapabilitySetupError)
+        assert "Plugin 'coder': UserError: `SubAgents(include_self=True)`" in str(first.error)
         second = await shell.run_turn(TurnStart(text='again'), headless=True)
-        assert (first.outcome, second.outcome) == ('completed', 'completed')
+        assert second.outcome == 'completed', second.error
         text = output.getvalue()
-        assert text.count("Plugin 'coder': UserError: `SubAgents(include_self=True)`") == 1
+        assert text.count('Leaving the failing coder capability out of later turns') == 1
         assert 'run /plugins reload coder' in text
         assert shell.loader.capabilities() == []
         await shell.loader.command(['reload', 'coder'])

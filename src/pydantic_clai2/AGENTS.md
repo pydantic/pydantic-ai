@@ -254,7 +254,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
 | `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
 | `config/plugin_requirements.py` | pure rules for requirement tags: parse stored rows, drop unsupported settings, merge tags on save, the notice |
-| `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`, so the turn runs without it |
+| `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |
 | `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
 | `builtin_plugins/repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |

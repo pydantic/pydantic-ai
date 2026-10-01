@@ -15,7 +15,7 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session
-from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard, setup_errors, without
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard, raised_here, setup_errors
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup
@@ -45,36 +45,42 @@ def session(agent: Agent[None, str], tmp_path: Path, *plugins: AbstractCapabilit
 
 
 @pytest.mark.parametrize('capability', [RefusesForRun(), RefusesWrapRun()])
-async def test_setup_error_is_reported_once_and_the_turn_completes(
+async def test_setup_error_fails_the_turn_closed_and_is_reported(
     tmp_path: Path, capability: AbstractCapability[None]
 ) -> None:
+    """Nothing is retried, so no other capability is set up twice; the caller leaves it out of later turns."""
     reported: list[CapabilitySetupError] = []
     guard = PluginGuard[None](capability, plugin='broken')
     conversation = session(Agent(TestModel(custom_output_text='done')), tmp_path, guard)
     conversation.on_setup_error = reported.append
-    result = await conversation.prompt('hello')
-    assert result.output == 'done'
+    with pytest.raises(CapabilitySetupError, match="Plugin 'broken': UserError: bad "):
+        await conversation.prompt('hello')
     assert [(error.plugin, error.capability) for error in reported] == [('broken', capability)]
-    assert str(reported[0]).startswith("Plugin 'broken': UserError: bad ")
-    # Without a listener the session still goes on without it.
     conversation.on_setup_error = None
-    assert (await conversation.prompt('again')).output == 'done'
+    with pytest.raises(CapabilitySetupError):
+        await conversation.prompt('again')
+    conversation.plugins = ()
+    assert (await conversation.prompt('without it')).output == 'done'
 
 
 async def test_unguarded_or_foreign_setup_errors_still_fail(tmp_path: Path) -> None:
     """A guard the session did not add, here one bound to the agent, is not the session's to drop."""
+    reported: list[CapabilitySetupError] = []
     guard = PluginGuard[None](RefusesWrapRun(), plugin='bound')
-    bound = Agent(TestModel(), deps_type=type(None), capabilities=[guard])
+    bound = session(Agent(TestModel(), deps_type=type(None), capabilities=[guard]), tmp_path)
+    bound.on_setup_error = reported.append
     with pytest.raises(CapabilitySetupError, match="Plugin 'bound'"):
-        await session(bound, tmp_path).prompt('hello')
+        await bound.prompt('hello')
+    unguarded = session(Agent(TestModel()), tmp_path, RefusesWrapRun())
+    unguarded.on_setup_error = reported.append
     with pytest.raises(UserError, match='bad wrap_run setting'):
-        await session(Agent(TestModel()), tmp_path, RefusesWrapRun()).prompt('hello')
-    assert (
-        without([RefusesWrapRun()], CapabilitySetupError(plugin='x', capability=object(), error=UserError('x'))) is None
-    )
+        await unguarded.prompt('hello')
+    assert reported == []
+    error = CapabilitySetupError(plugin='x', capability=object(), error=UserError('x'))
+    assert not raised_here([RefusesWrapRun()], error)
 
 
-async def test_simultaneous_setup_errors_drop_every_failing_capability(tmp_path: Path) -> None:
+async def test_simultaneous_setup_errors_report_every_failing_capability(tmp_path: Path) -> None:
     """Core sets capabilities up concurrently, so two refusing at once arrive as one exception group."""
     reported: list[CapabilitySetupError] = []
     conversation = session(
@@ -84,7 +90,8 @@ async def test_simultaneous_setup_errors_drop_every_failing_capability(tmp_path:
         PluginGuard[None](RefusesForRun(), plugin='two'),
     )
     conversation.on_setup_error = reported.append
-    assert (await conversation.prompt('hello')).output == 'done'
+    with pytest.raises(ExceptionGroup):
+        await conversation.prompt('hello')
     assert sorted(error.plugin for error in reported) == ['one', 'two']
 
 

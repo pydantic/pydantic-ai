@@ -610,7 +610,7 @@ class _Shell(Generic[DepsT, OutputT]):
         return (*self.plugins, *self.loader.run_capabilities(), *self.speculation.capabilities(granted))
 
     def capability_failed(self, error: CapabilitySetupError) -> None:
-        """Report a plugin capability that rejected its settings, once: later runs leave it out."""
+        """Say a plugin capability that rejected its settings is left out of later turns; its turn fails as usual."""
         self.console.print(self.loader.suspend(error), style=theme.color(theme.WARNING), markup=False)
 
     def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:

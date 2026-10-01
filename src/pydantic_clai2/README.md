@@ -1451,8 +1451,9 @@ coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
 ```
 
 Nothing is rewritten; the other build still sees your setting. If a plugin still
-rejects its settings when a turn starts, CLAI names the plugin, finishes the turn
-without it, and `/plugins reload NAME` tries it again. CLAI builds from before this
+rejects its settings when a turn starts, that turn fails with the plugin named, and
+CLAI leaves that plugin's capability out of later turns; `/plugins reload NAME` tries
+it again. CLAI builds from before this
 check apply every saved setting as they always did.
 
 `/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its

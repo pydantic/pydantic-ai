@@ -2,7 +2,8 @@
 
 A setting the reader cannot honour, saved by another CLAI build, should cost that capability,
 not every turn. `PluginGuard` turns a `UserError` raised while the run is being built into
-`CapabilitySetupError`, which names the plugin; the session then runs again without it.
+`CapabilitySetupError`, which names the plugin. That turn still fails closed: nothing is retried,
+so no other capability is set up twice. The loader then leaves the capability out of later turns.
 
 Only setup is guarded: `for_run`, and `wrap_run` until it hands over to the rest of the run.
 Anything raised once the run is under way, by the model, a tool, or a hook, propagates as is.
@@ -91,15 +92,8 @@ def setup_errors(error: BaseException) -> list[CapabilitySetupError] | None:
     return found
 
 
-def without(
-    capabilities: Sequence[AgentCapability[AgentDepsT]], error: CapabilitySetupError
-) -> list[AgentCapability[AgentDepsT]] | None:
-    """`capabilities` minus the guard `error` came from; `None` when no guard here raised it."""
-    remaining: list[AgentCapability[AgentDepsT]] = [
-        capability for capability in capabilities if not _raised(capability, error)
-    ]
-    return remaining if len(remaining) < len(capabilities) else None
-
-
-def _raised(capability: object, error: CapabilitySetupError) -> bool:
-    return isinstance(capability, PluginGuard) and capability.origin is error.capability
+def raised_here(capabilities: Sequence[AgentCapability[AgentDepsT]], error: CapabilitySetupError) -> bool:
+    """Whether one of `capabilities` is the guard `error` came from, not a guard bound elsewhere."""
+    return any(
+        isinstance(capability, PluginGuard) and capability.origin is error.capability for capability in capabilities
+    )

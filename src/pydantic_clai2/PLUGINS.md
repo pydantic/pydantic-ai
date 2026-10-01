@@ -1822,8 +1822,9 @@ tags in `CAPABILITY_REQUIREMENTS`, keyed by that factory string.
 those; a plugin's own tags are attached the next time it saves or is enabled.
 
 If an untagged setting still makes a capability raise `UserError` while a run is
-set up, CLAI names the plugin once, leaves that capability out, and finishes the
-turn; `/plugins reload NAME` brings it back. Errors from the model, from tools, or
+set up, that turn fails closed with the plugin named, and CLAI leaves that
+capability out of later turns; `/plugins reload NAME` brings it back. Nothing is
+retried, so no other capability is set up twice. Errors from the model, from tools, or
 from a raising `host.on` handler still fail the turn as before.
 
 ### Keep secrets in `/keys`: `KeyReference`, `SavedKey`, `host.save_settings`

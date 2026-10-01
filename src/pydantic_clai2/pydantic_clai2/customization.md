@@ -357,14 +357,16 @@ CAPABILITY_REQUIREMENTS = {
 
 Saving coder there stores {"sub_agents": ["stock-bound-delegation"]} for it. Another build
 with tags but without the feature loads coder with the built-in "sub_agents": false and shows
-the notice. A build older than tags still applies true and fails until fail-soft or a fix.
+the notice. A build older than tags still applies true; with fail-soft, only its first turn fails.
 
 ### Fail-soft at run setup
 
-A setting that slips through untagged costs one capability, not the turn. CLAI guards each
-capability a plugin adds with host.add. When one raises UserError while the run is set up (in
-for_run, or in wrap_run before it hands over to the run), CLAI reports it once, naming the
-plugin, and runs the turn again without it. The capability stays out until /plugins reload.
+A setting that slips through untagged costs one turn and then one capability, not every
+turn. CLAI guards each capability a plugin adds with host.add. When one raises UserError while
+the run is set up (in for_run, or in wrap_run before it hands over to the run), that turn fails
+closed with the plugin named, and CLAI leaves the capability out of later turns until
+/plugins reload. The turn is not retried, so no other capability's setup runs twice, and a
+capability that refuses to run never gets skipped within the turn it refused.
 Errors from the model, tools, or hooks once the run is under way propagate as before, and
 host.on handlers are never guarded, so a raising handler still fails closed.
 

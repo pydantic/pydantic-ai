@@ -34,7 +34,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     ensure_inactive,
 )
-from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, setup_errors, without
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -156,7 +156,7 @@ class Session(Generic[DepsT, OutputT]):
         self._pending_steering: list[Sequence[UserContent]] = []
         self.on_context_usage: Callable[[int], None] | None = None
         self.on_setup_error: Callable[[CapabilitySetupError], None] | None = None
-        """Told when a guarded plugin capability rejected its configuration and the turn went on without it."""
+        """Told when a guarded plugin capability rejected its configuration, before the failed turn's error propagates."""
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -277,91 +277,71 @@ class Session(Generic[DepsT, OutputT]):
                     summary=replace(candidate, outcome='running'), messages=accepted
                 )
                 self._messages = accepted
-            messages: list[ModelMessage] = []
-            try:
-                model = await self.resolved_model()
-                plugins = list(self.plugins)
-                while True:
-                    # Each attempt captures its own messages: a capture context keeps only its first run's.
-                    with capture_run_messages() as messages:
-                        try:
-                            result = await self._run(
-                                content, model=model, plugins=plugins, previous=previous, run_id=run_id
-                            )
-                            break
-                        except Exception as exc:
-                            # Nothing has run yet: go again without the plugin capabilities that refused their settings.
-                            errors = setup_errors(exc)
-                            remaining: list[AgentCapability[DepsT]] | None = plugins
-                            for error in errors or ():
-                                remaining = without(remaining, error) if remaining is not None else None
-                            if not errors or remaining is None:
-                                raise
-                            plugins = remaining
-                            for error in errors:
-                                if self.on_setup_error is not None:
-                                    self.on_setup_error(error)
-                self._accepting_steering = False
-                self._messages = result.all_messages()
-                await self._save_turn(outcome='completed')
-                return result
-            except get_cancelled_exc_class() as cancelled:
-                self._accepting_steering = False
-                # Core captures partial responses and tool results during cleanup.
-                # If cancellation precedes graph startup, retain at least the prompt.
-                self._messages = messages or [*previous, ModelRequest(parts=[UserPromptPart(content)])]
-                self._mark_interrupted()
+            with capture_run_messages() as messages:
                 try:
-                    with move_on_after(5, shield=True):
-                        await self._save_turn(outcome='cancelled')
-                except Exception as exc:
-                    if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
-                        cancelled.add_note(f'Could not save cancelled turn: {exc}')
-                    logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
-                raise
-            except Exception:
-                self._accepting_steering = False
-                if self.conversations is not None:
-                    self._messages = messages or self._messages
+                    model = await self.resolved_model()
+                    capabilities = list(self.plugins)
+                    workspace: Literal['new'] | None = None
+                    if _supports_local_workspace() and not _supplies_workspace(
+                        [*_agent_capabilities(self.agent), *self.plugins]
+                    ):
+                        capabilities.append(LocalWorkspace[DepsT](self.workspace, env=_command_env()))
+                        if _stale_local_workspace(previous, self.workspace):
+                            # A conversation resumed from another directory: work in this session's.
+                            workspace = 'new'
+                    result = await self.agent.run(
+                        content,
+                        deps=self.deps,
+                        model=model,
+                        model_settings=self.model_settings,
+                        retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
+                        message_history=previous,
+                        conversation_id=self.summary.id,
+                        run_id=run_id,
+                        capabilities=capabilities,
+                        workspace=workspace,
+                        usage_limits=self.usage_limits,
+                        event_stream_handler=self._stream,
+                    )
+                    self._accepting_steering = False
+                    self._messages = result.all_messages()
+                    await self._save_turn(outcome='completed')
+                    return result
+                except get_cancelled_exc_class() as cancelled:
+                    self._accepting_steering = False
+                    # Core captures partial responses and tool results during cleanup.
+                    # If cancellation precedes graph startup, retain at least the prompt.
+                    self._messages = messages or [*previous, ModelRequest(parts=[UserPromptPart(content)])]
                     self._mark_interrupted()
-                    await self._save_turn(outcome='failed')
-                raise
+                    try:
+                        with move_on_after(5, shield=True):
+                            await self._save_turn(outcome='cancelled')
+                    except Exception as exc:
+                        if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
+                            cancelled.add_note(f'Could not save cancelled turn: {exc}')
+                        logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
+                    raise
+                except Exception as exc:
+                    self._accepting_steering = False
+                    self._report_setup_errors(exc)
+                    if self.conversations is not None:
+                        self._messages = messages or self._messages
+                        self._mark_interrupted()
+                        await self._save_turn(outcome='failed')
+                    raise
         finally:
             self._accepting_steering = False
             self._run_context = None
             self._pending_steering.clear()
             self._running = False
 
-    async def _run(
-        self,
-        content: str | Sequence[UserContent],
-        *,
-        model: Model | str | None,
-        plugins: Sequence[AgentCapability[DepsT]],
-        previous: list[ModelMessage],
-        run_id: str,
-    ) -> AgentRunResult[OutputT]:
-        capabilities = list(plugins)
-        workspace: Literal['new'] | None = None
-        if _supports_local_workspace() and not _supplies_workspace([*_agent_capabilities(self.agent), *plugins]):
-            capabilities.append(LocalWorkspace[DepsT](self.workspace, env=_command_env()))
-            if _stale_local_workspace(previous, self.workspace):
-                # A conversation resumed from another directory: work in this session's.
-                workspace = 'new'
-        return await self.agent.run(
-            content,
-            deps=self.deps,
-            model=model,
-            model_settings=self.model_settings,
-            retries={'tools': self.tool_retries} if self.tool_retries is not None else None,
-            message_history=previous,
-            conversation_id=self.summary.id,
-            run_id=run_id,
-            capabilities=capabilities,
-            workspace=workspace,
-            usage_limits=self.usage_limits,
-            event_stream_handler=self._stream,
-        )
+    def _report_setup_errors(self, error: BaseException) -> None:
+        """Tell `on_setup_error` about each setup failure from one of this session's guards; the turn still fails."""
+        if self.on_setup_error is None:
+            return
+        for setup_error in setup_errors(error) or ():
+            if raised_here(self.plugins, setup_error):
+                self.on_setup_error(setup_error)
 
     async def _stream(self, ctx: RunContext[DepsT], events: AsyncIterable[AgentStreamEvent]) -> None:
         self._accepting_steering = True

@@ -310,7 +310,10 @@ class PluginLoader(Generic[DepsT]):
     def suspend(self, error: CapabilitySetupError) -> str:
         """Leave the failed capability out of later runs until its plugin loads again; return the notice."""
         self._suspended.setdefault(error.plugin, []).append(error.capability)
-        return f'{error} Continuing without it; fix its settings, then run /plugins reload {error.plugin}.'
+        return (
+            f'Leaving the failing {error.plugin} capability out of later turns; '
+            f'fix its settings, then run /plugins reload {error.plugin}.'
+        )
 
     def renderers(self) -> list[Renderer[AgentStreamEvent]]:
         """Consulted before the default display, in load order."""
