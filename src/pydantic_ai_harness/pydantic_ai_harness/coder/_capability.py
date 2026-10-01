@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -76,6 +77,8 @@ class Coder(CombinedCapability[AgentDepsT]):
     everything the agent has, including capabilities bound next to `Coder`.
     That requires binding `Coder` with `Agent(capabilities=[...])` rather than
     passing it to `run()`. `sub_agents=False` leaves delegation out.
+    `agent_folders` optionally adds disk-defined delegates using `SubAgents`' folder
+    names or explicit workspace paths. It defaults to `None` (no disk discovery).
     """
 
     def __init__(
@@ -86,6 +89,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         unrestricted_filesystem: bool = False,
         repo_context: bool = True,
         sub_agents: bool = True,
+        agent_folders: str | Sequence[str | Path] | None = None,
     ) -> None:
         if workspace is not None:
             warn_argument_ignored(
@@ -119,7 +123,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         if repo_context:
             capabilities.append(RepoContext[AgentDepsT](expose_inventory_tool=False))
         if sub_agents:
-            capabilities.append(SubAgents[AgentDepsT](include_self=True, agent_folders=None))
+            capabilities.append(SubAgents[AgentDepsT](include_self=True, agent_folders=agent_folders))
         capabilities += [
             ClearToolResults[AgentDepsT](max_fraction=0.7),
             WarnNearLimits[AgentDepsT](max_context_fraction=0.9),

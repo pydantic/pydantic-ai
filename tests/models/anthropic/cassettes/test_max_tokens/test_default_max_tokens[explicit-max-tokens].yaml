@@ -42,7 +42,7 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-a818944dbd6f3ec7dedf188d6d529cf7-7a488acd8fddc899-01
+      - 00-9edb579dcabfeb0a202b5a42cf2f9985-df5e4019437698b2-01
       transfer-encoding:
       - chunked
       vary:
@@ -51,7 +51,7 @@ interactions:
       type: json
       content:
         model: claude-sonnet-4-5-20250929
-        id: msg_011CfWfgBWmre2g6qszSDpvP
+        id: msg_011CfWk4XTetciJdcDHe8eSX
         type: message
         role: assistant
         content:
@@ -59,12 +59,12 @@ interactions:
           thinking: |-
             17 * 23 = ?
 
-            Let me calculate this step by step:
+            I can calculate this step by step:
             17 * 23 = 17 * 20 + 17 * 3
             = 340 + 51
             = 391
           signature: >-
-            EtoCCpsBCBIYAipAKyOmBAWUzNn85CboHQZRLnL7lFQtlFc2FBHxfTj4gpu53ddTCtRtaYPr7UExkR8hScrfgZAbwPE6oPL8+DFMADIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB5+Lr1QYSDHf7kecc5VoygyqyfBoMRwKTYtRbyp9xmyecIjBp1a9buP6sMSJmKBVO0eZZ045lAZX10kAbq6LVV5xPbL72BZKeG1hvvmvGVGO+62YqbB5DG9dO/bq87FsAM9L3eYIPd88OdcFtyC2qQ6EbdkLoydbDqCQ0xdakL4gmz0h2ZGGwWDFZ/PPv1/Q8vATFECO+yLBA+sTExB9Qihb+IpWI3b+uQmyhr9Mh7KkLi4d8EbyiUJ1z1+qf0mLMghgB
+            EtkCCpsBCBIYAipAOj7tKIR4DBGyYclh6aqaeaQT1kpKk8vSEK16OTX/Y0cmJrMcIa/rY9D+fc1VYeEX983z4VnyjP6aPr3UBZnvhDIaY2xhdWRlLXNvbm5ldC00LTUtMjAyNTA5Mjk4AEIIdGhpbmtpbmdaJDQ0YWU2NzZjLTk1OGYtNGQ2OC05MTA4LWVhZTlkZTdiMzY2YqgB4f3r1QYSDL4JZxNJQYYctz0K2RoMdLGPGPQsqHXGqqVJIjDeSD2fEqBGYPRhqjwJ4/Z81xm88IObdisbouHIdT+5uuVsUjHPl0YCTTN6oKcSS98qayT6UPAjPqHwis2DlVo9rRw4qZ8Zzxy9isVntORAx3eVFxVnA6Pf250J6mllGPJSnaJgoyvvTvg98UyBdLV4BEz5tcKdie1bPQ/N2eJpQyof1ZJWQVQ6QvbA3RE5xOj4gh2qxQmVg8aIjjoHGAE=
         - type: text
           text: "391"
         container: null
@@ -84,4 +84,4 @@ interactions:
           service_tier: standard
           inference_geo: not_available
         diagnostics: null
-  recorded_at: 2026-09-28T22:59:51.208983+00:00
+  recorded_at: 2026-09-28T23:57:21.590616+00:00
