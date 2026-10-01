@@ -1,4 +1,7 @@
-"""The built-in `repo_context` plugin: the workspace's instruction files, through harness `RepoContext`."""
+"""Give the model your repository's instruction files, such as AGENTS.md.
+
+The built-in `repo_context` plugin: the workspace's instruction files, through harness `RepoContext`.
+"""
 
 from collections.abc import Sequence
 from pathlib import Path
