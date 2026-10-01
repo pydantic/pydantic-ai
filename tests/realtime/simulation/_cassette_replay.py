@@ -105,9 +105,10 @@ def _segments(cassette: RealtimeCassette) -> Iterator[tuple[list[dict[str, Any]]
 
 def _closed(close: CassetteClose | None) -> Exception:
     """What reading past the last frame raises: the recorded close, abnormal ones included."""
-    if close is None or close.ok:
+    if close is None:
         return ConnectionClosedOK(None, None)
-    return ConnectionClosedError(Close(close.code, close.reason), None)
+    received = Close(close.code, close.reason)
+    return ConnectionClosedOK(received, None) if close.ok else ConnectionClosedError(received, None)
 
 
 class _InboundOnlySocket:
