@@ -254,7 +254,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                     transcript = _build_compact_transcript(ctx.messages, dynamic.max_context_messages)
                     result, error_type = await self._generate_reminder(ctx, index, transcript)
                 except Exception as exc:
-                    dynamic._log_failure(  # pyright: ignore[reportPrivateUsage,reportUnknownMemberType]
+                    dynamic._log_failure(  # pyright: ignore[reportPrivateUsage]
                         exc, ctx.run_id, 'LLMReminder generation operation failed; using GoalReanchor text instead'
                     )
                     result, error_type = None, 'DurabilityError'
