@@ -165,7 +165,7 @@ async def test_before_model_request_in_place_additions_still_persist_with_deprec
     agent = Agent(FunctionModel(model_function, stream_function=stream_function), capabilities=[AddMessages()])
     with pytest.warns(
         PydanticAIDeprecationWarning,
-        match=r'`request_context\.messages` in `before_model_request`.*assign a new list.*`ctx\.messages`',
+        match=r'In v3, appending to `request_context\.messages` in `before_model_request`.*`ctx\.messages\.append\(msg\)`',
     ):
         if streaming:
             async with agent.run_stream('hello') as stream:
