@@ -883,7 +883,7 @@ class _NumberRenderer:
                 # If there is a diff, make the name bold and compute the diff_str
                 name = name and f'[bold]{name}[/]'
                 diff_str = self._get_diff_str(old, new)
-                if diff_str:  # pragma: no branch
+                if diff_str:
                     result += f' ({diff_str})'
                 result = f'[{diff_style}]{result}[/]'
 
@@ -962,7 +962,12 @@ class _NumberRenderer:
         diff = new - old
         if abs(diff) < self.diff_atol + self.diff_rtol * abs(old):
             return None
-        return self.diff_increase_style if diff > 0 else self.diff_decrease_style
+        if diff > 0:
+            return self.diff_increase_style
+        if diff <= 0:
+            return self.diff_decrease_style
+        # A `nan` difference has no direction, so it gets neither the increase nor the decrease style.
+        return None
 
 
 T_contra = TypeVar('T_contra', contravariant=True)
