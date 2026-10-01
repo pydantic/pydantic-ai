@@ -14702,7 +14702,8 @@ class _DelayFunctionModel(FunctionModel):
         return delay if isinstance(delay, float) else None
 
 
-def test_agent_graph_sleep_default_uses_anyio(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize('delay', [0.01, -0.01])
+def test_agent_graph_sleep_default_uses_anyio(monkeypatch: pytest.MonkeyPatch, delay: float) -> None:
     """When no custom sleep is registered, the continuation loop uses anyio.sleep."""
     call_count = 0
     slept_delays: list[float] = []
@@ -14712,7 +14713,7 @@ def test_agent_graph_sleep_default_uses_anyio(monkeypatch: pytest.MonkeyPatch) -
         call_count += 1
         if call_count == 1:
             return ModelResponse(
-                parts=[TextPart('paused')], state='suspended', provider_details={'continuation_delay': 0.01}
+                parts=[TextPart('paused')], state='suspended', provider_details={'continuation_delay': delay}
             )
         return ModelResponse(parts=[TextPart('done')])
 
@@ -14727,7 +14728,7 @@ def test_agent_graph_sleep_default_uses_anyio(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(anyio, 'sleep', tracking_sleep)
     result = agent.run_sync('test')
     assert 'done' in result.output
-    assert 0.01 in slept_delays
+    assert max(delay, 0) in slept_delays
 
 
 def test_agent_graph_sleep_custom_function() -> None:

@@ -196,7 +196,7 @@ async def _agent_graph_sleep(delay: float) -> None:
     if sleep_func is not None:
         await sleep_func(delay)
     else:
-        await anyio.sleep(delay)
+        await anyio.sleep(max(delay, 0))
 
 
 DepsT = TypeVar('DepsT')
