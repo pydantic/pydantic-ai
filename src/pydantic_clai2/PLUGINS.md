@@ -701,7 +701,7 @@ settings using the former import paths are redirected to the new modules.
 
 | Id | Backed by | Settings | Does |
 |---|---|---|---|
-| `coder` | `pydantic_ai_harness.coder:Coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": false}` | the file and shell tools |
+| `coder` | `pydantic_clai2.builtin_plugins.coder` | `{"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true, "agent_folders": ["agents"]}` | the file and shell tools, plus task delegation and disk agents |
 | `ask_user` | `pydantic_clai2.builtin_plugins.ask_user_menu` | `{}` | the `ask_user_question` tool: multiple-choice questions answered from the terminal |
 | `repo_context` | `pydantic_clai2.builtin_plugins.repo_context` | `{}` | reads `CLAUDE.md` or `AGENTS.md` from the launch directory into the instructions |
 | `persistence` | `pydantic_clai2.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
@@ -756,16 +756,53 @@ read. To run a built-in with different options, add your own declaration under
 the same name and it takes the built-in's place:
 
 ```text
-/plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": false, "repo_context": false}'
+/plugins add coder pydantic_clai2.builtin_plugins.coder '{"unrestricted_filesystem": false, "repo_context": false}'
 /plugins add repo_context pydantic_clai2.builtin_plugins.repo_context '{"walk_up": true}'
 ```
 
 Keep `"repo_context": false` on a replacement `coder`: `Coder` bundles its own
 `RepoContext`, and with the `repo_context` plugin also on, the instruction file
-would reach the model twice. CLAI adds `"sub_agents": false` to any `Coder`
-declaration that does not set it: `Coder`'s delegation runs the agent again,
-which only brings along what is bound to the agent, and CLAI passes its plugins
-to each run instead, so `Coder` refuses to start with delegation on.
+would reach the model twice. The stock `coder` enables `delegate_task`: a task
+can run in a fresh conversation with the same active plugin tools, instructions,
+and guardrails. CLAI rebuilds its stock agent before the next prompt when the
+active capability snapshot changes, binding those capabilities to the new agent.
+Conversation history stays in the session; an existing run keeps its own snapshot.
+The exported `DEFAULT_PLUGINS` keeps delegation off for custom-agent launchers;
+the CLI uses `STOCK_PLUGINS`, which opts its own rebuildable agent in.
+
+Saved `Coder` declarations that omit `sub_agents` still default to `false` for
+compatibility. Set `"sub_agents": true` in `/plugins configure coder` to opt in;
+explicit `false` remains an opt-out. Supplied agents are not rebuilt: their plugins
+are still run-level capabilities, so self-delegation requires binding `Coder` and
+the capabilities it should carry when constructing that agent.
+
+`agent_folders` is a JSON list of folder names or paths for disk-defined agents
+(Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
+`.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
+project definitions win. A path loads exactly that folder; `[]` disables disk
+agents. The stock CLI uses `["agents"]`. Saved `coder` declarations that omit
+`agent_folders` keep disk agents off, so an upgrade never loads new definitions
+without your say. Old `pydantic_ai_harness.coder:Coder` declarations load
+through this module and are not rewritten.
+
+Managed tasks are a stock-shell service over harness `DelegationTasks`, not new
+host hooks. The shell keeps plugin resources alive until children settle; `/plugins`
+changes are refused while managed children run. Exit/reload drains them before
+`session_end`. Child questions use `host.full_screen()` and identify the child.
+Typed delegation lifecycle events supply compact transcript rows; raw child events
+update the task inspector rather than entering the parent's transcript. Core hooks
+and guardrails bound to the stock agent still run on general-purpose children.
+Explore/Plan are separate read-only agents and do not inherit plugin tools.
+
+See [managed tasks](README.md#managed-tasks-in-the-interactive-stock-cli) for `/tasks`,
+Ctrl+B, independent histories, explicit resume, completion-report provenance, and
+workspace restrictions. Supplied agents and headless calls are unchanged. Do not
+hold a parent's `RunContext` or call its event emitter after that run has ended;
+background reports go through the task owner's currently attached parent queue.
+When a direct background child finishes while the interactive stock CLI is idle,
+the shell starts an automated continuation with no user message. Its `turn_start`
+and `turn_end` hooks receive empty text. The editor preserves drafts and gives
+queued user input priority. Reports arriving during a run stay on its native queue.
 
 `repo_context` wraps harness `RepoContext` with the launch directory as the
 workspace and its default filenames. Its settings:

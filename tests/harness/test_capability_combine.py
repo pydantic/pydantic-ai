@@ -292,6 +292,9 @@ COMBINE_POLICY: dict[str, Policy] = {
     'ModalSandbox': Anonymous('two coexist; the first supplies the run workspace, as core picks the first supplier'),
     'Researcher': Anonymous('a packaged harness; composing two is composing their members'),
     'ClampOversizedMessages': Anonymous('clamping twice is a no-op; several thresholds compose'),
+    'DelegationReports': Anonymous(
+        'one per task owner and conversation; each delivers only its own reports, so several coexist'
+    ),
     'ClearToolResults': Anonymous('several form an escalation ladder, like `TieredCompaction` tiers'),
     'DeduplicateFileReads': Anonymous('file-read identification is agent-specific; one per `file_key`'),
     'DynamicWorkflow': Anonymous('one per workflow definition'),

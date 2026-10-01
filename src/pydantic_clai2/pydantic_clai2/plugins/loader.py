@@ -44,6 +44,8 @@ from pydantic_clai2.ui.rendering.status import Status, StatusSegment
 # Local settings databases from before the package move, or from before plugins were declared as
 # `Plugin` classes, can still name the old factories.
 _MOVED_FACTORIES = {
+    'pydantic_ai_harness.coder:Coder': 'pydantic_clai2.builtin_plugins.coder',
+    'pydantic_ai_harness:Coder': 'pydantic_clai2.builtin_plugins.coder',
     'pydantic_clai2.sessions': 'pydantic_clai2.runtime.sessions',
     'pydantic_clai2.ask_user_menu:activate': 'pydantic_clai2.builtin_plugins.ask_user_menu',
     'pydantic_clai2.builtin_plugins.ask_user_menu:activate': 'pydantic_clai2.builtin_plugins.ask_user_menu',

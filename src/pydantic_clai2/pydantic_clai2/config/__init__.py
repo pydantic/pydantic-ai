@@ -115,10 +115,10 @@ class PluginSettings(BaseModel):
 
     @model_validator(mode='after')
     def _coder_without_delegation(self) -> 'PluginSettings':
-        """Turn `Coder`'s delegation off unless a declaration asks for it.
+        """Preserve the delegation opt-out of declarations saved before `sub_agents` existed.
 
-        CLAI passes plugins to each run, and `Coder`'s delegation needs `Coder` bound to the agent,
-        so it raises otherwise. Declarations saved before `sub_agents` existed do not set it.
+        The stock declaration explicitly opts in. Supplied agents still receive plugins per run,
+        where self-delegation requires capabilities bound to the agent instead.
         """
         if self.factory != _CODER_FACTORY or 'sub_agents' in self.settings:
             return self

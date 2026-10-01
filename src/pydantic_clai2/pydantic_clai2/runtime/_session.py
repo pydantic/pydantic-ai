@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import replace
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -12,7 +13,7 @@ from uuid import uuid4
 
 from anyio import get_cancelled_exc_class, move_on_after
 
-from pydantic_ai import AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
+from pydantic_ai import Agent, AgentRunResult, AgentStreamEvent, RunContext, capture_run_messages
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
@@ -24,6 +25,7 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
 from pydantic_ai.models import Model
+from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import WorkspaceRef
@@ -34,6 +36,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     ensure_inactive,
 )
+from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -114,11 +117,35 @@ def _stale_local_workspace(messages: Sequence[ModelMessage], workspace: str) -> 
     return ref is not None and ref.provider == 'local' and ref != WorkspaceRef(provider='local', id=workspace)
 
 
+class StockAgent(Agent[DepsT, OutputT]):
+    """A CLAI-owned agent whose configuration can be rebuilt with active plugins."""
+
+    def __init__(
+        self,
+        model: Model | str | None,
+        *,
+        deps_type: type[DepsT],
+        output_type: OutputSpec[OutputT],
+        capabilities: Sequence[AgentCapability[DepsT]],
+    ) -> None:
+        super().__init__(model, deps_type=deps_type, output_type=output_type, capabilities=capabilities)
+        self._stock_deps_type = deps_type
+
+    def with_plugins(self, plugins: Sequence[AgentCapability[DepsT]]) -> 'StockAgent[DepsT, OutputT]':
+        """Bind a snapshot without mutating the agent used by another conversation."""
+        return StockAgent(
+            self.model,
+            deps_type=self._stock_deps_type,
+            output_type=self.output_type,
+            capabilities=[self.root_capability, *plugins],
+        )
+
+
 class Session(Generic[DepsT, OutputT]):
     """Run prompts to completion, retaining successful and interrupted turns in memory.
 
-    Plugins are capabilities (or capability functions) bound per run, not to
-    the agent itself, so the set can change between prompts.
+    Stock agents are rebuilt when the plugin snapshot changes, so delegates carry
+    the same capabilities. Supplied agents keep their existing run-level plugins.
     """
 
     def __init__(
@@ -133,6 +160,7 @@ class Session(Generic[DepsT, OutputT]):
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
     ) -> None:
+        self.delegations: DelegationTasks | None = None
         self.conversations = conversations
         self.workspace = str((workspace or Path.cwd()).resolve())
         self.summary = ConversationSummary(workspace=self.workspace)
@@ -144,6 +172,8 @@ class Session(Generic[DepsT, OutputT]):
         self.tool_retries: int | None = None
         self.resolve_model: Callable[[str], Model | str | Awaitable[Model | str]] = lambda name: name
         self.agent = agent
+        self._base_agent = agent
+        self._bound_plugins: tuple[AgentCapability[DepsT], ...] = ()
         self.deps = deps
         self.plugins: Sequence[AgentCapability[DepsT]] = tuple(plugins)
         self.usage_limits = usage_limits
@@ -254,11 +284,14 @@ class Session(Generic[DepsT, OutputT]):
             self._run_context.enqueue(*content, priority='asap')
         return True
 
-    async def prompt(self, text: str, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
+    async def prompt(self, text: str | None, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:
         """Execute the complete native agent loop, including tool calls."""
         if self._running:
             raise RuntimeError('A conversation can only run one prompt at a time')
-        content: str | Sequence[UserContent] = [text, *images] if images else text
+        content: str | Sequence[UserContent] | None = (
+            [*([text] if text is not None else []), *images] if images else text
+        )
+        submitted = [ModelRequest(parts=[UserPromptPart(content)])] if content is not None else []
         self._running = True
         self._accepting_steering = True
         try:
@@ -267,17 +300,36 @@ class Session(Generic[DepsT, OutputT]):
             candidate = replace(self.summary, run_id=run_id, owner_pid=os.getpid(), model=self.model)
             if self.conversations is not None:
                 if self.summary.revision == 0:
-                    title = ' '.join(''.join(c for c in text if c.isprintable() or c.isspace()).split())[:64]
+                    title = ' '.join(''.join(c for c in (text or '') if c.isprintable() or c.isspace()).split())[:64]
                     candidate = replace(candidate, title=title or 'New session')
-                accepted: list[ModelMessage] = [*previous, ModelRequest(parts=[UserPromptPart(content)])]
+                accepted: list[ModelMessage] = [*previous, *submitted]
                 self.summary = await self.conversations.save(
                     summary=replace(candidate, outcome='running'), messages=accepted
                 )
                 self._messages = accepted
-            with capture_run_messages() as messages:
+            with (
+                capture_run_messages() as messages,
+                self.delegations.bind() if self.delegations is not None else nullcontext(),
+            ):
                 try:
                     model = await self.resolved_model()
                     capabilities = list(self.plugins)
+                    if isinstance(self._base_agent, StockAgent):
+                        if len(self.plugins) != len(self._bound_plugins) or any(
+                            new is not old for new, old in zip(self.plugins, self._bound_plugins)
+                        ):
+                            self.agent = self._base_agent.with_plugins(self.plugins)
+                            self._bound_plugins = tuple(self.plugins)
+                        # Already bound to the stock agent, including delegation and guardrails.
+                        capabilities = []
+                    if self.delegations is not None:
+                        capabilities.append(
+                            DelegationReports(
+                                self.delegations,
+                                conversation_id=self.summary.id,
+                                priority='asap' if text is None else 'when_idle',
+                            )
+                        )
                     workspace: Literal['new'] | None = None
                     if _supports_local_workspace() and not _supplies_workspace(
                         [*_agent_capabilities(self.agent), *self.plugins]
@@ -308,7 +360,7 @@ class Session(Generic[DepsT, OutputT]):
                     self._accepting_steering = False
                     # Core captures partial responses and tool results during cleanup.
                     # If cancellation precedes graph startup, retain at least the prompt.
-                    self._messages = messages or [*previous, ModelRequest(parts=[UserPromptPart(content)])]
+                    self._messages = messages or [*previous, *submitted]
                     self._mark_interrupted()
                     try:
                         with move_on_after(5, shield=True):
