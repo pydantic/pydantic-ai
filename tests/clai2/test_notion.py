@@ -32,6 +32,7 @@ from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus import key_picker
 from pydantic_clai2.ui.menus.field_menu import FieldMenu
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
+from tests.clai2.conftest import stored_accounts
 from tests.clai2.menu_script import Script, pick, typed
 
 Vault = dict[tuple[str, str], str]
@@ -366,7 +367,7 @@ async def test_logout_forgets_the_sign_in_and_the_choice(
     assert await shell.run('/notion logout') == (
         'Signed out of Notion and cleared the selected key. The key itself stays in /keys.'
     )
-    assert list(vault) == [('pydantic-clai2', 'api-keys')], 'only the named key remains'
+    assert stored_accounts() == {'api-keys'}, 'only the named key remains'
     assert (await shell.built()).client is not None
 
 

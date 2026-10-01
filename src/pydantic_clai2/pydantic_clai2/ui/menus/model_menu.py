@@ -170,7 +170,9 @@ class ModelMenu:
         self._discovered = tuple(discovered)
         self.models = [
             model
-            for model in catalog(include=[context.settings.model or ''], discovered=self._discovered)
+            for model in catalog(
+                include=[context.settings.model or '', *context.plugin_models()], discovered=self._discovered
+            )
             if provider is None or model.name.partition(':')[0] == provider
         ]
 

@@ -137,6 +137,33 @@ async def test_registration_order_follows_the_shipped_declarations(tmp_path: Pat
     assert harness.text.index('alpha started') < harness.text.index('mike started')
 
 
+async def test_startup_creates_the_plugins_folder(tmp_path: Path) -> None:
+    """So installing a drop-in is one copy, without first finding and creating the folder."""
+    harness = Harness(tmp_path)
+    harness.store.plugins_dir.rmdir()
+    await harness.loader.load_all()
+    assert harness.store.plugins_dir.is_dir()
+    await harness.loader.load_all()  # already there: nothing to do
+    assert harness.text == ''
+
+
+async def test_startup_leaves_the_plugins_folder_alone_when_plugins_are_off(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.store.plugins_dir.rmdir()
+    harness.loader.enabled = False
+    await harness.loader.load_all()
+    assert not harness.store.plugins_dir.exists()
+
+
+async def test_startup_reports_a_plugins_folder_it_cannot_create_and_carries_on(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.store.plugins_dir.rmdir()
+    harness.store.plugins_dir.write_text('a file where the folder belongs')
+    await harness.loader.load_all()
+    assert 'Cannot create the plugins folder:' in harness.text
+    assert harness.loader.entries() == []
+
+
 async def test_folder_discovery_and_load_order(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.write('beta')

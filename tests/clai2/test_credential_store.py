@@ -1,4 +1,4 @@
-"""Exercise keyring storage with Windows' UTF-16 credential size limit, and the no-keyring file fallback."""
+"""One keyring read per session for every credential, older per-entry logins, and the no-keyring file fallback."""
 
 import io
 import os
@@ -9,22 +9,44 @@ from uuid import UUID
 
 import keyring
 import pytest
-from keyring.errors import InitError, KeyringLocked, NoKeyringError, PasswordDeleteError
+from keyring.errors import InitError, KeyringLocked, NoKeyringError
 from rich.console import Console
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers.openai_codex import OpenAICodexCredentials
 from pydantic_clai2.auth import CodexAuth, CodexCredentials
+from pydantic_clai2.config import credential_store
 from pydantic_clai2.config.credential_store import (
     credentials_path,
     delete_credentials,
     load_codex_credentials,
     save_codex_credentials,
 )
+from tests.clai2.conftest import stored_accounts
+
+Vault = dict[tuple[str, str], str]
+KEY = ('pydantic-clai2', 'encryption-key')
+LEGACY = ('pydantic-clai2', 'openai-codex')
 
 
 def fake_browser(url: str) -> bool:
     return True
+
+
+def new_session() -> None:
+    """Forget the key a previous process read, as a restart would."""
+    credential_store._stored_key.cache_clear()  # pyright: ignore[reportPrivateUsage]
+
+
+def legacy_chunks(vault: Vault, value: str, *, count: int = 3) -> None:
+    """Store `value` the way an older CLAI split large bundles for Windows' per-entry size limit."""
+    generation = 'a' * 32
+    vault[LEGACY] = f'clai-chunks-v1:{generation}:{count}'
+    size = -(-len(value) // count)
+    for index in range(count):
+        vault[f'pydantic-clai2.openai-codex.{generation}.{index}', 'openai-codex'] = value[
+            index * size : (index + 1) * size
+        ]
 
 
 @pytest.fixture
@@ -32,132 +54,165 @@ def fallback(tmp_path: Path) -> Path:
     return tmp_path / 'config' / 'credentials.json'
 
 
-async def test_large_codex_credentials(vault: dict[str, str], fallback: Path) -> None:
+@pytest.fixture
+def reads(monkeypatch: pytest.MonkeyPatch, vault: Vault) -> list[tuple[str, str]]:
+    """Reads of entries that exist: on macOS, each one can ask the user for their password."""
+    seen: list[tuple[str, str]] = []
+
+    def get(service: str, account: str) -> str | None:
+        if (value := vault.get((service, account))) is not None:
+            seen.append((service, account))
+        return value
+
+    monkeypatch.setattr(keyring, 'get_password', get)
+    return seen
+
+
+def test_a_session_reads_one_keyring_entry(vault: Vault, reads: list[tuple[str, str]]) -> None:
+    """Marcelo's startup read `api-keys` once per plugin plus each plugin's own entry: 4 prompts, not 1."""
+    accounts = ('api-keys', 'linear', 'posthog', 'mcp-day_ai')
+    for account in accounts:
+        save_codex_credentials(account=account, value=f'{account}-secret')
+    assert list(vault) == [KEY]
+    assert stored_accounts() == set(accounts)
+    new_session()
+    reads.clear()
+    for _ in range(3):
+        assert [load_codex_credentials(account=account) for account in accounts] == [
+            f'{account}-secret' for account in accounts
+        ]
+    save_codex_credentials(account='linear', value='refreshed')
+    assert load_codex_credentials(account='linear') == 'refreshed'
+    assert reads == [KEY]
+
+
+@pytest.mark.parametrize('value', ['small', 'x' * 12000, '\U0001f511' * 2000])
+def test_round_trip_is_encrypted_at_rest(vault: Vault, fallback: Path, value: str) -> None:
+    assert load_codex_credentials(fallback=fallback) is None
+    save_codex_credentials(fallback=fallback, value=value)
+    encrypted = fallback.with_suffix('.enc')
+    assert value.encode() not in encrypted.read_bytes()
+    if sys.platform != 'win32':  # pragma: no branch
+        assert stat.S_IMODE(encrypted.stat().st_mode) == 0o600
+    assert not fallback.exists()
+    assert list(vault) == [KEY]
+    new_session()
+    assert load_codex_credentials(fallback=fallback) == value
+
+
+async def test_large_codex_credentials(vault: Vault) -> None:
     source = CodexCredentials()
     credentials = OpenAICodexCredentials(
         access_token='fake-access' * 500, refresh_token='fake-refresh' * 300, account_id='fake-account'
     )
     await source.save(credentials)
     assert await source.load() == credentials
-    assert len(vault) > 1
     refreshed = OpenAICodexCredentials(
         access_token='refreshed' * 500, refresh_token='new-refresh' * 300, account_id='fake-account'
     )
     await source.save(refreshed)
     assert await source.load() == refreshed
+    assert list(vault) == [KEY]
 
 
-@pytest.fixture
-def vault(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
-    entries: dict[str, str] = {}
+def test_legacy_login_moves_into_an_encrypted_file(vault: Vault, reads: list[tuple[str, str]], fallback: Path) -> None:
+    vault[LEGACY] = '{"access_token":"legacy"}'
+    assert load_codex_credentials(fallback=fallback) == '{"access_token":"legacy"}'
+    assert reads.count(LEGACY) == 1, 'moving it reads the older entry once'
+    assert list(vault) == [KEY]
+    new_session()
+    reads.clear()
+    assert load_codex_credentials(fallback=fallback) == '{"access_token":"legacy"}'
+    assert reads == [KEY]
+
+
+def test_legacy_chunked_login_moves_into_an_encrypted_file(vault: Vault, fallback: Path) -> None:
+    legacy_chunks(vault, 'x' * 5000)
+    assert load_codex_credentials(fallback=fallback) == 'x' * 5000
+    assert list(vault) == [KEY]
+    assert load_codex_credentials(fallback=fallback) == 'x' * 5000
+
+
+def test_newer_login_wins_a_migration_race(vault: Vault, monkeypatch: pytest.MonkeyPatch, fallback: Path) -> None:
+    """Another process saves a new login between this one reading the older entry and moving it."""
+    vault[LEGACY] = 'older'
+    original_get = keyring.get_password
 
     def get(service: str, account: str) -> str | None:
-        assert account == 'openai-codex'
-        return entries.get(service)
-
-    def set_value(service: str, account: str, value: str) -> None:
-        assert account == 'openai-codex'
-        if len(value.encode('utf-16-le')) > 2560:
-            raise OSError(1783, 'CredWrite', 'The stub received bad data')
-        entries[service] = value
-
-    def delete(service: str, account: str) -> None:
-        assert account == 'openai-codex'
-        if service not in entries:
-            raise PasswordDeleteError('Not found')
-        del entries[service]
+        """The first read is the older entry; the other process saves right after it."""
+        value = original_get(service, account)
+        monkeypatch.setattr(keyring, 'get_password', original_get)
+        save_codex_credentials(fallback=fallback, value='newer')
+        return value
 
     monkeypatch.setattr(keyring, 'get_password', get)
-    monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
-    return entries
+    assert load_codex_credentials(fallback=fallback) == 'newer'
+    assert load_codex_credentials(fallback=fallback) == 'newer'
 
 
-@pytest.mark.parametrize('value', ['x' * 1280, 'x' * 1281, 'x' * 12000, '\U0001f511' * 2000])
-def test_windows_round_trip_and_refresh(vault: dict[str, str], fallback: Path, value: str) -> None:
-    assert load_codex_credentials(fallback=fallback) is None
-    save_codex_credentials(fallback=fallback, value=value)
-    assert load_codex_credentials(fallback=fallback) == value
-    original_services = set(vault) - {'pydantic-clai2'}
-    save_codex_credentials(fallback=fallback, value=value + 'refreshed' * 1000)
-    assert load_codex_credentials(fallback=fallback) == value + 'refreshed' * 1000
-    assert original_services.isdisjoint(vault)
-    save_codex_credentials(fallback=fallback, value='small')
-    assert load_codex_credentials(fallback=fallback) == 'small'
-    assert vault == {'pydantic-clai2': 'small'}
+def test_swept_staging_file_leaves_the_move_to_the_other_process(
+    vault: Vault, monkeypatch: pytest.MonkeyPatch, fallback: Path
+) -> None:
+    """A concurrent migration's stale-file sweep removed this one's staging file before it was linked."""
+    vault[LEGACY] = 'older'
+
+    def swept(source: str, destination: Path) -> None:
+        raise FileNotFoundError(source)
+
+    monkeypatch.setattr('pydantic_clai2.config.credential_store.os.link', swept)
+    assert load_codex_credentials(fallback=fallback) == 'older'
+    assert vault[LEGACY] == 'older', 'the entry stays until a move succeeds'
 
 
-def test_oversized_single_entry_reproduces_windows_error(vault: dict[str, str], fallback: Path) -> None:
-    value = 'x' * 1281
-    with pytest.raises(OSError, match='CredWrite'):
-        keyring.set_password('pydantic-clai2', 'openai-codex', value)
-    assert not vault
-    save_codex_credentials(fallback=fallback, value=value)
-    assert load_codex_credentials(fallback=fallback) == value
+def test_key_created_by_another_process_is_used(vault: Vault, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two first-ever saves race; the one that waited on the lock reuses the key instead of replacing it."""
+    other = 'c2VjcmV0LWtleS1mcm9tLWFub3RoZXItcHJvY2VzcyE='
+    original_get = keyring.get_password
+
+    def get(service: str, account: str) -> str | None:
+        value = original_get(service, account)
+        if (service, account) == KEY and value is None:
+            vault[KEY] = other
+        return value
+
+    monkeypatch.setattr(keyring, 'get_password', get)
+    save_codex_credentials(value='mine')
+    assert vault == {KEY: other}
+    new_session()
+    assert load_codex_credentials() == 'mine'
 
 
-def test_legacy_login(vault: dict[str, str], fallback: Path) -> None:
-    vault['pydantic-clai2'] = '{"access_token":"legacy"}'
-    assert load_codex_credentials(fallback=fallback) == '{"access_token":"legacy"}'
-    save_codex_credentials(fallback=fallback, value='new' * 2000)
-    assert load_codex_credentials(fallback=fallback) == 'new' * 2000
+@pytest.mark.parametrize('damage', ['lost key', 'malformed key', 'corrupt file'])
+def test_undecryptable_login_asks_to_reconnect(vault: Vault, fallback: Path, damage: str) -> None:
+    save_codex_credentials(fallback=fallback, value='secret')
+    new_session()
+    if damage == 'lost key':
+        del vault[KEY]
+    elif damage == 'malformed key':
+        vault[KEY] = 'not a Fernet key'
+    else:
+        fallback.with_suffix('.enc').write_text('not a token')
+    with pytest.raises(UserError, match='cannot be decrypted'):
+        load_codex_credentials(fallback=fallback)
+    save_codex_credentials(fallback=fallback, value='reconnected')
+    assert load_codex_credentials(fallback=fallback) == 'reconnected'
 
 
 @pytest.mark.parametrize('manifest', ['clai-chunks-v1:bad', 'clai-chunks-v1:' + 'a' * 32 + ':0'])
-def test_corrupt_manifest_can_be_replaced(vault: dict[str, str], fallback: Path, manifest: str) -> None:
-    vault['pydantic-clai2'] = manifest
+def test_corrupt_manifest_can_be_replaced(vault: Vault, fallback: Path, manifest: str) -> None:
+    vault[LEGACY] = manifest
     with pytest.raises(UserError, match='invalid'):
         load_codex_credentials(fallback=fallback)
     save_codex_credentials(fallback=fallback, value='replacement')
     assert load_codex_credentials(fallback=fallback) == 'replacement'
+    assert list(vault) == [KEY]
 
 
-def test_missing_chunk(vault: dict[str, str], fallback: Path) -> None:
-    save_codex_credentials(fallback=fallback, value='x' * 5000)
-    del vault[next(service for service in vault if service != 'pydantic-clai2')]
+def test_missing_chunk(vault: Vault, fallback: Path) -> None:
+    legacy_chunks(vault, 'x' * 5000)
+    del vault[f'pydantic-clai2.openai-codex.{"a" * 32}.1', 'openai-codex']
     with pytest.raises(UserError, match='incomplete'):
         load_codex_credentials(fallback=fallback)
-
-
-@pytest.mark.parametrize('discard', [False, True])
-def test_failed_chunk_preserves_login(
-    vault: dict[str, str], fallback: Path, monkeypatch: pytest.MonkeyPatch, *, discard: bool
-) -> None:
-    save_codex_credentials(fallback=fallback, value='previous' * 1000)
-    previous = dict(vault)
-    original_set = keyring.set_password
-    writes = 0
-
-    def fail(service: str, account: str, value: str) -> None:
-        nonlocal writes
-        writes += 1
-        if writes == 2:
-            if discard:
-                return
-            raise OSError('backend unavailable')
-        original_set(service, account, value)
-
-    monkeypatch.setattr(keyring, 'set_password', fail)
-    with pytest.raises((OSError, UserError)):
-        save_codex_credentials(fallback=fallback, value='replacement' * 1000)
-    assert vault == previous
-    assert load_codex_credentials(fallback=fallback) == 'previous' * 1000
-
-
-def test_uncertain_manifest_write_retains_chunks(
-    vault: dict[str, str], fallback: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    original_set = keyring.set_password
-
-    def fail_after_write(service: str, account: str, value: str) -> None:
-        original_set(service, account, value)
-        if service == 'pydantic-clai2':
-            raise OSError('backend unavailable after write')
-
-    monkeypatch.setattr(keyring, 'set_password', fail_after_write)
-    with pytest.raises(OSError):
-        save_codex_credentials(fallback=fallback, value='replacement' * 1000)
-    assert load_codex_credentials(fallback=fallback) == 'replacement' * 1000
 
 
 @pytest.fixture
@@ -180,7 +235,7 @@ def test_file_fallback_when_no_keyring(fallback: Path, no_keyring: None) -> None
     assert load_codex_credentials(fallback=fallback) == '{"access_token":"first"}'
     save_codex_credentials(fallback=fallback, value='{"access_token":"refreshed"}')
     assert load_codex_credentials(fallback=fallback) == '{"access_token":"refreshed"}'
-    assert list(fallback.parent.iterdir()) == [fallback]
+    assert list(fallback.parent.glob('credentials.*')) == [fallback]
     if sys.platform != 'win32':  # pragma: no branch
         assert stat.S_IMODE(fallback.stat().st_mode) == 0o600
 
@@ -239,7 +294,7 @@ def test_locked_keyring_is_not_a_fallback(fallback: Path, monkeypatch: pytest.Mo
         load_codex_credentials(fallback=fallback)
 
 
-def test_keyring_save_removes_plaintext_copy(vault: dict[str, str], fallback: Path) -> None:
+def test_keyring_save_removes_plaintext_copy(vault: Vault, fallback: Path) -> None:
     fallback.parent.mkdir()
     fallback.write_text('{"access_token":"from-file"}', encoding='utf-8')
     assert load_codex_credentials(fallback=fallback) == '{"access_token":"from-file"}'
@@ -278,25 +333,29 @@ def test_fallback_paths_are_per_account(tmp_path: Path, no_keyring: None, monkey
     assert load_codex_credentials(account='vllm', fallback=vllm) == 'vllm-token'
 
 
-@pytest.mark.parametrize('value', ['small', 'x' * 12000])
-def test_delete_removes_entry_and_chunks(vault: dict[str, str], fallback: Path, value: str) -> None:
-    save_codex_credentials(fallback=fallback, value=value)
-    fallback.parent.mkdir(parents=True, exist_ok=True)
+@pytest.mark.parametrize('legacy', [None, 'small', 'x' * 5000])
+def test_delete_removes_every_copy(vault: Vault, fallback: Path, legacy: str | None) -> None:
+    save_codex_credentials(fallback=fallback, value='current')
+    if legacy == 'small':
+        vault[LEGACY] = legacy
+    elif legacy is not None:
+        legacy_chunks(vault, legacy)
     fallback.write_text('stale', encoding='utf-8')
     delete_credentials(fallback=fallback)
-    assert vault == {} and not fallback.exists()
+    assert list(vault) == [KEY]
+    assert list(fallback.parent.glob('credentials.*')) == []
     delete_credentials(fallback=fallback)
     assert load_codex_credentials(fallback=fallback) is None
 
 
-def test_delete_clears_a_corrupt_manifest(vault: dict[str, str], fallback: Path) -> None:
-    vault['pydantic-clai2'] = 'clai-chunks-v1:broken'
+def test_delete_clears_a_corrupt_manifest(vault: Vault, fallback: Path) -> None:
+    vault[LEGACY] = 'clai-chunks-v1:broken'
     delete_credentials(fallback=fallback)
     assert vault == {}
 
 
 def test_delete_skips_chunks_that_are_already_gone(fallback: Path) -> None:
-    keyring.set_password('pydantic-clai2', 'openai-codex', f'clai-chunks-v1:{"0" * 32}:2')
+    keyring.set_password(*LEGACY, f'clai-chunks-v1:{"0" * 32}:2')
     delete_credentials(fallback=fallback)
     assert load_codex_credentials(fallback=fallback) is None
 

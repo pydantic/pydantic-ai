@@ -7,10 +7,11 @@ from typing import Protocol, runtime_checkable
 from pydantic import JsonValue, TypeAdapter
 
 from pydantic_ai.settings import ModelSettings
-from pydantic_clai2.commands import Command
+from pydantic_clai2.commands import Command, set_completions
 from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui import telemetry
 
 
 @runtime_checkable
@@ -32,6 +33,8 @@ class CommandContext:
     apply_setting: Callable[[str, Settings], None]
     project: ProjectSettings = field(default_factory=ProjectSettings)
     """Read-only here: `/set` writes the user store, and the project file wins again at next start."""
+    plugin_models: Callable[[], Sequence[str]] = lambda: ()
+    """Models loaded plugins offer with `PluginHost.model_provider`, as `PREFIX:NAME`."""
 
     def __post_init__(self) -> None:
         """Keep the configured model selectable, including preferences saved before the model list existed."""
@@ -92,9 +95,20 @@ class CommandContext:
     def _apply(self, key: str, settings: Settings) -> None:
         self.settings = settings
         self.apply_setting(key, settings)
+        telemetry.record('setting {setting} changed', setting=key, value=_shown(key, settings))
 
     def _when(self, key: str) -> str:
         when = 'Applies at next startup.' if key == 'display.splash' else 'Applied.'
         if self.from_project(key):
             when += ' The project file sets it again at next start.'
         return when
+
+
+def _shown(key: str, settings: Settings) -> bool | int | float | str:
+    """A setting's new value for UI telemetry: flags, numbers, and listed choices, but never typed text."""
+    value: object = getattr(settings, SETTING_FIELDS[key])
+    if value is None:
+        return 'null'
+    if isinstance(value, bool | int | float):
+        return value
+    return value if isinstance(value, str) and value in set(set_completions([key, ''])) else 'custom'
