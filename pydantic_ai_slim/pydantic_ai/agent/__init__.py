@@ -239,8 +239,8 @@ async def _run_lifecycle_hooks(  # noqa: C901
     # 6. _do_run resumes: returns the result (success) or re-raises the error.
     # 7. If wrap_run catches the error and returns a recovery result, we use it.
     #    Otherwise the original error propagates.
-    _run_ready = asyncio.Event()
-    _run_done = asyncio.Event()
+    _run_ready = anyio.Event()
+    _run_done = anyio.Event()
     _run_error: BaseException | None = None
     _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
 
