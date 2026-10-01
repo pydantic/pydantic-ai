@@ -15,12 +15,18 @@ tools:
     mode: gh-proxy
     toolsets: [default]
 safe-outputs:
-  # Failures and noop messages stay in the run rather than in public `[aw]` issues.
+  # Failures, noops and missing-tool/data/incomplete reports stay in the run, not in public `[aw]` issues.
   report-failure-as-issue: false
   footer: false
   activation-comments: false
   noop:
     report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-issue:
     max: 1
     title-prefix: "[docs-drift] "

@@ -63,7 +63,7 @@ tools:
     # PR-scoped surface: read the PR, related issues, repo, and search.
     toolsets: [pull_requests, repos, search, issues]
 safe-outputs:
-  # Failures and noop messages stay in the run rather than in public `[aw]` issues.
+  # Failures, noops and missing-tool/data/incomplete reports stay in the run, not in public `[aw]` issues.
   report-failure-as-issue: false
   # `workflow_run` carries no PR, so the PR-targeting outputs below default to a
   # triggering PR that does not exist and silently discard the review. `target:`
@@ -78,6 +78,12 @@ safe-outputs:
   activation-comments: false
   noop:
     report-as-issue: false
+  missing-tool:
+    create-issue: false
+  missing-data:
+    create-issue: false
+  report-incomplete:
+    create-issue: false
   create-pull-request-review-comment:
     max: 30
     target: ${{ needs.eligibility.outputs.pr_number }}
