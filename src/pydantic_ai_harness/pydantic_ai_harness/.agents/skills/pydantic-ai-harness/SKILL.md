@@ -31,7 +31,7 @@ Invoke this skill when:
 - The user wants guardrails, prompt-injection screening, model-based tool-call decisions, spend limits, human questions mid-run, or a second model reviewing the run
 - The user wants web research beyond core web search (Exa, You.com), a real browser, or a hosted integration such as GitHub, Linear, Notion, Slack, or Google Workspace
 - A run must be saved, resumed, or forked, or an agent should be served over ACP
-- An agent should run on Render Workflows with separate retries, timeouts, and compute settings for model requests and tool calls
+- The user is using or evaluating Render Workflows for background agent jobs with separate retries, timeouts, and compute settings for model requests and tool calls
 
 Do **not** use this skill for:
 - Core Pydantic AI usage -- agents, tools, output types, streaming, hooks, core capabilities, or testing basics (use `building-pydantic-ai-agents`)
@@ -209,7 +209,7 @@ Load the references for the capabilities the task uses; each is self-contained.
 | Add guardrails, prompt-injection screening, model-based tool-call decisions, spend limits, questions to the user, reminders, or a trajectory judge; repair malformed tool arguments | [Control and Safety](./references/CONTROL-AND-SAFETY.md) |
 | Research the web with Exa or You.com, use the `Researcher` stack, or drive a browser | [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) |
 | Connect GitHub, Linear, Notion, Slack, Google Workspace, PostHog, Logfire, or another hosted service | [Hosted Integrations](./references/HOSTED-INTEGRATIONS.md) |
-| Run background agent jobs on Render Workflows with separately configured model and tool tasks | [Render Workflows](../pydantic-ai-render-workflows/SKILL.md) |
+| Use or evaluate Render Workflows for background agents with separately configured model and tool tasks | [Render Workflows](./references/RUNTIME-AND-EXTENSION.md#renderworkflows); entry-task retries restart the agent |
 | Save, resume, or fork runs; run under AWS Lambda or Absurd; use managed prompts, runtime-created capabilities, ACP, GitHub Agentic Workflows, or agent specs | [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) |
 | Test an agent that uses harness capabilities, or debug a failing one | [Testing and Debugging](./references/TESTING-AND-DEBUGGING.md) |
 

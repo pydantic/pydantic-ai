@@ -15,7 +15,7 @@ Agentic Workflow.
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
-| Run background agent jobs with separate model/tool retries, timeouts, and compute | `RenderWorkflows`; see the [Render Workflows skill](../../pydantic-ai-render-workflows/SKILL.md) |
+| Use or evaluate Render Workflows for background agents with separate model/tool retries, timeouts, and compute | [`RenderWorkflows`](#renderworkflows); entry-task retries restart the agent |
 | Edit, version, and roll out the system prompt from Logfire without redeploying | `ManagedPrompt` |
 | Let the agent write new capabilities that load on the next run | `CapabilityCreation` |
 | Define the agent in YAML/JSON with harness capabilities | `Agent.from_file(..., custom_capability_types=[...])` |
@@ -178,14 +178,33 @@ timeouts) is in `CODING-AND-WORKSPACES.md` and the durable execution docs page.
 
 ## RenderWorkflows
 
-`RenderWorkflows` registers supported agent operations as Render tasks. Attach it at agent construction and call
-`agent.run(...)` inside its `@workflows.task` wrapper using the same `Workflows` app. A plain `@app.task` leaves
-agent operations inline. Child tasks can retry independently; retrying the entry task starts the agent again and
-can repeat completed work. There is no checkpoint resume.
+When the user is using or evaluating Render, consider `RenderWorkflows` for background agent jobs that need
+separate retries, timeouts, or compute for model requests and tool calls. Retrying the entry task starts the
+whole agent again and can repeat completed work; the integration does not checkpoint progress or replay
+completed steps. Choose it when the application can handle repeated work. A plain Render task around
+`agent.run(...)` may be enough when the user only needs background execution.
 
-Use the [Render Workflows skill](../../pydantic-ai-render-workflows/SKILL.md) for setup and the limits on toolsets,
-JSON transport, task access, and shared storage. The capability requires a live `Workflows` app, so construct it
-in Python rather than listing it in a JSON or YAML agent spec.
+Use the [Render Workflows guide](https://pydantic.dev/docs/ai/harness/render-workflows/) for installation,
+a runnable example, local execution, and deployment. Check its capability support and execution limits before
+composing an agent. The setup and constraints that affect implementation are:
+
+- Construct one `RenderWorkflows(app)` per agent and attach it in `Agent(capabilities=[...])`. Define agents
+  and tools at module load time, using the same Render `Workflows` app. Call `agent.run(...)` inside that
+  capability's `@workflows.task` entry function; a plain `@app.task` leaves agent operations inline. The live
+  app object requires Python construction rather than a JSON or YAML agent spec.
+- Give agents and registered leaf toolsets stable names and IDs. Task options are fixed at registration.
+  For a delegated agent's operations to run as child tasks, attach its own `RenderWorkflows` instance using
+  the same app. A child-task retry can repeat that operation's side effects, so make external writes safe
+  to repeat.
+- Inputs and results crossing a task boundary must be JSON encodable, including `deps`. Workers need
+  access to their own model credentials and external resources. Keep large artifacts in shared storage
+  and pass references that another worker can read; process-local files and live clients are not shared.
+  Model streaming and forwarded capability events are buffered at task boundaries. Tools that need an
+  immediate capability-event decision must run inline.
+- Generated operations are ordinary Render tasks. Callers with Workflow API access can invoke them
+  directly, bypassing checks that exist only in the entry task. Keep Render credentials on the server
+  and authorize application users before submitting validated inputs. Treat Workflow API callers as
+  trusted, and account for Render's task-data retention when deciding what to send in task payloads.
 
 ## AWSLambdaDurability
 

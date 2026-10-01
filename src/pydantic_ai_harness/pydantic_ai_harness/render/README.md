@@ -10,7 +10,7 @@ completed model requests and tool calls. Use it when your application can handle
 
 If you only need background execution, a native Render task around `agent.run(...)` may be enough.
 
-[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/render/)
+[Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/render/) | [Detailed reference](#task-definitions-and-child-task-runs)
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
 
@@ -43,7 +43,7 @@ The `render` extra supplies the Python SDK and its `render-workflows` executable
 
 Save the following as `app.py` in your project directory:
 
-```python {title="app.py" names="defined"}
+```python
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from render import TaskContext, Workflows
@@ -150,7 +150,7 @@ You can keep `TestModel` and the mock weather tool while working through the rem
 To give model requests and tool calls different retry limits, timeouts, or compute, replace the `app` and
 `workflows` declarations in `app.py` with the following block. Keep it before the `Agent(...)` declaration:
 
-```python {names="defined"}
+```python
 from render import Options, Retry, Workflows
 
 from pydantic_ai_harness import RenderWorkflows
@@ -175,10 +175,11 @@ To set the timeout for the whole agent run, replace `@workflows.task` above `sup
 `@workflows.task(timeout_seconds=600, plan='flex')`. Restart the local server and repeat step 4 to check that the
 updated task still runs. These settings are fixed when tasks register and cannot change between invocations.
 
-To give a statically known function tool its own options, use `resolve_tool_options`; returning `False` keeps that tool inline. The [per-tool options reference](https://github.com/pydantic/pydantic-ai/blob/main/docs/harness/render-workflows.md#task-options-and-tool-opt-out) explains the resolver contract and the restrictions for MCP and dynamic tools.
+For per-tool configuration, see [Task options and tool opt-out](#task-options-and-tool-opt-out).
 
 A failed child task can retry while the entry task waits. Retrying the entry task restarts `agent.run(...)`, so model
 and tool calls that already finished may run again. There is no checkpoint resume or replay of completed steps.
+The Render SDK also does not let this integration assign stable idempotency keys to child calls.
 Either kind of retry can repeat an external action performed before its result was recorded; use application-level
 idempotency keys or deduplication for writes and API requests that must not happen twice.
 
@@ -191,7 +192,7 @@ and from retries in the provider SDK. Account for all three when setting retry l
 Your application can submit the same `support` task through the Render SDK. With the local task server still
 running, save this as `submit.py` alongside `app.py`:
 
-```python {title="submit.py" names="defined"}
+```python
 import asyncio
 
 from render import RenderAsync
@@ -213,14 +214,12 @@ Run it in a second terminal:
 RENDER_USE_LOCAL_DEV=1 uv run python submit.py
 ```
 
-With pip, use `python` instead of `uv run python` in your activated environment.
-
 `RENDER_USE_LOCAL_DEV=1` directs the client to the local server without requiring a Render API key. The script
 prints the run ID as soon as Render accepts the task, without waiting for the agent's answer.
 
 To retrieve that run's status and result, save this as `check_run.py`:
 
-```python {title="check_run.py" names="defined"}
+```python
 import asyncio
 import json
 import sys
@@ -257,13 +256,10 @@ the server.
 ## 8. Deploy the agent to Render
 
 Once the local example works, deploy the project as a [Workflow service](https://render.com/docs/workflows-tutorial#4-create-a-workflow-service).
-Review the deployment constraints below, then:
+Review the [execution limits](#execution-limits) below, then:
 
-1. Push the project and its dependency files to your Git provider. If you installed from a local checkout,
-   build matching Graph, core, and Harness wheels from that checkout and include them in the deployment. Update
-   the dependency paths to those wheels and regenerate the lockfile. Building the wheels together preserves
-   the matching versions derived from the checkout's Git metadata. Alternatively, use a published Harness release
-   that contains the integration. Paths to directories on your laptop will not exist on Render.
+1. Push the project and its dependency files to your Git provider. Include the lockfile so the build installs
+   the versions you tested locally.
 2. Create a Workflow service linked to that repository. Set its root directory to the folder containing `app.py`
    and its build command to install the project's dependencies. For a uv project whose dependencies are available
    in the build, use `uv sync --locked`.
@@ -279,18 +275,126 @@ Review the deployment constraints below, then:
 Render's [task submission guide](https://render.com/docs/workflows-running) covers authentication and other ways
 to trigger the deployed task.
 
-## Constraints to check before deployment
+## Task definitions and child task runs
 
-- **Task access:** Render API callers can submit generated operations directly, bypassing checks that exist only in the entry task. Treat those callers as trusted; see the [task access boundary](https://github.com/pydantic/pydantic-ai/blob/main/docs/harness/render-workflows.md#task-access-boundary).
-- **Toolsets:** Explicit IDs must be stable and unique. Unnamed capability-owned tools can remain inline without a child-task record.
-- **Task inputs:** Dependencies, messages, arguments, and results must be JSON serializable, and Render limits a task run's arguments to 4 MB. Pass resource IDs across the boundary and reconstruct clients inside workers.
-- **Memory and storage:** The `Memory` capability is not supported by this integration yet. Hosted task instances do not share local memory or files, so tools that persist data need a shared external backend. Read credentials from worker environment variables rather than passing them through task inputs or results.
-- **Streaming and cancellation:** Model responses are buffered until their child task finishes, so live tokens do not stream across the task boundary. Pydantic AI cancellation tokens are unsupported in a workflow; use Render's native task cancellation instead.
-- **Compatibility:** The adapter uses private Pydantic AI APIs, so test the integration before upgrading its dependencies. The local quickstart verifies task dispatch, but does not establish hosted failure recovery or performance.
+The capability registers definitions for these operations:
 
-Render retains task inputs and results for 30 days and allows up to 500 task definitions per workflow. Check the current [limits and pricing](https://render.com/docs/workflows-limits) when deciding how many operations to register as separate tasks.
+- model requests, buffered stream requests, compaction, and suspended-response cleanup;
+- per function toolset by default, or per statically known function tool when its resolved options differ, argument validation and tool calls;
+- per MCP and dynamic toolset, discovery, instructions, validation, and calls;
+- `event_stream_handler` delivery;
+- each method another capability declares with `@durable_operation`.
 
-## Further reference
+Render's limit of 500 definitions per workflow counts the entry task and these generated definitions. Each definition
+can produce many child runs, which Render schedules and bills individually.
 
-See the [integration reference](https://github.com/pydantic/pydantic-ai/blob/main/docs/harness/render-workflows.md)
-for task naming, sub-agent setup, JSON transport, memory, large tool outputs, and tracing.
+## Task names for capability toolsets
+
+Every registered leaf toolset needs a stable `id` because Render uses it in persisted task names. Duplicate IDs fail
+Pydantic AI's uniqueness check; the integration does not rename them. An unnamed supported toolset attached directly
+to an agent is rejected before any task definitions register.
+
+Capability-owned toolsets can remain unnamed, in which case their tools execute inline in the entry task without
+separate run records or task options.
+
+## Sub-agent delegation
+
+`SubAgents` runs its `delegate_task` tool in the workflow entry task. To run a delegate's model requests and
+supported tools as Render tasks, construct the child `Agent` at module load time with its own `RenderWorkflows`
+instance, using the same `Workflows` app as the parent. A child without that configuration stays inline.
+
+Successful child operations contribute usage and buffered events to the parent run. Failed operations and
+`ModelRetry` attempts do not forward those updates. The delegation limit applies within one active parent task
+run; it does not impose a shared budget across entry-task retries or separate runs.
+
+Immediate capability events require a synchronous decision before their emitter continues, which cannot be buffered across a child task. The integration rejects those events across the task boundary, so keep tools that emit them inline.
+
+## Large tool outputs
+
+`ToolOutputLimits` also contributes an unnamed helper toolset, so that helper remains inline. It measures and reduces a tool return after the registered tool task returns to the workflow entry task.
+
+In `Spill` mode, the capability writes the full payload to a filesystem-backed store and gives the model a handle for a later `read_tool_result` call. Because task runs execute in separate processes and can have isolated filesystems, the later task might not be able to read the file behind that handle.
+
+For large artifacts, return bounded JSON containing a key into object storage, a database, or another durable service that both tasks can reach. A later tool can then fetch the artifact from that shared store.
+
+## Memory
+
+The `Memory` capability is not supported by this integration yet. Hosted task instances also do not share local memory or files, so tools that persist data need a shared external backend.
+
+## Task options and tool opt-out
+
+Use Render `Options` for the model, tool, event, and capability task definitions:
+
+```python
+from render import Options, Retry, Workflows
+
+from pydantic_ai_harness import RenderWorkflows
+
+
+def resolve_tool_options(_operation_id, _tool, tool_name):
+    if tool_name == 'read_local_cache':
+        return False
+    return None
+
+
+app = Workflows()
+workflows = RenderWorkflows(
+    app,
+    model_options=Options(
+        retry=Retry(max_retries=3, wait_duration_ms=1_000),
+        timeout_seconds=300,
+        plan='flex',
+    ),
+    tool_options=Options(timeout_seconds=120, plan='2c-4g'),
+    event_options=Options(timeout_seconds=60),
+    capability_options=Options(timeout_seconds=120),
+    resolve_tool_options=resolve_tool_options,
+)
+```
+
+At registration, the resolver first receives `tool=None` and `tool_name=''` to determine the toolset default.
+It then receives each statically known function tool and its name; returning `None` keeps `tool_options`.
+
+When every static tool resolves to the shared default, the toolset keeps its existing shared call and validation task definitions. When at least one resolves different `Options` or `False`, each eligible static tool receives definitions named from the agent, toolset, tool, and operation.
+
+Returning `False` for a static function tool registers no task for that tool and runs it inside the workflow entry task. `False` is rejected for MCP and dynamic tools because their concrete tools are not known when the Workflow service registers definitions.
+
+## Execution limits
+
+- **JSON inputs and results:** Dependencies, messages, model settings, metadata, tool arguments, events, and
+  results must be JSON serializable. `deps_type` defaults to the agent's dependency type. Pass resource IDs
+  across the boundary and construct live clients inside workers.
+- **Task size:** Render limits the total arguments of a task run to [4 MB](https://render.com/docs/workflows-limits#additional-limits),
+  including the integration's metadata. An oversized call fails before submission. Store large documents
+  externally and pass their IDs or URLs.
+- **Task access:** Callers with Workflow API access can submit generated model and tool tasks directly,
+  bypassing checks in the entry task. Treat those callers as trusted to use the worker's tools and credentials.
+  Keep Render credentials on the server, authenticate application users, and submit validated inputs on their
+  behalf. Caller-supplied dependencies and approval fields do not establish authorization.
+- **Retention:** Render stores task state, including prompts, responses, tool arguments and results, and
+  dependencies, for [30 days](https://render.com/docs/workflows-limits#task-state-retention). Read credentials
+  from worker environment variables rather than passing them through task inputs or results.
+- **Streaming and cancellation:** Model responses and events are buffered until the child task finishes;
+  provider tokens do not stream live to the caller. Pydantic AI cancellation tokens are unsupported inside a
+  workflow, so use Render's native task cancellation. Cancellation does not undo external tool side effects.
+
+Retry behavior is described in [Configure retries and timeouts](#6-configure-retries-and-timeouts).
+
+If a tool needs `ctx.model`, supply a model instance as the agent's default or register it through
+`models={...}`. A child task resolves that instance in its own process, and calls through `ctx.model` run
+inside that task. A model specified only by a string has no registered instance available through `ctx.model`.
+
+## Execution and tracing
+
+Render's synchronous and asynchronous clients submit ordinary tasks to its queues. To start the entry task on a
+schedule, use a Render cron job.
+
+The capability emits no additional OpenTelemetry spans. Pydantic AI traces model and tool operations, while
+Render records task runs, retries, logs, and metrics. Configure Pydantic AI instrumentation when each worker
+loads the app to use `ctx.tracer` inside child tasks. It is a no-op when tracing is disabled. The caller's
+`trace_include_content` setting is preserved, but parent span context is not propagated across Render task
+calls, so child-task spans can appear in separate traces.
+
+## API reference
+
+See the [`RenderWorkflows` API reference](https://pydantic.dev/docs/ai/harness/render-workflows/#api-reference).
