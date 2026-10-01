@@ -40,8 +40,7 @@ _SLA = dt.timedelta(days=3)
 # Applied only by the community-demand sweep; scripts trust the label.
 COMMUNITY_LABEL = 'community-backed'
 # Assigned P1/P2 issues are kept in the attention queue by `reconcile`; the
-# owner is pinged once *they* have been inactive past the window. Community
-# demand may still open the assignment gate, but does not interrupt owners.
+# owner is pinged once *they* have been inactive past the window.
 _REMINDER_SLAS = {
     'p:1-highest': dt.timedelta(days=3),
     'p:2-high': dt.timedelta(days=5),
@@ -105,7 +104,7 @@ _LABELS = {
     _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
     _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request is cooling down after escalation'),
     _DELIVERED_LABEL: ('ededed', 'A delivered channel escalation is waiting for GitHub state cleanup'),
-    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this; it opens the assignment routing gate'),
+    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this'),
 }
 _SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
 _SEARCH_SUMMARY_QUERY = """
