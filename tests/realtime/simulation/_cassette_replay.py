@@ -9,7 +9,6 @@ cassette of a reconnect holds several), and whatever it yields is collected.
 from __future__ import annotations as _annotations
 
 import json
-import re
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any, Literal
@@ -170,27 +169,6 @@ async def replay_codec_events(path: Path) -> list[list[RealtimeCodecEvent]]:
         if isinstance(connection, OpenAILiveConnection):
             await connection.aclose()
     return events
-
-
-_CLIENT_EVENT_ID_RE = re.compile(r'pydantic_ai\.\w+\.(\d+(?:-\d+)*)')
-
-
-def recorded_inputs_sent(path: Path) -> int:
-    """How many inputs the recorded session sent, as far as its frames show: one past the highest input number.
-
-    A connection numbers every input it is sent, and names the ones a frame serves in that frame's `event_id`
-    (see `client_event_id`). The server echoes those numbers in a requested response's `metadata`, so a
-    lifecycle stream replayed without the session that sent them still answers them.
-    """
-    numbers = [
-        int(number)
-        for interaction in RealtimeCassette.load(path).interactions
-        if isinstance(interaction, CassetteMessage) and interaction.direction == 'sent'
-        if isinstance(event_id := interaction.data.get('event_id'), str)
-        if (match := _CLIENT_EVENT_ID_RE.fullmatch(event_id))
-        for number in match.group(1).split('-')
-    ]
-    return max(numbers, default=-1) + 1
 
 
 async def replay_lifecycle_events(path: Path) -> list[list[RealtimeCodecEvent | LifecycleEvent]]:

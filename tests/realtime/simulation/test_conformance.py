@@ -39,12 +39,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.usage import RequestUsage
 
-    from ._cassette_replay import (
-        recorded_inputs_sent,
-        replay_codec_events,
-        replay_lifecycle_events,
-        websocket_cassettes,
-    )
+    from ._cassette_replay import replay_codec_events, replay_lifecycle_events, websocket_cassettes
     from ._conformance import LifecycleChecker
 
 pytestmark = [
@@ -65,9 +60,8 @@ async def test_cassette_obeys_the_codec_lifecycle(recording: Path) -> None:
         for event in events:
             checker.feed(event)
         assert checker.issues == []
-    inputs_sent = recorded_inputs_sent(recording)
     for events in await replay_lifecycle_events(recording):
-        checker = LifecycleChecker(lifecycle=True, inputs_sent=lambda: inputs_sent)
+        checker = LifecycleChecker(lifecycle=True)
         for event in events:
             checker.feed(event)
         checker.finish()
