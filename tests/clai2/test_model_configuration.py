@@ -16,11 +16,12 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
-from pydantic_clai2.custom_params import CustomParamsMenu, DeleteParam, expand_params, parse_pair
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.model_menu import ModelSettingsSource, model_settings_command, run_model_settings
-from pydantic_clai2.model_options import model_options, validate_model_options
-from pydantic_clai2.model_settings import ModelSettingsForm, model_defaults, model_settings_from_json
+from pydantic_clai2.models.custom_params import expand_params
+from pydantic_clai2.models.model_options import model_options, validate_model_options
+from pydantic_clai2.models.model_settings import ModelSettingsForm, model_defaults, model_settings_from_json
+from pydantic_clai2.ui.menus.custom_params import CustomParamsMenu, DeleteParam, parse_pair
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, run_model_settings
 from tests.clai2.menu_script import Script, make_context, pick, typed
 
 
@@ -231,7 +232,7 @@ def test_custom_editor_validates_before_commit(tmp_path: Path, monkeypatch: pyte
     context, _ = make_context(tmp_path)
     custom = CustomParamsMenu(store=context.store, model='test')
     keys = iter(['enter', 'a', ' ', '=', ' ', '2', 'enter'])
-    monkeypatch.setattr('pydantic_clai2.custom_params.menu_key', lambda: next(keys))
+    monkeypatch.setattr('pydantic_clai2.ui.menus.custom_params.menu_key', lambda: next(keys))
     assert custom.editor(key=None).run().value == 'a = 2'
 
 
@@ -306,7 +307,7 @@ def test_settings_search_does_not_reset_on_lowercase_r(tmp_path: Path, monkeypat
     source = ModelSettingsSource(context.store, 'openai:gpt-5.6')
     menu = FieldMenu(source)
     keys = iter([*'reasoning', 'enter', 'R'])
-    monkeypatch.setattr('pydantic_clai2.field_menu.menu_key', lambda: next(keys))
+    monkeypatch.setattr('pydantic_clai2.ui.menus.field_menu.menu_key', lambda: next(keys))
     widget = menu.build()
     result = widget.run()
     assert result.item is not None and result.item.value == 'openai_reasoning_effort'

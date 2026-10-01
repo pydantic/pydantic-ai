@@ -21,14 +21,19 @@ from collections.abc import Callable, Coroutine, Mapping
 from contextlib import AbstractContextManager
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import anyio
 import httpx
 from anyio import CancelScope, fail_after
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.providers._oauth import OAuthFlow
-
-from .credential_store import credential_lock, delete_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.credential_store import (
+    credential_lock,
+    delete_credentials,
+    load_codex_credentials,
+    save_codex_credentials,
+)
 
 REFRESH_MARGIN = 300
 """Seconds before expiry at which a token is refreshed, so a run does not start with one about to lapse."""
@@ -211,7 +216,7 @@ async def _until_listening(redirect_uri: str, callback: asyncio.Future[Tokens]) 
                 await http.get(redirect_uri)
                 return
             except httpx.TransportError:
-                await asyncio.sleep(0.02)
+                await anyio.sleep(0.02)
 
 
 async def _until_released(redirect_uri: str, *, limit: float = 2) -> None:
@@ -229,7 +234,7 @@ async def _until_released(redirect_uri: str, *, limit: float = 2) -> None:
             return
         writer.close()
         await writer.wait_closed()
-        await asyncio.sleep(0.05)
+        await anyio.sleep(0.05)
 
 
 class PKCESignIn:
@@ -303,7 +308,7 @@ class PKCESignIn:
             with fail_after(self.timeout):
                 await _until_listening(flow.redirect_uri, callback)
                 try:
-                    opened = await asyncio.to_thread(self.open_browser, url)
+                    opened = await anyio.to_thread.run_sync(self.open_browser, url, abandon_on_cancel=True)
                 except webbrowser.Error:
                     opened = False
                 if not opened:
@@ -335,12 +340,12 @@ class PKCESignIn:
         Refresh runs under a cross-process lock and re-reads first, because a rotating service invalidates the
         old refresh token: two sessions refreshing at once would sign each other out.
         """
-        tokens = self._usable(await asyncio.to_thread(self._load))
+        tokens = self._usable(await anyio.to_thread.run_sync(self._load, abandon_on_cancel=True))
         if not tokens.stale(time.time()):
             return tokens.access_token.get_secret_value()
         if tokens.refresh_token is None:
             raise UserError(f'The {self.service} sign-in expired. Run {self.setup} to sign in again.')
-        return await asyncio.to_thread(self._refresh_locked)
+        return await anyio.to_thread.run_sync(self._refresh_locked, abandon_on_cancel=True)
 
     def _usable(self, tokens: Tokens | None) -> Tokens:
         """`tokens`, when they are this client's and grant everything it asks for now; otherwise raise."""
