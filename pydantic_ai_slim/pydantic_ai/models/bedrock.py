@@ -1794,7 +1794,9 @@ class BedrockStreamedResponse(StreamedResponse):
     _provider_response_id: str | None = None
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
-        return (BotoCoreError, ClientError)
+        # botocore reads the event stream straight from the urllib3 response, so tearing it down mid-read can raise a
+        # raw urllib3 error too.
+        return (BotoCoreError, ClientError, Urllib3HTTPError)
 
     async def close_stream(self) -> None:
         await anyio.to_thread.run_sync(self._event_stream.close)
