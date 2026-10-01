@@ -350,11 +350,37 @@ def test_snapshot_skips_signed_operational_incidents_but_keeps_human_items_and_b
     assert [candidate['kind'] for candidate in candidates] == ['issue', 'pull_request']
 
 
-def test_operational_labels_without_a_valid_controller_marker_are_not_filtered():
+@pytest.mark.parametrize(
+    'marker',
+    [
+        '{"version":true,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":1.0,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":2,"scope":"provider","key":"minimax","kind":"balance"}',
+        '{"version":1,"scope":"provider","key":"minimax"}',
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance","reset_at":"2026-08-25T00:00:00"}',
+    ],
+)
+def test_operational_labels_without_a_valid_controller_marker_are_not_filtered(marker: str):
     issue = item(9, labels=['agentic-workflows', 'pydanty:meta'])
-    issue['body'] = '<!-- pydantic-ai-provider-health:v1 {"version":0,"key":"minimax"} -->'
+    issue['body'] = f'<!-- pydantic-ai-provider-health:v1 {marker} -->'
 
     assert not monitor._is_provider_health_incident(issue)
+    snapshot = monitor.build_snapshot(SnapshotClient({9: issue}), 'pydantic/pydantic-ai', now=NOW)
+    assert [candidate['number'] for candidate in snapshot['candidates']] == [9]
+
+
+def test_deeply_nested_operational_marker_does_not_abort_snapshot():
+    nested = '[' * 10_000 + '0' + ']' * 10_000
+    issue = item(9, labels=['agentic-workflows', 'pydanty:meta'])
+    issue['body'] = (
+        '<!-- pydantic-ai-provider-health:v1 '
+        '{"version":1,"scope":"provider","key":"minimax","kind":"balance",'
+        f'"extra":{nested}}} -->'
+    )
+
+    snapshot = monitor.build_snapshot(SnapshotClient({9: issue}), 'pydantic/pydantic-ai', now=NOW)
+
+    assert [candidate['number'] for candidate in snapshot['candidates']] == [9]
 
 
 def test_candidate_search_covers_recent_activity_and_the_backlog():

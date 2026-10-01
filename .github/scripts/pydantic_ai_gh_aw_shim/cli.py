@@ -50,7 +50,7 @@ import httpx2
 import logfire
 from anthropic import AsyncAnthropic
 from mcp.shared.exceptions import McpError
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from tenacity import RetryCallState, retry_if_result, stop_after_delay, wait_random_exponential
 
 from pydantic_ai import Agent, ModelRetry, RunContext, UsageLimitExceeded
@@ -915,14 +915,21 @@ def _is_minimax_insufficient_balance(error: ModelHTTPError) -> bool:
     body = error.body
     if not isinstance(body, Mapping):
         return False
-    details = body.get('error')
+    try:
+        typed_body = TypeAdapter(dict[str, object]).validate_python(body)
+    except ValidationError:
+        return False
+    details = typed_body.get('error')
     if not isinstance(details, Mapping):
         return False
-    error_type = details.get('type')
-    message = details.get('message')
-    return error_type == 'insufficient_balance_error' or (
-        isinstance(message, str) and 'insufficient balance' in message.lower()
-    )
+    try:
+        typed_details = TypeAdapter(dict[str, object]).validate_python(details)
+    except ValidationError:
+        return False
+    error_type = typed_details.get('type')
+    message = typed_details.get('message')
+    message_matches = isinstance(message, str) and 'insufficient balance' in message.lower()
+    return error_type == 'insufficient_balance_error' or message_matches
 
 
 def _failure_details(error: BaseException | None) -> dict[str, object]:

@@ -230,4 +230,6 @@ Run it locally before pushing:
 uv run python .github/scripts/agentic_workflow_guard.py check --base-ref origin/main
 ```
 
+Pass both the script project and changed file paths to Pyright, e.g. `uv run pyright -p .github/scripts .github/scripts/agent_provider_health.py`. The root Pyright project skips dot directories, even when a file is named explicitly.
+
 When adding a check, pair it with a regression test in `test_agentic_workflow_guard.py` built from the configuration that actually broke — the existing cases are reconstructed from the parent commit of the PR that fixed each one.

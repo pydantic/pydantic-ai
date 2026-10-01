@@ -1162,6 +1162,68 @@ jobs:
     assert all(violation.path in (str(source), str(lock)) for violation in violations)
 
 
+def test_provider_health_readiness_must_be_required_in_every_or_branch(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    source = _write(
+        workflows / 'pydantic-ai-mini.md',
+        """---
+name: MiniMax
+imports:
+  - shared/engine-minimax.md
+  - shared/provider-health.md
+if: ${{ needs.provider_health.outputs.ready == 'true' }}
+safe-outputs:
+  report-failure-as-issue: false
+  noop:
+    report-as-issue: false
+---
+Readiness: ${{ needs.provider_health.outputs.ready }}
+""",
+    )
+    lock = _write(
+        source.with_suffix('.lock.yml'),
+        """jobs:
+  activation:
+    needs: [provider_health]
+    if: needs.provider_health.outputs.ready == 'true'
+  provider_health:
+    needs: [pre_activation]
+""",
+    )
+
+    assert check_provider_health_wiring(workflows) == []
+
+    source.write_text(
+        source.read_text(encoding='utf-8').replace(
+            "if: ${{ needs.provider_health.outputs.ready == 'true' }}",
+            "if: ${{ needs.provider_health.outputs.ready == 'true' || true }}",
+            1,
+        ),
+        encoding='utf-8',
+    )
+    assert [violation.check for violation in check_provider_health_wiring(workflows)] == ['provider-health-gate']
+
+    source.write_text(
+        source.read_text(encoding='utf-8').replace(
+            "needs.provider_health.outputs.ready == 'true' || true",
+            "needs.provider_health.outputs.ready == 'true'",
+            1,
+        ),
+        encoding='utf-8',
+    )
+    lock.write_text(
+        lock.read_text(encoding='utf-8').replace(
+            "needs.provider_health.outputs.ready == 'true'",
+            "needs.provider_health.outputs.ready == 'true' || true",
+            1,
+        ),
+        encoding='utf-8',
+    )
+    assert [violation.check for violation in check_provider_health_wiring(workflows)] == [
+        'provider-health-activation-if'
+    ]
+
+
 def test_provider_health_identity_is_shared_and_stable_for_workflow_run_retries(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
     shared = workflows / 'shared'
@@ -1373,6 +1435,19 @@ jobs:
     _write(
         monitor,
         trusted_config.replace(
+            'python3 .github/scripts/agent_provider_health.py monitor\n'
+            '          --run-attempt "$RUN_ATTEMPT"\n'
+            '          --agent-artifact agent/agent-stdio.log',
+            'bash ./agent/payload',
+            1,
+        ),
+    )
+    assert 'provider-health-monitor-artifact-execution' in {
+        violation.check for violation in check_provider_health_monitor(workflows)
+    }
+    _write(
+        monitor,
+        trusted_config.replace(
             '    env:\n      PYDANTIC_AI_RUN_ATTEMPT: ${{ github.run_attempt }}\n',
             '',
             1,
@@ -1396,7 +1471,36 @@ jobs:
 
 def test_assigned_alert_metadata_gate_excludes_operational_incidents(tmp_path: Path):
     workflows = tmp_path / '.github' / 'workflows'
-    _write(workflows / 'at-claude.yml', "name: @claude\non: issues\nif: contains(github.event.issue.body, '@claude')\n")
+    _write(
+        workflows / 'at-claude.yml', "name: '@claude'\non: issues\nif: contains(github.event.issue.body, '@claude')\n"
+    )
+
+    violations = check_assigned_alert_metadata_gate(workflows)
+
+    assert [violation.check for violation in violations] == ['assigned-alert-metadata-gate']
+
+
+def test_assigned_alert_metadata_gate_checks_each_event_route(tmp_path: Path):
+    workflows = tmp_path / '.github' / 'workflows'
+    _write(
+        workflows / 'at-claude.yml',
+        """name: '@claude'
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [opened, assigned]
+jobs:
+  get-pr-info:
+    if: |
+      (github.event_name == 'issue_comment' &&
+        !contains(github.event.issue.labels.*.name, 'pydanty:meta') &&
+        !contains(github.event.issue.labels.*.name, 'pydanty:meta') &&
+        contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'issues' &&
+        contains(github.event.issue.body, '@claude'))
+""",
+    )
 
     violations = check_assigned_alert_metadata_gate(workflows)
 

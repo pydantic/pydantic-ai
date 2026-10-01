@@ -110,9 +110,14 @@ class RunResult:
 
 
 def _mapping(value: object) -> dict[str, object] | None:
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+    if not isinstance(value, dict):
         return None
-    return value
+    data: dict[str, object] = {}
+    for key, item in value.items():  # pyright: ignore[reportUnknownVariableType]
+        if not isinstance(key, str):
+            return None
+        data[key] = item
+    return data
 
 
 def _string(value: object) -> str | None:
@@ -145,6 +150,13 @@ def _now() -> dt.datetime:
 
 def _timestamp(value: dt.datetime) -> str:
     return value.astimezone(dt.timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z')
+
+
+def _timestamp_from_millis(value: int | float) -> str | None:
+    try:
+        return _timestamp(dt.datetime.fromtimestamp(value / 1000, tz=dt.timezone.utc))
+    except (OverflowError, OSError, ValueError):
+        return None
 
 
 def _iso_time(value: object) -> str | None:
@@ -196,13 +208,13 @@ def _health_from_json(value: object) -> Health:
     run_attempt = _positive_attempt(data.get('run_attempt'))
     reason = _object_string(data, 'reason')
     checked_at = _iso_time(data.get('checked_at'))
-    status = quota_data.get('status')
+    status_value = quota_data.get('status')
     ready = data.get('ready')
-    if status == 'healthy':
+    if status_value == 'healthy':
         quota_status: QuotaStatus = 'healthy'
-    elif status == 'exhausted':
+    elif status_value == 'exhausted':
         quota_status = 'exhausted'
-    elif status == 'unknown':
+    elif status_value == 'unknown':
         quota_status = 'unknown'
     else:
         raise ValueError('provider-health artifact has an invalid quota status')
@@ -213,18 +225,10 @@ def _health_from_json(value: object) -> Health:
     weekly_reset_at = (
         _iso_time(quota_data.get('weekly_reset_at')) if quota_data.get('weekly_reset_at') is not None else None
     )
-    interval_percent = quota_data.get('interval_remaining_percent')
-    weekly_percent = quota_data.get('weekly_remaining_percent')
+    interval_percent = _validated_percent(quota_data.get('interval_remaining_percent'))
+    weekly_percent = _validated_percent(quota_data.get('weekly_remaining_percent'))
     interval_unlimited = quota_data.get('interval_unlimited')
     weekly_unlimited = quota_data.get('weekly_unlimited')
-    for percent in (interval_percent, weekly_percent):
-        if percent is not None and (
-            isinstance(percent, bool)
-            or not isinstance(percent, (int, float))
-            or not math.isfinite(percent)
-            or not 0 <= percent <= 100
-        ):
-            raise ValueError('provider-health artifact has an invalid remaining percentage')
     if (
         workflow is None
         or task_key is None
@@ -283,6 +287,34 @@ def _quota_window_status(status: object, percent: object, total: object) -> Quot
     return 'unknown'
 
 
+def _validated_percent(value: object) -> float | None:
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or not 0 <= value <= 100
+    ):
+        raise ValueError('provider-health artifact has an invalid remaining percentage')
+    return float(value)
+
+
+def _quota_window(
+    status: object, percent: object, total: object, end: object
+) -> tuple[QuotaStatus, str, float | None, bool] | None:
+    if not isinstance(end, (int, float)) or isinstance(end, bool) or not math.isfinite(end):
+        return None
+    reset = _timestamp_from_millis(end)
+    quota_status = _quota_window_status(status, percent, total)
+    if reset is None or quota_status == 'unknown':
+        return None
+    remaining_percent = (
+        float(percent) if status != 3 and isinstance(percent, (int, float)) and not isinstance(percent, bool) else None
+    )
+    return quota_status, reset, remaining_percent, status == 3
+
+
 def _parse_plan_quota(value: object, resource: str | None) -> Quota:
     if not resource:
         return Quota('unknown')
@@ -298,11 +330,15 @@ def _parse_plan_quota(value: object, resource: str | None) -> Quota:
     matching_rows = 0
     exhausted = False
     healthy = False
-    resets: list[int | float] = []
+    resets: list[str] = []
     window_resets: list[str] = []
     remaining_percent: list[float | None] = []
     unlimited: list[bool] = []
-    for item in remains:
+    quota_rows: list[object] = []
+    item: object
+    for item in remains:  # pyright: ignore[reportUnknownVariableType]
+        quota_rows.append(item)  # pyright: ignore[reportUnknownArgumentType]
+    for item in quota_rows:
         entry = _mapping(item)
         if entry is None:
             return Quota('unknown')
@@ -315,33 +351,29 @@ def _parse_plan_quota(value: object, resource: str | None) -> Quota:
         ends = (entry.get('end_time'), entry.get('weekly_end_time'))
         if statuses == (3, 3) and totals == (0, 0):
             return Quota('unknown')
-        for status, percent, total, end in zip(statuses, percentages, totals, ends, strict=True):
-            if not isinstance(end, (int, float)) or isinstance(end, bool) or not math.isfinite(end):
+        for values in zip(statuses, percentages, totals, ends, strict=True):
+            window = _quota_window(*values)
+            if window is None:
                 return Quota('unknown')
-            window_status = _quota_window_status(status, percent, total)
-            if window_status == 'unknown':
-                return Quota('unknown')
+            window_status, window_reset, percent, is_unlimited = window
             if window_status == 'exhausted':
                 exhausted = True
-                resets.append(end)
+                resets.append(window_reset)
             else:
                 healthy = True
-            window_resets.append(_timestamp(dt.datetime.fromtimestamp(end / 1000, tz=dt.timezone.utc)))
-            remaining_percent.append(float(percent) if status != 3 and isinstance(percent, (int, float)) else None)
-            unlimited.append(status == 3)
+            window_resets.append(window_reset)
+            remaining_percent.append(percent)
+            unlimited.append(is_unlimited)
     if matching_rows != 1:
         return Quota('unknown')
     reset_at: str | None = None
     if exhausted:
-        reset_ms = min(resets) if resets else None
-        reset_at = (
-            _timestamp(dt.datetime.fromtimestamp(reset_ms / 1000, tz=dt.timezone.utc)) if reset_ms is not None else None
-        )
-        status: QuotaStatus = 'exhausted'
+        reset_at = min(resets) if resets else None
+        quota_status: QuotaStatus = 'exhausted'
     else:
-        status = 'healthy' if healthy else 'unknown'
+        quota_status = 'healthy' if healthy else 'unknown'
     return Quota(
-        status,
+        quota_status,
         reset_at,
         remaining_percent[0],
         remaining_percent[1],
@@ -416,8 +448,8 @@ class GitHubClient:
         if body is not None:
             request.add_header('Content-Type', 'application/json')
         with urllib.request.urlopen(request, timeout=30) as response:
-            payload: object = json.loads(response.read()) if response.status != 204 else {}
-            return payload
+            response_payload: object = json.loads(response.read()) if response.status != 204 else {}
+            return response_payload
 
     def open_incidents(self) -> list[Issue]:
         found: list[Issue] = []
@@ -427,9 +459,13 @@ class GitHubClient:
             response = self.request('GET', f'issues?state=open&labels={labels}&per_page=100&page={page}')
             if not isinstance(response, list):
                 raise ValueError('GitHub returned an invalid open-issues response')
-            batch = [issue for entry in response if (issue := _issue(entry)) is not None]
+            response_entries: list[object] = []
+            entry: object
+            for entry in response:  # pyright: ignore[reportUnknownVariableType]
+                response_entries.append(entry)  # pyright: ignore[reportUnknownArgumentType]
+            batch = [issue for entry in response_entries if (issue := _issue(entry)) is not None]
             found.extend(batch)
-            if len(response) < 100:
+            if len(response_entries) < 100:
                 return found
             page += 1
 
@@ -471,7 +507,7 @@ def _marker_from_body(body: str) -> IncidentMarker | None:
     try:
         decoded: object = json.loads(match.group(1))
         data = _mapping(decoded)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return None
     version = data.get('version') if data is not None else None
     if data is None or isinstance(version, bool) or not isinstance(version, int) or version != 1:

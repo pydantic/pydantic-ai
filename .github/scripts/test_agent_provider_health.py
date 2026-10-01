@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
+import datetime as dt
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,20 @@ from pydantic_ai.usage import RunUsage
 sys.path.insert(0, str(Path(__file__).parent))
 
 import agent_provider_health as health
+from agent_provider_health import (
+    _create_or_reuse_incident,  # pyright: ignore[reportPrivateUsage]
+    _fetch_minimax_quota,  # pyright: ignore[reportPrivateUsage]
+    _health_from_json,  # pyright: ignore[reportPrivateUsage]
+    _mapping,  # pyright: ignore[reportPrivateUsage]
+    _marker_from_body,  # pyright: ignore[reportPrivateUsage]
+    _monitor_command,  # pyright: ignore[reportPrivateUsage]
+    _parse_balance,  # pyright: ignore[reportPrivateUsage]
+    _parse_plan_quota,  # pyright: ignore[reportPrivateUsage]
+    _reconcile_recovery,  # pyright: ignore[reportPrivateUsage]
+    _run_result_from,  # pyright: ignore[reportPrivateUsage]
+    _scope_for,  # pyright: ignore[reportPrivateUsage]
+    _write_health,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai_gh_aw_shim import cli as shim
 
 
@@ -57,6 +72,14 @@ def _issue(number: int, marker: health.IncidentMarker, *, body_prefix: str = '')
     return health.Issue(number, 'Agent workflow incident', body, 'open', f'https://github.com/org/repo/issues/{number}')
 
 
+def _marker_from_payload(payload: object) -> health.IncidentMarker | None:
+    data = _mapping(payload)
+    body = data.get('body') if data is not None else None
+    if not isinstance(body, str):
+        return None
+    return _marker_from_body(body)
+
+
 class FakeGitHub(health.GitHubClient):
     """Capture issue requests in memory for reconciler boundary tests."""
 
@@ -80,7 +103,7 @@ class FakeGitHub(health.GitHubClient):
             ]
         if method == 'POST':
             self.posts.append(payload)
-            data = payload if isinstance(payload, dict) else {}
+            data = _mapping(payload) or {}
             issue = health.Issue(
                 100 + len(self.posts),
                 str(data.get('title')),
@@ -127,9 +150,9 @@ def test_plan_quota_requires_explicit_resource_and_complete_status() -> None:
     """Only a configured quota resource with complete values may open inference."""
     payload: dict[str, object] = {'model_remains': [_quota_entry()]}
 
-    assert health._parse_plan_quota(payload, None).status == 'unknown'
-    assert health._parse_plan_quota(payload, 'video').status == 'unknown'
-    quota = health._parse_plan_quota(payload, 'general')
+    assert _parse_plan_quota(payload, None).status == 'unknown'
+    assert _parse_plan_quota(payload, 'video').status == 'unknown'
+    quota = _parse_plan_quota(payload, 'general')
     assert quota.status == 'healthy'
     assert quota.interval_remaining_percent == 80
     assert quota.weekly_remaining_percent == 70
@@ -139,7 +162,7 @@ def test_plan_quota_requires_explicit_resource_and_complete_status() -> None:
 
 def test_plan_quota_exhaustion_uses_status_and_preserves_reset() -> None:
     """An exhausted quota carries the provider's window reset into incident state."""
-    quota = health._parse_plan_quota(
+    quota = _parse_plan_quota(
         {'model_remains': [_quota_entry(interval_status=2, interval_percent=0)]},
         'general',
     )
@@ -150,7 +173,7 @@ def test_plan_quota_exhaustion_uses_status_and_preserves_reset() -> None:
 
 def test_unlimited_status_ignores_zero_remaining_percentage() -> None:
     """MiniMax status 3 means unlimited unless the not-in-plan sentinel applies."""
-    quota = health._parse_plan_quota(
+    quota = _parse_plan_quota(
         {
             'model_remains': [
                 _quota_entry(
@@ -185,14 +208,44 @@ def test_unlimited_status_ignores_zero_remaining_percentage() -> None:
 )
 def test_plan_quota_unavailable_or_not_in_plan_is_unknown(payload: object) -> None:
     """Missing resource rows and non-entitled rows stay unknown."""
-    assert health._parse_plan_quota(payload, 'general').status == 'unknown'
+    assert _parse_plan_quota(payload, 'general').status == 'unknown'
+
+
+def test_check_writes_blocked_artifact_for_out_of_range_plan_reset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unrepresentable provider reset time blocks the gate without losing its artifact."""
+    entry: dict[str, object] = _quota_entry()
+    entry['end_time'] = 1e300
+    entry['weekly_end_time'] = 1e300
+    payload: dict[str, object] = {'base_resp': {'status_code': 0}, 'model_remains': [entry]}
+    monkeypatch.setattr(health.urllib.request, 'urlopen', lambda *_args, **_kwargs: FakeHTTPResponse(payload))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: FakeGitHub())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    secret = 'plan-key-private-fixture'
+    monkeypatch.setenv('MINIMAX_API_KEY', secret)
+    monkeypatch.setenv('MINIMAX_QUOTA_RESOURCE', 'general')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'nightly-sweep')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'task-1')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'schedule')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'token')
+    output = tmp_path / 'provider-health.json'
+
+    assert health.main(['check', '--output', str(output)]) == 0
+
+    artifact = output.read_text()
+    result = _health_from_json(json.loads(artifact))
+    assert not result.ready
+    assert result.quota.status == 'unknown'
+    assert secret not in artifact
 
 
 def test_payg_balance_validates_native_response_without_exposing_amount() -> None:
     """The native PAYG response validates status and balance without logging it."""
-    assert health._parse_balance({'base_resp': {'status_code': 0}, 'available_amount': '0.5'}).status == 'healthy'
-    assert health._parse_balance({'base_resp': {'status_code': 0}, 'available_amount': '0'}).status == 'exhausted'
-    assert health._parse_balance({'base_resp': {'status_code': 3}, 'available_amount': '50'}).status == 'unknown'
+    assert _parse_balance({'base_resp': {'status_code': 0}, 'available_amount': '0.5'}).status == 'healthy'
+    assert _parse_balance({'base_resp': {'status_code': 0}, 'available_amount': '0'}).status == 'exhausted'
+    assert _parse_balance({'base_resp': {'status_code': 3}, 'available_amount': '50'}).status == 'unknown'
 
 
 def test_check_summary_reports_plan_usage_left_and_window_resets(
@@ -200,8 +253,8 @@ def test_check_summary_reports_plan_usage_left_and_window_resets(
 ) -> None:
     """The trusted check reports validated remaining percentages and their reset times."""
     payload: dict[str, object] = {'base_resp': {'status_code': 0}, 'model_remains': [_quota_entry()]}
-    monkeypatch.setattr(health.urllib.request, 'urlopen', lambda *_args, **_kwargs: FakeHTTPResponse(payload))
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: FakeGitHub())
+    monkeypatch.setattr(health.urllib.request, 'urlopen', lambda *_args, **_kwargs: FakeHTTPResponse(payload))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: FakeGitHub())  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('MINIMAX_API_KEY', 'plan-key')
     monkeypatch.setenv('MINIMAX_QUOTA_RESOURCE', 'general')
     monkeypatch.setenv('GITHUB_WORKFLOW', 'nightly-sweep')
@@ -237,7 +290,7 @@ def test_plan_key_without_active_plan_falls_back_to_native_balance(monkeypatch: 
 
     monkeypatch.setattr(health.urllib.request, 'urlopen', open_url)
 
-    assert health._fetch_minimax_quota('legacy-key', 'general').status == 'exhausted'
+    assert _fetch_minimax_quota('legacy-key', 'general').status == 'exhausted'
     assert seen_urls == [health.MINIMAX_PLAN_URL, health.MINIMAX_BALANCE_URL]
 
 
@@ -249,9 +302,9 @@ def test_plan_key_fallback_with_positive_native_balance_is_healthy(monkeypatch: 
             FakeHTTPResponse({'base_resp': {'status_code': 0}, 'available_amount': '2.50'}),
         ]
     )
-    monkeypatch.setattr(health.urllib.request, 'urlopen', lambda *_args, **_kwargs: next(responses))
+    monkeypatch.setattr(health.urllib.request, 'urlopen', lambda *_args, **_kwargs: next(responses))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
-    assert health._fetch_minimax_quota('legacy-key', 'general').status == 'healthy'
+    assert _fetch_minimax_quota('legacy-key', 'general').status == 'healthy'
 
 
 def test_health_check_blocks_unknown_empty_and_matching_incident() -> None:
@@ -309,15 +362,15 @@ def test_health_artifact_round_trips_versioned_gate_dto(tmp_path: Path) -> None:
     )
     path = tmp_path / 'provider-health.json'
 
-    health._write_health(path, original)
+    _write_health(path, original)
 
-    assert health._health_from_json(json.loads(path.read_text())) == original
+    assert _health_from_json(json.loads(path.read_text())) == original
 
 
 def test_check_requires_the_actual_run_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The check command never guesses a run attempt when runner metadata is missing."""
     client = FakeGitHub()
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
     monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
@@ -341,11 +394,11 @@ def test_attempt_contract_rejects_missing_or_invalid_values(run_attempt: object,
         health.Quota('healthy'),
     )
     path = tmp_path / 'provider-health.json'
-    health._write_health(path, original)
+    _write_health(path, original)
     health_payload: dict[str, object] = json.loads(path.read_text())
     health_payload['run_attempt'] = run_attempt
     with pytest.raises(ValueError, match='missing required validated fields'):
-        health._health_from_json(health_payload)
+        _health_from_json(health_payload)
 
     provider_health: dict[str, object] = {
         'workflow': 'nightly-sweep',
@@ -354,7 +407,7 @@ def test_attempt_contract_rejects_missing_or_invalid_values(run_attempt: object,
         'run_attempt': run_attempt,
         'failure': {'kind': 'timeout'},
     }
-    assert health._run_result_from({'type': 'result', 'provider_health': provider_health}) is None
+    assert _run_result_from({'type': 'result', 'provider_health': provider_health}) is None
 
 
 def test_result_parser_reads_shim_terminal_jsonl_at_root(tmp_path: Path) -> None:
@@ -386,25 +439,25 @@ def test_monitor_creates_one_assigned_labeled_incident_then_reuses_it() -> None:
     client = FakeGitHub()
     result = health.RunResult('nightly-sweep', 'task-1', 'schedule', 1, health.Failure('authentication', 401, None))
 
-    first = health._create_or_reuse_incident(
+    first = _create_or_reuse_incident(client, result, '88', client.repo, 'MiniMax rejected credentials', dry_run=False)
+    redelivery = _create_or_reuse_incident(
         client, result, '88', client.repo, 'MiniMax rejected credentials', dry_run=False
     )
-    redelivery = health._create_or_reuse_incident(
-        client, result, '88', client.repo, 'MiniMax rejected credentials', dry_run=False
-    )
-    later_failure = health._create_or_reuse_incident(
+    later_failure = _create_or_reuse_incident(
         client, result, '89', client.repo, 'MiniMax rejected credentials', dry_run=False
     )
 
     assert first is not None and redelivery is not None and later_failure is not None
     assert first.number == redelivery.number == later_failure.number
     assert len(client.posts) == 1
-    payload = client.posts[0]
-    assert isinstance(payload, dict)
-    assert payload['labels'] == ['agentic-workflows', 'pydanty:meta']
-    assert payload['assignees'] == ['dsfaccini']
-    assert 'First failing run: https://github.com/org/repo/actions/runs/88' in str(payload['body'])
-    assert 'amount' not in str(payload['body']).lower()
+    payload: object = client.posts[0]
+    payload_data = _mapping(payload) or {}
+    assert payload_data['labels'] == ['agentic-workflows', 'pydanty:meta']
+    assert payload_data['assignees'] == ['dsfaccini']
+    body = payload_data.get('body')
+    assert isinstance(body, str)
+    assert 'First failing run: https://github.com/org/repo/actions/runs/88' in body
+    assert 'amount' not in body.lower()
 
 
 def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
@@ -451,7 +504,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
     )
 
     health_artifact = tmp_path / 'provider-health.json'
-    health._write_health(
+    _write_health(
         health_artifact,
         health.Health(
             workflow,
@@ -465,10 +518,10 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
         ),
     )
     client = FakeGitHub()
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
-    monitor_args = SimpleNamespace(
+    monitor_args = argparse.Namespace(
         repository=None,
         run_id=70,
         run_attempt=1,
@@ -479,10 +532,10 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
         recover_issue=None,
     )
 
-    health._monitor_command(monitor_args)
-    health._monitor_command(monitor_args)
-    health._monitor_command(
-        SimpleNamespace(
+    _monitor_command(monitor_args)
+    _monitor_command(monitor_args)
+    _monitor_command(
+        argparse.Namespace(
             repository=None,
             run_id=71,
             run_attempt=1,
@@ -496,10 +549,10 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
 
     assert len(client.posts) == 1
     issue = client.issues[0]
-    marker = health._marker_from_body(issue.body)
+    marker = _marker_from_body(issue.body)
     assert marker == health.IncidentMarker('provider', 'minimax', 'balance', '70', None)
     assert 'private provider detail' not in issue.body
-    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('healthy'))
+    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_WORKFLOW', 'Another workflow')
     monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'different-task')
     monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'schedule')
@@ -509,7 +562,7 @@ def test_real_shim_result_is_idempotently_monitored_and_blocks_other_workflows(
     second_workflow_health = tmp_path / 'other-workflow-provider-health.json'
 
     assert health.main(['check', '--output', str(second_workflow_health)]) == 0
-    assert not health._health_from_json(json.loads(second_workflow_health.read_text())).ready
+    assert not _health_from_json(json.loads(second_workflow_health.read_text())).ready
     assert len(client.posts) == 1
 
 
@@ -540,7 +593,7 @@ def test_monitor_uses_fresh_quota_when_agent_result_is_from_prior_attempt(
     assert (stale_result.failure is not None) is stale_is_error
 
     health_artifact = tmp_path / 'provider-health.json'
-    health._write_health(
+    _write_health(
         health_artifact,
         health.Health(
             workflow,
@@ -554,13 +607,13 @@ def test_monitor_uses_fresh_quota_when_agent_result_is_from_prior_attempt(
         ),
     )
     client = FakeGitHub()
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
 
     assert (
-        health._monitor_command(
-            SimpleNamespace(
+        _monitor_command(
+            argparse.Namespace(
                 repository=None,
                 run_id=80,
                 run_attempt=2,
@@ -574,9 +627,8 @@ def test_monitor_uses_fresh_quota_when_agent_result_is_from_prior_attempt(
         == 0
     )
 
-    payload = client.posts[0]
-    assert isinstance(payload, dict)
-    assert health._marker_from_body(str(payload['body'])) == health.IncidentMarker(
+    payload: object = client.posts[0]
+    assert _marker_from_payload(payload) == health.IncidentMarker(
         'provider', 'minimax', 'quota_exhausted', '80', '2026-10-01T13:00:00Z'
     )
 
@@ -586,7 +638,7 @@ def test_monitor_ignores_stale_failure_on_current_healthy_success(
 ) -> None:
     """A stale attempt-one failure cannot resurrect an incident after attempt-two success."""
     health_artifact = tmp_path / 'provider-health.json'
-    health._write_health(
+    _write_health(
         health_artifact,
         health.Health(
             'nightly-sweep',
@@ -615,13 +667,13 @@ def test_monitor_ignores_stale_failure_on_current_healthy_success(
         )
     )
     client = FakeGitHub()
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
 
     assert (
-        health._monitor_command(
-            SimpleNamespace(
+        _monitor_command(
+            argparse.Namespace(
                 repository=None,
                 run_id=81,
                 run_attempt=2,
@@ -643,7 +695,7 @@ def test_monitor_reuses_existing_provider_block_when_agent_result_is_stale(
     """Stale terminal metadata does not duplicate the provider issue that blocked this run."""
     existing = _issue(82, health.IncidentMarker('provider', 'minimax', 'authentication', '82', None))
     health_artifact = tmp_path / 'provider-health.json'
-    health._write_health(
+    _write_health(
         health_artifact,
         health.Health(
             'nightly-sweep',
@@ -672,13 +724,13 @@ def test_monitor_reuses_existing_provider_block_when_agent_result_is_stale(
         )
     )
     client = FakeGitHub([existing])
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
 
     assert (
-        health._monitor_command(
-            SimpleNamespace(
+        _monitor_command(
+            argparse.Namespace(
                 repository=None,
                 run_id=83,
                 run_attempt=2,
@@ -700,7 +752,7 @@ def test_monitor_rejects_health_artifact_from_different_run_attempt(
 ) -> None:
     """A trusted health artifact must match the triggering workflow attempt."""
     health_artifact = tmp_path / 'provider-health.json'
-    health._write_health(
+    _write_health(
         health_artifact,
         health.Health(
             'nightly-sweep',
@@ -714,13 +766,13 @@ def test_monitor_rejects_health_artifact_from_different_run_attempt(
         ),
     )
     client = FakeGitHub()
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
 
     with pytest.raises(ValueError, match='does not match the triggering'):
-        health._monitor_command(
-            SimpleNamespace(
+        _monitor_command(
+            argparse.Namespace(
                 repository=None,
                 run_id=84,
                 run_attempt=2,
@@ -754,7 +806,7 @@ def test_check_command_reads_bearer_balance_and_writes_secret_free_artifact(
 
     monkeypatch.setattr(health.urllib.request, 'urlopen', open_url)
     client = FakeGitHub()
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     key = 'sk-api-private-fixture-key'
     monkeypatch.setenv('MINIMAX_API_KEY', key)
     monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI CI Review')
@@ -772,7 +824,7 @@ def test_check_command_reads_bearer_balance_and_writes_secret_free_artifact(
     assert health.main(['check', '--output', str(output)]) == 0
 
     dto_text = output.read_text()
-    assert health._health_from_json(json.loads(dto_text)).ready is expected_ready
+    assert _health_from_json(json.loads(dto_text)).ready is expected_ready
     ready_line = 'ready=true' if expected_ready else 'ready=false'
     assert ready_line in github_output.read_text()
     assert requests[0].full_url == health.MINIMAX_BALANCE_URL
@@ -786,28 +838,28 @@ def test_check_command_reads_bearer_balance_and_writes_secret_free_artifact(
 
 def test_scope_rules_for_typed_and_untyped_failures() -> None:
     """Terminal failure kinds map to provider, task, or scheduled workflow scope."""
-    assert health._scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('balance', None, None))) == (
+    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('balance', None, None))) == (
         'provider',
         'minimax',
         'balance',
     )
-    assert health._scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('other', 403, None))) == (
+    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, health.Failure('other', 403, None))) == (
         'provider',
         'minimax',
         'other',
     )
     rate_limited = health.RunResult('w', 't', 'workflow_dispatch', 1, health.Failure('rate_limit', 429, None))
-    assert health._scope_for(rate_limited) == ('provider', 'minimax', 'rate_limit')
+    assert _scope_for(rate_limited) == ('provider', 'minimax', 'rate_limit')
     scheduled_timeout = health.RunResult('w', 'target-head-a1b2', 'schedule', 1, health.Failure('timeout', None, None))
     repeated_scheduled_timeout = health.RunResult(
         'w', 'target-head-a1b2', 'schedule', 1, health.Failure('timeout', None, None)
     )
-    assert health._scope_for(scheduled_timeout) == ('workflow', 'w', 'timeout')
-    assert health._scope_for(repeated_scheduled_timeout) == health._scope_for(scheduled_timeout)
-    assert health._scope_for(
+    assert _scope_for(scheduled_timeout) == ('workflow', 'w', 'timeout')
+    assert _scope_for(repeated_scheduled_timeout) == _scope_for(scheduled_timeout)
+    assert _scope_for(
         health.RunResult('w', 'target-head-a1b2', 'workflow_dispatch', 1, health.Failure('timeout', None, None))
     ) == ('task', 'w:target-head-a1b2', 'timeout')
-    assert health._scope_for(health.RunResult('w', 't', 'schedule', 1, None)) == ('workflow', 'w', 'execution')
+    assert _scope_for(health.RunResult('w', 't', 'schedule', 1, None)) == ('workflow', 'w', 'execution')
 
 
 def test_scheduled_recovery_closes_only_elapsed_known_window(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -817,9 +869,10 @@ def test_scheduled_recovery_closes_only_elapsed_known_window(monkeypatch: pytest
     unknown = _issue(3, health.IncidentMarker('provider', 'minimax', 'quota_unknown', None, None))
     client = FakeGitHub([elapsed, future, unknown])
     monkeypatch.setenv('MINIMAX_API_KEY', 'plan-key')
-    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('healthy'))
+    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setattr(health, '_now', lambda: dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc))
 
-    assert health._reconcile_recovery(client, SimpleNamespace(dry_run=False, recover_issue=None)) == 0
+    assert _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=None)) == 0
     assert client.closed == [1]
 
 
@@ -828,18 +881,15 @@ def test_scheduled_monitor_creates_or_reuses_unknown_quota_incident(monkeypatch:
     client = FakeGitHub()
     monkeypatch.setenv('MINIMAX_API_KEY', 'plan-key')
     monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '1')
-    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('unknown'))
-    args = SimpleNamespace(dry_run=False, recover_issue=None)
+    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('unknown'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    args = argparse.Namespace(dry_run=False, recover_issue=None)
 
-    health._reconcile_recovery(client, args)
-    health._reconcile_recovery(client, args)
+    _reconcile_recovery(client, args)
+    _reconcile_recovery(client, args)
 
     assert len(client.posts) == 1
-    payload = client.posts[0]
-    assert isinstance(payload, dict)
-    assert health._marker_from_body(str(payload['body'])) == health.IncidentMarker(
-        'provider', 'minimax', 'quota_unknown', None, None
-    )
+    payload: object = client.posts[0]
+    assert _marker_from_payload(payload) == health.IncidentMarker('provider', 'minimax', 'quota_unknown', None, None)
 
 
 def test_manual_recovery_requires_healthy_provider_and_targets_one_issue(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -848,13 +898,13 @@ def test_manual_recovery_requires_healthy_provider_and_targets_one_issue(monkeyp
     other = _issue(6, health.IncidentMarker('provider', 'minimax', 'quota_unknown', None, None))
     client = FakeGitHub([incident, other])
     monkeypatch.setenv('MINIMAX_API_KEY', 'plan-key')
-    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('unknown'))
+    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('unknown'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
-    health._reconcile_recovery(client, SimpleNamespace(dry_run=False, recover_issue=5))
+    _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=5))
     assert client.closed == []
 
-    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('healthy'))
-    health._reconcile_recovery(client, SimpleNamespace(dry_run=False, recover_issue=5))
+    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=5))
     assert client.closed == [5]
 
 
@@ -863,9 +913,9 @@ def test_named_recovery_without_provider_key_stays_unknown(monkeypatch: pytest.M
     issue = _issue(4, health.IncidentMarker('workflow', 'nightly-sweep', 'timeout', '4', None))
     client = FakeGitHub([issue])
     monkeypatch.delenv('MINIMAX_API_KEY', raising=False)
-    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('healthy'))
+    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
-    health._reconcile_recovery(client, SimpleNamespace(dry_run=False, recover_issue=4))
+    _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=4))
 
     assert client.closed == []
 
@@ -878,23 +928,30 @@ def test_named_workflow_and_task_recovery_also_requires_healthy_quota(
     task_issue = _issue(8, health.IncidentMarker('task', 'nightly-sweep:task-1', 'timeout', '8', None))
     client = FakeGitHub([workflow_issue, task_issue])
     monkeypatch.setenv('MINIMAX_API_KEY', 'plan-key')
-    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('unknown'))
+    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('unknown'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
 
-    health._reconcile_recovery(client, SimpleNamespace(dry_run=False, recover_issue=7))
-    health._reconcile_recovery(client, SimpleNamespace(dry_run=False, recover_issue=8))
+    _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=7))
+    _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=8))
     assert client.closed == []
 
-    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('healthy'))
-    health._reconcile_recovery(client, SimpleNamespace(dry_run=False, recover_issue=7))
+    monkeypatch.setattr(health, '_fetch_minimax_quota', lambda *_: health.Quota('healthy'))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=7))
     assert client.closed == [7]
-    health._reconcile_recovery(client, SimpleNamespace(dry_run=False, recover_issue=8))
+    _reconcile_recovery(client, argparse.Namespace(dry_run=False, recover_issue=8))
     assert client.closed == [7, 8]
+
+
+def test_marker_from_body_rejects_deeply_nested_json() -> None:
+    """Malformed nested issue markers cannot abort monitoring."""
+    body = health.MARKER_PREFIX + '{"nested":' + '[' * 10_000 + '0' + ']' * 10_000 + '} -->'
+
+    assert _marker_from_body(body) is None
 
 
 def test_monitor_ignores_successful_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A healthy successful workflow completion creates no incident."""
     artifact = tmp_path / 'provider-health.json'
-    health._write_health(
+    _write_health(
         artifact,
         health.Health(
             'nightly-sweep',
@@ -908,12 +965,12 @@ def test_monitor_ignores_successful_run(tmp_path: Path, monkeypatch: pytest.Monk
         ),
     )
     client = FakeGitHub()
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
 
-    result = health._monitor_command(
-        SimpleNamespace(
+    result = _monitor_command(
+        argparse.Namespace(
             repository=None,
             run_id=42,
             run_attempt=1,
@@ -935,7 +992,7 @@ def test_monitor_handles_missing_terminal_log(
 ) -> None:
     """A missing terminal log is untyped and follows the trusted workflow outcome."""
     health_artifact = tmp_path / 'provider-health.json'
-    health._write_health(
+    _write_health(
         health_artifact,
         health.Health(
             'nightly-sweep',
@@ -955,12 +1012,12 @@ def test_monitor_handles_missing_terminal_log(
     assert not missing_agent_log.exists()
 
     client = FakeGitHub()
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
 
-    result = health._monitor_command(
-        SimpleNamespace(
+    result = _monitor_command(
+        argparse.Namespace(
             repository=None,
             run_id=45,
             run_attempt=1,
@@ -975,9 +1032,8 @@ def test_monitor_handles_missing_terminal_log(
     assert result == 0
     assert bool(client.posts) is creates_incident
     if creates_incident:
-        payload = client.posts[0]
-        assert isinstance(payload, dict)
-        assert health._marker_from_body(str(payload['body'])) == health.IncidentMarker(
+        payload: object = client.posts[0]
+        assert _marker_from_payload(payload) == health.IncidentMarker(
             'workflow', 'nightly-sweep', 'execution', '45', None
         )
 
@@ -987,7 +1043,7 @@ def test_blocked_run_without_agent_artifact_creates_provider_incident(
 ) -> None:
     """A blocked gate creates an incident even when the model artifact is absent."""
     artifact = tmp_path / 'provider-health.json'
-    health._write_health(
+    _write_health(
         artifact,
         health.Health(
             'nightly-sweep',
@@ -1001,12 +1057,12 @@ def test_blocked_run_without_agent_artifact_creates_provider_incident(
         ),
     )
     client = FakeGitHub()
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
 
-    result = health._monitor_command(
-        SimpleNamespace(
+    result = _monitor_command(
+        argparse.Namespace(
             repository=None,
             run_id=43,
             run_attempt=1,
@@ -1020,9 +1076,8 @@ def test_blocked_run_without_agent_artifact_creates_provider_incident(
 
     assert result == 0
     assert len(client.posts) == 1
-    payload = client.posts[0]
-    assert isinstance(payload, dict)
-    issue_marker = health._marker_from_body(str(payload['body']))
+    payload: object = client.posts[0]
+    issue_marker = _marker_from_payload(payload)
     assert issue_marker == health.IncidentMarker('provider', 'minimax', 'quota_exhausted', '43', '2026-10-01T11:00:00Z')
 
 
@@ -1031,7 +1086,7 @@ def test_monitor_uses_trusted_context_when_terminal_metadata_mismatches(
 ) -> None:
     """Uncorrelated shim metadata falls back to workflow scope from the trusted DTO."""
     health_artifact = tmp_path / 'provider-health.json'
-    health._write_health(
+    _write_health(
         health_artifact,
         health.Health(
             'nightly-sweep',
@@ -1060,12 +1115,12 @@ def test_monitor_uses_trusted_context_when_terminal_metadata_mismatches(
         )
     )
     client = FakeGitHub()
-    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)
+    monkeypatch.setattr(health, 'GitHubClient', lambda *_: client)  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
     monkeypatch.setenv('GITHUB_REPOSITORY', 'org/repo')
     monkeypatch.setenv('GITHUB_TOKEN', 'token')
 
-    health._monitor_command(
-        SimpleNamespace(
+    _monitor_command(
+        argparse.Namespace(
             repository=None,
             run_id=44,
             run_attempt=1,
@@ -1077,8 +1132,5 @@ def test_monitor_uses_trusted_context_when_terminal_metadata_mismatches(
         )
     )
 
-    payload = client.posts[0]
-    assert isinstance(payload, dict)
-    assert health._marker_from_body(str(payload['body'])) == health.IncidentMarker(
-        'workflow', 'nightly-sweep', 'execution', '44', None
-    )
+    payload: object = client.posts[0]
+    assert _marker_from_payload(payload) == health.IncidentMarker('workflow', 'nightly-sweep', 'execution', '44', None)

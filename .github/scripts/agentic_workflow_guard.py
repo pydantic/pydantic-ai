@@ -53,11 +53,11 @@ import re
 import shlex
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, TypeGuard, cast
 
 import yaml
 
@@ -115,6 +115,100 @@ NEEDS_REFERENCE = re.compile(r'\bneeds\.([A-Za-z_][A-Za-z0-9_-]*)')
 EXPRESSION_BLOCK = re.compile(r'\$\{\{(.*?)\}\}', re.DOTALL)
 
 
+def _strip_boolean_wrappers(expression: str) -> str:
+    """Strip parentheses that wrap the whole expression, not a subexpression."""
+    expression = expression.strip()
+    while expression.startswith('(') and expression.endswith(')'):
+        depth = 0
+        quote: str | None = None
+        wraps_expression = True
+        for index, character in enumerate(expression):
+            if quote is not None:
+                if character == quote:
+                    quote = None
+            elif character in ("'", '"'):
+                quote = character
+            elif character == '(':
+                depth += 1
+            elif character == ')':
+                depth -= 1
+                if depth == 0 and index != len(expression) - 1:
+                    wraps_expression = False
+                    break
+        if not wraps_expression or depth != 0:
+            break
+        expression = expression[1:-1].strip()
+    return expression
+
+
+def _split_boolean_operator(expression: str, operator: str) -> list[str]:
+    """Split at boolean operators outside quotes and parenthesized expressions."""
+    terms: list[str] = []
+    depth = 0
+    quote: str | None = None
+    start = 0
+    index = 0
+    while index < len(expression):
+        character = expression[index]
+        if quote is not None:
+            if character == quote:
+                quote = None
+            index += 1
+            continue
+        if character in ("'", '"'):
+            quote = character
+            index += 1
+            continue
+        if character == '(':
+            depth += 1
+            index += 1
+            continue
+        if character == ')':
+            depth -= 1
+            index += 1
+            continue
+        if depth == 0 and expression.startswith(operator, index):
+            terms.append(expression[start:index].strip())
+            index += len(operator)
+            start = index
+            continue
+        index += 1
+    if not terms:
+        return []
+    terms.append(expression[start:].strip())
+    return terms
+
+
+def _boolean_branches(expression: str) -> list[list[str]]:
+    """Return conjunction terms for each OR branch in a workflow condition."""
+    expression = _strip_boolean_wrappers(expression)
+    if expression.startswith('${{') and expression.endswith('}}'):
+        expression = expression[3:-2].strip()
+    disjunctions = _split_boolean_operator(expression, '||')
+    if disjunctions:
+        return [branch for term in disjunctions for branch in _boolean_branches(term)]
+    conjunctions = _split_boolean_operator(expression, '&&')
+    if not conjunctions:
+        return [[expression]]
+    branches: list[list[str]] = [[]]
+    for term in conjunctions:
+        term_branches = _boolean_branches(term)
+        branches = [prefix + suffix for prefix in branches for suffix in term_branches]
+    return branches
+
+
+def _normalized_condition(expression: str) -> str:
+    """Normalize whitespace for comparisons between boolean-expression terms."""
+    return re.sub(r'\s+', '', expression)
+
+
+def _condition_is_required(expression: str, condition: str) -> bool:
+    """Check that `condition` is a conjunct in every OR branch."""
+    expected = _normalized_condition(condition)
+    branches = _boolean_branches(expression)
+    return bool(branches) and all(expected in {_normalized_condition(term) for term in branch} for branch in branches)
+
+
 @dataclass(frozen=True)
 class Violation:
     """A single policy failure, rendered as one line of CI output."""
@@ -146,6 +240,11 @@ def _as_strings(value: object) -> set[str]:
     if isinstance(value, list):
         return {str(item) for item in cast(list[Any], value)}
     return set()
+
+
+def _is_object_sequence(value: object) -> TypeGuard[Sequence[object]]:
+    """Narrow parsed YAML sequences without letting untyped items escape."""
+    return isinstance(value, Sequence) and not isinstance(value, (str, bytes))
 
 
 def parse_frontmatter(source: Path) -> dict[str, Any]:
@@ -669,7 +768,8 @@ def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
                 )
             )
         condition = str(frontmatter.get('if', ''))
-        if 'needs.provider_health.outputs.ready' not in condition or "'true'" not in condition:
+        health_ready_condition = "needs.provider_health.outputs.ready == 'true'"
+        if not _condition_is_required(condition, health_ready_condition):
             violations.append(
                 Violation(
                     str(source),
@@ -704,7 +804,7 @@ def check_provider_health_wiring(workflows_dir: Path = WORKFLOWS_DIR) -> list[Vi
                     '`activation.needs` does not include `provider_health`; the health gate can resolve empty.',
                 )
             )
-        if 'needs.provider_health.outputs.ready' not in activation_condition or "'true'" not in activation_condition:
+        if not _condition_is_required(activation_condition, health_ready_condition):
             violations.append(
                 Violation(
                     str(lock),
@@ -865,12 +965,13 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Monitor reconciliation must use FIFO `queue: max` and retain up to the platform limit of 100 pending runs.',
             )
         )
-    steps_value = monitor_job.get('steps')
+    steps_value: object = monitor_job.get('steps')
     steps: list[Mapping[str, object]] = []
-    if isinstance(steps_value, list):
+    if _is_object_sequence(steps_value):
         for raw_step in steps_value:
-            if isinstance(raw_step, Mapping):
-                steps.append(_as_mapping(raw_step))
+            step = _as_mapping(raw_step)
+            if step:
+                steps.append(step)
     checkout_steps: list[Mapping[str, object]] = [
         step for step in steps if str(step.get('uses', '')).startswith('actions/checkout@')
     ]
@@ -900,7 +1001,7 @@ def check_provider_health_monitor(workflows_dir: Path = WORKFLOWS_DIR) -> list[V
                 'Agent artifacts may only be downloaded for the allowlisted `workflow_run` event.',
             )
         )
-    artifact_paths = re.compile(r'(?:^|\s)(?:agent|provider-health)/\S+')
+    artifact_paths = re.compile(r'(?:^|[\s"\'=])(?:\./)?(?:agent|provider-health)/\S+')
     artifact_execution = False
     for step in steps:
         uses = str(step.get('uses', ''))
@@ -1002,14 +1103,30 @@ def check_assigned_alert_metadata_gate(workflows_dir: Path = WORKFLOWS_DIR) -> l
     source = workflows_dir / 'at-claude.yml'
     if not source.is_file():
         return [Violation(str(source), 'assigned-alert-metadata-gate', '@claude workflow is missing.')]
-    text = source.read_text(encoding='utf-8')
-    metadata_gate = "!contains(github.event.issue.labels.*.name, 'pydanty:meta')"
-    if text.count(metadata_gate) < 2:
+    workflow = _as_mapping(yaml.safe_load(source.read_text(encoding='utf-8')))
+    jobs = _as_mapping(workflow.get('jobs'))
+    job_condition = str(_as_mapping(jobs.get('get-pr-info')).get('if', ''))
+    branches = _boolean_branches(job_condition)
+    metadata_gate = _normalized_condition("!contains(github.event.issue.labels.*.name, 'pydanty:meta')")
+    event_pattern = re.compile(r"github\.event_name\s*==\s*'([^']+)'")
+    routes_are_gated = bool(branches)
+    for event in ('issue_comment', 'issues'):
+        relevant_branches: list[list[str]] = []
+        for branch in branches:
+            branch_events = {found for term in branch for found in event_pattern.findall(term)}
+            if event in branch_events or not branch_events:
+                relevant_branches.append(branch)
+        if not relevant_branches or any(
+            metadata_gate not in {_normalized_condition(term) for term in branch} for branch in relevant_branches
+        ):
+            routes_are_gated = False
+            break
+    if not routes_are_gated:
         return [
             Violation(
                 str(source),
                 'assigned-alert-metadata-gate',
-                '`issues` and `issue_comment` activation must exclude `pydanty:meta` operational alerts.',
+                '`issues` and `issue_comment` route predicates must exclude `pydanty:meta` operational alerts.',
             )
         ]
     return []

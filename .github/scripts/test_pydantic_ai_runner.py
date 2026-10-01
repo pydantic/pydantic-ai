@@ -30,6 +30,7 @@ import httpx2
 import pytest
 import yaml
 from anthropic import AsyncAnthropic, RateLimitError
+from pydantic import TypeAdapter
 from pytest import LogCaptureFixture
 from tenacity import stop_after_attempt, wait_none
 
@@ -899,7 +900,11 @@ def test_run_uses_workflow_request_limit(workflow: str, expected_limit: int, mon
             raise RuntimeError('stop after capturing the run limit')
 
     monkeypatch.setattr(shim, 'Agent', _Agent)
-    monkeypatch.setattr(shim, 'emit', lambda _obj: None)
+
+    def _ignore_emit(_obj: dict[str, object]) -> None:
+        pass
+
+    monkeypatch.setattr(shim, 'emit', _ignore_emit)
     rc = asyncio.run(
         shim.run(
             prompt='test',
@@ -2277,15 +2282,14 @@ def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch
     result = next(event for event in emitted if event.get('type') == 'result')
     assert rc == 1
     assert result['is_error'] is True
-    token_usage = result['usage']
-    assert isinstance(token_usage, dict)
-    input_tokens = token_usage.get('input_tokens')
-    output_tokens = token_usage.get('output_tokens')
-    assert isinstance(input_tokens, int) and input_tokens > 0
-    assert isinstance(output_tokens, int) and output_tokens > 0
-    assert token_usage.get('cache_creation_input_tokens') == 2
-    assert token_usage.get('cache_read_input_tokens') == 4
-    assert result['num_turns'] > 0
+    typed_token_usage = TypeAdapter(dict[str, int]).validate_python(result['usage'])
+    input_tokens = typed_token_usage['input_tokens']
+    output_tokens = typed_token_usage['output_tokens']
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert typed_token_usage.get('cache_creation_input_tokens') == 2
+    assert typed_token_usage.get('cache_read_input_tokens') == 4
+    assert TypeAdapter(int).validate_python(result['num_turns']) > 0
     assert result['provider_health'] == {
         'workflow': 'Pydantic AI CI Review',
         'task_key': 'pr-123',

@@ -23,7 +23,7 @@ from pathlib import Path
 # these scripts only run on the newer runner Python.
 from typing import Annotated, Any, Literal, TypedDict, cast  # noqa: TID251
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 from triage_models import AgentItem, IssueEvent, agent_items, item_labels, parse_time, snapshot_candidates
 
 try:
@@ -37,6 +37,7 @@ except ImportError:  # sparse checkouts that omit the telemetry module stay sile
 
 _API = 'https://api.github.com'
 _PROVIDER_HEALTH_MARKER = re.compile(r'<!-- pydantic-ai-provider-health:v1 (\{[^\n]*\}) -->')
+_PROVIDER_HEALTH_MARKER_ADAPTER: TypeAdapter[dict[str, object]] = TypeAdapter(dict[str, object])
 _SLA = dt.timedelta(days=3)
 # Applied only by the community-demand sweep; scripts trust the label.
 COMMUNITY_LABEL = 'community-backed'
@@ -426,15 +427,40 @@ def _is_provider_health_incident(item: Mapping[str, object]) -> bool:
         return False
     try:
         marker: object = json.loads(match.group(1))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         return False
-    return (
-        isinstance(marker, dict)
-        and marker.get('version') == 1
-        and marker.get('scope') in ('provider', 'workflow', 'task')
-        and isinstance(marker.get('key'), str)
-        and bool(marker['key'])
-    )
+    if not isinstance(marker, dict):
+        return False
+    try:
+        marker_values: dict[str, object] = _PROVIDER_HEALTH_MARKER_ADAPTER.validate_python(marker, strict=True)
+    except (ValidationError, RecursionError):
+        return False
+    version = marker_values.get('version')
+    scope = marker_values.get('scope')
+    key = marker_values.get('key')
+    kind = marker_values.get('kind')
+    reset_at = marker_values.get('reset_at')
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version != 1
+        or scope not in ('provider', 'workflow', 'task')
+        or not isinstance(key, str)
+        or not key
+        or not isinstance(kind, str)
+        or not kind
+    ):
+        return False
+    if reset_at is not None:
+        if not isinstance(reset_at, str):
+            return False
+        try:
+            reset_time = dt.datetime.fromisoformat(reset_at.replace('Z', '+00:00'))
+        except ValueError:
+            return False
+        if reset_time.tzinfo is None:
+            return False
+    return True
 
 
 def _candidate_page(client: GitHubClient, repo: str, *, now: dt.datetime) -> list[dict[str, Any]]:
