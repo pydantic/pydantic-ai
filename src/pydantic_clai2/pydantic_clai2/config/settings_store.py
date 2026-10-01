@@ -23,13 +23,15 @@ def canonical_plugin_id(plugin_id: str) -> str:
 
 
 def canonical_plugin_declarations(plugins: Iterable[PluginSettings]) -> dict[str, PluginSettings]:
-    """One declaration per current ID; an explicit current name takes precedence over its old alias."""
+    """Keep declaration order, preferring an explicit current name over its old alias."""
     declarations = {plugin.id: plugin for plugin in plugins}
-    for previous, current in _PLUGIN_NAMES.items():
-        legacy = declarations.pop(previous, None)
-        if legacy is not None:
-            declarations.setdefault(current, legacy.model_copy(update={'id': current}))
-    return declarations
+    renamed: dict[str, PluginSettings] = {}
+    for plugin in declarations.values():
+        current = canonical_plugin_id(plugin.id)
+        if current != plugin.id and current in declarations:
+            continue
+        renamed[current] = plugin if current == plugin.id else plugin.model_copy(update={'id': current})
+    return renamed
 
 
 def config_dir() -> Path:
