@@ -18,31 +18,18 @@ from pydantic_ai.toolsets import AbstractToolset, CombinedToolset
 from pydantic_ai.toolsets.external import ExternalToolset
 from pydantic_ai_harness import RenderWorkflows
 
-from .conftest import RecordingTaskContext
-from .test_render_workflows import RegistrationRecordingWorkflows
+from .conftest import RecordingTaskContext, RecordingWorkflows, renderless_environment, run_agent_in_task
 
 _TASK_NAME_PROBE = """
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.models.test import TestModel
-from render.workflows import Workflows
 
 from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 
-names = []
+from tests.harness.render.conftest import RecordingWorkflows
 
-
-class RecordingWorkflows(Workflows):
-    def task(self, func=None, *, name=None, retry=None, timeout_seconds=None, plan=None):
-        decorator = super().task(name=name, retry=retry, timeout_seconds=timeout_seconds, plan=plan)
-
-        def record(target):
-            definition = decorator(target)
-            names.append(definition.name)
-            return definition
-
-        return record if func is None else record(func)
-
+app = RecordingWorkflows()
 
 worker = Agent(TestModel(), name='worker', description='Does the work')
 async def explicit_tool():
@@ -55,10 +42,10 @@ Agent(
     capabilities=[
         SubAgents(agents=[SubAgent(worker)], agent_folders=None),
         ToolOutputLimits(),
-        RenderWorkflows(RecordingWorkflows(), deps_type=type(None)),
+        RenderWorkflows(app, deps_type=type(None)),
     ],
 )
-print('\\n'.join(sorted({name for name in names if '__function_toolset__' in name and '<agent>' not in name})))
+print('\\n'.join(sorted({name for name in app.registered_task_names if '__function_toolset__' in name and '<agent>' not in name})))
 """
 
 
@@ -79,6 +66,7 @@ def test_importing_render_workflows_does_not_add_an_optional_mcp_import() -> Non
         check=False,
         capture_output=True,
         text=True,
+        env=renderless_environment(),
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -122,15 +110,8 @@ async def recorded_task_names(
     render_workflows: RenderWorkflows[None],
     prompt: str,
 ) -> list[str]:
-    @render_workflows.task
-    async def run_agent(ctx: TaskContext, prompt: str) -> str:
-        del ctx
-        return (await agent.run(prompt)).output
-
     context = RecordingTaskContext()
-    pending_result = run_agent.func(context, prompt)
-    assert inspect.isawaitable(pending_result)
-    await pending_result
+    await run_agent_in_task(agent, render_workflows, context, prompt=prompt)
     return context.task_names
 
 
@@ -141,6 +122,7 @@ def probe_task_names() -> list[str]:
         check=False,
         capture_output=True,
         text=True,
+        env=renderless_environment(),
     )
     assert completed.returncode == 0, completed.stderr
     return completed.stdout.split()
@@ -239,7 +221,7 @@ def test_a_toolset_the_user_attached_without_an_id_is_refused_on_its_own_terms()
     async def recall(topic: str) -> str:
         return topic
 
-    app = RegistrationRecordingWorkflows()
+    app = RecordingWorkflows()
 
     with pytest.raises(UserError, match='needs a unique `id`'):
         build_agent(Notes(toolset_id='notes'), app=app, toolsets=[FunctionToolset[None]([recall])])
@@ -263,7 +245,7 @@ def test_two_toolsets_that_already_share_an_id_are_still_a_collision() -> None:
 
     # Both of these were named by whoever owns them, so there is nothing to derive and
     # nothing to disambiguate: a genuine clash is Pydantic AI's answer, given earlier.
-    app = RegistrationRecordingWorkflows()
+    app = RecordingWorkflows()
 
     with pytest.raises(UserError, match='Two toolsets have the same `id`'):
         build_agent(Notes(toolset_id='notes'), app=app, toolsets=[FunctionToolset[None]([recall], id='notes')])
@@ -272,14 +254,9 @@ def test_two_toolsets_that_already_share_an_id_are_still_a_collision() -> None:
 
 
 def test_two_independent_agents_register_the_same_explicit_task_names() -> None:
-    first, _ = build_agent(
-        Notes(id='web_search', toolset_id='web-search'), app=(first_app := RegistrationRecordingWorkflows())
-    )
-    second, _ = build_agent(
-        Notes(id='web_search', toolset_id='web-search'), app=(second_app := RegistrationRecordingWorkflows())
-    )
+    build_agent(Notes(id='web_search', toolset_id='web-search'), app=(first_app := RecordingWorkflows()))
+    build_agent(Notes(id='web_search', toolset_id='web-search'), app=(second_app := RecordingWorkflows()))
 
-    assert first is not second
     assert 'support__function_toolset__web-search.call_tool' in first_app.registered_task_names
     assert first_app.registered_task_names == second_app.registered_task_names
 

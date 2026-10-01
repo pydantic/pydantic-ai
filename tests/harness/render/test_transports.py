@@ -17,7 +17,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness import RenderWorkflows
 
-from .conftest import RecordingTaskContext
+from .conftest import RecordingTaskContext, run_agent_in_task
 
 
 @dataclass
@@ -257,21 +257,11 @@ async def test_invalid_typed_dict_dependencies_fail_codec_validation() -> None:
     run_agent = runtime.task(run_agent_impl)
     pending = run_agent.func(RecordingTaskContext())
     assert inspect.isawaitable(pending)
-    with pytest.raises(UserWarning, match='Expected `int`'):
+    with (
+        pytest.warns(UserWarning, match='Expected `int`'),
+        pytest.raises(UserError, match='Render operation invalid request'),
+    ):
         await pending
-
-
-async def _run_in_workflow(
-    agent: Agent[None, str], runtime: RenderWorkflows[None], context: TaskContext, *, model: str | None = None
-) -> str:
-    async def run_agent_impl(ctx: TaskContext) -> str:
-        del ctx
-        return (await agent.run('inspect', model=model) if model else await agent.run('inspect')).output
-
-    run_agent = runtime.task(run_agent_impl)
-    pending = run_agent.func(context)
-    assert inspect.isawaitable(pending)
-    return await pending
 
 
 async def test_child_task_model_is_guarded_when_the_worker_registers_no_instance() -> None:
@@ -285,7 +275,7 @@ async def test_child_task_model_is_guarded_when_the_worker_registers_no_instance
         return str(ctx.model)
 
     with pytest.raises(UserError, match="'model' is not available on 'RenderRunContext'"):
-        await _run_in_workflow(agent, runtime, RecordingTaskContext())
+        await run_agent_in_task(agent, runtime, RecordingTaskContext())
 
 
 async def test_registered_model_id_resolves_to_its_instance_in_the_child_task() -> None:
@@ -304,7 +294,7 @@ async def test_registered_model_id_resolves_to_its_instance_in_the_child_task() 
         seen.append(ctx.model)
         return 'ok'
 
-    output = await _run_in_workflow(agent, runtime, RecordingTaskContext(), model='alternate')
+    output = await run_agent_in_task(agent, runtime, RecordingTaskContext(), model='alternate')
 
     assert output == 'from the alternate model'
     assert seen == [alternate]

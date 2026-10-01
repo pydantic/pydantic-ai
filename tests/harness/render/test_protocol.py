@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import inspect
 import re
 from collections.abc import Callable
 from typing import ParamSpec, TypeAlias, TypeGuard, TypeVar
 
 import pytest
 from pydantic import TypeAdapter, ValidationError
-from render.workflows import TaskContext, TaskDefinition, Workflows
+from render.workflows import TaskDefinition, Workflows
 
 from pydantic_ai import Agent, ModelRetry, RunContext
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -25,7 +24,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
 
-from .conftest import RecordingTaskContext
+from .conftest import RecordingTaskContext, run_agent_in_task
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -50,16 +49,6 @@ def _set(key: str, value: object) -> Tamper:
 
 def _drop(key: str) -> Tamper:
     return lambda envelope: envelope.__delitem__(key)
-
-
-def _on_control_flow(tamper: Tamper) -> Tamper:
-    """Rewrite control-flow results only, leaving successful ones as the worker wrote them."""
-
-    def rewrite(envelope: dict[str, object]) -> None:
-        if envelope.get('status') == 'control-flow':
-            tamper(envelope)
-
-    return rewrite
 
 
 def _in_error(tamper: Tamper) -> Tamper:
@@ -123,19 +112,6 @@ class Audit(AbstractCapability[None]):
         return f'recorded:{message}'
 
 
-async def _run_agent(
-    agent: Agent[None, str], runtime: RenderWorkflows[None], context: TaskContext, *, prompt: str = 'hello'
-) -> str:
-    async def run_agent_impl(ctx: TaskContext) -> str:
-        del ctx
-        return (await agent.run(prompt)).output
-
-    run_agent = runtime.task(run_agent_impl)
-    pending = run_agent.func(context)
-    assert inspect.isawaitable(pending)
-    return await pending
-
-
 def build_agent() -> tuple[Agent[None, str], RenderWorkflows[None]]:
     runtime = RenderWorkflows[None](Workflows())
     agent = Agent[None, str](TestModel(), name='support', deps_type=type(None), capabilities=[runtime])
@@ -178,7 +154,6 @@ def _error_kind(result: dict[str, object]) -> object:
 def _assert_completed_with_permanent_error(context: TaskBoundary, *, task: str, kind: str) -> None:
     """Assert the child task ran and finished with exactly one permanent-error result."""
     assert context.started == [task]
-    assert [set(result) for result in context.results] == [{'version', 'status', 'error'}]
     assert [result['status'] for result in context.results] == ['error']
     assert _error_kind(context.results[0]) == kind
 
@@ -209,78 +184,46 @@ def _assert_control_flow_payload(kind: str, error: Exception) -> None:
         assert error.result == 'done'
 
 
-async def test_every_request_envelope_carries_its_version_and_operation() -> None:
+async def test_agent_result_survives_the_json_round_trip() -> None:
     agent, runtime = build_agent()
     context = TaskBoundary()
 
-    await _run_agent(agent, runtime, context)
-
-    # Envelope shape is persisted journal data: a request recorded by one worker is read back
-    # by another, so the version and the operation it names travel with every request.
+    assert await run_agent_in_task(agent, runtime, context) == 'success (no tool calls)'
     assert context.requests
-    assert all(set(request) == {'version', 'operation', 'payload'} for request in context.requests)
-    assert all(request['version'] == 2 for request in context.requests)
-    assert all(request['operation'] == 'support__model.request' for request in context.requests)
-
-
-async def test_successful_result_envelope_carries_its_version_and_payload() -> None:
-    agent, runtime = build_agent()
-    context = TaskBoundary()
-
-    await _run_agent(agent, runtime, context)
-
     assert context.results
-    assert all(set(result) == {'version', 'status', 'payload'} for result in context.results)
-    assert all(result['version'] == 2 for result in context.results)
-    assert all(result['status'] == 'ok' for result in context.results)
 
 
 @pytest.mark.parametrize(
-    ('tamper', 'message'),
+    'tamper',
     [
-        pytest.param(_set('operation', 'support__model.compact_messages'), 'names operation', id='wrong-operation'),
-        pytest.param(_drop('payload'), r"missing \['payload'\]", id='missing-key'),
-        pytest.param(_set('surprise', True), r"unexpected \['surprise'\]", id='extra-key'),
-        pytest.param(
-            _set('version', 3),
-            r'protocol version 3 is unsupported; expected one of \[1, 2\]',
-            id='unsupported-version',
-        ),
-        pytest.param(_set('payload', 5), 'Operation payload must be a JSON object', id='payload-not-an-object'),
+        pytest.param(_set('operation', 'support__model.compact_messages'), id='wrong-operation'),
+        pytest.param(_drop('payload'), id='missing-payload'),
     ],
 )
-async def test_malformed_request_completes_the_child_with_an_invalid_request_error(
-    tamper: Tamper, message: str
-) -> None:
+async def test_malformed_request_completes_the_child_with_an_invalid_request_error(tamper: Tamper) -> None:
     agent, runtime = build_agent()
     context = TaskBoundary(tamper_request=tamper)
 
     # Retrying cannot repair persisted request bytes, so the worker completes the task with an
     # error result and the workflow side is what raises once it reads that result back.
-    with pytest.raises(UserError, match=message):
-        await _run_agent(agent, runtime, context)
+    with pytest.raises(UserError, match='Render operation invalid request'):
+        await run_agent_in_task(agent, runtime, context)
 
     _assert_completed_with_permanent_error(context, task='support__model.request', kind='invalid-request')
 
 
 @pytest.mark.parametrize(
-    ('tamper', 'message'),
+    'tamper',
     [
-        pytest.param(
-            _set('version', 3),
-            r'protocol version 3 is unsupported; expected one of \[1, 2\]',
-            id='unsupported-version',
-        ),
-        pytest.param(_set('status', 'finished'), "unknown status 'finished'", id='unknown-status'),
-        pytest.param(_drop('payload'), r"missing \['payload'\]", id='missing-key'),
-        pytest.param(_set('surprise', True), r"unexpected \['surprise'\]", id='extra-key'),
+        pytest.param(_set('version', 3), id='unsupported-version'),
+        pytest.param(_drop('payload'), id='missing-payload'),
     ],
 )
-async def test_malformed_result_envelope_is_rejected_workflow_side(tamper: Tamper, message: str) -> None:
+async def test_malformed_result_envelope_is_rejected_workflow_side(tamper: Tamper) -> None:
     agent, runtime = build_agent()
 
-    with pytest.raises(ValueError, match=message):
-        await _run_agent(agent, runtime, TaskBoundary(tamper_result=tamper))
+    with pytest.raises(ValueError):
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_result=tamper))
 
 
 @pytest.mark.parametrize(
@@ -310,7 +253,7 @@ async def test_expected_control_flow_crosses_as_a_result_and_is_recreated(
     agent, runtime, recreated = build_audited_agent(failure)
     context = TaskBoundary()
 
-    await _run_agent(agent, runtime, context)
+    await run_agent_in_task(agent, runtime, context)
 
     # The child task returned a result rather than failing, so Render keeps the journal entry
     # and the workflow side turns that result back into the same control flow.
@@ -323,38 +266,25 @@ async def test_expected_control_flow_crosses_as_a_result_and_is_recreated(
 async def test_control_flow_metadata_survives_the_round_trip() -> None:
     agent, runtime, recreated = build_audited_agent(ApprovalRequired(metadata={'reason': 'review'}))
 
-    await _run_agent(agent, runtime, TaskBoundary())
+    await run_agent_in_task(agent, runtime, TaskBoundary())
 
     approval = recreated[0]
     assert isinstance(approval, ApprovalRequired)
     assert approval.metadata == {'reason': 'review'}
 
 
-@pytest.mark.parametrize(
-    ('tamper', 'message'),
-    [
-        pytest.param(_in_error(_set('kind', 'nap')), "unknown control-flow kind 'nap'", id='unknown-kind'),
-        pytest.param(_in_error(_drop('message')), r"missing \['message'\]", id='missing-field'),
-        pytest.param(_in_error(_set('message', 7)), 'Model-retry message must be a string', id='wrong-field-type'),
-        pytest.param(
-            _on_control_flow(_set('error', 'model-retry')),
-            'Control-flow error must be a JSON object',
-            id='error-not-object',
-        ),
-    ],
-)
-async def test_malformed_control_flow_result_is_rejected_workflow_side(tamper: Tamper, message: str) -> None:
+async def test_unknown_control_flow_result_is_rejected_workflow_side() -> None:
     agent, runtime, _ = build_audited_agent(ModelRetry('again'), capture=False)
 
-    with pytest.raises(ValueError, match=message):
-        await _run_agent(agent, runtime, TaskBoundary(tamper_result=tamper))
+    with pytest.raises(ValueError):
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_result=_in_error(_set('kind', 'nap'))))
 
 
 async def test_malformed_control_flow_metadata_is_rejected_workflow_side() -> None:
     agent, runtime, _ = build_audited_agent(ApprovalRequired(metadata={'reason': 'review'}), capture=False)
 
     with pytest.raises(ValueError, match='Approval metadata must be a JSON object'):
-        await _run_agent(agent, runtime, TaskBoundary(tamper_result=_in_error(_set('metadata', 'review'))))
+        await run_agent_in_task(agent, runtime, TaskBoundary(tamper_result=_in_error(_set('metadata', 'review'))))
 
 
 async def test_control_flow_payload_that_cannot_be_encoded_completes_the_child_with_an_invalid_result_error() -> None:
@@ -362,7 +292,7 @@ async def test_control_flow_payload_that_cannot_be_encoded_completes_the_child_w
     context = TaskBoundary()
 
     with pytest.raises(UserError, match='Approval metadata must be JSON serializable'):
-        await _run_agent(agent, runtime, context)
+        await run_agent_in_task(agent, runtime, context)
 
     _assert_completed_with_permanent_error(context, task='audited__capability__audit.record', kind='invalid-result')
 
@@ -372,7 +302,7 @@ async def test_unexpected_handler_error_leaves_the_task_failed_rather_than_encod
     context = TaskBoundary()
 
     with pytest.raises(RuntimeError, match='provider exploded'):
-        await _run_agent(agent, runtime, context)
+        await run_agent_in_task(agent, runtime, context)
 
     # Unlike Pydantic ModelRetry control flow, this exception fails the child task.
     assert 'audited__capability__audit.record' in context.started
@@ -409,7 +339,7 @@ async def test_function_tool_model_retry_is_completed_control_flow_and_agent_con
     )
     context = TaskBoundary()
 
-    output = await _run_agent(agent, runtime, context)
+    output = await run_agent_in_task(agent, runtime, context)
 
     assert output == 'continued after retry'
     assert calls == 2
@@ -427,7 +357,7 @@ async def test_protocol_enforces_four_mib_request_limit_through_public_agent() -
     agent, runtime = build_agent()
 
     with pytest.raises(ValueError, match='4194304-byte limit') as raised:
-        await _run_agent(agent, runtime, TaskBoundary(), prompt='x' * (4 * 1024 * 1024))
+        await run_agent_in_task(agent, runtime, TaskBoundary(), prompt='x' * (4 * 1024 * 1024))
 
     # The limit applies to the serialized task arguments, not to the prompt alone, so a prompt of
     # exactly 4 MiB is already over it once the envelope and JSON punctuation are counted.

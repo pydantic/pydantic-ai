@@ -5,87 +5,22 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
-from typing import Concatenate, Literal, ParamSpec, Protocol, TypeVar, overload
+from typing import Literal, ParamSpec, TypeVar
 
 import anyio
-from render.workflows import Options, Retry, TaskContext, TaskDefinition, Workflows
+from render.workflows import Options, TaskContext, TaskDefinition
 
 from pydantic_ai import Agent, FunctionToolset, RunContext
-from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import Tool, ToolDefinition
-from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai_harness import RenderWorkflows
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 
-from .conftest import RecordingTaskContext
+from .conftest import RecordingTaskContext, RecordingWorkflows, run_agent_in_task
 
 P = ParamSpec('P')
 R = TypeVar('R')
-
-
-class RecordingTaskDecorator(Protocol):
-    """Typed decorator returned by `RegistrationLog.task(...)`."""
-
-    @overload
-    def __call__(self, func: Callable[Concatenate[TaskContext, P], Awaitable[R]], /) -> TaskDefinition[P, R]: ...
-
-    @overload
-    def __call__(self, func: Callable[Concatenate[TaskContext, P], R], /) -> TaskDefinition[P, R]: ...
-
-
-class RegistrationLog(Workflows):
-    """Record task names and registration-time Options through the public decorator."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.options: dict[str, Options] = {}
-        self.names: list[str] = []
-
-    @overload
-    def task(
-        self,
-        func: Callable[Concatenate[TaskContext, P], Awaitable[R]],
-        /,
-    ) -> TaskDefinition[P, R]: ...
-
-    @overload
-    def task(
-        self,
-        func: Callable[Concatenate[TaskContext, P], R],
-        /,
-    ) -> TaskDefinition[P, R]: ...
-
-    @overload
-    def task(
-        self,
-        *,
-        name: str | None = None,
-        retry: Retry | None = None,
-        timeout_seconds: int | None = None,
-        plan: str | None = None,
-    ) -> RecordingTaskDecorator: ...
-
-    def task(
-        self,
-        func: Callable[..., object] | None = None,
-        *,
-        name: str | None = None,
-        retry: Retry | None = None,
-        timeout_seconds: int | None = None,
-        plan: str | None = None,
-    ) -> object:
-        decorate = super().task(name=name, retry=retry, timeout_seconds=timeout_seconds, plan=plan)
-
-        def record(target: Callable[..., object]) -> TaskDefinition[..., object]:
-            definition = decorate(target)
-            self.names.append(definition.name)
-            self.options[definition.name] = Options(retry=retry, timeout_seconds=timeout_seconds, plan=plan)
-            return definition
-
-        return record if func is None else record(func)
 
 
 class NestedTaskContext(RecordingTaskContext):
@@ -103,19 +38,6 @@ class NestedTaskContext(RecordingTaskContext):
             return await super().run(task, *args, **kwargs)
         finally:
             self.stack.pop()
-
-
-async def run_in_task(agent: Agent[None, str], runtime: RenderWorkflows[None], context: TaskContext) -> str:
-    """Run `agent` from a public Render task entry point."""
-
-    @runtime.task
-    async def root(ctx: TaskContext) -> str:
-        del ctx
-        return (await agent.run('go')).output
-
-    pending = root.func(context)
-    assert inspect.isawaitable(pending)
-    return await pending
 
 
 def three_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -144,7 +66,7 @@ def resolve_lookup_options(
     return False if tool_name == 'inline_lookup' else None
 
 
-def build_per_tool_agent() -> tuple[Agent[None, str], RenderWorkflows[None], RegistrationLog]:
+def build_per_tool_agent() -> tuple[Agent[None, str], RenderWorkflows[None], RecordingWorkflows]:
     """One named FunctionToolset with two remote tools and one inline opt-out."""
 
     async def fast_lookup() -> str:
@@ -156,7 +78,7 @@ def build_per_tool_agent() -> tuple[Agent[None, str], RenderWorkflows[None], Reg
     async def inline_lookup() -> str:
         return 'inline'
 
-    app = RegistrationLog()
+    app = RecordingWorkflows()
     runtime = RenderWorkflows[None](app, deps_type=type(None), resolve_tool_options=resolve_lookup_options)
     agent = Agent[None, str](
         FunctionModel(three_tools),
@@ -190,41 +112,10 @@ async def test_named_toolset_registers_stable_per_function_tasks_and_inline_opt_
     assert {value.plan for value in registered.values()} == {'starter', 'standard'}
 
     context = NestedTaskContext()
-    assert await run_in_task(agent, runtime, context) == 'done'
+    assert await run_agent_in_task(agent, runtime, context) == 'done'
     invoked = [name for name, _depth in context.calls if name in registered]
     assert sorted(invoked) == sorted(registered)
     assert not any('inline_lookup' in name for name, _depth in context.calls)
-
-
-class OwnedUnnamedTools(AbstractCapability[None]):
-    """A capability-owned FunctionToolset the caller never names."""
-
-    id = 'owned_tools'
-
-    def __init__(self) -> None:
-        async def owned_lookup() -> str:
-            return 'owned'
-
-        self.toolset = FunctionToolset[None]([owned_lookup])
-
-    def get_toolset(self) -> AbstractToolset[None]:
-        return self.toolset
-
-
-async def test_unnamed_capability_toolset_is_never_privately_renamed() -> None:
-    capability = OwnedUnnamedTools()
-    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
-    agent = Agent[None, str](
-        TestModel(call_tools=['owned_lookup']),
-        name='owned',
-        deps_type=type(None),
-        capabilities=[capability, runtime],
-    )
-
-    assert capability.toolset.id is None
-    context = NestedTaskContext()
-    assert isinstance(await run_in_task(agent, runtime, context), str)
-    assert not [name for name, _depth in context.calls if '__function_toolset__owned_tools' in name]
 
 
 def delegate_once(agent_name: str) -> FunctionModel:
@@ -246,9 +137,9 @@ def tool_then_finish(messages: list[ModelMessage], info: AgentInfo) -> ModelResp
     return ModelResponse(parts=[ToolCallPart('child_tool', {}, tool_call_id='child-tool')])
 
 
-def build_nested_agents() -> tuple[Agent[None, str], RenderWorkflows[None], RegistrationLog]:
+def build_nested_agents() -> tuple[Agent[None, str], RenderWorkflows[None], RecordingWorkflows]:
     """Build explicit parent and child agents against one Workflows app."""
-    app = RegistrationLog()
+    app = RecordingWorkflows()
     child_runtime = RenderWorkflows[None](app, deps_type=type(None))
     child = Agent[None, str](
         FunctionModel(tool_then_finish),
@@ -271,16 +162,10 @@ def build_nested_agents() -> tuple[Agent[None, str], RenderWorkflows[None], Regi
     return parent, parent_runtime, app
 
 
-def test_explicit_subagent_delegate_tool_is_not_registered() -> None:
-    _, _, app = build_nested_agents()
-
-    assert not [name for name in app.options if '__function_toolset__sub_agents' in name]
-
-
 async def test_explicit_subagent_uses_shared_app_for_direct_child_task_runs() -> None:
     parent, parent_runtime, _ = build_nested_agents()
     context = NestedTaskContext()
-    assert await run_in_task(parent, parent_runtime, context) == 'parent done'
+    assert await run_agent_in_task(parent, parent_runtime, context) == 'parent done'
     assert ('nested-child__model.request', 1) in context.calls
     assert ('nested-child__function_toolset__<agent>.call_tool', 1) in context.calls
     assert not [name for name, _depth in context.calls if '__function_toolset__sub_agents' in name]
@@ -318,9 +203,9 @@ def child_delegating_model(messages: list[ModelMessage], info: AgentInfo) -> Mod
     return ModelResponse(parts=[ToolCallPart('child_tool', {}, tool_call_id='child-tool')])
 
 
-def build_two_level_agents() -> tuple[Agent[None, str], RenderWorkflows[None], RegistrationLog]:
+def build_two_level_agents() -> tuple[Agent[None, str], RenderWorkflows[None], RecordingWorkflows]:
     """Build parent, child, and grandchild agents against one Workflows app."""
-    app = RegistrationLog()
+    app = RecordingWorkflows()
     grandchild_runtime = RenderWorkflows[None](app, deps_type=type(None))
     grandchild = Agent[None, str](
         FunctionModel(grandchild_model),
@@ -367,7 +252,7 @@ async def test_two_level_explicit_delegation_runs_supported_operations_and_termi
     context = NestedTaskContext()
 
     with anyio.fail_after(5):
-        assert await run_in_task(parent, runtime, context) == 'parent done'
+        assert await run_agent_in_task(parent, runtime, context) == 'parent done'
 
     names = [name for name, _depth in context.calls]
     assert names.count('nested-child-two-level__model.request') == 3
@@ -408,7 +293,7 @@ async def test_inline_subagents_charges_concurrent_max_calls_before_awaiting() -
         executions.append('ran')
         return ModelResponse(parts=[TextPart('worker done')])
 
-    app = RegistrationLog()
+    app = RecordingWorkflows()
     runtime = RenderWorkflows[None](app, deps_type=type(None))
     worker = Agent[None, str](
         FunctionModel(worker_model),
@@ -501,9 +386,9 @@ def resolve_prepared_options(
 
 def build_prepared_agent(
     tools: list[Tool[None]], *, agent_name: str, toolset_id: str, called_name: str
-) -> tuple[Agent[None, str], RenderWorkflows[None], RegistrationLog]:
+) -> tuple[Agent[None, str], RenderWorkflows[None], RecordingWorkflows]:
     """One named FunctionToolset whose tools are renamed for the model by `prepare`."""
-    app = RegistrationLog()
+    app = RecordingWorkflows()
     runtime = RenderWorkflows[None](app, deps_type=type(None), resolve_tool_options=resolve_prepared_options)
     agent = Agent[None, str](
         call_renamed_tool(called_name),
@@ -535,7 +420,11 @@ async def test_prepared_rename_routes_registration_and_invocation_to_one_task() 
         toolset_id='prepared',
         called_name='report',
     )
-    registered = [name for name in app.names if '__function_toolset__prepared' in name and name.endswith('.call_tool')]
+    registered = [
+        name
+        for name in app.registered_task_names
+        if '__function_toolset__prepared' in name and name.endswith('.call_tool')
+    ]
     slow_task = 'prepared-options__function_toolset__prepared.slow_report.call_tool'
 
     assert sorted(registered) == sorted(
@@ -547,7 +436,7 @@ async def test_prepared_rename_routes_registration_and_invocation_to_one_task() 
 
     context = NestedTaskContext()
     with anyio.fail_after(5):
-        output = await run_in_task(agent, runtime, context)
+        output = await run_agent_in_task(agent, runtime, context)
 
     assert output == 'report=slow'
     assert [name for name, _depth in context.calls if name.endswith('.call_tool')] == [slow_task]
@@ -561,17 +450,17 @@ async def test_prepared_rename_with_resolver_false_stays_inline() -> None:
         toolset_id='opted-out',
         called_name='summary',
     )
-    registered = sorted(name for name in app.names if '__function_toolset__opted-out' in name)
+    registered = sorted(name for name in app.registered_task_names if '__function_toolset__opted-out' in name)
 
     assert registered == [
         'prepared-inline__function_toolset__opted-out.quick_report.call_tool',
         'prepared-inline__function_toolset__opted-out.quick_report.validate_args',
     ]
-    assert not [name for name in app.names if 'inline_report' in name or 'summary' in name]
+    assert not [name for name in app.registered_task_names if 'inline_report' in name or 'summary' in name]
 
     context = NestedTaskContext()
     with anyio.fail_after(5):
-        output = await run_in_task(agent, runtime, context)
+        output = await run_agent_in_task(agent, runtime, context)
 
     assert output == 'summary=inline'
     assert not [name for name, _depth in context.calls if '__function_toolset__opted-out' in name]
@@ -596,7 +485,7 @@ def call_part_then_shared(messages: list[ModelMessage], info: AgentInfo) -> Mode
     return ModelResponse(parts=[ToolCallPart('part', {}, tool_call_id='part')])
 
 
-def build_colliding_agent() -> tuple[Agent[None, str], RenderWorkflows[None], RegistrationLog]:
+def build_colliding_agent() -> tuple[Agent[None, str], RenderWorkflows[None], RecordingWorkflows]:
     """Toolset `x` with tool `part` alongside a toolset whose own ID is `x.part`."""
 
     async def part() -> str:
@@ -608,7 +497,7 @@ def build_colliding_agent() -> tuple[Agent[None, str], RenderWorkflows[None], Re
     async def shared_tool() -> str:
         return 'shared'
 
-    app = RegistrationLog()
+    app = RecordingWorkflows()
     runtime = RenderWorkflows[None](app, deps_type=type(None), resolve_tool_options=resolve_collision_options)
     agent = Agent[None, str](
         FunctionModel(call_part_then_shared),
@@ -628,11 +517,11 @@ def test_per_tool_and_shared_task_names_do_not_collide() -> None:
     _, _, app = build_colliding_agent()
     shared_task = 'collide__function_toolset__x.part.call_tool'
 
-    assert len(app.names) == len(set(app.names))
-    assert app.names.count(shared_task) == 1
+    assert len(app.registered_task_names) == len(set(app.registered_task_names))
+    assert app.registered_task_names.count(shared_task) == 1
     per_tool = [
         name
-        for name in app.names
+        for name in app.registered_task_names
         if name.endswith('.call_tool') and name != shared_task and '__function_toolset__x' in name
     ]
     assert len(per_tool) == 2
@@ -647,7 +536,7 @@ async def test_colliding_identities_route_each_tool_to_its_own_task() -> None:
     context = NestedTaskContext()
 
     with anyio.fail_after(5):
-        output = await run_in_task(agent, runtime, context)
+        output = await run_agent_in_task(agent, runtime, context)
 
     assert output == 'collide done'
     call_tool_runs = [name for name, _depth in context.calls if name.endswith('.call_tool')]

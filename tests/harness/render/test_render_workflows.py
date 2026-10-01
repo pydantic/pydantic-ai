@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import inspect
-from collections.abc import AsyncIterable, Callable
+from collections.abc import AsyncIterable
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 import anyio
 import pytest
-from render.workflows import Retry, TaskContext, TaskDefinition, Workflows
+from render.workflows import TaskContext, TaskDefinition, Workflows
 
 from pydantic_ai import Agent, FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -32,7 +32,7 @@ from pydantic_ai.toolsets import DynamicToolset
 from pydantic_ai_harness import RenderWorkflows, ToolOutputLimits
 from pydantic_ai_harness.subagents import SubAgent, SubAgents
 
-from .conftest import RecordingTaskContext
+from .conftest import RecordingTaskContext, RecordingWorkflows, ToolTaskConcurrency
 
 if TYPE_CHECKING:
     # Only the MCP tests below need this class, and only at runtime when the optional MCP
@@ -44,40 +44,6 @@ P = ParamSpec('P')
 R = TypeVar('R')
 
 MCP_DEPENDENCY_MODULE = 'fastmcp'
-
-
-class RegistrationRecordingWorkflows(Workflows):
-    """Record every task registered through the public `Workflows.task` decorator.
-
-    A `Workflows` app publishes no registry, so the decorator is the only public place to
-    observe that a registration happened at all. Both documented call styles are recorded,
-    because the app that carries an agent's operation tasks is also the app a user registers
-    their own workflow entry points on.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.registered_task_names: list[str] = []
-
-    def task(
-        self,
-        func: Callable[..., Any] | None = None,
-        *,
-        name: str | None = None,
-        retry: Retry | None = None,
-        timeout_seconds: int | None = None,
-        plan: str | None = None,
-    ) -> Any:
-        decorator = super().task(name=name, retry=retry, timeout_seconds=timeout_seconds, plan=plan)
-
-        def recording_decorator(target: Callable[..., Any]) -> TaskDefinition[..., Any]:
-            definition = decorator(target)
-            self.registered_task_names.append(definition.name)
-            return definition
-
-        if func is None:
-            return recording_decorator
-        return recording_decorator(func)
 
 
 class UnidentifiedAudit(AbstractCapability[None]):
@@ -100,19 +66,11 @@ class FanOutRecordingTaskContext(RecordingTaskContext):
 
     def __init__(self) -> None:
         super().__init__()
-        self.active_tool_tasks = 0
-        self.max_active_tool_tasks = 0
+        self.concurrency = ToolTaskConcurrency()
 
     async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
-        is_tool_call = task.name.endswith('.call_tool')
-        if is_tool_call:
-            self.active_tool_tasks += 1
-            self.max_active_tool_tasks = max(self.max_active_tool_tasks, self.active_tool_tasks)
-        try:
+        with self.concurrency.track(task.name):
             return await super().run(task, *args, **kwargs)
-        finally:
-            if is_tool_call:
-                self.active_tool_tasks -= 1
 
 
 def mcp_dependency_installed() -> bool:
@@ -276,7 +234,8 @@ async def test_independent_tool_calls_fan_out_as_render_child_tasks() -> None:
         assert inspect.isawaitable(pending_result)
         await pending_result
 
-    assert context.max_active_tool_tasks == 2
+    assert context.concurrency.maximum == 2
+    assert context.concurrency.active == 0
 
 
 async def test_dynamic_tool_discovery_and_call_run_as_render_child_tasks() -> None:
@@ -414,7 +373,7 @@ async def test_a_named_toolset_registers_its_render_tasks_under_its_id() -> None
 
 async def test_delegation_tool_stays_inline_while_explicit_child_operations_use_render_tasks() -> None:
     """The unnamed capability tool stays inline while the configured child remains durable."""
-    app = RegistrationRecordingWorkflows()
+    app = RecordingWorkflows()
     child_render_workflows = RenderWorkflows[None](app, deps_type=type(None))
     worker = Agent[None, str](
         FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('worker result')])),
@@ -462,7 +421,7 @@ async def test_delegation_tool_stays_inline_while_explicit_child_operations_use_
 
 def test_tool_output_limits_unnamed_toolset_stays_inline() -> None:
     """A capability-owned helper tool does not acquire a Render task identity."""
-    app = RegistrationRecordingWorkflows()
+    app = RecordingWorkflows()
     Agent[None, str](
         TestModel(),
         name='support',
@@ -484,7 +443,7 @@ def test_a_capability_contributing_operations_without_an_id_is_rejected_before_r
     given would keep a partial task set for the life of the process. The wording is pinned
     to core's because this is the same refusal, only earlier.
     """
-    app = RegistrationRecordingWorkflows()
+    app = RecordingWorkflows()
 
     with pytest.raises(UserError) as rejection:
         Agent[None, str](
@@ -509,7 +468,7 @@ async def test_the_same_capability_with_an_id_registers_and_runs_its_operation_t
     once, through an entry point registered with the app's own decorator rather than the
     capability's, to show the recorded task is the one that carries it.
     """
-    app = RegistrationRecordingWorkflows()
+    app = RecordingWorkflows()
     render_workflows = RenderWorkflows[None](app, deps_type=type(None))
     audit = IdentifiedAudit()
     agent = Agent[None, str](
@@ -534,7 +493,9 @@ async def test_the_same_capability_with_an_id_registers_and_runs_its_operation_t
 
     context = RecordingTaskContext()
     with anyio.fail_after(5):
-        assert isinstance(await entry_point.func(context), str)
+        pending = entry_point.func(context)
+        assert inspect.isawaitable(pending)
+        assert isinstance(await pending, str)
 
     assert 'support__capability__audit.record' in context.task_names
 

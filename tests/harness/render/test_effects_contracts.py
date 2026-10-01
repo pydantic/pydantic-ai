@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import json
 from collections.abc import AsyncIterator, MutableMapping
 from dataclasses import dataclass
@@ -11,7 +10,7 @@ from typing import ParamSpec, TypeGuard, TypeVar
 import anyio
 import pytest
 from pydantic import TypeAdapter
-from render.workflows import TaskContext, TaskDefinition, Workflows
+from render.workflows import TaskDefinition, Workflows
 
 from pydantic_ai import Agent, CapabilityEvent, CustomEvent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, Hooks
@@ -23,7 +22,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness import RenderWorkflows
 
-from .conftest import RecordingTaskContext, json_round_trip
+from .conftest import RecordingTaskContext, ToolTaskConcurrency, json_round_trip, run_agent_in_task
 
 P = ParamSpec('P')
 R = TypeVar('R')
@@ -156,23 +155,16 @@ class SiblingCallToolTaskContext(JsonRecordingTaskContext):
     def __init__(self, *, siblings: int = 2) -> None:
         super().__init__()
         self._siblings = siblings
-        self.active_tool_tasks = 0
-        self.max_active_tool_tasks = 0
+        self.concurrency = ToolTaskConcurrency()
         self._overlap = anyio.Event()
 
     async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
-        is_tool_call = task.name.endswith('.call_tool')
-        if is_tool_call:
-            self.active_tool_tasks += 1
-            self.max_active_tool_tasks = max(self.max_active_tool_tasks, self.active_tool_tasks)
-            if self.active_tool_tasks == self._siblings:
-                self._overlap.set()
-            await self._overlap.wait()
-        try:
-            return await super().run(task, *args, **kwargs)
-        finally:
+        with self.concurrency.track(task.name) as is_tool_call:
             if is_tool_call:
-                self.active_tool_tasks -= 1
+                if self.concurrency.active == self._siblings:
+                    self._overlap.set()
+                await self._overlap.wait()
+            return await super().run(task, *args, **kwargs)
 
 
 class MalformedEffectsTaskContext(JsonRecordingTaskContext):
@@ -228,23 +220,6 @@ class V1CompatibilityTaskContext(JsonRecordingTaskContext):
         return result
 
 
-async def _run_agent(
-    agent: Agent[None, str],
-    runtime: RenderWorkflows[None],
-    context: TaskContext,
-    *,
-    usage: RunUsage,
-) -> str:
-    @runtime.task
-    async def root(ctx: TaskContext) -> str:
-        del ctx
-        return (await agent.run('exercise effects', usage=usage)).output
-
-    pending = root.func(context)
-    assert inspect.isawaitable(pending)
-    return await pending
-
-
 def _event_hooks(seen: list[ChildEffectEvent]) -> Hooks[None]:
     hooks = Hooks[None]()
 
@@ -294,7 +269,7 @@ async def test_child_usage_delta_is_applied_to_the_original_usage_once() -> None
         return 'accounted'
 
     context = JsonRecordingTaskContext()
-    assert isinstance(await _run_agent(agent, runtime, context, usage=usage), str)
+    assert isinstance(await run_agent_in_task(agent, runtime, context, usage=usage), str)
 
     assert usage.details['caller_marker'] == 11
     assert usage.details['child_marker'] == 7
@@ -318,7 +293,7 @@ async def test_child_events_are_replayed_to_the_caller_in_order_once() -> None:
         return 'published'
 
     assert isinstance(
-        await _run_agent(agent, runtime, JsonRecordingTaskContext(), usage=RunUsage()),
+        await run_agent_in_task(agent, runtime, JsonRecordingTaskContext(), usage=RunUsage()),
         str,
     )
     assert [(event.child, event.sequence) for event in seen] == [('only', 1), ('only', 2)]
@@ -337,7 +312,7 @@ async def test_capability_owned_tool_transfers_its_capability_events_and_usage()
     )
 
     context = JsonRecordingTaskContext()
-    assert isinstance(await _run_agent(agent, runtime, context, usage=usage), str)
+    assert isinstance(await run_agent_in_task(agent, runtime, context, usage=usage), str)
 
     assert usage.details['owned_marker'] == 4
     assert [(event.child, event.sequence) for event in seen] == [('owned', 1), ('owned', 2)]
@@ -371,9 +346,10 @@ async def test_concurrent_child_effects_are_additive_and_ordered_per_child() -> 
 
     context = SiblingCallToolTaskContext()
     with anyio.fail_after(5):
-        assert isinstance(await _run_agent(agent, runtime, context, usage=usage), str)
+        assert isinstance(await run_agent_in_task(agent, runtime, context, usage=usage), str)
 
-    assert context.max_active_tool_tasks == 2
+    assert context.concurrency.maximum == 2
+    assert context.concurrency.active == 0
     assert usage.details['alpha_marker'] == 2
     assert usage.details['beta_marker'] == 5
     assert [(event.child, event.sequence) for event in seen if event.child == 'alpha'] == [('alpha', 1), ('alpha', 2)]
@@ -422,7 +398,7 @@ async def test_failed_attempt_effects_are_discarded_and_success_is_applied_once(
             raise ModelRetry('retry once')
         return 'recovered'
 
-    assert await _run_agent(agent, runtime, JsonRecordingTaskContext(), usage=usage) == 'done'
+    assert await run_agent_in_task(agent, runtime, JsonRecordingTaskContext(), usage=usage) == 'done'
 
     assert 'attempt_1' not in usage.details
     assert usage.details['attempt_2'] == 1
@@ -445,7 +421,7 @@ async def test_effects_share_the_successful_operation_result_json_envelope() -> 
         return 'accounted'
 
     context = JsonRecordingTaskContext()
-    assert isinstance(await _run_agent(agent, runtime, context, usage=usage), str)
+    assert isinstance(await run_agent_in_task(agent, runtime, context, usage=usage), str)
     tool_results = [result for name, result in context.results if name.endswith('.call_tool')]
 
     assert len(tool_results) == 1
@@ -468,12 +444,7 @@ async def test_malformed_effects_fail_closed() -> None:
         return 'accounted'
 
     with pytest.raises(ValueError, match='Operation effects must be a JSON object'):
-        await _run_agent(agent, runtime, MalformedEffectsTaskContext(), usage=RunUsage())
-
-
-@pytest.mark.skip(reason='unsupported: the public result contract defines no effects result-size limit')
-def test_effect_result_size_limit_is_unsupported() -> None:
-    """Document the unsupported size-limit row without inventing a policy."""
+        await run_agent_in_task(agent, runtime, MalformedEffectsTaskContext(), usage=RunUsage())
 
 
 async def test_negative_usage_effects_fail_closed_without_mutating_caller_usage() -> None:
@@ -493,7 +464,7 @@ async def test_negative_usage_effects_fail_closed_without_mutating_caller_usage(
         return 'accounted'
 
     with pytest.raises(ValueError, match='Operation effects usage deltas cannot contain negative counts'):
-        await _run_agent(agent, runtime, context, usage=usage)
+        await run_agent_in_task(agent, runtime, context, usage=usage)
 
     assert context.usage_before_effects is not None
     assert usage == context.usage_before_effects
@@ -531,7 +502,7 @@ async def test_immediate_capability_event_fails_before_protected_action() -> Non
         UserError,
         match='Immediate capability events are unsupported inside a Render child task',
     ):
-        await _run_agent(agent, runtime, JsonRecordingTaskContext(), usage=RunUsage())
+        await run_agent_in_task(agent, runtime, JsonRecordingTaskContext(), usage=RunUsage())
 
     assert protected_actions == []
 
@@ -551,7 +522,7 @@ async def test_new_operation_requests_and_results_use_protocol_v2() -> None:
         return 'accounted'
 
     context = JsonRecordingTaskContext()
-    assert isinstance(await _run_agent(agent, runtime, context, usage=RunUsage()), str)
+    assert isinstance(await run_agent_in_task(agent, runtime, context, usage=RunUsage()), str)
 
     request_versions = [request.get('version') for _, request in context.requests]
     result_versions = [result.get('version') for _, result in context.results]
@@ -574,7 +545,7 @@ async def test_new_caller_accepts_effect_free_v1_compatibility_results() -> None
         return 'accounted'
 
     context = V1CompatibilityTaskContext()
-    assert isinstance(await _run_agent(agent, runtime, context, usage=usage), str)
+    assert isinstance(await run_agent_in_task(agent, runtime, context, usage=usage), str)
 
     observed = {
         'new_request_versions': context.new_request_versions,

@@ -12,10 +12,11 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator, Sequence
+from collections.abc import Awaitable, Callable, Generator, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Concatenate, ParamSpec, Protocol, TypeVar, overload
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
@@ -28,14 +29,21 @@ except ModuleNotFoundError as exc:
     _render_spec = None
 
 if TYPE_CHECKING:
-    from render.workflows import TaskContext, TaskDefinition, TaskRunMetadata
+    from render.workflows import Options, Retry, TaskContext, TaskDefinition, TaskRunMetadata, Workflows
+
+    from pydantic_ai import Agent
+    from pydantic_ai.usage import RunUsage
+    from pydantic_ai_harness import RenderWorkflows
 elif _render_spec is None:
     collect_ignore_glob = ['*.py']
+
+    class Workflows:
+        """Placeholder used only while pytest ignores Render-extra tests."""
 
     class TaskContext:
         """Placeholder used only while pytest ignores Render-extra tests."""
 else:
-    from render.workflows import TaskContext, TaskDefinition, TaskRunMetadata
+    from render.workflows import Options, Retry, TaskContext, TaskDefinition, TaskRunMetadata, Workflows
 
 
 def pytest_ignore_collect(collection_path: Path) -> bool:
@@ -45,6 +53,69 @@ def pytest_ignore_collect(collection_path: Path) -> bool:
 
 P = ParamSpec('P')
 R = TypeVar('R')
+
+
+class RecordingTaskDecorator(Protocol):
+    """Typed decorator returned by `RecordingWorkflows.task(...)`."""
+
+    @overload
+    def __call__(self, func: Callable[Concatenate[TaskContext, P], Awaitable[R]], /) -> TaskDefinition[P, R]: ...
+
+    @overload
+    def __call__(self, func: Callable[Concatenate[TaskContext, P], R], /) -> TaskDefinition[P, R]: ...
+
+
+class RecordingWorkflows(Workflows):
+    """Record task names and registration-time Options through the public decorator."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.options: dict[str, Options] = {}
+        self.registered_task_names: list[str] = []
+
+    @overload
+    def task(
+        self,
+        func: Callable[Concatenate[TaskContext, P], Awaitable[R]],
+        /,
+    ) -> TaskDefinition[P, R]: ...
+
+    @overload
+    def task(
+        self,
+        func: Callable[Concatenate[TaskContext, P], R],
+        /,
+    ) -> TaskDefinition[P, R]: ...
+
+    @overload
+    def task(
+        self,
+        *,
+        name: str | None = None,
+        retry: Retry | None = None,
+        timeout_seconds: int | None = None,
+        plan: str | None = None,
+    ) -> RecordingTaskDecorator: ...
+
+    def task(
+        self,
+        func: Callable[..., object] | None = None,
+        *,
+        name: str | None = None,
+        retry: Retry | None = None,
+        timeout_seconds: int | None = None,
+        plan: str | None = None,
+    ) -> object:
+        decorate = super().task(name=name, retry=retry, timeout_seconds=timeout_seconds, plan=plan)
+
+        def record(target: Callable[..., object]) -> TaskDefinition[..., object]:
+            definition = decorate(target)
+            self.registered_task_names.append(definition.name)
+            self.options[definition.name] = Options(retry=retry, timeout_seconds=timeout_seconds, plan=plan)
+            return definition
+
+        return record if func is None else record(func)
+
 
 _RENDER_CREDENTIAL_KEYS = frozenset(
     {
@@ -87,6 +158,47 @@ class RecordingTaskContext(TaskContext):
 def json_round_trip(value: R) -> R:
     """Copy JSON payloads while retaining their outer Python call-container type."""
     return TypeAdapter(type(value)).validate_json(json.dumps(value))
+
+
+async def run_agent_in_task(
+    agent: Agent[None, str],
+    runtime: RenderWorkflows[None],
+    context: TaskContext,
+    *,
+    prompt: str = 'go',
+    usage: RunUsage | None = None,
+    model: str | None = None,
+) -> str:
+    """Run an agent through the public Render entry-task decorator."""
+
+    @runtime.task
+    async def root(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run(prompt, usage=usage, model=model)).output
+
+    pending = root.func(context)
+    assert inspect.isawaitable(pending)
+    return await pending
+
+
+@dataclass
+class ToolTaskConcurrency:
+    """Count overlapping tool tasks, including time spent waiting at test barriers."""
+
+    active: int = 0
+    maximum: int = 0
+
+    @contextmanager
+    def track(self, task_name: str) -> Generator[bool]:
+        is_tool = task_name.endswith('.call_tool')
+        if is_tool:
+            self.active += 1
+            self.maximum = max(self.maximum, self.active)
+        try:
+            yield is_tool
+        finally:
+            if is_tool:
+                self.active -= 1
 
 
 class LocalTask(BaseModel):

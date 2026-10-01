@@ -1,51 +1,14 @@
 from __future__ import annotations
 
-import inspect
-from collections.abc import Callable
-from typing import Any
-
 import pytest
-from render.workflows import Options, Retry, TaskContext, Workflows
+from render.workflows import Options, Retry, Workflows
 
 from pydantic_ai import Agent, FunctionToolset, RunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness import RenderWorkflows
 
-from .conftest import RecordingTaskContext
-
-
-class OptionsRecordingWorkflows(Workflows):
-    def __init__(self) -> None:
-        super().__init__()
-        self.options: dict[str, Options] = {}
-
-    def task(
-        self,
-        func: Callable[..., Any] | None = None,
-        *,
-        name: str | None = None,
-        retry: Retry | None = None,
-        timeout_seconds: int | None = None,
-        plan: str | None = None,
-    ) -> Any:
-        decorator = super().task(
-            name=name,
-            retry=retry,
-            timeout_seconds=timeout_seconds,
-            plan=plan,
-        )
-
-        def record(target: Callable[..., Any]) -> Any:
-            definition = decorator(target)
-            self.options[definition.name] = Options(
-                retry=retry,
-                timeout_seconds=timeout_seconds,
-                plan=plan,
-            )
-            return definition
-
-        return record if func is None else record(func)
+from .conftest import RecordingTaskContext, RecordingWorkflows, run_agent_in_task
 
 
 def build_agent(*, options: Options | None = None) -> tuple[Agent[None, str], RenderWorkflows[None]]:
@@ -60,17 +23,6 @@ def build_agent(*, options: Options | None = None) -> tuple[Agent[None, str], Re
     return agent, runtime
 
 
-async def _run_in_workflow(agent: Agent[None, str], runtime: RenderWorkflows[None], context: TaskContext) -> str:
-    async def run_agent_impl(ctx: TaskContext) -> str:
-        del ctx
-        return (await agent.run('remote')).output
-
-    run_agent = runtime.task(run_agent_impl)
-    pending = run_agent.func(context)
-    assert inspect.isawaitable(pending)
-    return await pending
-
-
 async def test_runs_inline_outside_render_context() -> None:
     agent, runtime = build_agent()
     assert isinstance((await agent.run('inline')).output, str)
@@ -81,7 +33,7 @@ async def test_dispatches_registered_task_and_activates_child_context() -> None:
     agent, runtime = build_agent()
     context = RecordingTaskContext()
 
-    assert isinstance(await _run_in_workflow(agent, runtime, context), str)
+    assert isinstance(await run_agent_in_task(agent, runtime, context), str)
     assert context.task_names == ['support__model.request']
 
 
@@ -107,11 +59,11 @@ async def test_invocation_options_that_differ_from_registration_are_rejected() -
     # Render fixes a task's retry, timeout, and plan when the task is registered, so options
     # resolved later for one tool cannot take effect and are rejected instead of ignored.
     with pytest.raises(UserError, match='fixed when an agent is bound'):
-        await _run_in_workflow(agent, runtime, RecordingTaskContext())
+        await run_agent_in_task(agent, runtime, RecordingTaskContext())
 
 
 async def test_named_toolsets_register_and_use_distinct_options() -> None:
-    app = OptionsRecordingWorkflows()
+    app = RecordingWorkflows()
     fast_options = Options(timeout_seconds=60, plan='starter')
     slow_options = Options(timeout_seconds=300, plan='standard')
     registration_calls: list[tuple[str, object | None, str]] = []
@@ -152,7 +104,7 @@ async def test_named_toolsets_register_and_use_distinct_options() -> None:
     assert app.options['toolset-options__function_toolset__slow-tools.call_tool'] == slow_options
     assert ('fast-tools', None, '') in registration_calls
     assert ('slow-tools', None, '') in registration_calls
-    assert isinstance(await _run_in_workflow(agent, runtime, RecordingTaskContext()), str)
+    assert isinstance(await run_agent_in_task(agent, runtime, RecordingTaskContext()), str)
 
 
 async def test_registered_task_options_are_snapshotted_when_the_agent_is_bound() -> None:
@@ -187,4 +139,4 @@ async def test_registered_task_options_are_snapshotted_when_the_agent_is_bound()
     options.timeout_seconds = 1
 
     with pytest.raises(UserError, match='fixed when an agent is bound'):
-        await _run_in_workflow(agent, runtime, RecordingTaskContext())
+        await run_agent_in_task(agent, runtime, RecordingTaskContext())
