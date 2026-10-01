@@ -10,8 +10,6 @@ def error_message(error: BaseException) -> str:
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         if isinstance(current, CredentialsRefreshError):
-            return (
-                'Could not refresh your Codex login. Run /login openai-codex to sign in again, then retry your message.'
-            )
+            return 'Could not refresh your Codex login. Run /login codex to sign in again, then retry your message.'
         current = current.__cause__ or (None if current.__suppress_context__ else current.__context__)
     return str(error)

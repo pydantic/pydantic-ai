@@ -1,12 +1,13 @@
 """Named API keys and a shared, name-only picker for credential prompts."""
 
-import asyncio
 import json
 import re
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from functools import partial
 from typing import Protocol
 
+from anyio import to_thread
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, TypeAdapter, ValidationError
 from termflow.tui import MenuBuilder, MenuItem
@@ -224,7 +225,7 @@ async def set_api_key(*, args: list[str]) -> str:
     prompt: PromptSession[str] = PromptSession()
     try:
         name = normalize_name(name=await prompt.prompt_async('API key name (automatically uppercased): '))
-        keys = await asyncio.to_thread(load_keys)
+        keys = await to_thread.run_sync(load_keys, abandon_on_cancel=True)
         if name in keys:
             answer = await prompt.prompt_async(f'Replace {name}? [y/N]: ')
             if answer.strip().lower() != 'y':
@@ -232,7 +233,7 @@ async def set_api_key(*, args: list[str]) -> str:
         value = await prompt.prompt_async(f'API key value for {name}: ', is_password=True)
     except (EOFError, KeyboardInterrupt):
         return 'API key entry cancelled.'
-    return await asyncio.to_thread(save_key, name=name, value=value)
+    return await to_thread.run_sync(partial(save_key, name=name, value=value), abandon_on_cancel=True)
 
 
 def build_key_menu(*, names: list[str], label: str, optional: bool) -> Menu:
@@ -271,7 +272,7 @@ def _answer(choice: str | KeyReference | None) -> str:
 
 
 async def _prompt_api_key(*, prompt: SecretPrompt, label: str, optional: bool) -> str | KeyReference | None:
-    keys = await asyncio.to_thread(load_keys)
+    keys = await to_thread.run_sync(load_keys, abandon_on_cancel=True)
     if keys:
         menu = build_key_menu(names=list(keys), label=label, optional=optional)
         result = await run_worker(lambda: menu.run())

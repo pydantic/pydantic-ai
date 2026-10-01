@@ -14,6 +14,7 @@ from dataclasses import field, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeGuard, cast
 
+import anyio
 from opentelemetry.trace import Tracer
 from typing_extensions import TypeVar, assert_never
 
@@ -167,7 +168,7 @@ _AGENT_GRAPH_SLEEP: ContextVar[AgentGraphSleepFunc | None] = ContextVar(
 def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Generator[None]:
     """Set a custom async sleep function for agent graph delays.
 
-    By default, the agent graph uses `asyncio.sleep` when it needs to wait during
+    By default, the agent graph uses `anyio.sleep` when it needs to wait during
     a run. Durable execution frameworks (Temporal, Prefect, DBOS, Restate, etc.)
     should use this context manager to register their own durable sleep so that
     delays survive workflow replays and don't waste activity time.
@@ -192,12 +193,12 @@ def set_agent_graph_sleep(sleep_func: AgentGraphSleepFunc) -> Generator[None]:
 
 
 async def _agent_graph_sleep(delay: float) -> None:
-    """Sleep using the registered agent graph sleep function, or asyncio.sleep."""
+    """Sleep using the registered agent graph sleep function, or anyio.sleep."""
     sleep_func = _AGENT_GRAPH_SLEEP.get()
     if sleep_func is not None:
         await sleep_func(delay)
     else:
-        await asyncio.sleep(delay)
+        await anyio.sleep(max(delay, 0))
 
 
 DepsT = TypeVar('DepsT')
@@ -489,8 +490,8 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     cancellation: RunCancellation = dataclasses.field(default_factory=RunCancellation, repr=False)
     """The run's first-party cancellation controller. Runtime-only: holds a live task reference."""
 
-    pending_immediate_dispatches: dict[int, list[asyncio.Event]] = dataclasses.field(
-        default_factory=dict[int, list[asyncio.Event]], repr=False
+    pending_immediate_dispatches: dict[int, list[anyio.Event]] = dataclasses.field(
+        default_factory=dict[int, list[anyio.Event]], repr=False
     )
     """Settlement signals for buffered events dispatched immediately, keyed by `id(event)`.
 
@@ -1351,8 +1352,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # 3. This coroutine waits for stream_ready (or early task completion), yields the stream
         #    to the caller, and sets stream_done when the caller is finished consuming it.
         # 4. The handler resumes, the stream context manager closes, and the task completes.
-        stream_ready = asyncio.Event()
-        stream_done = asyncio.Event()
+        stream_ready = anyio.Event()
+        stream_done = anyio.Event()
         agent_stream_holder: list[result.AgentStream[DepsT, T]] = []
 
         _handler_response: _messages.ModelResponse | None = None
