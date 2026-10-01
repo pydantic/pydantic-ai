@@ -635,11 +635,13 @@ class _JsonSchemaTestData:
         """Generate an array from a JSON Schema array."""
         data: list[Any] = []
         unique_items = schema.get('uniqueItems')
+        max_items = schema.get('maxItems')
         prefix_items: list[dict[str, Any]] | None = schema.get('prefixItems')
         items_schema: dict[str, Any] | list[dict[str, Any]] = schema.get('items', {})
         if isinstance(items_schema, list):
             # Drafts before 2020-12 spell a tuple as an `items` list; 2020-12 replaced it with `prefixItems`.
-            prefix_items, items_schema = prefix_items or items_schema[: schema.get('maxItems')], {}
+            tuple_items = [item for index, item in enumerate(items_schema) if max_items is None or max_items > index]
+            prefix_items, items_schema = prefix_items or tuple_items, {}
         if prefix_items:
             for item in prefix_items:
                 data.append(self._gen_any(item))
@@ -654,7 +656,6 @@ class _JsonSchemaTestData:
                     self.seed += 1
         elif items_schema:
             # if there is an `items` schema, add an item unless it would break `maxItems` rule
-            max_items = schema.get('maxItems')
             if max_items is None or max_items > len(data):
                 data.append(self._gen_any(items_schema))
                 if unique_items:
