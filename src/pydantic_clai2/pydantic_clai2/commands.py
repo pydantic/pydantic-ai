@@ -17,7 +17,7 @@ from termflow.tui.completion import (
 from pydantic_ai.models import known_model_names
 from pydantic_clai2.config import SETTING_FIELDS, STRING_SETTINGS, PluginSettings
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
-from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_id
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering.spinners import BUILTIN_SPINNERS
 from pydantic_clai2.ui.rendering.theme import names as theme_names
@@ -252,6 +252,8 @@ def added_plugin(args: list[str]) -> PluginSettings:
 
 def plugins_command(store: SettingsStore, args: list[str]) -> str:
     """Manage explicit plugin declarations without importing plugins."""
+    if len(args) > 1:
+        args = [args[0], canonical_plugin_id(args[1]), *args[2:]]
     declarations = store.plugins()
     if not args or args == ['list']:
         return (

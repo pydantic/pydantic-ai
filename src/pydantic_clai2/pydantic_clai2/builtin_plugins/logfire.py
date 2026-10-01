@@ -1,4 +1,4 @@
-"""Default-enabled Logfire instrumentation, owned by the plugin rather than the process.
+"""The default-enabled `observability` plugin: Logfire instrumentation owned by the plugin, not the process.
 
 With `ui_events` on, the same instance also records CLAI's UI interactions (see `pydantic_clai2.ui.telemetry`).
 With `token` naming a `/keys` entry, everything goes to that key's Logfire project, such as one a team shares.
@@ -145,7 +145,7 @@ def _destination(
     if config.token.name not in keys:
         host.console.print(
             f'Logfire is not sending telemetry: {config.token.name} is not in /keys. Save it there, then run '
-            '/plugins reload logfire.',
+            '/plugins reload observability.',
             style=theme.color(theme.WARNING),
             markup=False,
         )

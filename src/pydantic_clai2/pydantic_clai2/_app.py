@@ -106,7 +106,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
     PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
-    PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire'),
+    PluginSettings(id='observability', factory='pydantic_clai2.builtin_plugins.logfire'),
     PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
     PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),

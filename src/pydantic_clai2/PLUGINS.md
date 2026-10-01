@@ -322,9 +322,9 @@ no notification-specific telemetry.
 to restore the built-in default. Normal plugin unloading discards its handlers;
 there are no background workers to stop.
 
-## Logfire: default agent tracing
+## Observability: default agent tracing
 
-The built-in `logfire` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
+The built-in `observability` plugin (`pydantic_clai2.builtin_plugins.logfire`) is enabled by default in
 the stock CLI. It registers Pydantic AI's `Instrumentation` capability with an
 isolated Logfire instance, not process-wide instrumentation or custom tracing
 hooks. Agent/model/tool spans include timing, token usage, failures, text content,
@@ -342,11 +342,17 @@ telemetry destination through its own files. Without credentials the default
 `if-token-present` mode does not export to Logfire or start interactive setup. Console logging is disabled. Other SDK configuration,
 such as explicit OTLP exporters, still applies.
 
-Manage it with `/plugins disable logfire`, `/plugins enable logfire`, or
-`/plugins reload logfire`. To change its defaults:
+Previously named `logfire`, this plugin keeps existing enabled/disabled choices,
+settings, and saved token references. No reconfiguration is needed. Old commands
+and project or drop-in declarations using `logfire` refer to the same plugin,
+not a second tracing instance. If both names were saved, the `observability`
+declaration takes precedence; edits and removal apply to that one shared entry.
+
+Manage it with `/plugins disable observability`, `/plugins enable observability`, or
+`/plugins reload observability`. To change its defaults:
 
 ```text
-/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
 Options are `service_name` (default `pydantic-clai2`), `include_content` and
@@ -361,7 +367,7 @@ Content flags do not suppress all metadata: tool names and definitions may still
 be recorded. Logfire's usual scrubbing is enabled.
 
 `base_url` (an https origin) is the Logfire to send to; unset, the SDK uses
-`LOGFIRE_BASE_URL`, else the region the token names. `/plugins configure logfire`
+`LOGFIRE_BASE_URL`, else the region the token names. `/plugins configure observability`
 sets `token`, `base_url`, and `send_to_logfire` for you: it asks
 where traces go, runs Logfire's own device sign-in there (the one behind
 `logfire auth`, not `logfire_mcp`'s MCP OAuth, whose tokens only the MCP server
@@ -612,8 +618,8 @@ and each run fails with that message instead of reaching Logfire.
 
 The label is `LOGFIRE_API_KEY`, the variable `LogfireMCP` reads, and not
 `LOGFIRE_TOKEN`. `LOGFIRE_TOKEN` is the write token the
-[`logfire` plugin](#logfire-default-agent-tracing) sends traces with, and it
-cannot query the MCP server. The `logfire` plugin keeps reading it from the
+[`observability` plugin](#observability-default-agent-tracing) sends traces with, and it
+cannot query the MCP server. The `observability` plugin keeps reading it from the
 environment or the Logfire SDK's credential file.
 
 The same settings can be given as JSON, which is validated the same way:

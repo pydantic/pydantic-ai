@@ -211,6 +211,20 @@ def test_store_keeps_tags_beside_declarations(tmp_path: Path) -> None:
     assert tags(store, 'p') is None and store.plugins() == []
 
 
+def test_renamed_plugin_tags_follow_its_stored_id(tmp_path: Path) -> None:
+    """`observability` is stored as `logfire` for older builds; its tags live under the same ID."""
+    store = SettingsStore(tmp_path / 'config.db')
+    plugin = PluginSettings(id='observability', factory='p', settings={'mode': 'fancy'})
+    store.save_plugin(plugin, requires={'mode': frozenset({'fancy-mode'})})
+    assert tags(store, 'observability') == tags(store, 'logfire') == {'mode': ['fancy-mode']}
+    with closing(sqlite3.connect(store.path)) as connection:
+        assert [row[0] for row in connection.execute('SELECT id FROM plugin_requirements')] == ['logfire']
+    store.save_plugin(plugin.model_copy(update={'enabled': False}))
+    assert tags(store, 'observability') == {'mode': ['fancy-mode']}
+    store.delete_plugin('observability')
+    assert tags(store, 'logfire') is None
+
+
 def test_unreadable_and_stale_rows(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
     save_raw(store, 'p', '{"id": "p", "factory": "p", "settings": {"mode": "fancy"}}', 'not json')
