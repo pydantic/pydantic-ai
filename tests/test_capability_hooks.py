@@ -441,6 +441,18 @@ class TestModelRequestHooks:
         assert result.usage.output_tokens == 5
         assert [part.content for part in result.all_messages()[-1].parts if isinstance(part, TextPart)] == ['recovered']
 
+    async def test_failed_model_request_counts_as_a_request(self):
+        """`RunUsage.requests` counts requests made to the model, including ones that fail."""
+
+        def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('provider failed')
+
+        usage = RunUsage()
+        with pytest.raises(RuntimeError, match='provider failed'):
+            await Agent(FunctionModel(model_function)).run('hello', usage=usage)
+
+        assert usage.requests == 1
+
     async def test_usage_ledger_is_shared_with_replaced_request_context(self):
         observed_responses: list[ModelResponse] = []
 
