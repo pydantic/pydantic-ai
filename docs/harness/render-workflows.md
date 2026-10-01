@@ -1,6 +1,6 @@
 ---
-title: Run AI agents in the background with retries and timeouts
-description: Run long-running LLM tasks outside HTTP requests, retry failed tool calls, and check background job status with Pydantic AI and Render Workflows.
+title: Render Workflows
+description: Run agents in the background with separate retry, timeout, and compute settings for model requests and tools.
 ---
 
 # Render Workflows
@@ -9,6 +9,9 @@ Run long-running AI agents in the background with separate retries, timeouts, an
 and tool calls. The [Render Workflows](https://render.com/docs/workflows) integration runs the agent loop in an entry
 task and supported operations as child tasks, each with its own status, logs, and result. For example, a tool that
 processes a large document can have a longer timeout than the model calls around it.
+
+The integration does not checkpoint agent progress: an entry-task retry starts the agent again and can repeat
+completed model requests and tool calls. Use it when your application can handle repeated work.
 
 If you only need background execution, a native Render task around `agent.run(...)` may be enough.
 
@@ -26,24 +29,6 @@ You need Python 3.10 or later. Install the [Render CLI](https://render.com/docs/
 ## 1. Install dependencies
 
 In a new directory, initialize a project with [uv](https://docs.astral.sh/uv/) using `uv init --bare`; for an existing uv project, run the installation command directly. If you use pip, first create and activate a virtual environment.
-
-Until a Harness release includes this integration, install from a Pydantic AI repository checkout containing it.
-Replace `/path/to/pydantic-ai` with the checkout's absolute path. Install Graph, core, and Harness together so their
-versions match. The uv command uses editable installs to match the monorepo's workspace dependencies:
-
-uv:
-
-```bash
-uv add --editable "/path/to/pydantic-ai/pydantic_graph" "/path/to/pydantic-ai/pydantic_ai_slim" "/path/to/pydantic-ai/src/pydantic_ai_harness[render]"
-```
-
-pip:
-
-```bash
-pip install "/path/to/pydantic-ai/pydantic_graph" "/path/to/pydantic-ai/pydantic_ai_slim" "/path/to/pydantic-ai/src/pydantic_ai_harness[render]"
-```
-
-For a published Harness release that includes the integration, use this command instead of the checkout install:
 
 ```bash
 pip/uv-add "pydantic-ai-harness[render]"
