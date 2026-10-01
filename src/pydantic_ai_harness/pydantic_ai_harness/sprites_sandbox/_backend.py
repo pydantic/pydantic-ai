@@ -368,9 +368,10 @@ def _map_error(error: Exception, sprite_name: str | None) -> WorkspaceError | No
     return WorkspaceError(f'Sprites refused the request: {error}')
 
 
-async def _check_sigkill_sprite(sprite: AsyncSprite) -> None:
-    # A user's SIGKILL also exits 137; only a control-plane 404 proves the Sprite died.
-    # A stalled or failing lookup must not replace the command's real result.
+async def _check_sprite_deleted(sprite: AsyncSprite) -> None:
+    # A Sprite deleted mid-command can still report a normal exit, and a user's SIGKILL also exits
+    # 137; only a control-plane 404 proves the Sprite died. A stalled or failing lookup must not
+    # replace the command's real result.
     try:
         with anyio.fail_after(2):
             await sprite.client.get_sprite(sprite.name)
@@ -738,8 +739,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
             # Exec in a missing `dir` exits 1 with a `chdir` message on stdout before the wrapper
             # runs (observed 2026-09-28), which a command's own output could imitate; confirm it.
             await self._check_working_dir(sandbox, directory, result, timeout=timeout, deadline=deadline.deadline)
-        if code == 137:
-            await _check_sigkill_sprite(sandbox)
+        await _check_sprite_deleted(sandbox)
         return result
 
     async def _check_working_dir(
