@@ -295,6 +295,35 @@ pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
+## Updating
+
+Install with `uv tool install pydantic-clai2` and CLAI can update itself.
+`updates.channel` picks where it looks:
+
+- `stable` (default): the newest release on PyPI.
+- `bleeding`: the newest commit on `main` that changes CLAI. It downloads that
+  commit's source over HTTPS and installs CLAI, harness, and core from it, so it
+  needs no release and no `git`. These builds report version `0.0.0+<commit>`.
+
+```text
+/set updates.channel bleeding
+/update
+```
+
+When a newer build exists, the status row shows `update <version or commit>: /update`.
+CLAI checks once at startup and again when you change the channel, and only for
+`uv tool` installs. Offline, it shows nothing. `/update` runs `uv tool install --force`,
+shows uv's output, then exits; start `clai2` again to use the new build. Switching
+back to `stable` offers the latest release.
+
+Windows does not let a program replace files it is running from, so there
+`/update` exits first and installs in a new PowerShell window; start `clai2`
+again when that window reports success.
+
+The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
+again afterwards. Without uv on `PATH`, or outside a `uv tool` install, `/update`
+prints the command to run yourself, in PowerShell syntax on Windows.
+
 ## Your own agent
 
 ```bash
@@ -757,7 +786,7 @@ every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
 Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/add_model`, `/model_settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
+`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
 matching applies to the filename within the typed directory. Path completion inserts

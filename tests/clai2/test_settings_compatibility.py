@@ -39,6 +39,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().speculative_code_mode is False
     # Databases from before `/spinner` keep the braille they always showed.
     assert store.load().spinner == 'working'
+    # Databases from before `/update` follow stable releases.
+    assert store.load().update_channel == 'stable'
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []
