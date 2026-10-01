@@ -17,6 +17,7 @@ from ..._inline_snapshot import snapshot
 from ...conftest import RequestCapture, try_import
 
 with try_import() as imports_successful:
+    from pydantic_ai.models import ModelRequestParameters
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -85,3 +86,13 @@ def test_google_image_generation_tool_follows_supports_image_output(
     """
     model = GoogleModel(model_name, provider=GoogleProvider(api_key=gemini_api_key), profile=profile)
     assert (ImageGenerationTool in model.profile.get('supported_native_tools', frozenset())) is supports_native
+
+
+def test_google_optional_image_generation_tool_dropped_on_text_model(gemini_api_key: str):
+    """An optional `ImageGenerationTool` on a text model is dropped instead of raising.
+
+    Not a VCR test: the tool is resolved in `prepare_request`, before any request is built.
+    """
+    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    _, params = model.prepare_request(None, ModelRequestParameters(native_tools=[ImageGenerationTool(optional=True)]))
+    assert params.native_tools == []
