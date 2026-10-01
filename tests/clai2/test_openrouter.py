@@ -13,7 +13,8 @@ from tests.clai2.menu_script import make_context
 
 
 @pytest.mark.parametrize('token', ['test-secret'])
-async def test_discovery(token: str) -> None:
+@pytest.mark.parametrize('anyio_backend', ['asyncio', 'trio'])
+async def test_discovery(token: str, anyio_backend: str) -> None:
     def response(request: httpx.Request) -> httpx.Response:
         assert str(request.url) in ('https://openrouter.ai/api/v1/models', 'https://openrouter.ai/api/v1/key')
         assert request.headers.get('authorization') == (f'Bearer {token}' if token else None)
