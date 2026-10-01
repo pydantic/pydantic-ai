@@ -319,7 +319,9 @@ def test_voice_live_noise_reduction(model_name: str, settings: dict[str, Any], e
     'echo_cancellation,expected', [(True, {'type': 'server_echo_cancellation'}), (False, None), (None, None)]
 )
 def test_voice_live_echo_cancellation(echo_cancellation: bool | None, expected: dict[str, str] | None) -> None:
-    settings = {} if echo_cancellation is None else {'azure_voice_live_echo_cancellation': echo_cancellation}
+    settings: dict[str, Any] = (
+        {} if echo_cancellation is None else {'azure_voice_live_echo_cancellation': echo_cancellation}
+    )
     assert _voice_live_config('gpt-realtime', **settings).get('input_audio_echo_cancellation') == expected
 
 
