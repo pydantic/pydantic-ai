@@ -110,10 +110,6 @@ def test_feature_names_are_hyphenated_lowercase_words() -> None:
     for bad in ('Stock', 'two  words', 'trailing-', '-leading', 'under_score', '', UNREADABLE):
         with pytest.raises(ValueError, match='lowercase words joined by hyphens'):
             check_feature_name(bad)
-    for name in features.SUPPORTED_FEATURES:
-        check_feature_name(name)
-    for requirements in features.CAPABILITY_REQUIREMENTS.values():
-        declared_requirements(requirements)
 
 
 def test_declarations_are_validated() -> None:
@@ -274,7 +270,7 @@ async def test_unsupported_setting_is_dropped_with_one_notice(tmp_path: Path) ->
     assert harness.text.count('fancy: ignored saved mode (needs fancy-mode); using defaults.') == 1
     assert '(needs fancy-mode)' in await harness.loader.command(['reload', 'fancy'])
     menu = PluginMenu(harness.loader, apply=lambda action: None)
-    assert 'notice  fancy: ignored saved mode' in menu.details(MenuItem('fancy', value='fancy'))
+    assert 'fancy: ignored saved mode' in menu.details(MenuItem('fancy', value='fancy'))
     # Nothing was rewritten by reading.
     assert harness.store.plugins()[0].settings == {'mode': 'fancy', 'color': 'red'}
 

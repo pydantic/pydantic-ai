@@ -1429,19 +1429,25 @@ for `/agent` and `/mcp`:
 ```text
  Plugins
 
- [x] coder         pydantic_ai_harness.coder:Coder   | coder
- [x] notify        ~/.config/pydantic-clai2/plugins  | source  ~/.config/.../notify.py
- [ ] audit         my_package.audit                  | state   enabled, loaded
-                                                     | adds    2 commands, 1 hook, 0 tools
-                                                     | error   none
- Save & close
+ > ● coder    on      built-in   │ coder
+   ● notify   on      drop-in    │ on · built-in
+   ○ audit    off     installed  │
+   ○ broken   failed  drop-in    │ source   pydantic_clai2.builtin_plugins.coder
+   Save & close                  │ provides 1 capability
+                                 │ settings press c to configure
 
- Up/Down move - Space enable/disable - C configure - R reload - D remove - Enter/Q close
+ ↑/↓ move · space on/off · c configure · r reload · d remove · enter/q close
 ```
 
-The left side lists every plugin with `[x]` for on and `[ ]` for off. The right
-side shows details for the highlighted one: where it came from, whether it
-loaded, what it registered, and the last error if loading failed. Every key
+The left side lists every plugin with `●` for on and `○` for off, a coloured
+status (`on`, `off`, `failed`, or `idle` when enabled but not loaded yet), and
+where it came from (`built-in`, `project`, `drop-in`, or `installed`). The
+colours follow your `/theme`. The right side shows details for the highlighted
+one: a description, its source, what it registered, whether it has a settings
+menu, and the last error if loading failed. The description is the first
+paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
+the module's. CLAI reads it from the source file without importing it, so a
+plugin that is off runs no code to describe itself. Every key
 acts immediately; there is no pending save step, so the **Save & close** row,
 Enter, Q, Esc, and Ctrl-C all just close.
 

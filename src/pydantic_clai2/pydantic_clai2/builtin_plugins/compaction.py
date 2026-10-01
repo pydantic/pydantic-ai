@@ -1,4 +1,6 @@
-"""The built-in `compaction` plugin: Code Puppy's compaction chain from harness, `/compact`, and a context gauge.
+"""Keep long conversations inside the context window by summarizing older messages; adds /compact.
+
+The built-in `compaction` plugin: Code Puppy's compaction chain from harness, `/compact`, and a context gauge.
 
 The chain is `FallbackCompaction` over `SummarizingCompaction` then `SlidingWindowCompaction`, so a
 failed or over-budget summary degrades to truncation. `compact_now` drives the chain for `/compact`.
