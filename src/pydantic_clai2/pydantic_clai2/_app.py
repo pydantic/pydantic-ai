@@ -56,6 +56,7 @@ from pydantic_clai2.plugins import (
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.reloading import reload_clai
 from pydantic_clai2.runtime.session_settings import SessionSettings
@@ -598,14 +599,19 @@ class _Shell(Generic[DepsT, OutputT]):
             fire=self.loader.fire,
             models=self.context.store.models,
         )
+        self.session.on_setup_error = self.capability_failed
 
     def run_plugins(self) -> tuple[AgentCapability[DepsT], ...]:
-        """Capabilities bound to the next run: supplied, plugin-registered, then speculation.
+        """Capabilities bound to the next run: supplied, plugin-registered (guarded), then speculation.
 
-        Speculation sees the others, so its sandbox mount stays within their `FileSystem`.
+        Speculation sees the others unguarded, so its sandbox mount stays within their `FileSystem`.
         """
         granted = (*self.plugins, *self.loader.capabilities())
-        return (*granted, *self.speculation.capabilities(granted))
+        return (*self.plugins, *self.loader.run_capabilities(), *self.speculation.capabilities(granted))
+
+    def capability_failed(self, error: CapabilitySetupError) -> None:
+        """Report a plugin capability that rejected its settings, once: later runs leave it out."""
+        self.console.print(self.loader.suspend(error), style=theme.color(theme.WARNING), markup=False)
 
     def fork_session(self, model: str | None, history: Sequence[ModelMessage]) -> Session[DepsT, OutputT]:
         """A separately saved session configured like the foreground one, seeded with `history`."""

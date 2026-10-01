@@ -1,7 +1,7 @@
 """Everything a plugin can register, recorded on one host per plugin."""
 
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Generic, Literal, Protocol, TypeVar, get_args, overload
@@ -54,6 +54,7 @@ from pydantic_ai.providers import infer_provider_class
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import Settings
+from pydantic_clai2.config.plugin_requirements import Requirements, declared_requirements
 from pydantic_clai2.models import CLAI_PROVIDERS, LOGIN_ALIASES, LOGINS
 from pydantic_clai2.ui.rendering.spinners import Spinner, make_spinner
 from pydantic_clai2.ui.rendering.status import Status, StatusSegment
@@ -290,11 +291,13 @@ class PluginHost(Generic[DepsT]):
         conversation: Conversation | None = None,
         status: Status | None = None,
         save_settings: Callable[[dict[str, JsonValue]], None] = lambda _settings: None,
+        requirements: Requirements | None = None,
     ) -> None:
         """`settings` is the raw JSON from `plugins add`; validate it with `settings(Model)`.
 
         `persist` writes changed settings back to the plugin's declaration; without it they
-        last until the plugin unloads.
+        last until the plugin unloads. `requirements` are the feature tags the loader knows for a
+        capability class, which cannot call `settings(Model, requires=...)` itself.
 
         The shell passes its own `conversation` and `status`; a host built elsewhere gets a
         `Transcript` and a detached status row, so a plugin needs no special case for either.
@@ -313,6 +316,7 @@ class PluginHost(Generic[DepsT]):
         self.commands = Commands()
         self._settings = settings
         self._persist = save_settings
+        self._requirements: Requirements = dict(requirements or {})
         self._configurer: Callable[[], Awaitable[str]] | None = None
         self._hooks: Hooks[DepsT] = Hooks()
         self._hooks_used = False
@@ -367,8 +371,28 @@ class PluginHost(Generic[DepsT]):
             f'{len(self._segments)} status segments'
         )
 
-    def settings(self, model: type[ModelT], /) -> ModelT:
-        """Validate the JSON given to `plugins add` against the plugin's own model."""
+    @property
+    def requirements(self) -> Requirements:
+        """Feature names each setting key needs, as declared with `settings(Model, requires=...)`."""
+        return dict(self._requirements)
+
+    def settings(self, model: type[ModelT], /, *, requires: Mapping[str, Iterable[str]] | None = None) -> ModelT:
+        """Validate the JSON given to `plugins add` against the plugin's own model.
+
+        `requires` names the features a setting's saved value depends on, such as
+        `{'sub_agents': ['stock-bound-delegation']}`. CLAI stores the tags beside the declaration
+        whenever the settings are saved, and a build missing a feature ignores that setting and uses
+        its default. Keys are the saved names (aliases included); see `PLUGINS.md`.
+        """
+        if requires is not None:
+            declared = declared_requirements(requires)
+            known = {name for key, info in model.model_fields.items() for name in (key, info.alias) if name}
+            unknown = declared.keys() - known
+            if unknown:
+                raise ValueError(
+                    f'{model.__name__} has no setting {", ".join(sorted(unknown))} to require features for.'
+                )
+            self._requirements = declared
         return model.model_validate(self._settings)
 
     def save_settings(self, settings: BaseModel, /) -> None:

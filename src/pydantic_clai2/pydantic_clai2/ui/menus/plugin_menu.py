@@ -66,6 +66,8 @@ class PluginMenu(Generic[DepsT]):
             f'adds    {entry.host.summary() if entry.host else "-"}',
             f'error   {entry.error or "none"}',
         ]
+        if entry.ignored:
+            lines.append(f'notice  {entry.ignored}')
         if self.notice:
             lines.append(f'notice  {self.notice}')
         return '\n'.join(lines)

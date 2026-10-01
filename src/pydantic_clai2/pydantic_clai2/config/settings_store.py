@@ -6,9 +6,10 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from pydantic_clai2.config import SETTING_FIELDS, PluginSettings, Settings, resolve_settings
+from pydantic_clai2.config.plugin_requirements import Requirements, merged_requirements
 
 _JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _JSON_OBJECT: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(dict[str, JsonValue])
@@ -36,6 +37,12 @@ class SettingsStore:
                 'CREATE TABLE IF NOT EXISTS model_settings (model TEXT PRIMARY KEY, settings_json TEXT NOT NULL)'
             )
             connection.execute('CREATE TABLE IF NOT EXISTS models (name TEXT PRIMARY KEY)')
+            # Requirement tags sit beside `plugins`, never inside a declaration: older builds validate
+            # declarations strictly and never look at this table. It needs no schema version bump,
+            # which those builds would refuse.
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS plugin_requirements (id TEXT PRIMARY KEY, requirements_json TEXT NOT NULL)'
+            )
             connection.execute('PRAGMA user_version = 1')
 
     @contextmanager
@@ -97,18 +104,60 @@ class SettingsStore:
                 for row in connection.execute('SELECT declaration FROM plugins ORDER BY id')
             ]
 
-    def save_plugin(self, plugin: PluginSettings) -> None:
-        """Persist an explicitly trusted plugin declaration."""
+    def plugin_requirements(self, plugin_id: str) -> JsonValue | None:
+        """The stored requirement tags for a plugin's settings, as saved; `None` when it has none.
+
+        Text that is not JSON comes back as a string, which `stored_requirements` treats as unreadable.
+        """
         with self._connect() as connection:
+            return self._requirements_row(connection, plugin_id)
+
+    def save_plugin(self, plugin: PluginSettings, *, requires: Requirements | None = None) -> None:
+        """Persist an explicitly trusted plugin declaration with the writer's requirement tags.
+
+        `requires` is what the plugin declares for its settings. Stored tags on values left unchanged
+        are kept, so saving never strips a tag another build attached. Both rows change in one transaction.
+        """
+        with self._connect() as connection:
+            old = connection.execute('SELECT declaration FROM plugins WHERE id = ?', (plugin.id,)).fetchone()
+            # Tags without a declaration were left by a build that deleted it without knowing this table.
+            old_row = self._requirements_row(connection, plugin.id) if old is not None else None
+            row = merged_requirements(
+                old_settings=_saved_settings(old[0]) if old is not None else {},
+                old_row=old_row,
+                new_settings=plugin.settings,
+                declared=requires or {},
+            )
             connection.execute(
                 'INSERT INTO plugins VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET declaration = excluded.declaration',
                 (plugin.id, plugin.model_dump_json()),
             )
+            if row:
+                connection.execute(
+                    'INSERT INTO plugin_requirements VALUES (?, ?) '
+                    'ON CONFLICT(id) DO UPDATE SET requirements_json = excluded.requirements_json',
+                    (plugin.id, _JSON_OBJECT.dump_json(row).decode()),
+                )
+            else:
+                connection.execute('DELETE FROM plugin_requirements WHERE id = ?', (plugin.id,))
+
+    @staticmethod
+    def _requirements_row(connection: sqlite3.Connection, plugin_id: str) -> JsonValue | None:
+        row = connection.execute(
+            'SELECT requirements_json FROM plugin_requirements WHERE id = ?', (plugin_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return _JSON.validate_json(row[0])
+        except ValidationError:
+            return row[0]
 
     def delete_plugin(self, plugin_id: str) -> None:
-        """Forget a declaration; a plugin file in the plugins folder is not deleted."""
+        """Forget a declaration and its requirement tags; a plugin file in the plugins folder is not deleted."""
         with self._connect() as connection:
             connection.execute('DELETE FROM plugins WHERE id = ?', (plugin_id,))
+            connection.execute('DELETE FROM plugin_requirements WHERE id = ?', (plugin_id,))
 
     def model_settings(self, model: str) -> dict[str, JsonValue]:
         """Saved overrides for one model; empty when none."""
@@ -132,3 +181,12 @@ class SettingsStore:
     def plugins_dir(self) -> Path:
         """Folder scanned for drop-in plugins, next to the settings database."""
         return self.path.parent / 'plugins'
+
+
+def _saved_settings(declaration: str) -> dict[str, JsonValue]:
+    """A stored declaration's `settings`, read leniently: the row may come from another build."""
+    try:
+        settings = _JSON_OBJECT.validate_json(declaration).get('settings')
+    except ValidationError:
+        return {}
+    return settings if isinstance(settings, dict) else {}

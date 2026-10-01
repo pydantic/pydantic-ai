@@ -755,7 +755,10 @@ Keep `"repo_context": false` on a replacement `coder`: `Coder` bundles its own
 would reach the model twice. CLAI adds `"sub_agents": false` to any `Coder`
 declaration that does not set it: `Coder`'s delegation runs the agent again,
 which only brings along what is bound to the agent, and CLAI passes its plugins
-to each run instead, so `Coder` refuses to start with delegation on.
+to each run instead, so `Coder` refuses to start with delegation on. If another
+build saved `"sub_agents": true` with a feature tag this build lacks, CLAI uses the
+built-in `false` and says so; see
+[Settings that need a feature](#settings-that-need-a-feature-hostsettingsmodel-requires).
 
 `repo_context` wraps harness `RepoContext` with the launch directory as the
 workspace and its default filenames. Its settings:
@@ -1775,6 +1778,47 @@ plugin command, without a reload. `google_workspace` is a worked example.
 CLAI ignores unknown names in its own saved settings and preserves their values for
 other versions or branches. This does not relax validation of plugin declarations
 or `host.settings(Model)`.
+
+### Settings that need a feature: `host.settings(Model, requires=...)`
+
+Every CLAI on a machine shares one settings database, whatever code it runs: other
+worktrees, branches, and installs. When a setting's valid values or meaning depend
+on code that other builds may lack, tag it with the feature it needs:
+
+```python
+settings = host.settings(Options, requires={'mode': ['fancy-mode']})
+```
+
+The contract:
+
+- **Feature names** are lowercase words joined by hyphens, such as
+  `stock-bound-delegation`. A build lists the ones it supports in
+  `SUPPORTED_FEATURES` (`pydantic_clai2/config/features.py`). Never rename or reuse one.
+- **Keys** are the saved names, aliases included. An unknown key or a badly formed
+  name raises `ValueError` at activation.
+- **Writers attach tags for you.** `host.save_settings`, `/plugins add`,
+  `/plugins enable` and `disable`, and the settings menus store them beside the
+  declaration, in their own table. Your settings JSON never holds them.
+- **A build that lacks a feature, or does not know its name, ignores that one
+  setting.** It uses the built-in declaration's value, or your model's default,
+  keeps your other settings, and prints one line per plugin:
+  `coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.`
+  Reading never rewrites the database, and saving from that build keeps the
+  ignored value and its tag. A tag goes away only when its value changes.
+- **Tag only settings whose default is the safe choice.** Dropping a value means
+  using the default, so a default must never be looser than what it replaces.
+- **Builds older than tags ignore them** and apply every setting as before.
+  Tags cannot protect those builds.
+
+A capability class declared as `module:Class` has no `activate`; CLAI lists its
+tags in `CAPABILITY_REQUIREMENTS`, keyed by that factory string.
+`clai2 plugins add` from the command line imports nothing, so it attaches only
+those; a plugin's own tags are attached the next time it saves or is enabled.
+
+If an untagged setting still makes a capability raise `UserError` while a run is
+set up, CLAI names the plugin once, leaves that capability out, and finishes the
+turn; `/plugins reload NAME` brings it back. Errors from the model, from tools, or
+from a raising `host.on` handler still fail the turn as before.
 
 ### Keep secrets in `/keys`: `KeyReference`, `SavedKey`, `host.save_settings`
 

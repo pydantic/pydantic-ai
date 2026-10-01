@@ -252,6 +252,9 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
+| `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
+| `config/plugin_requirements.py` | pure rules for requirement tags: parse stored rows, drop unsupported settings, merge tags on save, the notice |
+| `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`, so the turn runs without it |
 | `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
 | `builtin_plugins/repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
@@ -306,6 +309,15 @@ switches. Different versions can share the same settings database.
   the current `Settings()` defaults will not catch an unintended default change.
 - Verify rejected values and unsupported schema versions leave stored data intact.
   If a change introduces a migration, test failure rollback as well as success.
+- When a plugin setting's valid values or meaning depend on code other builds may
+  lack, add a feature name to `SUPPORTED_FEATURES` in `config/features.py` and tag
+  the setting (`host.settings(Model, requires=...)`, or `CAPABILITY_REQUIREMENTS`
+  for a `module:Class` capability). Tags live in the `plugin_requirements` table;
+  never add a field to `PluginSettings`, a key to its `settings`, or bump
+  `user_version`, since older builds reject all three. A build lacking a feature
+  drops only that setting and uses the default. Run setup `UserError`s are caught
+  only by `PluginGuard` around `host.add` capabilities; `Hooks` stay unguarded so
+  handlers still fail closed. See "Settings that need a feature" in `customization.md`.
 
 ## Local verification
 
