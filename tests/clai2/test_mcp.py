@@ -20,25 +20,24 @@ from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import (
     HTTPServer,
+    MCPPlugin,
     MCPServers,
     MCPSettings,
     MCPStore,
     SSEServer,
     StdioServer,
-    activate,
     http_client,
 )
-from pydantic_clai2.plugin_loader import PluginLoader
-from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins import LoadedPlugin, PluginHost, SessionEnd, SessionStart, collect
+from pydantic_clai2.plugins.loader import PluginLoader
 
 
-def make_host(settings: dict[str, JsonValue], store: MCPStore | None = None) -> PluginHost[None]:
+def make_plugin(settings: dict[str, JsonValue], store: MCPStore | None = None) -> LoadedPlugin[None]:
     host: PluginHost[None] = PluginHost(name='mcp', console=Console(file=io.StringIO()), settings=settings)
-    activate(host, store=store)
-    return host
+    return collect(MCPPlugin(host, host.settings(MCPSettings), store=store))
 
 
 def write_server(tmp_path: Path, *, with_tool: bool = True) -> tuple[Path, Path]:
@@ -87,13 +86,13 @@ async def test_builtin_is_enabled_and_the_dashboard_is_the_front_door() -> None:
     declaration = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'mcp')
     assert declaration.enabled
     assert declaration.factory == 'pydantic_clai2.mcp'
-    host = make_host({})
-    assert len(host.capabilities) == 1
-    dashboard = await host.commands.execute_async('/mcp')
+    plugin = make_plugin({})
+    assert len(plugin.capabilities) == 1
+    dashboard = await plugin.commands.execute_async('/mcp')
     assert 'No MCP servers yet' in dashboard
     assert '/mcp install' in dashboard
     assert '/plugins' not in dashboard
-    await host.handlers[0](SessionEnd(reason='exit'))
+    await plugin.dispatch(SessionEnd(reason='exit'))
 
 
 def test_store_round_trip_is_private_and_fails_loudly(tmp_path: Path) -> None:
@@ -132,17 +131,17 @@ def test_default_store_uses_the_clai_config_folder(tmp_path: Path) -> None:
 )
 def test_invalid_configuration(server: JsonValue) -> None:
     with pytest.raises(ValidationError):
-        make_host({'servers': {'test': server}})
+        make_plugin({'servers': {'test': server}})
 
 
 @pytest.mark.parametrize('name', ['bad_name', 'a b', '0server', 'x' * 65])
 def test_invalid_name(name: str) -> None:
     with pytest.raises(ValidationError):
-        make_host({'servers': {name: {'type': 'stdio', 'command': 'python'}}})
+        make_plugin({'servers': {name: {'type': 'stdio', 'command': 'python'}}})
 
 
 async def test_plugin_settings_servers_still_load_read_only(tmp_path: Path) -> None:
-    host = make_host(
+    plugin = make_plugin(
         {
             'servers': {
                 'remote': {'transport': 'http', 'url': 'https://user:pw@example.com:8443/mcp?secret=value'},
@@ -151,17 +150,17 @@ async def test_plugin_settings_servers_still_load_read_only(tmp_path: Path) -> N
         },
         MCPStore(tmp_path / 'config', workspace=tmp_path),
     )
-    dashboard = await host.commands.execute_async('/mcp list')
+    dashboard = await plugin.commands.execute_async('/mcp list')
     assert 'remote' in dashboard and 'plugin' in dashboard
     assert 'secret' not in dashboard
-    status = await host.commands.execute_async('/mcp status remote')
+    status = await plugin.commands.execute_async('/mcp status remote')
     assert 'https://example.com:8443/mcp' in status
     assert 'pw' not in status and 'secret' not in status
     with pytest.raises(ValueError, match='/plugins'):
-        await host.commands.execute_async('/mcp remove remote')
-    assert await host.commands.execute_async('/mcp logs remote') == 'No log entries for remote yet.'
-    assert 'Stopped off' in await host.commands.execute_async('/mcp stop off')
-    assert '- off' in await host.commands.execute_async('/mcp')
+        await plugin.commands.execute_async('/mcp remove remote')
+    assert await plugin.commands.execute_async('/mcp logs remote') == 'No log entries for remote yet.'
+    assert 'Stopped off' in await plugin.commands.execute_async('/mcp stop off')
+    assert '- off' in await plugin.commands.execute_async('/mcp')
 
 
 async def test_loader_persistence_disable_and_project_plugin_trust(tmp_path: Path) -> None:
@@ -205,12 +204,12 @@ async def test_loader_persistence_disable_and_project_plugin_trust(tmp_path: Pat
 async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
     script, pid_file = write_server(tmp_path)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
-    host = make_host({}, store)
-    run = host.commands.execute_async
+    plugin = make_plugin({}, store)
+    run = plugin.commands.execute_async
     store.put('local', StdioServer(type='stdio', command=sys.executable, args=[str(script)]))
     assert 'o local' in await run('/mcp'), 'installed servers are ready without a start'
 
-    result = await Agent(TestModel(), deps_type=type(None), capabilities=host.capabilities).run('Use tools.')
+    result = await Agent(TestModel(), deps_type=type(None), capabilities=plugin.capabilities).run('Use tools.')
     assert 'pong' in result.output
     assert '+ local' in await run('/mcp'), 'the first prompt connects a ready server and keeps it'
     held = pid_file.read_text()
@@ -218,7 +217,7 @@ async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
     dashboard = await run('/mcp')
     assert '+ local' in dashboard and '1 tools' in dashboard and '1/1 running' in dashboard
     assert 'local_ping' in await run('/mcp status local')
-    result = await Agent(TestModel(), deps_type=type(None), capabilities=host.capabilities).run('Use tools.')
+    result = await Agent(TestModel(), deps_type=type(None), capabilities=plugin.capabilities).run('Use tools.')
     assert 'pong' in result.output
     assert pid_file.read_text() == held, 'a connected server keeps one process across runs'
 
@@ -227,7 +226,7 @@ async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
     assert 'Stopped local' in await run('/mcp stop local')
     assert_exited(pid_file)
     assert store.load().servers['local'].enabled is False, 'stop persists for user servers'
-    result = await Agent(TestModel(), deps_type=type(None), capabilities=host.capabilities).run('Use tools.')
+    result = await Agent(TestModel(), deps_type=type(None), capabilities=plugin.capabilities).run('Use tools.')
     assert result.output == 'success (no tool calls)'
 
     logs = await run('/mcp logs local 50')
@@ -244,7 +243,7 @@ async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
 
     assert 'Started local' in await run('/mcp start-all')
     assert 'local_ping' in await run('/mcp tools local')
-    await host.handlers[0](SessionEnd(reason='exit'))
+    await plugin.dispatch(SessionEnd(reason='exit'))
     assert_exited(pid_file)
     assert 'Stopped local' in await run('/mcp stop-all')
 
@@ -252,29 +251,29 @@ async def test_start_stop_restart_logs_and_agent_use(tmp_path: Path) -> None:
 async def test_tools_without_start_and_empty_server(tmp_path: Path) -> None:
     script, pid_file = write_server(tmp_path, with_tool=False)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
-    host = make_host({}, store)
+    plugin = make_plugin({}, store)
     store.put('local', StdioServer(type='stdio', command=sys.executable, args=[str(script)]))
-    assert await host.commands.execute_async('/mcp tools local') == 'No tools provided by local.'
+    assert await plugin.commands.execute_async('/mcp tools local') == 'No tools provided by local.'
     assert_exited(pid_file)
 
 
 async def test_failed_start_is_reported_and_logged(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
-    host = make_host({}, store)
-    run = host.commands.execute_async
+    plugin = make_plugin({}, store)
+    run = plugin.commands.execute_async
     store.put('broken', StdioServer(type='stdio', command=sys.executable, args=['-c', 'raise SystemExit(3)']))
     message = await run('/mcp start broken')
     assert message.startswith('Could not start broken') and '/mcp logs broken' in message
     assert '! broken' in await run('/mcp')
     assert 'start failed' in await run('/mcp logs broken')
-    result = await Agent(TestModel(), deps_type=type(None), capabilities=host.capabilities).run('Use tools.')
+    result = await Agent(TestModel(), deps_type=type(None), capabilities=plugin.capabilities).run('Use tools.')
     assert result.output == 'success (no tool calls)', 'a failed server is left out of runs'
 
 
 async def test_env_references_resolve_at_connect_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv('GITHUB_TOKEN', raising=False)
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
-    host = make_host({}, store)
+    plugin = make_plugin({}, store)
     store.put(
         'github',
         HTTPServer(
@@ -282,10 +281,10 @@ async def test_env_references_resolve_at_connect_time(tmp_path: Path, monkeypatc
         ),
     )
     assert '$GITHUB_TOKEN' in store.path.read_text(), 'the saved file holds the reference, not a value'
-    assert 'set GITHUB_TOKEN in your environment' in await host.commands.execute_async('/mcp')
-    assert 'cannot connect' in await host.commands.execute_async('/mcp start github')
+    assert 'set GITHUB_TOKEN in your environment' in await plugin.commands.execute_async('/mcp')
+    assert 'cannot connect' in await plugin.commands.execute_async('/mcp start github')
     monkeypatch.setenv('GITHUB_TOKEN', 'token-value')
-    assert 'o github' in await host.commands.execute_async('/mcp')
+    assert 'o github' in await plugin.commands.execute_async('/mcp')
     servers = MCPServers(store)
     assert servers.state(servers.get('github')) == 'ready'
 
@@ -326,8 +325,8 @@ async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
     process = subprocess.Popen([sys.executable, str(script)], stderr=subprocess.DEVNULL)
     try:
         store = MCPStore(tmp_path / 'config', workspace=tmp_path)
-        host = make_host({}, store)
-        run = host.commands.execute_async
+        plugin = make_plugin({}, store)
+        run = plugin.commands.execute_async
         url = HttpUrl(f'http://127.0.0.1:{port}/{path}')
         store.put(
             'web', HTTPServer(type='http', url=url) if kind == 'http' else SSEServer(type='sse', url=url, timeout=10)
@@ -348,9 +347,9 @@ async def test_real_remote_server(tmp_path: Path, kind: str, path: str) -> None:
                 break
             await anyio.sleep(0.1)  # pragma: lax no cover
         assert message.startswith('Started web with 1 tools'), message
-        result = await Agent(TestModel(), deps_type=type(None), capabilities=host.capabilities).run('Use tools.')
+        result = await Agent(TestModel(), deps_type=type(None), capabilities=plugin.capabilities).run('Use tools.')
         assert 'pong' in result.output
-        await host.handlers[0](SessionEnd(reason='exit'))
+        await plugin.dispatch(SessionEnd(reason='exit'))
     finally:
         process.terminate()
         process.wait()
@@ -370,8 +369,8 @@ def test_remote_options_build_the_right_transport(tmp_path: Path) -> None:
 
 def test_plugin_settings_accept_the_old_transport_key() -> None:
     assert MCPSettings(servers={'x': StdioServer(type='stdio', command='x')}).servers['x'].type == 'stdio'
-    host = make_host({'servers': {'old': {'transport': 'stdio', 'command': 'x'}}})
-    assert len(host.capabilities) == 1
+    plugin = make_plugin({'servers': {'old': {'transport': 'stdio', 'command': 'x'}}})
+    assert len(plugin.capabilities) == 1
 
 
 def test_fastmcp_info_logging_stays_off_the_prompt() -> None:
@@ -380,8 +379,8 @@ def test_fastmcp_info_logging_stays_off_the_prompt() -> None:
 
 async def test_a_server_that_cannot_connect_does_not_fail_the_prompt(tmp_path: Path) -> None:
     store = MCPStore(tmp_path / 'config', workspace=tmp_path)
-    host = make_host({}, store)
+    plugin = make_plugin({}, store)
     store.put('broken', StdioServer(type='stdio', command=sys.executable, args=['-c', 'raise SystemExit(3)']))
-    result = await Agent(TestModel(), deps_type=type(None), capabilities=host.capabilities).run('Use tools.')
+    result = await Agent(TestModel(), deps_type=type(None), capabilities=plugin.capabilities).run('Use tools.')
     assert result.output == 'success (no tool calls)'
-    assert '! broken' in await host.commands.execute_async('/mcp')
+    assert '! broken' in await plugin.commands.execute_async('/mcp')

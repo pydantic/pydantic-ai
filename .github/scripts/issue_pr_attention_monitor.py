@@ -40,8 +40,7 @@ _SLA = dt.timedelta(days=3)
 # Applied only by the community-demand sweep; scripts trust the label.
 COMMUNITY_LABEL = 'community-backed'
 # Assigned P1/P2 issues are kept in the attention queue by `reconcile`; the
-# owner is pinged once *they* have been inactive past the window. Community
-# demand may still open the assignment gate, but does not interrupt owners.
+# owner is pinged once *they* have been inactive past the window.
 _REMINDER_SLAS = {
     'p:1-highest': dt.timedelta(days=3),
     'p:2-high': dt.timedelta(days=5),
@@ -105,7 +104,7 @@ _LABELS = {
     _PINGED_LABEL: ('fbca04', 'The assigned maintainer has received one reminder'),
     _ESCALATED_LABEL: ('d93f0b', 'The maintainer attention request is cooling down after escalation'),
     _DELIVERED_LABEL: ('ededed', 'A delivered channel escalation is waiting for GitHub state cleanup'),
-    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this; it opens the assignment routing gate'),
+    COMMUNITY_LABEL: ('0e8a16', 'Real users are asking for this'),
 }
 _SLACK_MENTION = re.compile(r'<@[UW][A-Z0-9]+>')
 _SEARCH_SUMMARY_QUERY = """
@@ -223,6 +222,9 @@ class GitHubClient:
 
     def post(self, path: str, payload: Mapping[str, object]) -> Any:
         return self.request('POST', path, payload)
+
+    def patch(self, path: str, payload: Mapping[str, object]) -> Any:
+        return self.request('PATCH', path, payload)
 
     def delete(self, path: str, payload: Mapping[str, object] | None = None) -> Any:
         return self.request('DELETE', path, payload)
@@ -489,16 +491,20 @@ def write_snapshot(client: GitHubClient, repo: str, path: str, *, now: dt.dateti
 
 
 def ensure_labels(client: GitHubClient, repo: str) -> None:
-    """Create the fixed workflow labels if they are absent."""
+    """Create the fixed workflow labels if they are absent, and keep their descriptions current."""
     for name, (color, description) in _LABELS.items():
         encoded = urllib.parse.quote(name, safe='')
         try:
-            client.get(f'/repos/{repo}/labels/{encoded}')
-            continue
+            existing = client.get(f'/repos/{repo}/labels/{encoded}')
         except urllib.error.HTTPError as exc:
             exc.close()
             if exc.code != 404:
                 raise
+        else:
+            # Only the description is managed: a maintainer may recolor a label.
+            if isinstance(existing, Mapping) and cast(Mapping[str, object], existing).get('description') != description:
+                client.patch(f'/repos/{repo}/labels/{encoded}', {'description': description})
+            continue
         try:
             client.post(f'/repos/{repo}/labels', {'name': name, 'color': color, 'description': description})
         except urllib.error.HTTPError as exc:
