@@ -42,6 +42,8 @@ from pydantic_ai import (
     ModelResponsePart,
     ModelRetry,
     ModelSelectionContext,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     PrefixedToolset,
     RequestUsage,
     RetryPromptPart,
@@ -83,7 +85,7 @@ from pydantic_ai.durable_exec._base import construction_toolsets
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
@@ -12039,6 +12041,57 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
     )
 
     assert not any(isinstance(p, ToolReturnPart) and p.tool_name == 'final_result' for p in new_messages[0].parts)
+
+
+def _native_web_search_parts() -> list[ModelResponsePart]:
+    return [
+        NativeToolCallPart('web_search', {'queries': ['weather']}, tool_call_id='search', provider_name='function'),
+        NativeToolReturnPart('web_search', [{'uri': 'https://example.com'}], tool_call_id='search'),
+    ]
+
+
+def test_text_before_trailing_native_tool_call_is_output():
+    """Text before a native tool call that no text follows is the output, rather than an empty response to retry.
+
+    Gemini reports the searches that grounded its text in metadata after that text, so the call comes last.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('It is sunny.'), *_native_web_search_parts()])
+
+    result = Agent(FunctionModel(respond)).run_sync('What is the weather?')
+
+    assert result.output == 'It is sunny.'
+    assert len(result.all_messages()) == 2
+
+
+def test_text_before_native_tool_call_followed_by_text_is_not_output():
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('Let me search.'), *_native_web_search_parts(), TextPart('It is sunny.')])
+
+    result = Agent(FunctionModel(respond)).run_sync('What is the weather?')
+
+    assert result.output == 'It is sunny.'
+
+
+async def test_streamed_text_before_trailing_native_tool_call_is_output():
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | BuiltinToolCallsReturns]:
+        yield 'It is '
+        yield 'sunny.'
+        call, tool_return = _native_web_search_parts()
+        yield {1: call}
+        yield {2: tool_return}
+
+    agent = Agent(FunctionModel(stream_function=stream))
+
+    async def handle_events(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    result = await agent.run('What is the weather?', event_stream_handler=handle_events)
+    assert result.output == 'It is sunny.'
+    async with agent.run_stream('What is the weather?') as stream_result:
+        assert await stream_result.get_output() == 'It is sunny.'
 
 
 def test_agent_native_tools_runtime_vs_agent_level():

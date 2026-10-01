@@ -300,13 +300,17 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
             elif text_processor := self._output_schema.text_processor:
                 text = ''
+                text_before_native_tool_call = ''
                 for part in message.parts:
                     if isinstance(part, _messages.TextPart):
                         text += part.content
                     elif isinstance(part, _messages.NativeToolCallPart):
                         # Text parts before a built-in tool call are essentially thoughts,
                         # not part of the final result output, so we reset the accumulated text
+                        text_before_native_tool_call = text or text_before_native_tool_call
                         text = ''
+                # Unless no text follows, as in `CallToolsNode`.
+                text = text or text_before_native_tool_call
 
                 run_ctx = replace(self._run_ctx, partial_output=allow_partial)
                 return await run_output_with_hooks(
