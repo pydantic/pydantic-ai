@@ -35,6 +35,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_WARNED_RUNS_KEPT = 256
+"""How many recent run ids an `LLMReminder` remembers for its once-per-run failure warning."""
+
 
 @dataclass
 class Reminder(Generic[AgentDepsT]):
@@ -251,8 +254,8 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
                     transcript = _build_compact_transcript(ctx.messages, dynamic.max_context_messages)
                     result, error_type = await self._generate_reminder(ctx, index, transcript)
                 except Exception as exc:
-                    logger.warning(
-                        'LLMReminder generation operation failed; using GoalReanchor text instead', exc_info=exc
+                    dynamic._log_failure(  # pyright: ignore[reportPrivateUsage,reportUnknownMemberType]
+                        exc, ctx.run_id, 'LLMReminder generation operation failed; using GoalReanchor text instead'
                     )
                     result, error_type = None, 'DurabilityError'
                 if error_type is not None:
@@ -279,7 +282,7 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
         except Exception as exc:
             # Reminders are best-effort. Journal the fallback decision rather than inheriting an
             # engine's potentially unbounded retry policy and stalling the agent run.
-            _log_generation_failure(exc)
+            reminder._log_failure(exc, ctx.run_id)  # pyright: ignore[reportPrivateUsage]
             return None, type(exc).__name__
 
     @classmethod
@@ -339,6 +342,8 @@ class LLMReminder(Generic[AgentDepsT]):
     max_context_messages: int = 10
     instructions: str = _LLM_INSTRUCTIONS
     _agent: Agent[None, str] | None = field(default=None, init=False, repr=False, compare=False)
+    _warned_runs: dict[str, None] = field(default_factory=dict[str, None], init=False, repr=False, compare=False)
+    """Runs whose generation failure was already logged, oldest first (an ordered set, bounded)."""
 
     def __post_init__(self) -> None:
         if self.max_context_messages < 1:
@@ -350,8 +355,28 @@ class LLMReminder(Generic[AgentDepsT]):
         try:
             return await self._generate(ctx)
         except Exception as exc:
-            _log_generation_failure(exc)
+            self._log_failure(exc, ctx.run_id)
             return GoalReanchor[AgentDepsT]()(ctx)
+
+    def _log_failure(
+        self,
+        exc: Exception,
+        run_id: str | None,
+        message: str = 'LLMReminder generation failed; using GoalReanchor text instead',
+    ) -> None:
+        """Warn once per run that generation failed and `GoalReanchor` text is used instead.
+
+        A misconfigured model (wrong name, missing API key) fails on every turn. One warning with
+        the traceback per run shows why, without repeating it for every model request. Without a
+        run id there is nothing to deduplicate on, so every failure is logged.
+        """
+        if run_id is not None:
+            if run_id in self._warned_runs:
+                return
+            self._warned_runs[run_id] = None
+            if len(self._warned_runs) > _WARNED_RUNS_KEPT:
+                del self._warned_runs[next(iter(self._warned_runs))]
+        logger.warning(message, exc_info=exc)
 
     async def _generate(self, ctx: RunContext[AgentDepsT]) -> str | None:
         """Generate without fallback so a durability engine can retry transient failures."""
@@ -371,15 +396,6 @@ class LLMReminder(Generic[AgentDepsT]):
         )
         text = result.output.strip()
         return text or None
-
-
-def _log_generation_failure(exc: Exception) -> None:
-    """Tell the operator an `LLMReminder` fell back to `GoalReanchor` text.
-
-    A misconfigured model (wrong name, missing API key) fails on every turn, and the fallback
-    text alone would hide that.
-    """
-    logger.warning('LLMReminder generation failed; using GoalReanchor text instead', exc_info=exc)
 
 
 def _request_reserved_for_parent(ctx: RunContext[AgentDepsT]) -> bool:

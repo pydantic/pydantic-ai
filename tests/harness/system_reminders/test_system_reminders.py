@@ -857,6 +857,45 @@ class TestLLMReminder:
         assert record.getMessage() == 'LLMReminder generation failed; using GoalReanchor text instead'
         assert record.exc_info is not None and str(record.exc_info[1]) == 'model down'
 
+    async def test_failure_is_logged_once_per_run(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A model that fails every turn logs one warning per run, not one per model request."""
+
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model down')
+
+        reminder = LLMReminder(model=FunctionModel(boom))
+        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('ship the fix')])]
+        first_run = _ctx(messages=messages)
+        first_run.run_id = 'run-1'
+        no_run_id = _ctx(messages=messages)
+        no_run_id.run_id = None
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
+            await reminder(first_run)
+            await reminder(first_run)
+            second_run = _ctx(messages=messages)
+            second_run.run_id = 'run-2'
+            await reminder(second_run)
+            await reminder(no_run_id)
+            await reminder(no_run_id)
+        assert len(caplog.records) == 4  # run-1 once, run-2 once, and each failure without a run id
+
+    async def test_remembers_a_bounded_number_of_runs(self, caplog: pytest.LogCaptureFixture) -> None:
+        def boom(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            raise RuntimeError('model down')
+
+        reminder = LLMReminder(model=FunctionModel(boom))
+        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('ship the fix')])]
+        with caplog.at_level(logging.WARNING, logger='pydantic_ai_harness.system_reminders'):
+            for index in range(258):
+                ctx = _ctx(messages=messages)
+                ctx.run_id = f'run-{index}'
+                await reminder(ctx)
+            oldest = _ctx(messages=messages)
+            oldest.run_id = 'run-0'
+            await reminder(oldest)
+        # 258 distinct runs, then the oldest again: it was evicted, so it warns a second time.
+        assert len(caplog.records) == 259
+
     def test_zero_max_context_messages_raises(self) -> None:
         with pytest.raises(ValueError, match='max_context_messages must be >= 1'):
             LLMReminder(model=TestModel(), max_context_messages=0)
