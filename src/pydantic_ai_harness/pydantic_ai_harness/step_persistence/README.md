@@ -771,8 +771,8 @@ in-memory checkpoint through shared references.
 
 `SnapshotSaved` is a typed capability event emitted after a checkpoint write
 completes. It carries `persistence_run_id`, `conversation_id`, `step_index`, and
-`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)` or CLAI's
-`host.on(SnapshotSaved)`. Store writes are the source of truth; notifications may
+`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)`, which a CLAI plugin
+returns from `get_capabilities`. Store writes are the source of truth; notifications may
 repeat during durable replay and observer failures cannot undo committed writes.
 
 ### Core boundary for stronger interrupted-step recovery

@@ -20,26 +20,24 @@ from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.ui.menus.field_menu import is_save_and_close
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu, open_plugins_menu
 
-PLUGIN = 'from pydantic_clai2.plugins import PluginHost\ndef activate(host: PluginHost) -> None:\n    pass\n'
+PLUGIN = 'from pydantic_clai2.plugins import Plugin\nclass Quiet(Plugin):\n    pass\n'
 TUNED = """
 from pydantic import BaseModel
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import Plugin
 
 
 class Settings(BaseModel):
     greeting: str = 'hi'
 
 
-def activate(host: PluginHost) -> None:
-    settings = host.settings(Settings)
-
-    @host.configure
-    async def configure() -> str:
+class Tuned(Plugin[Settings]):
+    async def configure(self) -> str:
+        host = self.host
         if host.name == 'grumpy':
             host.save_settings(Settings(greeting='grr'))
             raise ValueError('grumpy refuses to be configured')
-        if settings.greeting != 'hi':
-            return f'{host.name} already says {settings.greeting}.'
+        if self.settings.greeting != 'hi':
+            return f'{host.name} already says {self.settings.greeting}.'
         host.save_settings(Settings(greeting='hello'))
         return f'Configured {host.name}.'
 """
@@ -129,7 +127,7 @@ async def test_open_menu_applies_actions_from_the_menu_thread(tmp_path: Path) ->
         return MenuResult(item=menu.items()[-1])
 
     assert await open_plugins_menu(loader, run=run) == ''
-    assert loader.entries()[0].host is not None
+    assert loader.entries()[0].loaded is not None
     listing = await loader.command(['list'])
     assert 'gamma:' in listing and '(enabled, loaded)' in listing
 
@@ -143,7 +141,7 @@ async def test_open_menu_closes_quietly_without_changes(tmp_path: Path, names: t
         return MenuResult(cancelled=True)
 
     assert await open_plugins_menu(loader, run=run) == ''
-    assert all(entry.host is None for entry in loader.entries())
+    assert all(entry.loaded is None for entry in loader.entries())
 
 
 def test_save_and_close_is_the_last_row(tmp_path: Path) -> None:
@@ -206,9 +204,9 @@ async def test_enabling_from_the_menu_opens_the_settings_menu_then_returns(tmp_p
     assert await open_plugins_menu(loader, run=run) == '\n'.join(expected)
     assert notices == [None, *expected]
     grumpy, tuned = loader.entries()
-    assert grumpy.host is not None, 'a failing settings menu leaves the plugin on'
+    assert grumpy.loaded is not None, 'a failing settings menu leaves the plugin on'
     assert grumpy.declaration.settings == {'greeting': 'grr'}, 'and loaded with what it saved before failing'
-    assert tuned.host is not None and tuned.declaration.settings == {'greeting': 'hello'}
+    assert tuned.loaded is not None and tuned.declaration.settings == {'greeting': 'hello'}
 
 
 async def test_enable_and_add_commands_open_the_settings_menu(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

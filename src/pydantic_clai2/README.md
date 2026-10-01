@@ -812,13 +812,13 @@ After editing `pydantic_clai2` source, run `/reload` without arguments. It uses
 `importlib.reload` on loaded CLAI modules and rebuilds the prompt loop, commands,
 and session with the updated code. The Python process, agent, dependencies passed
 to `chat`, conversation messages, selected model, and active settings are kept.
-Enabled plugins unload and activate again so their handlers use the refreshed
+Enabled plugins unload and load again so their handlers use the refreshed
 shell types. Disabled and unapproved project plugins stay off.
 
 If an import or shell rebuild fails, CLAI reports the error and restores the
-previous module bindings. Correct the source and retry `/reload`. Plugin hosts
-and their registrations are recreated. Installed module globals not overwritten
-by the new source can survive; initialize mutable state in `activate`.
+previous module bindings. Correct the source and retry `/reload`. Plugin
+instances and their contributions are recreated. Installed module globals not
+overwritten by the new source can survive; initialize mutable state in `__init__`.
 Import-time side effects cannot be undone.
 
 Reload ordering follows module-scope imports in the current Python source, so
@@ -1177,7 +1177,7 @@ replace builtins and plugin spinners of the same name. Intervals are clamped to
 0.02-1 seconds and frames to 40 characters, padded to one width so the title does
 not shift. Edits apply on the next frame. `/spinner` lists any entry it skipped
 and why. A saved name that no longer exists, such as a removed plugin's, shows
-`working`. Plugins add spinners with `host.spinner` (see `PLUGINS.md`).
+`working`. Plugins add spinners from `get_spinners` (see `PLUGINS.md`).
 
 ### Streaming
 
@@ -1396,10 +1396,10 @@ output-token count, and purple tool names. Colours follow the selected `/theme`;
 context warnings keep the warning colour. The same styling applies while idle
 and working.
 
-A plugin can append its own fragment to the row with `host.status_segment`, such
+A plugin can append its own fragment to the row from `get_status_segments`, such
 as the working directory or a branch name; fragments are muted and dropped when
-the plugin unloads. See [PLUGINS.md](PLUGINS.md) for the registration and its
-cost rules.
+the plugin unloads. See [PLUGINS.md](PLUGINS.md) for the method and its cost
+rules.
 
 ## Plugins
 
@@ -1417,32 +1417,36 @@ export EXA_API_KEY=...
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
 ```
 
-For anything beyond one capability, a plugin is a Python file with an
-`activate(host)` function. A single plugin can do as much as it likes; this one
-both adds a capability and reacts to a lifecycle hook, to show two shapes at
+For anything beyond one capability, a plugin is a `Plugin` subclass. Like a
+Pydantic AI capability, it declares what it contributes by overriding methods,
+each defaulting to nothing. A single plugin can do as much as it likes; this one
+both adds a capability and reacts to a lifecycle moment, to show two shapes at
 once:
 
 ```python
+from collections.abc import Sequence
+
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.exa import ExaSearch
 
-from pydantic_clai2.plugins import PluginHost, TurnEnd
+from pydantic_clai2.plugins import Plugin, TurnEnd
 
 
-def activate(host: PluginHost) -> None:
-    host.add(ExaSearch(num_results=8))
+class Search(Plugin):
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        return (ExaSearch(num_results=8),)
 
-    @host.on('turn_end')
-    async def ping(event: TurnEnd) -> None:
-        host.console.bell()
+    async def on_turn_end(self, event: TurnEnd) -> None:
+        self.host.console.bell()
 ```
 
 Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
-importable with `/plugins add NAME module[:attr] [JSON]`. It is live for the
+importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
 next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove. Closing the menu returns to the prompt without printing the
 plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
 
-[PLUGINS.md](PLUGINS.md) has the full list of hooks, events, and rules.
+[PLUGINS.md](PLUGINS.md) has every method, event, and rule.
 
 `/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
 settings menu (`/plugins configure notion` reopens it). The token is picked from

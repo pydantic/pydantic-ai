@@ -101,7 +101,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
         factory='pydantic_ai_harness.coder:Coder',
         settings={'unrestricted_filesystem': True, 'repo_context': False, 'sub_agents': False},
     ),
-    PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu:activate'),
+    PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
     PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
     PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
@@ -863,7 +863,7 @@ def _report_project(project: ProjectSettings, console: Console) -> None:
 
 
 def _report_project_plugins(loader: PluginLoader[DepsT], console: Console) -> None:
-    waiting = [entry.name for entry in loader.entries() if entry.project and entry.host is None]
+    waiting = [entry.name for entry in loader.entries() if entry.project and entry.loaded is None]
     if waiting:
         console.print(
             f'Project plugins not loaded; approve one with /plugins enable NAME: {", ".join(waiting)}',
@@ -913,7 +913,7 @@ async def _run_prompt(
     console: Console,
     settings: Settings,
     status: Status,
-    renderers: Sequence[Renderer[AgentStreamEvent]],
+    renderers: Sequence[Renderer],
     screen: Screen,
     spinner: Callable[[], Spinner],
     images: Sequence[BinaryContent] = (),

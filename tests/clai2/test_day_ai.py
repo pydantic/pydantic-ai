@@ -79,8 +79,8 @@ class Shell:
 
     def host(self) -> PluginHost[None]:
         [entry] = self.loader.entries()
-        assert entry.host is not None
-        return entry.host
+        assert entry.loaded is not None
+        return entry.loaded.host
 
     def client(self) -> object:
         [capability] = self.loader.capabilities()

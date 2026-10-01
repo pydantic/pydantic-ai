@@ -133,7 +133,11 @@ async def test_legacy_logfire_sources_share_one_runtime_identity(tmp_path: Path,
     if source == 'folder':
         store.plugins_dir.mkdir()
         path = store.plugins_dir / 'logfire.py'
-        path.write_text('from pydantic_clai2.builtin_plugins.logfire import activate\n')
+        path.write_text(
+            'from pydantic_clai2.builtin_plugins.logfire import LogfirePlugin\n\n\n'
+            'class Observability(LogfirePlugin):\n'
+            '    pass\n'
+        )
         store.save_plugin(legacy.model_copy(update={'path': str(path)}))
         project = ()
     builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability')
