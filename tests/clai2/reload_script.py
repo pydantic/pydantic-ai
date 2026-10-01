@@ -50,20 +50,18 @@ async def main(root: Path, mode: str) -> None:
     plugin = root / 'reload_plugin.py'
     plugin.write_text(
         'from pydantic_clai2.commands import Command\n'
-        'from pydantic_clai2.plugins import SessionStart, SessionEnd, TurnStart\n'
-        'def activate(host):\n'
-        '    @host.on("session_start")\n'
-        '    async def start(event):\n'
+        'from pydantic_clai2.plugins import Plugin, SessionStart, SessionEnd, TurnStart\n'
+        'class Example(Plugin):\n'
+        '    async def on_session_start(self, event):\n'
         '        assert isinstance(event, SessionStart)\n'
-        '        host.console.print(f"plugin start {event.settings.model} {event.settings.thinking}")\n'
-        '    @host.on("session_end")\n'
-        '    async def end(event):\n'
-        '        host.console.print("plugin end")\n'
-        '    @host.on("turn_start")\n'
-        '    async def turn(event):\n'
+        '        self.host.console.print(f"plugin start {event.settings.model} {event.settings.thinking}")\n'
+        '    async def on_session_end(self, event):\n'
+        '        self.host.console.print("plugin end")\n'
+        '    async def on_turn_start(self, event):\n'
         '        assert isinstance(event, TurnStart)\n'
-        '        host.console.print("plugin turn " + event.text)\n'
-        '    host.commands.register(Command(name="example", description="Example", handler=lambda _: "plugin command"))\n'
+        '        self.host.console.print("plugin turn " + event.text)\n'
+        '    def get_commands(self):\n'
+        '        return [Command(name="example", description="Example", handler=lambda _: "plugin command")]\n'
     )
     store = SettingsStore(root / 'config.db')
     declaration = PluginSettings(id='example', factory='reload_plugin')
@@ -124,6 +122,8 @@ async def main(root: Path, mode: str) -> None:
                     elif mode == 'import':
                         (package / 'new_module.py').write_text('VALUE = 1\n')
                         app.write_text(updated + '\nfrom . import new_module\nraise RuntimeError("bad import")\n')
+                    elif mode == 'harness':
+                        app.write_text(updated + '\nfrom pydantic_ai_harness.subagents import _missing_reload_symbol\n')
                     elif mode == 'build':
                         app.write_text(
                             updated.replace('    commands = Commands()', '    raise RuntimeError("bad build")')
@@ -217,6 +217,10 @@ async def main(root: Path, mode: str) -> None:
         assert text.count('CLAI2 reloaded. Conversation preserved.') == 1, text
         assert 'Use /help.' in text, text
         assert 'pydantic_clai2.new_module' not in sys.modules
+    assert ('Harness is not refreshed by /reload.' in text) == (mode == 'harness'), text
+    if mode == 'harness':
+        assert '--resume to continue this session.' in text, text
+        assert 'Keep the worktree if asked to remove it.' in text, text
 
 
 asyncio.run(main(Path(sys.argv[1]), sys.argv[2]))

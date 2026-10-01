@@ -26,7 +26,7 @@ from pydantic_clai2.builtin_plugins._herdr_client import HerdrClient
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
+from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart, load_plugin
 from pydantic_clai2.runtime._session import Session
 
 
@@ -70,8 +70,9 @@ def test_inactive(missing: str, recorded: RecordingClient, monkeypatch: pytest.M
     else:
         monkeypatch.delenv(missing)
     host = make_host()
-    herdr.activate(host)
-    assert host.handlers == host.capabilities == []
+    loaded = load_plugin(herdr.HerdrPlugin, host)
+    assert isinstance(loaded.plugin, herdr.HerdrPlugin) and loaded.plugin.reporter is None
+    assert loaded.capabilities == ()
     assert recorded.reports == []
 
 
@@ -85,7 +86,7 @@ class QuestionModel(TestModel):
 @pytest.mark.parametrize('answer_error', [False, True])
 async def test_question_state_and_cleanup(recorded: RecordingClient, answer_error: bool) -> None:
     host = make_host()
-    herdr.activate(host)
+    loaded = load_plugin(herdr.HerdrPlugin, host)
 
     async def answer(request: AskUserRequest) -> AskUserResponse:
         assert recorded.reports[-1] == ('pane.report_agent', {'state': 'blocked', 'message': 'awaiting input'})
@@ -96,11 +97,10 @@ async def test_question_state_and_cleanup(recorded: RecordingClient, answer_erro
     agent = Agent(
         QuestionModel(call_tools=['ask_user_question']),
         deps_type=type(None),
-        capabilities=[AskUser(answerer=answer), *host.capabilities],
+        capabilities=[AskUser(answerer=answer), *loaded.capabilities],
     )
     before = asyncio.all_tasks()
-    for handler in host.handlers:
-        await handler(SessionStart(agent=agent, settings=Settings()))
+    await loaded.dispatch(SessionStart(agent=agent, settings=Settings()))
     try:
         if answer_error:
             with pytest.raises(ValueError, match='answerer failed'):
@@ -113,8 +113,7 @@ async def test_question_state_and_cleanup(recorded: RecordingClient, answer_erro
         assert 'blocked' in states
         assert states[-1] == 'idle'
     finally:
-        for handler in host.handlers:
-            await handler(SessionEnd(reason='exit'))
+        await loaded.dispatch(SessionEnd(reason='exit'))
     assert recorded.closed
     assert asyncio.all_tasks() == before
 
@@ -123,27 +122,23 @@ async def test_session_titles_metadata(recorded: RecordingClient, tmp_path: Path
     store = SqliteConversationStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store)
     host = PluginHost(name='herdr', console=Console(file=io.StringIO()), settings={}, conversation=session)
-    herdr.activate(host)
-    session.plugins = host.capabilities
+    loaded = load_plugin(herdr.HerdrPlugin, host)
+    session.plugins = loaded.capabilities
     await session.prompt('hello')
-    for handler in host.handlers:
-        await handler(TurnEnd(text='hello', outcome='completed'))
+    await loaded.dispatch(TurnEnd(text='hello', outcome='completed'))
     references = [params for method, params in recorded.reports if method == 'pane.report_agent_session']
     assert references == [{'agent_session_id': session.summary.id, 'agent_session_path': str(store.database)}]
     assert await store.name(source=session.summary, title='My conversation', subtitle='', tags=(), manual=True)
-    for handler in host.handlers:
-        await handler(TurnEnd(text='hello', outcome='completed'))
+    await loaded.dispatch(TurnEnd(text='hello', outcome='completed'))
     metadata = [params for method, params in recorded.reports if method == 'pane.report_metadata'][-1]
     assert metadata['title'] == 'My conversation'
     assert metadata['ttl_ms'] == 86_400_000
     assert metadata['tokens'] == {'model': 'agent default', 'tokens': f'{session.summary.total_tokens:,}'}
     assert ('tab.rename', {'label': 'My conversation'}) in recorded.reports
     session.clear()
-    for handler in host.handlers:
-        await handler(TurnEnd(text='', outcome='cancelled'))
+    await loaded.dispatch(TurnEnd(text='', outcome='cancelled'))
     assert recorded.reports[-1] == ('tab.rename', {'label': None})
-    for handler in host.handlers:
-        await handler(SessionEnd(reason='exit'))
+    await loaded.dispatch(SessionEnd(reason='exit'))
     assert recorded.closed
 
 
@@ -155,7 +150,7 @@ async def test_title_read_failure_or_session_switch(
     session = Session(Agent(TestModel()), deps=None, conversations=store)
     await session.prompt('hello')
     host = PluginHost(name='herdr', console=Console(file=io.StringIO()), settings={}, conversation=session)
-    herdr.activate(host)
+    loaded = load_plugin(herdr.HerdrPlugin, host)
     original_listing = store.listing
 
     async def listing(*, query: str = '', limit: int = 200, offset: int = 0) -> list[ConversationSummary]:
@@ -166,20 +161,18 @@ async def test_title_read_failure_or_session_switch(
         return summaries
 
     monkeypatch.setattr(store, 'listing', listing)
-    for handler in host.handlers:
-        await handler(TurnEnd(text='', outcome='completed'))
+    await loaded.dispatch(TurnEnd(text='', outcome='completed'))
     metadata = [params for method, params in recorded.reports if method == 'pane.report_metadata'][-1]
     assert metadata['clear_title'] is True
-    for handler in host.handlers:
-        await handler(SessionEnd(reason='exit'))
+    await loaded.dispatch(SessionEnd(reason='exit'))
     assert recorded.closed
 
 
 async def test_nested_run_does_not_report_idle(recorded: RecordingClient) -> None:
     host = make_host()
-    herdr.activate(host)
-    child = Agent(TestModel(), deps_type=type(None), capabilities=host.capabilities)
-    parent = Agent(TestModel(call_tools=['nested']), deps_type=type(None), capabilities=host.capabilities)
+    loaded = load_plugin(herdr.HerdrPlugin, host)
+    child = Agent(TestModel(), deps_type=type(None), capabilities=loaded.capabilities)
+    parent = Agent(TestModel(call_tools=['nested']), deps_type=type(None), capabilities=loaded.capabilities)
 
     @parent.tool_plain
     async def nested() -> str:
@@ -191,31 +184,29 @@ async def test_nested_run_does_not_report_idle(recorded: RecordingClient) -> Non
     states = [params['state'] for method, params in recorded.reports if method == 'pane.report_agent']
     assert states.count('idle') == 1
     assert states[-1] == 'idle'
-    for handler in host.handlers:
-        await handler(SessionEnd(reason='exit'))
+    await loaded.dispatch(SessionEnd(reason='exit'))
 
 
 async def test_context_percentage(recorded: RecordingClient) -> None:
     host = make_host()
-    herdr.activate(host)
+    loaded = load_plugin(herdr.HerdrPlugin, host)
     agent = Agent(
-        TestModel(), deps_type=type(None), capabilities=[ReportContextUsage(context_window=10_000), *host.capabilities]
+        TestModel(),
+        deps_type=type(None),
+        capabilities=[ReportContextUsage(context_window=10_000), *loaded.capabilities],
     )
     await agent.run('hello')
-    for handler in host.handlers:
-        await handler(TurnEnd(text='hello', outcome='completed'))
+    await loaded.dispatch(TurnEnd(text='hello', outcome='completed'))
     metadata = [params for method, params in recorded.reports if method == 'pane.report_metadata'][-1]
     tokens = metadata['tokens']
     assert isinstance(tokens, dict)
     context = tokens['context']
     assert isinstance(context, str) and context.endswith('%')
-    for handler in host.handlers:
-        await handler(TurnStart(text='new prompt'))
+    await loaded.dispatch(TurnStart(text='new prompt'))
     metadata = [params for method, params in recorded.reports if method == 'pane.report_metadata'][-1]
     tokens = metadata['tokens']
     assert isinstance(tokens, dict) and 'context' not in tokens
-    for handler in host.handlers:
-        await handler(SessionEnd(reason='exit'))
+    await loaded.dispatch(SessionEnd(reason='exit'))
 
 
 async def test_loader_enable_disable(tmp_path: Path, recorded: RecordingClient) -> None:
@@ -258,22 +249,20 @@ async def test_background_title_watcher(
     session = Session(agent, deps=None, conversations=store)
     await session.prompt('hello')
     host = PluginHost(name='herdr', console=Console(file=io.StringIO()), settings={}, conversation=session)
-    herdr.activate(host)
+    loaded = load_plugin(herdr.HerdrPlugin, host)
 
     def no_transcript(*args: object, **kwargs: object) -> None:
         raise AssertionError('Title polling must not load transcripts or media')  # pragma: no cover
 
     monkeypatch.setattr(store, 'get', no_transcript)
     monkeypatch.setattr(store.media, 'get', no_transcript)
-    for handler in host.handlers:
-        await handler(SessionStart(agent=agent, settings=Settings()))
+    await loaded.dispatch(SessionStart(agent=agent, settings=Settings()))
     try:
         assert await recorded.titles.get() == session.summary.title
         assert await store.name(source=session.summary, title='Background title', subtitle='', tags=(), manual=True)
         assert await asyncio.wait_for(recorded.titles.get(), timeout=10) == 'Background title'
     finally:
-        for handler in host.handlers:
-            await handler(SessionEnd(reason='exit'))
+        await loaded.dispatch(SessionEnd(reason='exit'))
     assert recorded.closed
 
 
@@ -482,7 +471,7 @@ def test_protocol_reports_and_sequences(server: Server) -> None:
 
 async def test_cancelled_question_returns_idle(recorded: RecordingClient) -> None:
     host = make_host()
-    herdr.activate(host)
+    loaded = load_plugin(herdr.HerdrPlugin, host)
     started = anyio.Event()
 
     async def answer(request: AskUserRequest) -> AskUserResponse:
@@ -493,7 +482,7 @@ async def test_cancelled_question_returns_idle(recorded: RecordingClient) -> Non
     agent = Agent(
         QuestionModel(call_tools=['ask_user_question']),
         deps_type=type(None),
-        capabilities=[AskUser(answerer=answer), *host.capabilities],
+        capabilities=[AskUser(answerer=answer), *loaded.capabilities],
     )
     async with anyio.create_task_group() as tasks:
         tasks.start_soon(agent.run, 'hello')
@@ -501,6 +490,5 @@ async def test_cancelled_question_returns_idle(recorded: RecordingClient) -> Non
         assert recorded.reports[-1][1]['state'] == 'blocked'
         tasks.cancel_scope.cancel()
     assert recorded.reports[-1] == ('pane.report_agent', {'state': 'idle', 'message': 'ready'})
-    for handler in host.handlers:
-        await handler(SessionEnd(reason='exit'))
+    await loaded.dispatch(SessionEnd(reason='exit'))
     assert recorded.closed

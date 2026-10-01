@@ -15,6 +15,7 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
     CombinedCapability,
+    Hooks,
     LocalWorkspace,
     ValidatedToolArgs,
     WrapperCapability,
@@ -43,9 +44,9 @@ from pydantic_ai_harness.step_persistence.conversations import (
 )
 from pydantic_clai2 import DEFAULT_PLUGINS, create_agent
 from pydantic_clai2._app import STOCK_PLUGINS, create_stock_agent
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, load_plugin
 from pydantic_clai2.runtime._session import Session
-from pydantic_clai2.runtime.sessions import activate
+from pydantic_clai2.runtime.sessions import PersistencePlugin
 
 
 def saved_session(tmp_path: Path) -> Session[None, str]:
@@ -193,9 +194,9 @@ async def test_cancellation_persists_and_live_session_cannot_resume(tmp_path: Pa
 async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
     session = saved_session(tmp_path)
     host = PluginHost(name='persistence', console=Console(file=StringIO()), settings={}, conversation=session)
-    activate(host)
-    assert any(isinstance(cap, StepPersistence) for cap in host.capabilities)
-    session.plugins = host.capabilities
+    plugin = load_plugin(PersistencePlugin, host)
+    assert any(isinstance(cap, StepPersistence) for cap in plugin.capabilities)
+    session.plugins = list(plugin.capabilities)
     await session.prompt('hello')
     assert session.step_store is not None and session.summary.run_id is not None
     snapshot = await session.step_store.latest_snapshot(run_id=session.summary.run_id)
@@ -203,8 +204,7 @@ async def test_persistence_plugin_uses_session_store(tmp_path: Path) -> None:
     assert snapshot.messages == session.messages
     assert snapshot.conversation_id == session.summary.id
     bare = PluginHost(name='persistence', console=Console(file=StringIO()), settings={})
-    activate(bare)
-    assert not bare.capabilities
+    assert not load_plugin(PersistencePlugin, bare).capabilities
 
 
 async def test_cancellation_still_propagates_when_saving_fails(
@@ -461,7 +461,7 @@ async def test_a_group_plugin_that_supplies_the_workspace_replaces_the_session_d
 
 @pytest.mark.parametrize('deny', [False, True])
 async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrails(tmp_path: Path, deny: bool) -> None:
-    plugin = PluginHost[None](name='guarded', console=Console(file=StringIO()), settings={})
+    hooks = Hooks[None]()
     tools = Capability[None](instructions='Follow the plugin guardrail.')
     executed: list[str] = []
     guarded: list[str] = []
@@ -472,20 +472,17 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
         executed.append('plugin_tool')
         return 'plugin result'
 
-    plugin.add(tools)
     bindings: list[RunContext[None]] = []
 
     def dynamic(ctx: RunContext[None]) -> Capability[None]:
         bindings.append(ctx)
         return Capability(instructions='Dynamic plugin instructions.')
 
-    plugin.add(dynamic)
-
-    @plugin.on('before_run')
+    @hooks.on.before_run
     async def record(ctx: RunContext[None]) -> None:
         runs.append((ctx.run_id, ctx.conversation_id, await ctx.workspace.working_dir()))
 
-    @plugin.on('before_tool_execute')
+    @hooks.on.before_tool_execute
     async def guard(
         ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
     ) -> ValidatedToolArgs:
@@ -542,13 +539,12 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
         deps=None,
         workspace=tmp_path,
         conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
-        plugins=[Coder(repo_context=False), *plugin.capabilities, LocalWorkspace(tmp_path)],
+        plugins=[Coder(repo_context=False), tools, dynamic, hooks, LocalWorkspace(tmp_path)],
     )
     persistence = PluginHost[None](
         name='persistence', console=Console(file=StringIO()), settings={}, conversation=session
     )
-    activate(persistence)
-    session.plugins = [*session.plugins, *persistence.capabilities]
+    session.plugins = [*session.plugins, *load_plugin(PersistencePlugin, persistence).capabilities]
     assert (await session.prompt('parent task')).output == 'done'
     assert executed == ([] if deny else ['plugin_tool'])
     assert sorted(guarded) == ['delegate_task', 'plugin_tool', 'read_file']

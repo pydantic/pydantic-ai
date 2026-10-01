@@ -24,20 +24,28 @@ shell itself lives here.
 
 ## The plugin model
 
-A plugin is a module with `activate(host: PluginHost)`, or a bare capability
-class. `@host.on(name)` registers a handler for a lifecycle moment;
-`@host.on(EventClass)` for a typed event; `host.commands.register` for a
-`/command`; `host.add` for tools and instructions; `host.render` for custom
-output; `host.settings(Model)` for validated config. `PLUGINS.md` is the user
-contract. If code and `PLUGINS.md` disagree, fix one so they agree in the same PR.
+A plugin is a `Plugin` subclass, or a bare capability class. It is declarative
+in the same way core's `AbstractCapability` is: every contribution is a method
+with a default that contributes nothing, and a plugin overrides only what it
+needs. `get_capabilities` for tools, instructions, and agent-run hooks (a `Hooks`
+capability, or `@on_event` on your own capability); `get_commands` for
+`/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
+and `get_model_providers`; `configure` for a settings menu; `on_session_start`,
+`on_session_end`, `on_turn_start`, and `on_turn_end` for CLAI's own moments. The
+settings model is the class's type parameter (`Plugin[Settings]`), validated into
+`self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
+(console, conversation, status, full screen, saved settings); it registers
+nothing. `docs/declarative-plugins.md` records the design. `PLUGINS.md` is the
+user contract. If code and `PLUGINS.md` disagree, fix one so they agree in the
+same PR.
 
 ## Rules for the plugin API
 
-- **No global state.** Registration goes on a `PluginHost` instance someone
-  constructed. No module-level dicts, no import-time side effects. Tests build a
-  host and call `activate` directly.
-- **Strings are keys, never payloads.** Hook names are a `Literal`; each name has
-  an `@overload` binding one typed event dataclass. A handler never receives
+- **Declare, do not register.** A plugin returns what it offers from `get_*`
+  methods, which the loader calls once per load (`collect`). No registration
+  calls, no module-level dicts, no import-time side effects. Tests call
+  `load_plugin(PluginClass, host)`.
+- **One method per moment, one typed event per method.** A handler never receives
   `*args`, `**kwargs`, `dict`, or `context: object = None`.
 - **No string sub-dispatch.** A handler does not receive `event_type: str` and
   switch on it. Use the event class as the key.
@@ -46,31 +54,33 @@ contract. If code and `PLUGINS.md` disagree, fix one so they agree in the same P
   `event.cancel()`). Nothing collects a list of return values.
 - **Fail closed, one way.** A raising handler on a decidable moment cancels the
   action and reports the error. No per-registration "fail open" flag.
-- **Host hooks are `<subject>_<moment>`** (`turn_start`). Core hooks keep core's
-  names verbatim (`before_tool_execute`). Do not rename a core hook for taste.
+- **CLAI moments are `on_<subject>_<moment>`** (`on_turn_start`). Core hooks stay
+  core's, reached through a `Hooks` capability. Do not wrap a core hook in a
+  plugin method.
 - **Payloads are kw-only dataclasses.** Not `BaseModel`. Pydantic is for the
   settings JSON boundary only.
 - **No `getattr`/`hasattr` on a plugin** to discover what it supports. It
-  registered the thing or it did not.
-- **Only four host hooks.** `session_start`, `session_end`, `turn_start`,
-  `turn_end`. Adding a fifth needs a use case that core cannot serve; say which
-  core hook you checked and why it does not fit.
+  returned the thing from a `get_*` method or it did not; `has_configure` and
+  `has_render` compare against the base-class default.
+- **Only four CLAI moments.** `on_session_start`, `on_session_end`,
+  `on_turn_start`, `on_turn_end`. Adding a fifth needs a use case that core
+  cannot serve; say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
 
 Plugins load and unload while CLAI runs. The rules that make that safe:
 
-- **One `PluginHost` per plugin.** The host is the ownership scope. Everything a
-  plugin registers is recorded on its own host, so unloading is "discard this
-  host". No `callback -> owner` map, no scanning registries for a plugin's name.
+- **One `LoadedPlugin` per plugin.** It holds the instance and what its `get_*`
+  methods returned, so unloading is "discard this `LoadedPlugin`". No
+  `callback -> owner` map, no scanning registries for a plugin's name.
 - **Load and unload only between turns.** `/commands` already run between turns,
   so this falls out for free; do not add a mid-run path.
-- **Load fires `session_start` for that plugin; unload fires `session_end`.** A
+- **Load runs `on_session_start` for that plugin; unload runs `on_session_end`.** A
   plugin cannot tell whether it was loaded at startup or later, and must not
   need to.
 - **`reload` is unload, re-import, load.** Drop-in entry modules use fresh source.
   Installed modules use `importlib.reload`, which retains globals absent from the
-  new source. Plugins must explicitly initialize their state on activation.
+  new source. Plugins keep their state on the instance, set up in `__init__`.
 - **Instruction order is capability order.** Placement is a core
   `CapabilityOrdering` (`position`, `wraps`, `wrapped_by`), not a CLAI list.
 - **Registration is idempotent per name.** "Active for the next prompt" is the
@@ -101,12 +111,12 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   must not run code as the user on launch. `/plugins enable` is the approval
   and persists the approved declaration in the store. Precedence is store,
   drop-in folder, project, built-in. CLAI never writes the project file.
-- **A load failure leaves the session as it was.** Import or `activate` errors
-  are reported and the plugin stays unloaded; partial registrations from a
-  failed `activate` are discarded with the host. Registered `session_end` handlers
-  run with `reason='error'` under a shield with a five-second cooperative timeout
-  per handler before a failed/cancelled load drops the host. Cleanup must tolerate
-  incomplete `session_start`; a handler failure must not skip later cleanup.
+- **A load failure leaves the session as it was.** Import, construction, or
+  `get_*` errors are reported and the plugin stays unloaded; nothing it declared
+  is kept. When construction succeeded, `on_session_end` runs with
+  `reason='error'` under a shield with a five-second cooperative timeout before a
+  failed/cancelled load drops the plugin. Cleanup must tolerate an incomplete
+  `on_session_start`.
 
 Compaction registers harness `FallbackCompaction` directly with `max_fraction`
 and `context_window` for both strategies. Harness owns the trigger; do not add
@@ -116,13 +126,13 @@ chain so yellow means the compacted request still exceeds the threshold.
 `FallbackExceptionGroup`, and `UsageLimitExceeded` select truncation after a
 summary failure; other exceptions propagate.
 
-## Adding or changing a hook
+## Adding or changing a CLAI moment or contribution
 
-1. Add the name to the `Literal`, the event dataclass, and the `@overload`.
-2. Add the parity test entry: the `Literal` must equal `Hooks.on`'s attribute
-   names plus the host names. Drift fails CI, not code review.
-3. Fire it from exactly one place in the shell.
-4. Document it in `PLUGINS.md` in the table it belongs to.
+1. Add the event dataclass and an `on_*` method (or a `get_*` method with a
+   no-op default) to `Plugin`, and route it in `_HANDLERS` or `collect`.
+2. Fire it, or read the collected value, from exactly one place in the shell.
+3. Document it in `PLUGINS.md` in the table it belongs to, and in
+   `docs/declarative-plugins.md` if it changes the design.
 
 ## The `/plugins`, `/set`, `/theme`, `/model`, and `/add_model` menus
 
@@ -138,7 +148,7 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
   state, no save/cancel pair. Settings menus still end with a **Save & close**
   row (`save_and_close_item()`, recognized by `picked(result)`) that only
   leaves; `FieldMenu`, `/keys`, and `/plugins` add it for you.
-- Turning a plugin on opens its `@host.configure` menu. A widget cannot open
+- Turning a plugin on opens its `configure` menu. A widget cannot open
   from inside another menu's key handler, so `PluginMenu` closes with a
   `Configure` result and `open_plugins_menu` runs the settings menu, then
   reopens the list.
@@ -171,11 +181,11 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
 ## Rendering
 
 `StreamRenderer` owns text and thinking. It knows nothing about any specific
-tool. Tool-specific output (shell previews, diffs, grep) is registered through
-`host.render` by the plugin that owns the event. Match on event classes, never
-on `tool_name` strings. Always flush the stream before printing anything else;
-the host does this for renderers, so do not call `console.print` from inside an
-`on` handler when a renderer would do.
+tool. Tool-specific output (shell previews, diffs, grep) comes from `render` on
+the plugin that owns the event. Match on event classes, never on `tool_name`
+strings. Always flush the stream before printing anything else; the shell does
+this for renderers, so do not call `console.print` from an event hook when a
+renderer would do.
 
 ## Colours
 
@@ -225,7 +235,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
 | `ui/menus/session_browser.py` | project/session browser using Termflow layout and terminal primitives |
 | `ui/rendering/_rendering.py` | streaming Markdown and thinking |
-| `plugins/__init__.py` | `PluginHost`, hook names, event dataclasses |
+| `plugins/__init__.py` | `Plugin`, `PluginHost`, `LoadedPlugin`/`collect`, event dataclasses |
+| `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
 | `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
@@ -268,7 +279,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `runtime/sandbox_calls.py` | events and ordering that render calls from inside `run_code` like direct calls; no harness imports |
 | `ui/rendering/theme.py` | Existing brand roles, opt-in Termflow palette scope, `color()`, `sgr()` |
 | `ui/menus/theme_picker.py` | `/theme` picker over Termflow's bundled palettes |
-| `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `host.spinner`, the user's `spinners.json`, `Spinners` |
+| `ui/rendering/spinners.py` | the working-animation catalogue: builtins, plugin `get_spinners`, the user's `spinners.json`, `Spinners` |
 | `ui/rendering/spinner_frames.py` | frame data for the Code Puppy cli-spinners pack |
 | `ui/menus/spinner_picker.py` | `/spinner`: animated picker, by-name selection with speed, `init` |
 
@@ -284,8 +295,8 @@ Keep files concise - we don't need any 10,000 line files. Single responsibility.
   the user's request, not just the implementation or automated tests.
 - `pytest-anyio`; real model calls are blocked globally.
 - Drive the shell with `TestModel` and a `Console(file=StringIO())`.
-- Test a hook by building a `PluginHost`, registering a handler, and firing the
-  event from the shell path that owns it. Assert the handler's effect (the
+- Test a moment by loading the plugin with `load_plugin` and firing the event
+  from the shell path that owns it (or `LoadedPlugin.dispatch`). Assert the handler's effect (the
   cancelled turn, the rewritten text), not a mock call count.
 - Renderers get synthetic events. They must not need `Coder` installed.
 - Cancellation: use a real `anyio` cancel scope, order with `Event`s, no sleeps.

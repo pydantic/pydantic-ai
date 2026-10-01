@@ -104,7 +104,7 @@ _CODER_FACTORY = 'pydantic_ai_harness.coder:Coder'
 
 
 class PluginSettings(BaseModel):
-    """Declaration for a trusted plugin: a module with `activate`, or `module:Capability`."""
+    """Declaration for a trusted plugin: a module defining one `Plugin` subclass, `module:PluginClass`, or `module:Capability`."""
 
     model_config = ConfigDict(extra='forbid', frozen=True, strict=True)
     id: str = Field(min_length=1)

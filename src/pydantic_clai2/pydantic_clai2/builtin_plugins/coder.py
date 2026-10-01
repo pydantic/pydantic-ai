@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Generic
 
 from pydantic import (
     BaseModel,
@@ -17,8 +19,9 @@ from pydantic import (
     model_serializer,
 )
 
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.coder import Coder
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import DepsT, Plugin, PluginHost
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 
@@ -72,12 +75,12 @@ class CoderSettings(BaseModel):
         return list(dict.fromkeys([*project, *personal]))
 
 
-class CoderSource:
+class CoderSource(Generic[DepsT]):
     """The two delegation settings, saved through the same validated model."""
 
     title = 'Coder sub-agents'
 
-    def __init__(self, host: PluginHost[object]) -> None:
+    def __init__(self, host: PluginHost[DepsT]) -> None:
         self.host = host
 
     def rows(self) -> tuple[FieldRow, ...]:
@@ -125,24 +128,24 @@ class CoderSource:
         return f'Reset {row.label}.'
 
 
-def activate(host: PluginHost[object]) -> None:
-    """Register coding tools and the shared field editor for delegation preferences."""
-    settings = host.settings(CoderSettings)
+class CoderPlugin(Plugin[CoderSettings, DepsT]):
+    """Harness `Coder`, plus a field editor for the delegation preferences."""
 
-    @host.configure
-    async def configure() -> str:
-        if not host.console.is_terminal:
-            return 'Configure agent folders from a terminal: /plugins configure coder'
-        messages = await run_worker(lambda: run_flow(FieldMenu(CoderSource(host))))
-        return '\n'.join(messages) or 'No Coder settings changed.'
-
-    host.add(
-        Coder[object](
-            instructions=settings.instructions,
-            unrestricted_filesystem=settings.unrestricted_filesystem,
-            workspace=settings.workspace,
-            repo_context=settings.repo_context,
-            sub_agents=settings.sub_agents,
-            agent_folders=settings.folders(home=Path.home()) or None,
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        settings = self.settings
+        return (
+            Coder[DepsT](
+                instructions=settings.instructions,
+                unrestricted_filesystem=settings.unrestricted_filesystem,
+                workspace=settings.workspace,
+                repo_context=settings.repo_context,
+                sub_agents=settings.sub_agents,
+                agent_folders=settings.folders(home=Path.home()) or None,
+            ),
         )
-    )
+
+    async def configure(self) -> str:
+        if not self.host.console.is_terminal:
+            return 'Configure agent folders from a terminal: /plugins configure coder'
+        messages = await run_worker(lambda: run_flow(FieldMenu(CoderSource(self.host))))
+        return '\n'.join(messages) or 'No Coder settings changed.'

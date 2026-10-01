@@ -14,7 +14,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.subagents import SubAgents
 from pydantic_clai2.builtin_plugins import coder as coder_plugin
-from pydantic_clai2.builtin_plugins.coder import CoderSettings, CoderSource, activate
+from pydantic_clai2.builtin_plugins.coder import CoderPlugin, CoderSettings, CoderSource
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -91,23 +91,18 @@ def test_menu_edits_save_only_chosen_settings() -> None:
 
 
 async def test_configure_outside_a_terminal_explains_how(monkeypatch: pytest.MonkeyPatch) -> None:
-    host = coder_host()
-    activate(host)
-    assert host.configurer is not None
-    assert 'from a terminal' in await host.configurer()
+    assert 'from a terminal' in await CoderPlugin[object].from_host(coder_host()).configure()
 
 
 @pytest.mark.parametrize('messages', [['Saved Agent folders.'], []])
 async def test_configure_runs_the_field_menu(monkeypatch: pytest.MonkeyPatch, messages: list[str]) -> None:
-    host = coder_host(terminal=True)
-    activate(host)
+    plugin = CoderPlugin[object].from_host(coder_host(terminal=True))
 
     async def run_worker(work: Callable[[], list[str]]) -> list[str]:
         return messages
 
     monkeypatch.setattr(coder_plugin, 'run_worker', run_worker)
-    assert host.configurer is not None
-    assert await host.configurer() == ('\n'.join(messages) or 'No Coder settings changed.')
+    assert await plugin.configure() == ('\n'.join(messages) or 'No Coder settings changed.')
 
 
 @pytest.mark.parametrize('factory', ['pydantic_ai_harness:Coder', 'pydantic_ai_harness.coder:Coder'])

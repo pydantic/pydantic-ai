@@ -49,7 +49,7 @@ class PluginMenu(Generic[DepsT]):
             hint = f'No plugins. Use /plugins add, or drop a file in {self._loader.plugins_dir}'
             return [MenuItem(hint, disabled=True), save_and_close_item()]
         rows = [
-            MenuItem(f'[{"x" if entry.host else " "}] {entry.name:<16} {entry.source}', value=entry.name)
+            MenuItem(f'[{"x" if entry.loaded else " "}] {entry.name:<16} {entry.source}', value=entry.name)
             for entry in entries
         ]
         return [*rows, save_and_close_item()]
@@ -63,7 +63,7 @@ class PluginMenu(Generic[DepsT]):
         lines = [
             f'source  {entry.source}',
             f'state   {entry.state}',
-            f'adds    {entry.host.summary() if entry.host else "-"}',
+            f'adds    {entry.loaded.summary() if entry.loaded else "-"}',
             f'error   {entry.error or "none"}',
         ]
         if self.notice:
@@ -74,7 +74,7 @@ class PluginMenu(Generic[DepsT]):
         """Space: enable or disable, saved immediately. Enabling opens the plugin's settings menu, if it has one."""
         entry = self._find(item)
         if entry is not None:
-            enabling = entry.host is None
+            enabling = entry.loaded is None
             self._run((self._loader.enable if enabling else self._loader.disable)(entry.name))
             if enabling and self.notice is None and self._loader.configurable(entry.name):
                 return MenuResult(item=MenuItem(item.label, value=Configure(entry.name)))
@@ -102,7 +102,7 @@ class PluginMenu(Generic[DepsT]):
             return None
         if self._loader.configurable(entry.name):
             return MenuResult(item=MenuItem(item.label, value=Configure(entry.name)))
-        self.notice = f'{entry.name} has no settings menu.' if entry.host else f'Enable {entry.name} to configure it.'
+        self.notice = f'{entry.name} has no settings menu.' if entry.loaded else f'Enable {entry.name} to configure it.'
         menu.replace_items(self.items())
         return None
 

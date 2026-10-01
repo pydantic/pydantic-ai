@@ -108,7 +108,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
             'agent_folders': ['agents'],
         },
     ),
-    PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu:activate'),
+    PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu'),
     PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
     PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
@@ -267,6 +267,13 @@ async def chat(
                     console.print(
                         f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
                     )
+                    if isinstance(exc, ImportError) and exc.name and exc.name.startswith('pydantic_ai_harness'):
+                        console.print(
+                            'Harness is not refreshed by /reload. Restart CLAI2 with the same launch options and '
+                            '--resume to continue this session. Keep the worktree if asked to remove it.',
+                            style=theme.color(theme.INFO),
+                            markup=False,
+                        )
                 fresh = False
             else:
                 with transcript.capture(console):
@@ -967,7 +974,7 @@ def _report_project(project: ProjectSettings, console: Console) -> None:
 
 
 def _report_project_plugins(loader: PluginLoader[DepsT], console: Console) -> None:
-    waiting = [entry.name for entry in loader.entries() if entry.project and entry.host is None]
+    waiting = [entry.name for entry in loader.entries() if entry.project and entry.loaded is None]
     if waiting:
         console.print(
             f'Project plugins not loaded; approve one with /plugins enable NAME: {", ".join(waiting)}',
@@ -1017,7 +1024,7 @@ async def _run_prompt(
     console: Console,
     settings: Settings,
     status: Status,
-    renderers: Sequence[Renderer[AgentStreamEvent]],
+    renderers: Sequence[Renderer],
     screen: Screen,
     spinner: Callable[[], Spinner],
     images: Sequence[BinaryContent] = (),
