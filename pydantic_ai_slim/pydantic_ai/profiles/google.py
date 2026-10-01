@@ -217,8 +217,9 @@ def _profile_model_name(model_name: str) -> str:  # pyright: ignore[reportUnused
     """The model id that profile lookup matches on, taken from a Google publisher model's resource name.
 
     The Gemini API accepts `models/X` for the bare id `X`; Vertex accepts `publishers/P/models/X` (optionally
-    under `projects/A/locations/B/`) and `P/X`. Tuned models, Model Registry models and endpoints carry an
-    opaque id rather than a model name, so they are returned unchanged.
+    under `projects/A/locations/B/`) and `P/X`. Tuned models, endpoints and full Model Registry paths carry an
+    opaque id rather than a model name, so they are returned unchanged. A short Vertex Model Registry id
+    (`models/N`) reduces to `N`, which names no publisher model.
     """
     match = _GOOGLE_PUBLISHER_MODEL_RESOURCE_NAME.fullmatch(model_name)
     return match.group(1) if match else model_name
