@@ -5,8 +5,8 @@ from typing import IO
 
 import pytest
 
-from pydantic_clai2 import prompt_surface
-from pydantic_clai2.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt import prompt_surface
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
 from tests.clai2.surface_terminal import SurfaceTerminal
 
 ROWS = ('TOP', 'DRAFT', 'BOTTOM', 'FOOTER')

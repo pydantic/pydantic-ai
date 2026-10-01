@@ -10,8 +10,9 @@ from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_clai2 import StreamRenderer, theme
+from pydantic_clai2 import StreamRenderer
 from pydantic_clai2.config import Settings, resolve_settings
+from pydantic_clai2.ui.rendering import theme
 
 
 @pytest.mark.parametrize('exit_code', [0, 1, None])

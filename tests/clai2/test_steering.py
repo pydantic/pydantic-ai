@@ -15,10 +15,10 @@ from pydantic_ai.messages import BinaryContent, ModelRequest, UserPromptPart
 from pydantic_ai.models import Model
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2._app import create_shell
-from pydantic_clai2._session import Session
-from pydantic_clai2.live_prompt import LivePrompt
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from tests.clai2.test_live_prompt import editor
 
 

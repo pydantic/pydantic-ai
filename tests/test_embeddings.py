@@ -55,6 +55,11 @@ with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as cohere_imports_successful:
+    import cohere
+    from cohere.types.embed_by_type_response import EmbedByTypeResponse
+    from cohere.types.embed_by_type_response_embeddings import EmbedByTypeResponseEmbeddings
+
+    from pydantic_ai.embeddings import cohere as cohere_embeddings
     from pydantic_ai.embeddings.cohere import (
         CohereEmbeddingModel,
         CohereEmbeddingSettings,
@@ -536,6 +541,23 @@ class TestOpenAI:
                     },
                 },
             ]
+        )
+
+
+@pytest.mark.skipif(not cohere_imports_successful(), reason='Cohere not installed')
+def test_cohere_empty_billed_units():
+    """An empty SDK billing object is a defensive case that a VCR recording cannot reliably produce."""
+    for billed_units in (cohere.ApiMetaBilledUnits(), cohere.ApiMetaBilledUnits(input_tokens=0, output_tokens=0)):
+        response = EmbedByTypeResponse(
+            id='test',
+            embeddings=EmbedByTypeResponseEmbeddings(float_=[[0.1]]),
+            meta=cohere.ApiMeta(billed_units=billed_units),
+        )
+        assert (
+            cohere_embeddings._map_usage(  # pyright: ignore[reportPrivateUsage]
+                response, 'cohere', 'https://api.cohere.com', 'embed-v4.0'
+            )
+            == RequestUsage()
         )
 
 

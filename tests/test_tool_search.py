@@ -18,6 +18,7 @@ from typing import Any, Literal, TypeVar, cast
 
 import pytest
 import yaml
+from cassetter import Cassette
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 from pytest_mock import MockerFixture
@@ -87,6 +88,7 @@ from pydantic_ai.toolsets._tool_search import (
 from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 from pydantic_ai.usage import RequestUsage, RunUsage
 
+from .cassette_utils import request_json
 from .conftest import iter_message_parts, message, message_part, try_import
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
@@ -459,16 +461,16 @@ _CASES = [
         scenario_summary=snapshot(
             {
                 'exchange_rate': {
-                    'keywords': "['currency exchange rate', 'USD EUR conversion', 'foreign exchange', 'currency converter']",
+                    'keywords': "['exchange rate', 'currency conversion', 'USD EUR', 'forex']",
                     'tool_calls': ['search_tools', 'get_exchange_rate'],
                 },
                 'stock_price': {
-                    'keywords': "['stock price', 'AAPL', 'ticker symbol', 'market data', 'financial data']",
-                    'tool_calls': ['search_tools', 'stock_lookup', 'stock_lookup'],
+                    'keywords': "['stock price', 'AAPL', 'market data', 'ticker', 'equity price']",
+                    'tool_calls': ['search_tools', 'stock_lookup'],
                 },
                 'translation': {
-                    'keywords': "['translate', 'translation', 'French', 'language']",
-                    'tool_calls': ['search_tools'],
+                    'keywords': None,
+                    'tool_calls': [],
                 },
                 'no_matching_tool': {
                     'keywords': "['book flight', 'flight booking', 'airline reservation', 'travel booking']",
@@ -1784,7 +1786,9 @@ async def test_tool_search_toolset_custom_search_fn_still_marks_corpus():
 
 
 @pytest.mark.vcr
-async def test_anthropic_native_tool_search_round_trip(allow_model_requests: None, anthropic_api_key: str) -> None:
+async def test_anthropic_native_tool_search_round_trip(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+) -> None:
     """End-to-end against live Anthropic: native BM25 server-side tool search
     populates `NativeToolCallPart` / `NativeToolReturnPart`, the model invokes
     the discovered deferred tool by its plain name, and the wire request carries
@@ -1828,15 +1832,9 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     assert rate_returns[0].content == '1 USD = 0.92 EUR'
 
     # Wire-level checks against the live cassette.
-    cassette_path = (
-        Path(__file__).parent / 'cassettes' / 'test_tool_search' / 'test_anthropic_native_tool_search_round_trip.yaml'
-    )
-    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
-    interactions = cast(list[dict[str, Any]], cassette['interactions'])
-
     # Initial request: deferred tools ship with `defer_loading: true`, and the BM25
     # builtin is registered alongside.
-    first_request = cast(dict[str, Any], interactions[0]['request']['parsed_body'])
+    first_request = cast(dict[str, Any], request_json(vcr.requests[0]))
     deferred_names = {
         cast(str, t['name'])
         for t in cast(list[dict[str, Any]], first_request['tools'])
@@ -1851,18 +1849,23 @@ async def test_anthropic_native_tool_search_round_trip(allow_model_requests: Non
     assert builtin_tool_types == {'tool_search_tool_bm25_20251119'}
 
     # Provisional beta header is rejected by the API — confirm we don't send it.
-    assert 'tool-search-tool-2025-11-19' not in (first_request.get('betas') or [])
-
-    # First response contains the server-side tool search round trip.
-    first_response_blocks = cast(list[dict[str, Any]], interactions[0]['response']['parsed_body']['content'])
-    assert any(
-        b.get('type') == 'server_tool_use' and b.get('name') == 'tool_search_tool_bm25' for b in first_response_blocks
+    assert not any(
+        'tool-search-tool-2025-11-19' in value for value in vcr.requests[0].headers.get('anthropic-beta', [])
     )
-    assert any(b.get('type') == 'tool_search_tool_result' for b in first_response_blocks)
+
+    # First response contains the server-side BM25 tool search round trip.
+    first_response = next(msg for msg in result.all_messages() if isinstance(msg, ModelResponse))
+    assert any(
+        isinstance(p, NativeToolSearchCallPart) and (p.provider_details or {}).get('strategy') == 'bm25'
+        for p in first_response.parts
+    )
+    assert any(isinstance(p, NativeToolSearchReturnPart) for p in first_response.parts)
 
 
 @pytest.mark.vcr
-async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, anthropic_api_key: str) -> None:
+async def test_anthropic_custom_callable_round_trip(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+) -> None:
     """End-to-end: a custom callable `ToolSearch` strategy runs locally but still
     surfaces natively on Anthropic — deferred tools ship with `defer_loading: true`,
     the model invokes the regular `search_tools` function tool, and our
@@ -1918,21 +1921,14 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
     # Wire-level checks against the cassette: the deferred corpus ships with
     # `defer_loading: true`, the model's `search_tools` call appears in the response,
     # and our tool result is formatted as `tool_reference` blocks (not plain text).
-
-    cassette_path = (
-        Path(__file__).parent / 'cassettes' / 'test_tool_search' / 'test_anthropic_custom_callable_round_trip.yaml'
-    )
-    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
-    interactions = cast(list[dict[str, Any]], cassette['interactions'])
-
-    first_request_tools = cast(list[dict[str, Any]], interactions[0]['request']['parsed_body']['tools'])
+    first_request_tools = cast(list[dict[str, Any]], request_json(vcr.requests[0])['tools'])
     deferred_names = {t['name'] for t in first_request_tools if t.get('defer_loading') is True}
     assert deferred_names == {'get_exchange_rate', 'stock_lookup'}
 
-    first_response_blocks = cast(list[dict[str, Any]], interactions[0]['response']['parsed_body']['content'])
-    assert any(b['type'] == 'tool_use' and b['name'] == 'search_tools' for b in first_response_blocks)
+    first_response = next(msg for msg in result.all_messages() if isinstance(msg, ModelResponse))
+    assert any(isinstance(p, ToolCallPart) and p.tool_name == 'search_tools' for p in first_response.parts)
 
-    second_request_messages = cast(list[dict[str, Any]], interactions[1]['request']['parsed_body']['messages'])
+    second_request_messages = cast(list[dict[str, Any]], request_json(vcr.requests[1])['messages'])
     tool_result_blocks: list[dict[str, Any]] = [
         block
         for msg in second_request_messages
@@ -1952,7 +1948,7 @@ async def test_anthropic_custom_callable_round_trip(allow_model_requests: None, 
 
 @pytest.mark.vcr
 async def test_anthropic_promotes_local_search_history_round_trip(
-    allow_model_requests: None, anthropic_api_key: str
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ) -> None:
     """End-to-end against live Anthropic: a turn with local-shape `ToolSearch*Part`
     history (from a prior cross-provider turn — e.g. on Google) runs cleanly on
@@ -2019,16 +2015,7 @@ async def test_anthropic_promotes_local_search_history_round_trip(
     # Wire-level: cassette confirms the request to Anthropic carried the prior
     # local-shape return as a `tool_result` with `tool_reference` content (NOT a
     # stringified JSON of the discoveries).
-    cassette_path = (
-        Path(__file__).parent
-        / 'cassettes'
-        / 'test_tool_search'
-        / 'test_anthropic_promotes_local_search_history_round_trip.yaml'
-    )
-    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
-    interactions = cast(list[dict[str, Any]], cassette['interactions'])
-
-    first_request_messages = cast(list[dict[str, Any]], interactions[0]['request']['parsed_body']['messages'])
+    first_request_messages = cast(list[dict[str, Any]], request_json(vcr.requests[0])['messages'])
     tool_result_contents: list[Any] = [
         block.get('content')
         for msg in first_request_messages
@@ -2125,7 +2112,9 @@ async def test_openai_promotes_local_search_history_round_trip(
 
 
 @pytest.mark.vcr
-async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests: None, anthropic_api_key: str) -> None:
+async def test_anthropic_native_tool_search_regex_strategy(
+    allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
+) -> None:
     """`ToolSearch(strategy='regex')` registers the regex variant of Anthropic's
     native tool search tool rather than BM25, and the live API accepts the request.
     """
@@ -2144,15 +2133,7 @@ async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests:
     # The live request carries the regex variant — the mock-only assertion here would
     # only validate that we generate the correct parameter shape, not that Anthropic
     # accepts it.
-    cassette_path = (
-        Path(__file__).parent
-        / 'cassettes'
-        / 'test_tool_search'
-        / 'test_anthropic_native_tool_search_regex_strategy.yaml'
-    )
-    cassette = cast(dict[str, Any], yaml.safe_load(cassette_path.read_text(encoding='utf-8')))
-    interactions = cast(list[dict[str, Any]], cassette['interactions'])
-    request_body = cast(dict[str, Any], interactions[0]['request']['parsed_body'])
+    request_body = cast(dict[str, Any], request_json(vcr.requests[0]))
     tool_types = [
         cast(str, t.get('type')) for t in cast(list[dict[str, Any]], request_body['tools']) if isinstance(t, dict)
     ]
@@ -2160,7 +2141,7 @@ async def test_anthropic_native_tool_search_regex_strategy(allow_model_requests:
     assert 'tool_search_tool_bm25_20251119' not in tool_types
     # Live API returned 2xx — the absence of a 4xx is the strongest signal that the
     # request shape (no beta header, regex variant) is accepted.
-    assert interactions[0]['response']['status']['code'] == 200
+    assert vcr.interactions[0].response.status == 200
 
 
 async def test_anthropic_regex_strategy_replay_preserves_variant(allow_model_requests: None):
@@ -3132,7 +3113,7 @@ _FIRST_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
     ('anthropic:claude-sonnet-4-5', 'openai-responses:gpt-5.4'): snapshot(
         [
             ('request', [{'type': 'user', 'content': 'Can I get a refund on order-123?'}]),
-            ('response', [{'type': 'text'}, {'type': 'load_capability_call', 'id': 'refunds'}]),
+            ('response', [{'type': 'load_capability_call', 'id': 'refunds'}]),
             (
                 'request',
                 [
@@ -3295,10 +3276,7 @@ _RESUME_TURN_EXPECTED: dict[tuple[str, str], _TraceShape] = {
             ('request', [{'type': 'user', 'content': 'And what about order-456?'}]),
             (
                 'response',
-                [
-                    {'type': 'text'},
-                    {'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-456'}},
-                ],
+                [{'type': 'tool_call', 'tool_name': 'lookup_refund_policy', 'args': {'order_id': 'order-456'}}],
             ),
             (
                 'request',
@@ -3528,10 +3506,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
             ),
             (
                 'ModelResponse',
-                [
-                    {'type': 'text'},
-                    {'type': 'load_capability_call', 'id': 'refunds'},
-                ],
+                [{'type': 'load_capability_call', 'id': 'refunds'}],
             ),
             (
                 'ModelRequest',
@@ -3549,7 +3524,7 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
                     {
                         'type': 'tool_call',
                         'tool_name': 'lookup_refund_policy',
-                        'args': {'order_id': 'order-123'},
+                        'args': '{"order_id": "order-123"}',
                     }
                 ],
             ),
@@ -3606,9 +3581,9 @@ async def test_anthropic_to_google_deferred_capability_history_replay(
         ]
     )
     assert google_result.output == snapshot("""\
-For order-456, the policy is the same: **a refund is allowed within 30 days** of your purchase.
+For order-456, the policy is the same: a refund is allowed for 30 days after the purchase date.
 
-Is there anything else I can assist you with?\
+Would you like to proceed with a refund for either of these orders?\
 """)
 
 

@@ -328,12 +328,18 @@ capability's commands in a Linux `bwrap` sandbox on that workspace's host:
 `BubblewrapSandbox(SSHWorkspace('dev@box', working_dir='/srv/app'))` or
 `BubblewrapSandbox(LocalWorkspace('.'))`. The host needs `bwrap` and user namespaces.
 
-- Read-only host, writable working dir, private `/tmp`, empty `/run` (no daemon sockets), no network
-  unless `network=True`. `bwrap_args` come after the defaults (`['--bind', p, p]`, `['--tmpfs', p]`).
-- **Only commands are sandboxed**: file methods (and `FileSystem`/`Coder` edit tools) go to the wrapped
-  workspace. Add `read_only=True` on the wrapped capability or a `FileSystem` root to limit them.
-- The host PID namespace is shared, so `Shell` background jobs survive the call, and sandboxed
-  commands can see and signal the host user's processes.
+- Read-only host, writable working dir, private `/tmp`, empty `/run` (no daemon sockets), required user
+  namespace, no capabilities. `bwrap_args` come after the defaults (`['--bind', p, p]`, `['--tmpfs', p]`).
+- `network=False` (default): no network, plus a Codex-style seccomp filter: no socket connect/bind/listen
+  (host Unix sockets and the sandbox's own loopback included), no Unix datagram sockets, no
+  `ptrace`/`io_uring`. Tests that start a local server, and Python 3.14's default `forkserver`
+  multiprocessing (use `get_context('spawn')`), need `network=True`: host network and ports, no filter.
+- File methods (and the `FileSystem`/`Coder` file tools) run in the sandbox as shell commands, so a
+  swapped-in symlink can't lead a write outside the working dir.
+- The host PID namespace is shared, so `Shell` background jobs survive the call (and the run), and
+  sandboxed commands can see and signal the host user's processes.
+- Not a hostile-agent boundary: commands read everything the host user can (hide `~/.ssh` with
+  `--tmpfs`), and files they write (Git hooks, `Makefile`) run unsandboxed if you run them later.
 - The ref and `backend` are the wrapped workspace's. `BubblewrapWorkspace` is the wrapper for building
   a `workspace=` directly: `BubblewrapWorkspace(Workspace(SSHWorkspaceBackend('dev@box')))`.
 
