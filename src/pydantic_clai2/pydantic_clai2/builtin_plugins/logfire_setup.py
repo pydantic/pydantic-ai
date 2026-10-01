@@ -1,4 +1,4 @@
-"""The `logfire` plugin's setup menu: pick where traces go, sign in there, pick a project.
+"""The `observability` plugin's setup menu: pick where traces go, sign in there, pick a project.
 
 It runs Logfire's own device sign-in (the one behind `logfire auth`), not the MCP OAuth in
 `pydantic_clai2.logfire_oauth`: MCP tokens are issued for the MCP server alone and cannot mint write
@@ -220,7 +220,7 @@ async def sign_in(http: httpx.AsyncClient, base_url: str, setup: Setup) -> str:
         failures = 0
         if response.content.strip() not in (b'', b'null'):
             return _parse(_UserToken, response).token
-    raise SetupError('The sign-in link expired before it was approved. Run /plugins configure logfire to retry.')
+    raise SetupError('The sign-in link expired before it was approved. Run /plugins configure observability to retry.')
 
 
 async def _projects(http: httpx.AsyncClient, base_url: str, user_token: str) -> list[Project]:

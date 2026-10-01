@@ -1,6 +1,6 @@
 """UI interaction telemetry: shared UI helpers say what the user did, and a subscribed Logfire instance exports it.
 
-Nothing is recorded until a sink subscribes. The built-in `logfire` plugin subscribes its own instance when
+Nothing is recorded until a sink subscribes. The built-in `observability` plugin subscribes its own instance when
 its `ui_events` setting is on, and unsubscribes before it shuts that instance down. Every span and log is
 tagged `clai2-ui`.
 
