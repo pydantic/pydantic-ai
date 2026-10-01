@@ -1,6 +1,7 @@
 """`/update`: release lookup, install commands, the footer notice, and the shell exit after an install."""
 
 import json
+import os
 import shlex
 import sys
 import threading
@@ -25,6 +26,7 @@ from pydantic_clai2.cli.self_update import (
     _in_thread,  # pyright: ignore[reportPrivateUsage]
     _run_uv,  # pyright: ignore[reportPrivateUsage]
     find_update,
+    find_uv,
     installed,
     latest,
 )
@@ -192,7 +194,7 @@ def _updates(
         fetch=fetch,
         spawn=lambda work: work(),
         run=run,
-        which=lambda name: uv,
+        find_uv=lambda: uv,
     )
     return updates, ran
 
@@ -283,6 +285,26 @@ async def test_failed_install_removes_the_overrides_file() -> None:
     with pytest.raises(OSError):
         await updates.command([])
     assert not seen[0].exists()
+
+
+def test_find_uv_skips_relative_path_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    planted = tmp_path / 'repo'
+    trusted = tmp_path / 'bin'
+    for directory in (planted, trusted):
+        directory.mkdir()
+        for name in ('uv', 'uv.EXE'):
+            (directory / name).write_text('')
+            (directory / name).chmod(0o755)
+    (tmp_path / 'empty').mkdir()
+    (tmp_path / 'empty' / 'uv').write_text('')  # Not executable.
+    (tmp_path / 'empty' / 'uv').chmod(0o644)
+    monkeypatch.chdir(planted)
+    path = os.pathsep.join(['', '.', 'repo', str(tmp_path / 'empty'), str(trusted)])
+    assert find_uv(environ={'PATH': path}, windows=False) == str(trusted / 'uv')
+    windows = {'PATH': path, 'PATHEXT': os.pathsep.join(['.COM', '.EXE'])}
+    assert find_uv(environ=windows, windows=True) == str(trusted / 'uv.EXE')
+    assert find_uv(environ={'PATH': 'repo'}, windows=False) is None
+    assert find_uv(environ={}, windows=False) is None
 
 
 def test_in_thread_runs_the_work() -> None:

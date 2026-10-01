@@ -8,11 +8,10 @@ packages from the same archive, whose exact dev pins are not on PyPI.
 import os
 import re
 import shlex
-import shutil
 import sys
 import tempfile
 import threading
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from importlib import metadata
@@ -161,6 +160,23 @@ def find_update(channel: UpdateChannel, current: Installed, target: str) -> Upda
     return None if current.commit is None and current.version == target else Update(channel=channel, target=target)
 
 
+def find_uv(*, environ: Mapping[str, str] = os.environ, windows: bool = os.name == 'nt') -> str | None:
+    """`uv` from the absolute `PATH` entries only.
+
+    Not `shutil.which`: on Windows before Python 3.12 it searches the working directory first, even with
+    `path=`, so a repository could supply its own `uv.exe`.
+    """
+    extensions = environ.get('PATHEXT', '.EXE').split(os.pathsep) if windows else ['']
+    for directory in environ.get('PATH', '').split(os.pathsep):
+        if not os.path.isabs(directory):
+            continue
+        for extension in extensions:
+            candidate = os.path.join(directory, f'uv{extension}')
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+    return None
+
+
 def _in_thread(work: Callable[[], None]) -> None:
     threading.Thread(target=work, name='clai-update-check', daemon=True).start()
 
@@ -189,7 +205,7 @@ class Updates:
     spawn: Callable[[Callable[[], None]], None] = _in_thread
     """Runs the background check; tests run it inline."""
     run: Callable[[Sequence[str], dict[str, str]], Awaitable[int]] = _run_uv
-    which: Callable[[str], str | None] = shutil.which
+    find_uv: Callable[[], str | None] = find_uv
     restart_required: bool = False
     """Set after a successful install: the running environment was replaced, so the shell exits."""
     _checked: UpdateChannel | None = field(default=None, init=False)
@@ -224,7 +240,7 @@ class Updates:
         update = find_update(channel, self.current, await to_thread.run_sync(self.fetch, channel))
         if update is None:
             return f'CLAI {self.current.label} is the newest on the {channel} channel.'
-        uv = self.which('uv')
+        uv = self.find_uv()
         overrides = _write_overrides(update.overrides()) if channel == 'bleeding' else None
         command = update.command(uv=uv or 'uv', overrides=overrides)
         environment = update.environment()
