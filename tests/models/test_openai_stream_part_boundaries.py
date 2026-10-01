@@ -422,6 +422,44 @@ RESUMED_CONTENT_CASES = [
         profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
     ),
     ResumedContentCase(
+        id='text-after-think-tags-following-reasoning-drops-leading-whitespace',
+        stream=lambda: [
+            text_chunk('Answer.'),
+            _reasoning_chunk('Think.'),
+            text_chunk('<think>'),
+            text_chunk('More'),
+            text_chunk('</think>'),
+            text_chunk('\n\n'),
+            text_chunk('Done.'),
+            chunk([ChoiceDelta()], finish_reason='stop'),
+        ],
+        expected_parts=snapshot(
+            [
+                TextPart(content='Answer.'),
+                ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
+                ThinkingPart(content='More', id='content', provider_name='openai'),
+                TextPart(content='Done.'),
+            ]
+        ),
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
+    ),
+    ResumedContentCase(
+        id='trailing-whitespace-after-reasoning-is-dropped',
+        stream=lambda: [
+            text_chunk('Answer.'),
+            _reasoning_chunk('Think.'),
+            text_chunk('\n'),
+            chunk([ChoiceDelta()], finish_reason='stop'),
+        ],
+        expected_parts=snapshot(
+            [
+                TextPart(content='Answer.'),
+                ThinkingPart(content='Think.', id='reasoning_content', provider_name='openai'),
+            ]
+        ),
+        profile=OpenAIModelProfile(ignore_streamed_leading_whitespace=True),
+    ),
+    ResumedContentCase(
         id='leading-whitespace-before-tool-is-dropped',
         stream=lambda: [
             _reasoning_chunk('Think.'),
