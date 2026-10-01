@@ -162,7 +162,7 @@ async def test_smoothing_defaults_match_code_puppy(monkeypatch: pytest.MonkeyPat
             min_chars_per_tick=min_chars_per_tick,
         )
 
-    monkeypatch.setattr('pydantic_clai2._rendering.SmoothWriter', writer)
+    monkeypatch.setattr('pydantic_clai2.ui.rendering._rendering.SmoothWriter', writer)
     output = io.StringIO()
     renderer = StreamRenderer(
         Console(file=output, force_terminal=True), stop_loading=lambda: None, smooth_seconds=Settings().smooth_seconds

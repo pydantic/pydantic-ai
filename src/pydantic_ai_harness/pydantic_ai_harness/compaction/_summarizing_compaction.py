@@ -6,7 +6,6 @@ from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, cast
 
-from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
@@ -25,7 +24,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._usage import reserved_usage_limits
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import is_pinned, reinject_pinned
