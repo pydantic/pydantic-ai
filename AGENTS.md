@@ -113,8 +113,8 @@ The project uses:
 - `pyright` via `make typecheck`
 - `pytest` in `tests/`, via `make test`, with:
     - `inline-snapshot` for inline assertions
-- `cassetter` for recording and playing back requests to model APIs
-- Documentation is published by [pydantic/unified-docs](https://github.com/pydantic/docs).
+    - `cassetter` for recording and playing back requests to model APIs
+- Documentation is published by [pydantic/unified-docs](https://github.com/pydantic/unified-docs).
   `docs/navigation.yml` owns the Pydantic AI sidebar, routes, and redirects; `tests/test_examples.py`
   tests all code examples in the docs (including docstrings).
 - [`logfire`](docs/logfire.md) for OTel instrumentation of Pydantic AI and `httpx`
