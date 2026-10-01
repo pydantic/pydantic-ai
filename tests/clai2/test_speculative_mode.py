@@ -15,7 +15,15 @@ from rich.console import Console
 
 from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, DynamicCapability, LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -28,14 +36,15 @@ from pydantic_ai_harness.code_mode import (
 )
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_clai2 import StreamRenderer
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2 import Session, StreamRenderer
+from pydantic_clai2._app import create_stock_agent
+from pydantic_clai2.cli.command_context import CommandContext
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.customization import customization_guide
-from pydantic_clai2.eager_timing import EagerExecutionCompletedEvent
-from pydantic_clai2.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.speculation import Speculation, SpeculationCounters
-from pydantic_clai2.speculative_mode import (
+from pydantic_clai2.runtime.eager_timing import EagerExecutionCompletedEvent
+from pydantic_clai2.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_clai2.runtime.speculation import Speculation, SpeculationCounters
+from pydantic_clai2.runtime.speculative_mode import (
     NATIVE_TOOLS,
     SPECULATIVE_TOOLS,
     ShowSandboxCalls,
@@ -56,7 +65,7 @@ def streamed(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) 
                 assert isinstance(part, ToolCallPart)
                 yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
 
-    return FunctionModel(stream_function=stream)
+    return FunctionModel(respond, stream_function=stream)
 
 
 def fold_agent(model: FunctionModel, counters: SpeculationCounters, root: Path) -> Agent[None, str]:
@@ -84,6 +93,41 @@ def test_switch_supplies_the_sandbox_capabilities(tmp_path: Path) -> None:
         'SpeculativeExecution',
         'ShowSandboxCalls',
     ]
+
+
+async def test_stock_delegates_keep_speculative_plugins_and_workspace(tmp_path: Path) -> None:
+    (tmp_path / 'note.txt').write_text('delegated workspace content')
+    prompts: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file'}
+        assert guidance('read-only').strip() in (info.instructions or '')
+        if len(messages) == 1:
+            [request] = messages
+            assert isinstance(request, ModelRequest)
+            [part] = request.parts
+            assert isinstance(part, UserPromptPart) and isinstance(part.content, str)
+            prompt = part.content
+            prompts.append(prompt)
+            code = (
+                'await delegate_task(agent_name="self", task="child task")'
+                if prompt == 'parent task'
+                else 'await read_file(path="note.txt")'
+            )
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        assert any('delegated workspace content' in str(part.content) for part in returns)
+        return ModelResponse(parts=[TextPart('delegated workspace content')])
+
+    coder = Coder[None](repo_context=False)
+    session = Session(
+        create_stock_agent(streamed(respond)),
+        deps=None,
+        workspace=tmp_path,
+        plugins=[coder, *speculative_capabilities(SpeculationCounters(), (coder,))],
+    )
+    assert (await session.prompt('parent task')).output == 'delegated workspace content'
+    assert prompts == ['parent task', 'child task']
 
 
 class TestFold:

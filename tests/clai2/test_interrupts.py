@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from pydantic_clai2.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
 
 
 async def test_worker_thread_does_not_install_signals() -> None:
