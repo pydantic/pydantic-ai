@@ -873,10 +873,7 @@ class _Shell(Generic[DepsT, OutputT]):
         async with self.forks.busy(), self._released():
             await self.interrupts.run(_execute_command(self.commands, text, console=self.console, status=self.status))
         return (
-            text == '/exit'
-            or self.interrupts.exit_requested
-            or self.reload_requested
-            or self.updates.restart_required
+            text == '/exit' or self.interrupts.exit_requested or self.reload_requested or self.updates.restart_required
         )
 
     async def _turn(self, text: str | None) -> bool:
