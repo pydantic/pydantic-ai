@@ -56,9 +56,17 @@ from pydantic_ai import (
 from pydantic_ai.agent import Agent
 from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
-from pydantic_ai.exceptions import ContentFilterError, ModelHTTPError, ModelRetry, SuspendedResponseExpired
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelAPIError,
+    ModelHTTPError,
+    ModelRetry,
+    SuspendedResponseExpired,
+)
 from pydantic_ai.messages import INVALID_JSON_KEY, ToolSearchCallPart, ToolSearchReturnPart, sanitize_messages
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool, FileSearchTool, ImageAspectRatio, MCPServerTool, WebSearchTool
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -4968,22 +4976,23 @@ async def test_openai_responses_thinking_part_from_other_model(
                     TextPart(content=IsStr()),
                 ],
                 usage=RequestUsage(
-                    input_tokens=42,
-                    output_tokens=291,
+                    input_tokens=43,
+                    output_tokens=269,
                     details={
                         'cache_creation_input_tokens': 0,
                         'cache_read_input_tokens': 0,
-                        'input_tokens': 42,
-                        'output_tokens': 291,
+                        'input_tokens': 43,
+                        'output_tokens': 269,
+                        'thinking_tokens': 23,
                     },
-                    cost=Decimal('0.004491'),
+                    cost=Decimal('0.004164'),
                 ),
                 model_name='claude-sonnet-4-6',
                 timestamp=IsDatetime(),
                 provider_name='anthropic',
                 provider_url='https://api.anthropic.com',
                 provider_details={'finish_reason': 'end_turn'},
-                provider_response_id='msg_0114iHK2ditgTf1N8FWomc4E',
+                provider_response_id='msg_011CfY5JvP9tsuUrzoV5SHP9',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -5017,47 +5026,47 @@ async def test_openai_responses_thinking_part_from_other_model(
                 parts=[
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         signature=IsStr(),
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         provider_name='openai',
                     ),
                     ThinkingPart(
                         content=IsStr(),
-                        id='rs_68c42ce323d48193bcf88db6278980cf0ad492c7955fc6fc',
+                        id='rs_0bd463641f0080ef006abbec55cb3887d1b059d169b0450cfe',
                         provider_name='openai',
                     ),
                     TextPart(
                         content=IsStr(),
-                        id='msg_68c42d0b5e5c819385352dde1f447d910ad492c7955fc6fc',
+                        id='msg_0bd463641f0080ef006abbec8067f887d19765a3359225c08d',
                         provider_name='openai',
                     ),
                 ],
                 usage=RequestUsage(
-                    input_tokens=306,
-                    output_tokens=3134,
+                    input_tokens=300,
+                    output_tokens=3010,
                     output_reasoning_tokens=2496,
                     details={'reasoning_tokens': 2496},
-                    cost=Decimal('0.0317225'),
+                    cost=Decimal('0.030475'),
                 ),
                 model_name='gpt-5-2025-08-07',
                 timestamp=IsDatetime(),
@@ -5065,10 +5074,10 @@ async def test_openai_responses_thinking_part_from_other_model(
                 provider_url='https://api.openai.com/v1/',
                 provider_details={
                     'finish_reason': 'completed',
-                    'timestamp': datetime(2025, 9, 12, 14, 23, 30, tzinfo=timezone.utc),
+                    'timestamp': datetime(2026, 9, 29, 16, 50, 29, tzinfo=timezone.utc),
                     'service_tier': 'default',
                 },
-                provider_response_id='resp_68c42ce277ac8193ba08881bcefabaf70ad492c7955fc6fc',
+                provider_response_id='resp_0bd463641f0080ef006abbec55308087d1ac30fbbf212ebde7',
                 finish_reason='stop',
                 run_id=IsStr(),
                 conversation_id=IsStr(),
@@ -13656,6 +13665,155 @@ async def test_stream_response_failed_finish_reason_error(allow_model_requests: 
     assert (response.provider_details or {}).get('finish_reason') == 'failed'
 
 
+def _failed_response_json(error: dict[str, str] | None) -> dict[str, Any]:
+    return {
+        'id': 'resp_001',
+        'object': 'response',
+        'created_at': 1704067200,
+        'status': 'failed',
+        'model': 'gpt-5',
+        'output': [],
+        'parallel_tool_calls': True,
+        'tool_choice': 'auto',
+        'tools': [],
+        'error': error,
+    }
+
+
+def _sse(*events: dict[str, Any]) -> bytes:
+    return b''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n'.encode() for event in events)
+
+
+_CREATED_EVENT: dict[str, Any] = {
+    'type': 'response.created',
+    'response': {**_failed_response_json(None), 'status': 'in_progress'},
+    'sequence_number': 0,
+}
+_ERROR_EVENT: dict[str, Any] = {
+    'type': 'error',
+    'code': 'insufficient_quota',
+    'message': 'You exceeded your current quota',
+    'sequence_number': 0,
+}
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('stream', 'content', 'message'),
+    [
+        pytest.param(
+            True,
+            _sse(
+                _CREATED_EVENT,
+                {'type': 'error', 'code': 'server_error', 'message': 'The server had an error', 'sequence_number': 1},
+            ),
+            'server_error: The server had an error',
+            id='stream-error-event',
+        ),
+        pytest.param(
+            True,
+            _sse(_ERROR_EVENT),
+            'insufficient_quota: You exceeded your current quota',
+            id='stream-error-event-first',
+        ),
+        pytest.param(
+            True,
+            # The nested shape, which the SDK itself raises as `openai.APIError`.
+            _sse(
+                {
+                    'type': 'error',
+                    'sequence_number': 0,
+                    'error': {
+                        'type': 'insufficient_quota',
+                        'code': 'insufficient_quota',
+                        'message': 'You exceeded your current quota',
+                    },
+                }
+            ),
+            'You exceeded your current quota',
+            id='stream-error-event-nested',
+        ),
+        pytest.param(
+            True,
+            _sse(
+                {**_CREATED_EVENT, 'response': {**_CREATED_EVENT['response'], 'background': True}},
+                {
+                    'type': 'response.failed',
+                    'response': {
+                        **_failed_response_json({'code': 'rate_limit_exceeded', 'message': 'Rate limit reached'}),
+                        'background': True,
+                    },
+                    'sequence_number': 1,
+                },
+            ),
+            'rate_limit_exceeded: Rate limit reached',
+            id='stream-response-failed-background',
+        ),
+        pytest.param(
+            False,
+            json.dumps(_failed_response_json({'code': 'server_error', 'message': 'The model failed'})).encode(),
+            'server_error: The model failed',
+            id='response-failed',
+        ),
+    ],
+)
+async def test_response_error_raises_model_api_error(
+    allow_model_requests: None, stream: bool, content: bytes, message: str
+):
+    """A failure the Responses API reports in a 200 body or stream raises `ModelAPIError` with no status code,
+    instead of ending the response with `finish_reason='error'` and sending the model an output retry.
+
+    A mock transport stands in for a cassette because no real provider returns such a response on demand.
+    """
+    requests_made = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal requests_made
+        requests_made += 1
+        content_type = 'text/event-stream' if stream else 'application/json'
+        return httpx2.Response(200, content=content, headers={'content-type': content_type})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            if stream:
+                async with agent.run_stream('Hello') as result:
+                    await result.get_output()  # pragma: no cover — the error raises while the stream opens
+            else:
+                await agent.run('Hello')
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == message
+    # No output retry, re-poll, or cancellation of a background job the provider already marked as failed.
+    assert requests_made == 1
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_response_error_event_first_falls_back(allow_model_requests: None):
+    """An `error` event that opens the stream fires `FallbackModel`'s default `fallback_on`."""
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=_sse(_ERROR_EVENT), headers={'content-type': 'text/event-stream'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        primary = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(FallbackModel(primary, TestModel(custom_output_text='from fallback')))
+
+        async with agent.run_stream('Hello') as result:
+            output = await result.get_output()
+
+    assert output == 'from fallback'
+
+
 async def test_stream_response_incomplete_content_filter_finish_reason(allow_model_requests: None):
     """A terminal `response.incomplete` maps `content_filter` to 'content_filter', like the non-streaming path."""
 
@@ -14619,6 +14777,139 @@ async def test_openai_responses_compact_with_instructions(allow_model_requests: 
     assert isinstance(compacted, ModelResponse)
     assert len(compacted.parts) == 1
     assert isinstance(compacted.parts[0], CompactionPart)
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('content', 'cause'),
+    [
+        pytest.param(b'   ', json.JSONDecodeError, id='non-json'),
+        pytest.param(b'{"a":"\xe2\x82', UnicodeDecodeError, id='non-utf8'),
+    ],
+)
+async def test_openai_responses_compact_non_json_response_body_raises_model_api_error(
+    allow_model_requests: None, content: bytes, cause: type[ValueError]
+):
+    """A 200 compaction response body that can't be decoded as JSON surfaces as `ModelAPIError`, not the raw decode error.
+
+    A mock transport stands in for a cassette because no real provider returns such a body on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        request_context = ModelRequestContext(
+            model=model,
+            messages=[ModelRequest(parts=[UserPromptPart('Hello')])],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        )
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            await model.compact_messages(request_context)
+
+    assert isinstance(exc_info.value.__cause__, cause)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_openai_responses_stream_non_json_chunk_raises_model_api_error(allow_model_requests: None):
+    """A streamed event the SDK can't decode as JSON surfaces as `ModelAPIError`, not a raw `json.JSONDecodeError`.
+
+    A mock transport stands in for a cassette because no real provider returns such a stream on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+    content = (
+        b'event: response.output_text.delta\n'
+        b'data: {"type":"response.output_text.delta","item_id":"msg_001","output_index":0,"content_index":0,'
+        b'"delta":"Hello","sequence_number":0,"logprobs":[]}\n\n'
+        b'event: response.output_text.delta\n'
+        b'data: {not json\n\n'
+    )
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with agent.run_stream('Hello') as result:
+                await result.get_output()
+
+    assert isinstance(exc_info.value.__cause__, json.JSONDecodeError)
+    assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+async def test_openai_responses_stream_mcp_call_invalid_arguments_is_not_mapped(allow_model_requests: None):
+    """Only the SDK's own body decoding maps to `ModelAPIError`: a malformed MCP `arguments` string in a well-formed
+    stream is parsed by our event processing, so its `json.JSONDecodeError` still surfaces as is.
+
+    A mock client stands in for a cassette because no real provider returns such arguments on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8843
+    """
+    from openai.types import responses as resp
+    from openai.types.responses.response_output_item import McpCall
+
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    mcp_call = McpCall(
+        id='mcp_001',
+        type='mcp_call',
+        server_label='srv',
+        name='tool',
+        arguments='{not json',
+        output='ok',
+        status='completed',
+    )
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseOutputItemAddedEvent(
+            item=ResponseOutputMessage(
+                id='msg_001', content=[], role='assistant', status='in_progress', type='message'
+            ),
+            output_index=0,
+            type='response.output_item.added',
+            sequence_number=1,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta='Hello',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=2,
+            logprobs=[],
+        ),
+        resp.ResponseOutputItemDoneEvent(
+            item=mcp_call, output_index=1, type='response.output_item.done', sequence_number=3
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=mock_client)))
+
+    with pytest.raises(json.JSONDecodeError):
+        async with agent.run_stream('Hello') as result:
+            await result.get_output()
 
 
 async def test_openai_responses_compact_with_auto_previous_response_id_chain(

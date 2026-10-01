@@ -975,6 +975,73 @@ Treat `None` as unknown, not as an empty context window. It is returned before t
 
 Pydantic AI fills the window size from [genai-prices](https://github.com/pydantic/genai-prices) where its data records one. For a custom or local model, or one genai-prices doesn't cover yet, set the size explicitly with `profile={'context_window': 128_000}` — see [Inspecting a model's profile](models/overview.md#inspecting-a-models-profile).
 
+#### Scheduling maintenance into cache-cold windows
+
+History-mutating maintenance (summarizing, pruning, repair) has two costs: the work itself, and a *cache cost* — the next request re-writes the entire prompt prefix at full input price, since a mutated prefix can no longer hit the provider's prompt cache. That cache cost is only real while the cache is still warm. Once a conversation has been idle longer than the provider retains the prefix, the next request pays full price anyway, so that turn is a free moment to run any deferrable maintenance.
+
+Providers publish retention windows for their prompt caches. Pydantic AI records the documented default at the provider layer as [`ModelProfile.default_cache_retention`][pydantic_ai.profiles.ModelProfile.default_cache_retention]: 5 minutes for Anthropic, 30 minutes for OpenAI's GPT-5.6 and later. Where a provider's retention depends on account configuration rather than the model — as OpenAI's does for earlier models, where the default hinges on whether the organization has zero data retention enabled — the default is left unset, and the outlook is `'unknown'` unless you pass `retention=` yourself. [`prompt_cache_outlook()`][pydantic_ai.profiles.prompt_cache_outlook] uses it to predict, from a message history alone, whether the next request is likely to hit a warm cache:
+
+```python {title="cache_cold_maintenance.py"}
+from datetime import datetime, timedelta, timezone
+
+from pydantic_ai import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.profiles import prompt_cache_outlook
+
+profile = AnthropicModel('claude-sonnet-4-6').profile
+
+now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+history = [
+    ModelRequest(parts=[UserPromptPart(content='Hi')], timestamp=now - timedelta(minutes=30)),
+    ModelResponse(parts=[TextPart(content='Hello!')], timestamp=now - timedelta(minutes=30)),
+]
+
+# The last exchange was 30 minutes ago, well past Anthropic's 5-minute default.
+outlook = prompt_cache_outlook(history, profile=profile, now=now)
+print(outlook)
+#> cold
+```
+
+A `'cold'` outlook is the signal to flush pending maintenance for free; `'warm'` means the mutation would sacrifice a live cache hit, so defer it if it can wait; `'unknown'` (no documented retention, or a history without timestamps) should be treated like `'warm'` — never mutate on a guess.
+
+Retention you request through model settings, such as `anthropic_cache='1h'` or `openai_prompt_cache_retention='24h'`, replaces the provider's default. [`Model.resolve_cache_retention()`][pydantic_ai.models.Model.resolve_cache_retention] works it out from the settings a request is made with, returning `None` when they don't ask for anything, so passing its result as `retention=` keeps the profile's default in that case. A [`before_model_request`](hooks.md) hook has both the model and the request's settings at hand, so it can decide whether to do the expensive work this turn:
+
+```python {title="cache_cold_hook.py"}
+from pydantic_ai import Agent, ModelRequestContext, RunContext
+from pydantic_ai.capabilities import Hooks
+from pydantic_ai.models.anthropic import AnthropicModelSettings
+from pydantic_ai.profiles import prompt_cache_outlook
+
+hooks = Hooks()
+
+
+@hooks.on.before_model_request
+async def compact_when_cold(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+    messages = request_context.messages
+    model = request_context.model
+    outlook = prompt_cache_outlook(
+        messages,
+        profile=model.profile,
+        retention=model.resolve_cache_retention(request_context.model_settings),
+    )
+    over_budget = ctx.usage.total_tokens > 100_000
+    if len(messages) > 10 and (over_budget or outlook == 'cold'):
+        # Expensive: replace with your real summarization/pruning pass.
+        request_context.messages = messages[:1] + messages[-4:]
+    return request_context
+
+
+agent = Agent(
+    'anthropic:claude-sonnet-4-6',
+    model_settings=AnthropicModelSettings(anthropic_cache='1h'),  # (1)!
+    capabilities=[hooks],
+)
+```
+
+1. With the 1-hour cache requested, the outlook only turns `'cold'` after an hour of idleness rather than Anthropic's default 5 minutes.
+
+`CachePoint(ttl='1h')` markers in history extend the boundary in the same way, when the provider supports them. Azure and providers without a single documented default leave the field `None`, producing `'unknown'` unless the settings request a retention or you pass one explicitly.
+
 ### Testing History Processors
 
 You can test what messages are actually sent to the model provider using

@@ -5,10 +5,12 @@ from typing import TYPE_CHECKING
 from ._warn import HarnessDeprecationWarning
 
 if TYPE_CHECKING:
+    from .absurd import AbsurdDurability
     from .advisor import Advisor
     from .ask_user import AskUser
     from .background_tools import BackgroundTools
     from .browser_use import BrowserUse
+    from .bubblewrap_sandbox import BubblewrapSandbox, BubblewrapWorkspace
     from .capability_creation import CapabilityCreation
     from .code_mode import CodeMode
     from .coder import Coder
@@ -58,6 +60,7 @@ if TYPE_CHECKING:
     from .skills import Skills
     from .spend import SpendLimits
     from .sprites_sandbox import SpritesSandbox, SpritesSandboxBackend
+    from .ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
     from .stackone import StackOne
     from .step_persistence import StepPersistence
     from .subagents import SubAgent, SubAgents
@@ -68,10 +71,13 @@ if TYPE_CHECKING:
     from .youdotcom import YouResearch, YouSearch
 
 __all__ = [
+    'AbsurdDurability',
     'Advisor',
     'AskUser',
     'BackgroundTools',
     'BrowserUse',
+    'BubblewrapSandbox',
+    'BubblewrapWorkspace',
     'CapabilityCreation',
     'ClampOversizedMessages',
     'ClearToolResults',
@@ -115,6 +121,8 @@ __all__ = [
     'ReportContextUsage',
     'RepoContext',
     'Researcher',
+    'SSHWorkspace',
+    'SSHWorkspaceBackend',
     'Shell',
     'Skills',
     'SlidingWindowCompaction',
@@ -138,10 +146,12 @@ __all__ = [
 ]
 
 _CAPABILITY_EXPORTS = {
+    'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
     'AskUser': 'ask_user',
     'BackgroundTools': 'background_tools',
     'BrowserUse': 'browser_use',
+    'BubblewrapSandbox': 'bubblewrap_sandbox',
     'CapabilityCreation': 'capability_creation',
     'ClampOversizedMessages': 'compaction',
     'ClearToolResults': 'compaction',
@@ -176,6 +186,7 @@ _CAPABILITY_EXPORTS = {
     'SlidingWindowCompaction': 'compaction',
     'SpendLimits': 'spend',
     'SpritesSandbox': 'sprites_sandbox',
+    'SSHWorkspace': 'ssh_workspace',
     'StackOne': 'stackone',
     'StepPersistence': 'step_persistence',
     'SubAgents': 'subagents',
@@ -192,12 +203,14 @@ _CAPABILITY_EXPORTS = {
 }
 
 _CONSTANT_EXPORTS = {
+    'BubblewrapWorkspace': 'bubblewrap_sandbox',
     'DEFAULT_RESEARCHER_INSTRUCTIONS': 'researcher',
     'E2BSandboxBackend': 'e2b_sandbox',
     'LLM_API_KEY_ENV_PATTERNS': 'shell',
     'ModalSandboxBackend': 'modal_sandbox',
     'READ_ONLY_TOOL_NAMES': 'filesystem',
     'SpritesSandboxBackend': 'sprites_sandbox',
+    'SSHWorkspaceBackend': 'ssh_workspace',
     'SubAgent': 'subagents',
 }
 

@@ -14,10 +14,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.compaction import FallbackCompaction
 from pydantic_clai2 import Session, chat
-from pydantic_clai2.compaction import activate
+from pydantic_clai2.builtin_plugins.compaction import activate
 from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEnd, Transcript
-from pydantic_clai2.settings_store import SettingsStore
 from tests.clai2.test_app_edges import inputs
 
 
@@ -167,9 +167,11 @@ async def test_shell_loads_the_plugin_and_compacts(tmp_path: Path, monkeypatch: 
         settings=Settings(model='test'),
         store=SettingsStore(tmp_path / 'config.db'),
         builtin_plugins=(
-            PluginSettings(id='compaction', factory='pydantic_clai2.compaction', settings={'protected_tokens': 0}),
+            PluginSettings(
+                id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={'protected_tokens': 0}
+            ),
         ),
     )
     text = output.getvalue()
     assert 'Compacted 4 messages down to 3' in text
-    assert 'compaction' in text and 'pydantic_clai2.compaction (built-in)' in text
+    assert 'compaction' in text and 'pydantic_clai2.builtin_plugins.compaction (built-in)' in text

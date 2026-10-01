@@ -43,19 +43,18 @@ async def main(prior_history=()):
         await session.send('Continue where we left off.')
 ```
 
-Providers replay native function calls where their protocol permits. Gemini represents seeded tool
-calls and results as readable text because Live cannot put function parts in seeded turns. Thinking
-signatures and provider-native execution metadata are omitted because they belong to the session
-that produced them.
+Seeded tool calls and results are replayed as native function calls where the provider's protocol
+permits, and as readable text where it doesn't. Thinking signatures and provider-native execution
+metadata are omitted because they belong to the session that produced them.
 
 Content-less speech parts are skipped because they carry no replayable content. Unsupported content
 raises [`UserError`][pydantic_ai.exceptions.UserError] instead of being silently dropped. Video,
 documents, uploaded-file references, and model-generated files cannot be seeded.
 
-Speech transcripts are preferred over retained audio. OpenAI and Azure OpenAI can replay retained
-user audio when no transcript exists; Gemini and xAI cannot. Assistant speech always needs a
-transcript for seeding. Check `supports_session_seeding`, `supports_seeding_images`, and
-`supports_seeding_audio` on the
+Speech transcripts are preferred over retained audio. Where no transcript exists, retained user
+audio is replayed on models whose profile sets `supports_seeding_audio`, as long as it was recorded
+at the model's input sample rate. Assistant speech always needs a transcript for seeding. Check
+`supports_session_seeding`, `supports_seeding_images`, and `supports_seeding_audio` on the
 [`RealtimeModelProfile`][pydantic_ai.realtime.RealtimeModelProfile] (see
 [Provider support](overview.md#provider-support) for how profiles resolve) before constructing
 portable flows.

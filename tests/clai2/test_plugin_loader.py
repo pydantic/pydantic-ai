@@ -8,6 +8,7 @@ from types import ModuleType
 
 import anyio
 import pytest
+from pydantic import BaseModel
 from rich.console import Console
 
 from pydantic_ai import Agent
@@ -16,9 +17,9 @@ from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionEnd, SessionStart, TurnEnd, TurnStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader, PluginSettingsError
 
 RECORDER = """
 from pydantic_clai2.commands import Command
@@ -136,6 +137,33 @@ async def test_registration_order_follows_the_shipped_declarations(tmp_path: Pat
     assert harness.text.index('alpha started') < harness.text.index('mike started')
 
 
+async def test_startup_creates_the_plugins_folder(tmp_path: Path) -> None:
+    """So installing a drop-in is one copy, without first finding and creating the folder."""
+    harness = Harness(tmp_path)
+    harness.store.plugins_dir.rmdir()
+    await harness.loader.load_all()
+    assert harness.store.plugins_dir.is_dir()
+    await harness.loader.load_all()  # already there: nothing to do
+    assert harness.text == ''
+
+
+async def test_startup_leaves_the_plugins_folder_alone_when_plugins_are_off(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.store.plugins_dir.rmdir()
+    harness.loader.enabled = False
+    await harness.loader.load_all()
+    assert not harness.store.plugins_dir.exists()
+
+
+async def test_startup_reports_a_plugins_folder_it_cannot_create_and_carries_on(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.store.plugins_dir.rmdir()
+    harness.store.plugins_dir.write_text('a file where the folder belongs')
+    await harness.loader.load_all()
+    assert 'Cannot create the plugins folder:' in harness.text
+    assert harness.loader.entries() == []
+
+
 async def test_folder_discovery_and_load_order(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.write('beta')
@@ -156,6 +184,57 @@ async def test_folder_discovery_and_load_order(tmp_path: Path) -> None:
     assert harness.text.index('beta stopped eof') < harness.text.index('alpha stopped eof')
     assert {command.name for command in harness.commands} == {'help'}
     assert harness.loader.capabilities() == []
+
+
+async def test_add_saves_settings_only_once_activation_accepts_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / 'site' / 'clai_strict'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text(
+        'from pydantic import BaseModel, ConfigDict\n'
+        'from pydantic_clai2.plugins import PluginHost, SessionStart\n'
+        'class Settings(BaseModel):\n'
+        "    model_config = ConfigDict(extra='forbid')\n"
+        '    fail_on_start: bool = False\n'
+        'def activate(host: PluginHost) -> None:\n'
+        '    settings = host.settings(Settings)\n'
+        "    @host.on('session_start')\n"
+        '    async def started(event: SessionStart) -> None:\n'
+        '        if settings.fail_on_start:\n'
+        "            Settings.model_validate({'unexpected': 1})\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
+    harness = Harness(tmp_path)
+    with pytest.raises(PluginSettingsError):
+        await harness.loader.command(['add', 'strict', 'clai_strict', '{"secret": "s3cr3t"}'])
+    assert harness.store.plugins() == []
+    assert b's3cr3t' not in (tmp_path / 'config.db').read_bytes()
+    with pytest.raises(PluginError) as raised:
+        await harness.loader.command(['add', 'strict', 'clai_strict', '{"fail_on_start": true}'])
+    assert not isinstance(raised.value, PluginSettingsError), 'a ValidationError after activation is not about settings'
+    assert [plugin.settings for plugin in harness.store.plugins()] == [{'fail_on_start': True}]
+
+
+async def test_add_keeps_settings_the_plugin_saves_while_activating(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / 'site' / 'clai_migrating'
+    package.mkdir(parents=True)
+    (package / '__init__.py').write_text(
+        'from pydantic import BaseModel\n'
+        'from pydantic_clai2.plugins import PluginHost\n'
+        'class Settings(BaseModel):\n'
+        '    version: int = 1\n'
+        'def activate(host: PluginHost) -> None:\n'
+        '    host.save_settings(host.settings(Settings).model_copy(update={"version": 2}))\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
+    harness = Harness(tmp_path)
+    assert await harness.loader.command(['add', 'migrating', 'clai_migrating', '{"version": 1}']) == (
+        'Added and loaded migrating.'
+    )
+    assert [plugin.settings for plugin in harness.store.plugins()] == [{'version': 2}]
 
 
 async def test_declared_capability_class_and_activate_function(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -206,17 +285,17 @@ async def test_load_all_skips_missing_plugin_modules_quietly(tmp_path: Path, mon
     (package / 'plugin.py').write_text('import clai_missing_dependency\n')
     monkeypatch.syspath_prepend(str(tmp_path / 'site'))  # pyright: ignore[reportUnknownMemberType]
     harness = Harness(tmp_path)
-    # Saved by a CLAI version that shipped a `slack` built-in; this one does not.
-    harness.store.save_plugin(PluginSettings(id='slack', factory='pydantic_clai2.slack'))
+    # Saved by a CLAI version that shipped a `retired` built-in; this one does not.
+    harness.store.save_plugin(PluginSettings(id='retired', factory='pydantic_clai2.retired'))
     harness.store.save_plugin(PluginSettings(id='gone', factory='clai_gone.plugin:activate'))
     harness.store.save_plugin(PluginSettings(id='broken', factory='clai_broken.plugin'))
     await harness.loader.load_all()
     states = {entry.name: entry.state for entry in harness.loader.entries()}
-    assert states['slack'] == "enabled, failed: ModuleNotFoundError: No module named 'pydantic_clai2.slack'"
+    assert states['retired'] == "enabled, failed: ModuleNotFoundError: No module named 'pydantic_clai2.retired'"
     assert states['gone'] == "enabled, failed: ModuleNotFoundError: No module named 'clai_gone'"
     assert harness.text == ("Plugin 'broken': ModuleNotFoundError: No module named 'clai_missing_dependency'\n")
-    with pytest.raises(PluginError, match=r"No module named 'pydantic_clai2\.slack'"):
-        await harness.loader.command(['enable', 'slack'])
+    with pytest.raises(PluginError, match=r"No module named 'pydantic_clai2\.retired'"):
+        await harness.loader.command(['enable', 'retired'])
 
 
 async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
@@ -245,6 +324,30 @@ async def test_failed_load_leaves_nothing_registered(tmp_path: Path) -> None:
         await harness.loader.load('clash')
 
 
+async def test_saved_settings_persist_and_a_failed_start_after_saving_can_load_again(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'tuned.py').write_text(
+        'from pydantic import BaseModel\n'
+        'from pydantic_clai2.plugins import PluginHost, SessionStart\n'
+        'class Tuned(BaseModel):\n'
+        '    level: int = 1\n'
+        'def activate(host: PluginHost) -> None:\n'
+        "    @host.on('session_start')\n"
+        '    async def started(event: SessionStart) -> None:\n'
+        '        level = host.settings(Tuned).level\n'
+        '        host.save_settings(Tuned(level=level + 1))\n'
+        '        if level == 1:\n'
+        "            raise RuntimeError('first start fails')\n"
+    )
+    await harness.loader.load_all()
+    [entry] = harness.loader.entries()
+    assert entry.state == 'enabled, failed: RuntimeError: first start fails'
+    assert harness.store.plugins()[0].settings == {'level': 2}
+    await harness.loader.load('tuned')
+    assert harness.loader.entries()[0].state == 'enabled, loaded'
+    assert harness.store.plugins()[0].settings == {'level': 3}
+
+
 async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) -> None:
     harness = Harness(tmp_path)
     harness.write('counter', end_body='pass')
@@ -271,6 +374,23 @@ async def test_enable_disable_reload_persist_and_refresh_module(tmp_path: Path) 
     assert message.startswith('Disabled counter. Delete ')
     assert not harness.store.plugins()[0].enabled
     assert harness.loader.entries()[0].state == 'disabled'
+
+
+async def test_save_settings_keeps_a_declaration_saved_after_load(tmp_path: Path) -> None:
+    """Another CLAI process may replace the declaration while this one has the plugin loaded."""
+
+    class Chosen(BaseModel):
+        level: int
+
+    harness = Harness(tmp_path)
+    path = harness.write('counter')
+    await harness.loader.load('counter')
+    newer = PluginSettings(id='counter', factory='counter:activate', path=str(path), settings={'level': 1})
+    harness.store.save_plugin(newer)
+    host = harness.loader.entries()[0].host
+    assert host is not None
+    host.save_settings(Chosen(level=2))
+    assert harness.store.plugins() == [newer.model_copy(update={'settings': {'level': 2}})]
 
 
 async def test_fire_reports_observers_and_fails_closed_on_turn_start(tmp_path: Path) -> None:
@@ -437,6 +557,47 @@ async def test_remove_restores_a_project_plugin_that_names_a_file(tmp_path: Path
     assert harness.store.plugins() == [] and harness.loader.entries()[0].state == 'disabled'
 
 
+@pytest.mark.parametrize(
+    'plugin_id',
+    [
+        'ask_user',
+        'repo_context',
+        'compaction',
+        'persistence',
+        'logfire',
+        'notifications',
+        'github',
+        'slack',
+        'posthog',
+        'grain',
+        'linear',
+    ],
+)
+def test_saved_builtin_factory_paths_upgrade_without_losing_toggles(tmp_path: Path, plugin_id: str) -> None:
+    """Previously saved built-ins follow their new import paths; user replacements do not."""
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == plugin_id)
+    old_factory = (
+        'pydantic_clai2.sessions'
+        if plugin_id == 'persistence'
+        else builtin.factory.replace('pydantic_clai2.builtin_plugins.', 'pydantic_clai2.')
+    )
+    harness = Harness(tmp_path, builtin=(builtin,))
+    harness.store.save_plugin(builtin.model_copy(update={'factory': old_factory, 'enabled': False}))
+    entry = harness.loader.entries()[0]
+    assert entry.builtin and entry.declaration.factory == builtin.factory and not entry.declaration.enabled
+
+    harness.store.save_plugin(builtin.model_copy(update={'factory': old_factory, 'settings': {'custom': True}}))
+    entry = harness.loader.entries()[0]
+    assert not entry.builtin and entry.declaration.factory == builtin.factory
+    assert entry.declaration.settings == {'custom': True}
+
+    # An independently named plugin can also have used the old import string.
+    harness.store.save_plugin(PluginSettings(id='plain', factory=old_factory))
+    assert (
+        next(item for item in harness.loader.entries() if item.name == 'plain').declaration.factory == builtin.factory
+    )
+
+
 async def test_repo_context_builtin_loads_the_workspace_instructions(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -461,7 +622,12 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
     assert await harness.loader.command(['disable', 'repo_context']) == 'Disabled repo_context.'
     assert harness.loader.capabilities() == []
 
-    knobs = ['add', 'repo_context', 'pydantic_clai2.repo_context', '{"inventory_tool": true, "walk_up": true}']
+    knobs = [
+        'add',
+        'repo_context',
+        'pydantic_clai2.builtin_plugins.repo_context',
+        '{"inventory_tool": true, "walk_up": true}',
+    ]
     assert await harness.loader.command(knobs) == 'Replaced built-in repo_context.'
     model = TestModel(call_tools=[])
     await Agent(model, deps_type=type(None), capabilities=harness.loader.capabilities()).run(
@@ -471,7 +637,9 @@ async def test_repo_context_builtin_loads_the_workspace_instructions(
     assert [tool.name for tool in model.last_model_request_parameters.function_tools] == ['inventory_agent_context']
     assert (await harness.loader.command(['remove', 'repo_context'])).startswith('repo_context is built in')
     with pytest.raises(PluginError, match='extra_forbidden'):
-        await harness.loader.command(['add', 'repo_context', 'pydantic_clai2.repo_context', '{"filenames": []}'])
+        await harness.loader.command(
+            ['add', 'repo_context', 'pydantic_clai2.builtin_plugins.repo_context', '{"filenames": []}']
+        )
 
 
 @pytest.mark.parametrize('error', ['RuntimeError', 'CancelledError'])

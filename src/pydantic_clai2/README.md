@@ -12,6 +12,15 @@ Context management is the built-in `compaction` plugin,
 [described below](#compacting-the-conversation).
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](PLUGINS.md#other-harness-capabilities).
+The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a
+token kept in `/keys`. `/google_workspace` opens its settings menu: the `/keys`
+entry to use (`GOOGLE_ACCESS_TOKEN` by default), products, and read-only tools; see
+[its settings](PLUGINS.md#google_workspace-gmail-calendar-and-drive-tools).
+`/plugins enable logfire_mcp` lets the agent query your Logfire telemetry and opens
+a settings menu (region, tools, and a key picked from `/keys`, never stored in plugin
+settings; otherwise browser sign-in, which also signs new users up and works over SSH:
+`/logfire_mcp login`). Reopen it with `/plugins configure logfire_mcp`; see
+[Logfire MCP](PLUGINS.md#logfire-mcp-query-your-telemetry).
 `/mcp` manages MCP servers the way Code Puppy's `/mcp` does. Bare `/mcp` shows a
 status dashboard. `/mcp install` opens a form where you name the server, pick
 `stdio`, `http`, or `sse`, type its URL or command, edit the rest of its JSON
@@ -45,6 +54,15 @@ Use `/set display.tool_output true` to show detailed output again, or
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
 
+## Source layout
+
+The shell entry point lives in `_app.py`. Related implementations live in
+`cli/`, `config/`, `runtime/`, `models/`, `plugins/`, and `ui/` (`prompt/`,
+`menus/`, and `rendering/`). Built-in plugins live in `builtin_plugins/`; MCP has its own
+`mcp/` package. Plugin authors can still import `pydantic_clai2.plugins` and
+`pydantic_clai2.commands` directly. See [the plugin guide](PLUGINS.md) for
+examples.
+
 ## Startup
 
 `clai2 --help` parses arguments without loading the agent or plugins. Interactive
@@ -59,6 +77,13 @@ CLAI version, is skipped without a message; `/plugins list` shows why. Library
 Python or set `PYTHONWARNINGS=default` to see them.
 `/login` offers both Codex and GitHub Copilot without loading their integrations for
 completion. Copilot requests use your saved login through the lazy provider resolver.
+
+## Herdr integration
+
+Enable `/plugins enable herdr` inside a [herdr](https://herdr.dev) pane to report
+CLAI2's state, session reference, model/token metadata, and conversation title.
+It starts disabled and does nothing outside herdr. See
+[the plugin guide](PLUGINS.md#herdr-integration) for details and limitations.
 
 ## Desktop notifications
 
@@ -255,6 +280,9 @@ Run `/login openai-codex` to connect your ChatGPT/Codex subscription.
 Type `/set model ` and press Tab to pick another provider-qualified model name.
 The choice is saved in SQLite and used for the next prompt without restarting.
 
+Without installing, run `uvx pydantic-clai2`. The package also installs a
+`pydantic-clai2` command that is an alias for `clai2`.
+
 From a source checkout, launch with `uv run --project pydantic-clai2 clai2`.
 
 For API-key providers, set the provider's API key environment variable before starting.
@@ -266,6 +294,26 @@ The startup splash adapts Code Puppy's stdlib-only, alternate-screen Pydantic
 pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow`.
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
+
+## Your own agent
+
+```bash
+clai2 --agent pydantic_ai.main:my_cool_agent
+clai2 -a my_agents:reviewer -p "Review the staged diff"
+```
+
+`--agent MODULE:ATTR` (short form `-a`) chats with an existing Pydantic AI `Agent`
+instance instead of CLAI's default agent. CLAI appends the launch directory to
+`sys.path`, after installed packages, so a module next to where you start CLAI
+resolves without installing it. `ATTR` must
+name an instance, not a class; the agent runs with `deps=None`. For that session
+only, no plugins load: no built-ins (including the stock coder tools), no saved or
+drop-in user plugins, and no project plugins, and `/plugins` reports that they are
+off. Nothing saved changes, so plain `clai2` loads plugins as before. The agent
+keeps its own model unless `-m` or `CLAI_MODEL` selects another. `-p`, `--resume`,
+and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
+To pass deps or plugins, write a launcher that calls `chat` (see
+`customization.md`).
 
 ## Headless mode
 
@@ -301,8 +349,9 @@ clai2 -w
 
 A Git worktree is another checkout of the same repository with its own branch
 and working files. Run these commands inside a repository with at least one
-commit. `--worktree NAME` creates a `clai/NAME` branch from the current `HEAD`
-and starts CLAI at `<repository-root>/.worktrees/NAME`.
+commit. `--worktree NAME` creates a `clai-NAME` branch from the current `HEAD`
+and starts CLAI at `<repository-root>/.worktrees/NAME`. If that worktree already
+exists, CLAI reopens it; if only the `clai-NAME` branch exists, CLAI checks it out.
 `-w` is the short form; omit the name to generate one. Names start with a letter
 or digit and contain only ASCII letters, digits, hyphens, and underscores.
 
@@ -313,8 +362,8 @@ Uncommitted changes, ignored files, and untracked files are not copied. Project 
 tools use the new worktree root. Your user settings and plugins stay available;
 a relative `--database` path still refers to the directory you launched from.
 
-CLAI prints the new path and branch. Existing branches and non-empty directories
-are rejected. If checkout fails, CLAI tries to remove only the branch it just
+CLAI prints the path and branch. A directory at that path that is not a Git
+worktree is rejected. If checkout fails, CLAI tries to remove only the branch it just
 created, without forcing deletion. If cleanup or the ignore edit fails, the error
 names the retained branch or checkout for recovery.
 
@@ -334,7 +383,7 @@ original repository root. Without `--force`, Git refuses to remove a dirty workt
 
 ```bash
 git worktree remove .worktrees/my-task
-git branch -d clai/my-task
+git branch -d clai-my-task
 ```
 
 A worktree separates working files, not permissions. CLAI's default tools can
@@ -344,7 +393,7 @@ no agent telemetry spans.
 ## Codex authentication
 
 The built-in model catalog and `/set model` completions include
-`openai-codex:gpt-6-sol` and `openai-codex:gpt-6-luna`.
+`openai-codex:gpt-6.1-sol`, `openai-codex:gpt-6-sol`, and `openai-codex:gpt-6-luna`.
 
 `/login openai-codex` opens the browser and uses core's `OpenAICodexOAuthFlow`:
 authorization code with PKCE, state validation, and a callback at
@@ -357,12 +406,15 @@ address bar and paste it at the prompt CLAI shows under the login link; the bare
 before exchanging the code. Whichever arrives first, the callback or the paste,
 completes the login.
 
-Tokens live in the configured Python `keyring` backend under service `pydantic-clai2`,
-not in SQLite or `~/.codex/auth.json`. Large token bundles are split across keyring
-entries to fit Windows Credential Manager's per-entry size limit. Existing
-single-entry logins remain readable. Choose an OS-backed credential store: CLAI
+Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-clai2/`
+(`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
+that decrypts them is the only entry CLAI keeps in the configured Python `keyring`
+backend (service `pydantic-clai2`, account `encryption-key`). CLAI reads that entry
+at most once per session, so macOS asks for keychain access at most once, instead of
+once per saved credential. Logins that older versions saved as keyring entries are
+moved into encrypted files the first time they are read. Choose an OS-backed credential store: CLAI
 uses the configured backend and does not enforce its encryption or storage policy.
-Installing or selecting a plaintext backend can store tokens in plaintext. Core owns
+Installing or selecting a plaintext backend can store the key in plaintext. Core owns
 token refresh through CLAI's `OpenAICodexCredentialSource`. Tests mock keyring,
 the browser, and OAuth exchange and do not access real credentials.
 
@@ -378,7 +430,7 @@ default) instead, named for the account: Codex uses `credentials-openai-codex.js
 and the GitHub Copilot, vllm and openrouter connections use their own files. Like keyring entries,
 these files are per user, so `--database PATH` does not move them. `/login` says so in its confirmation. A locked keyring is not treated as
 missing; unlock it instead. Once a keyring becomes available, the next login or
-token refresh moves the credentials there and deletes the file.
+token refresh encrypts the credentials and deletes the plaintext file.
 
 The default Coder shell runs under your OS identity, without a sandbox. Commands
 can read files and access credential backends available to that identity, including
@@ -387,7 +439,8 @@ Use a separate OS account or isolated environment for untrusted repositories.
 
 The requested default does not guarantee model availability for a subscription.
 Custom agents supplied to `chat` retain their model unless settings explicitly
-select an override. `/login` is async, and plugin command handlers may also return
+select an override. `clai2 --agent MODULE:ATTR` keeps the agent's model over saved
+and project models; only `-m` or `CLAI_MODEL` replaces it. `/login` is async, and plugin command handlers may also return
 an awaitable string.
 
 ## GitHub Copilot subscriptions
@@ -486,8 +539,9 @@ The currently configured model is kept in the list when upgrading.
 `/add_model` opens a searchable provider list, then a model picker for that provider.
 Esc from the model list returns to providers. Providers are unique prefixes from
 the merged catalog, including `openai-codex`. Its suggestions include
-`gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, and `gpt-6-astra`; availability
-depends on your account. Unknown prices and context limits are not inferred.
+`gpt-6.1-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-luna`,
+`gpt-5.6-terra`, and `gpt-5.6-sol`; availability depends on your account.
+Unknown prices and context limits are not inferred.
 
 The model catalog combines genai-prices' catalog
 filtered to providers Pydantic AI can run, plus core's own model list, plus
@@ -533,6 +587,14 @@ not enable fast mode. The stored values remain `service_tier=priority` and
 `service_tier=default`, so older CLAI versions can read them. A custom
 `service_tier` body parameter still takes precedence.
 
+While the active model starts with `openai-codex:`, `/fast` toggles between
+priority and standard processing. `/fast on` and `/fast off` select explicitly.
+It saves the active model's service tier for subsequent prompts and sessions,
+without changing reasoning effort or other preferences. It is absent from help
+and Tab completion on other models, and typing it there reports an unknown command.
+If a custom `service_tier` parameter is set, `/fast` asks you to remove it first
+with `/model_settings` rather than saving an ineffective change.
+
 Model preferences are shared across checkouts. Reading saved preferences ignores
 unknown fields, so newer settings do not break an older reader with this
 compatibility fix. Editing or resetting a known field preserves unknown fields
@@ -554,8 +616,8 @@ remain visible so they can be reset. Choices depend on the model and API: Chat C
 controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort
 and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
-1024 and below an explicit `max_tokens`. If classic thinking has no output cap,
-CLAI reserves the thinking budget plus 4096 output tokens. Other unset fields
+1024 and below an explicit `max_tokens`. Without one, Pydantic AI
+leaves room for the answer beyond the budget. Other unset fields
 use the provider default.
 Explicit native thinking settings take precedence over generic `thinking`.
 GPT-6 and GPT-5.6 families, including provider-qualified and namespaced names,
@@ -657,7 +719,7 @@ repository.
   "request_limit": 50,
   "plugins": [
     {"id": "exa", "factory": "pydantic_ai_harness.exa:ExaSearch", "settings": {"num_results": 8}},
-    {"id": "repo_context", "factory": "pydantic_clai2.repo_context", "settings": {"inventory_tool": true}}
+    {"id": "repo_context", "factory": "pydantic_clai2.builtin_plugins.repo_context", "settings": {"inventory_tool": true}}
   ]
 }
 ```
@@ -721,6 +783,11 @@ shows `(editing)` meanwhile. Clearing the draft and pressing Enter removes the
 message from the queue. If the run takes the message before you press Enter,
 the edit is queued as a new follow-up. With nothing queued, Up/down only walk
 history.
+While you walk history, Up/down stay on history even when a recalled slash
+command shows completion suggestions. Press Tab to pick a suggestion; Up/down
+then move through the suggestions. Editing the recalled text ends the walk, so
+suggestions for a prefix you type take Up/down as before. Esc closes the
+suggestions, and Tab brings them back.
 Enter submits a prompt when idle and queues a separate follow-up turn when busy.
 To steer instead, first queue the message with Enter, then press Alt+Enter
 (Option+Enter). This sends the oldest queued follow-up to the active run at its
@@ -810,6 +877,15 @@ when it finishes. Forks share the foreground's plugin instances, so a tool that
 asks you a question can open its picker from a fork.
 
 ## Saved sessions and `/resume`
+
+The project pane groups existing Git worktrees and their subdirectories under
+one repository name. Session cards show each checkout's current branch, or its
+worktree directory name for detached HEAD. These labels are read when the browser
+opens, not historical branch names. Missing directories, non-Git workspaces, and
+unavailable Git fall back to directory labels. Separate repositories with the
+same name remain separate and use paths to distinguish them. Transcript previews
+and cross-directory confirmations keep the original saved path; resuming does
+not change directories or migrate saved data.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
@@ -949,7 +1025,7 @@ redeclare the plugin with your own settings; `/plugins disable compaction`
 turns it off, `/compact` included:
 
 ```text
-/plugins add compaction pydantic_clai2.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
+/plugins add compaction pydantic_clai2.builtin_plugins.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
 ```
 
 | Key | Default | Does |
@@ -1312,6 +1388,10 @@ is kept separately and flushed in order, spilling to a private temporary file
 for large bursts. Full-screen menus release scrolling margins and detach the keyboard reader before taking over.
 Redirected output has no live editor or footer.
 No model requests or telemetry are added for status reporting.
+The status row follows Code Puppy's styling: muted surrounding text, an accented
+output-token count, and purple tool names. Colours follow the selected `/theme`;
+context warnings keep the warning colour. The same styling applies while idle
+and working.
 
 A plugin can append its own fragment to the row with `host.status_segment`, such
 as the working directory or a branch name; fragments are muted and dropped when
@@ -1361,6 +1441,17 @@ plugin list. Use `/plugins list` to print it. Plugins are trusted code running a
 
 [PLUGINS.md](PLUGINS.md) has the full list of hooks, events, and rules.
 
+`/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
+settings menu (`/plugins configure notion` reopens it). The token is picked from
+`/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one, it
+signs in through the browser. Plugin settings never hold the token. See
+[PLUGINS.md](PLUGINS.md#notion-workspace-tools).
+
+`/plugins enable linear` gives the agent Linear's hosted MCP tools, read-only by
+default, and opens its settings menu (`/plugins configure linear` reopens it). The
+key is picked from `/keys` by name (a new one is saved there as `LINEAR_API_KEY`),
+or choose browser sign-in. See [PLUGINS.md](PLUGINS.md#linear-issues-and-projects).
+
 ## Questions from the model
 
 When the task is ambiguous, the model can call `ask_user_question` instead of
@@ -1391,8 +1482,9 @@ shows how to put a different one, a web form for instance, in its place.
 The stock CLI enables the built-in `logfire` plugin by default. It adds Pydantic
 AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
 capability to CLAI turns for agent, model-request, and tool
-spans, including timing, token usage, and failures. It adds no separate CLAI spans
-and does not instrument HTTP clients or unrelated agents globally.
+spans, including timing, token usage, and failures. It adds CLAI's own UI spans
+only when `ui_events` is on (see below), and does not instrument HTTP clients or
+unrelated agents globally.
 
 Set `LOGFIRE_TOKEN` to a write token for your Logfire project. Alternatively,
 place the SDK's `logfire_credentials.json` in your user config directory at
@@ -1417,7 +1509,7 @@ credentials. Keep tokens out of plugin settings, which are saved as plaintext.
 /plugins disable logfire
 /plugins enable logfire
 /plugins reload logfire
-/plugins add logfire pydantic_clai2.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
 The last command replaces the built-in configuration. Its options are
@@ -1428,6 +1520,46 @@ than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Content flags contro
 Pydantic AI's prompt/result and standard binary-content capture, not all metadata;
 model/tool names and tool definitions may still be recorded. Logfire's normal
 scrubbing remains enabled.
+
+Two more options choose where telemetry goes and what it covers. `token` names a
+`/keys` entry holding a Logfire write token, which then takes the place of
+`LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
+rather than falling back. `ui_events` (default `false`) adds spans and logs, tagged
+`clai2-ui`, for UI interactions: menus, slash commands, `/set`, plugin actions,
+`/keys`, prompt submissions, steering, interrupts, completions, and session start,
+clear, and resume. They record names and listed choices, never prompt text, typed
+values, or secrets.
+
+### Setting up where traces go
+
+`/plugins configure logfire` (or `C` on `logfire` in `/plugins`) opens a setup menu:
+
+1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
+2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
+3. Pick one of the projects you can write to.
+
+CLAI then creates a write token for that project, saves it in `/keys` as
+`LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
+reloads and the next turn is traced there. The sign-in itself is not kept. The
+URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
+send the token elsewhere, and sending is turned on if it was off. Run the menu
+again to switch projects.
+
+### Sending UX telemetry to the Pydantic shared project
+
+`@pydantic.dev` staff can send CLAI UX telemetry to the team's shared Logfire
+project: run `/plugins configure logfire`, pick Logfire US, sign in with your
+Pydantic account, and pick the shared CLAI project. Then turn on UI events:
+
+```text
+/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"token": {"name": "LOGFIRE_TOKEN_<ORG>_<PROJECT>"}, "ui_events": true}'
+```
+
+using the key name the setup menu printed (Esc closes the menu that `/plugins add`
+opens). Run the setup menu again to go back to your personal project. Agent spans
+still include content by default; add `"include_content": false,
+"include_binary_content": false` if you'd rather share only UX telemetry and
+timing with the team.
 
 The plugin owns an isolated Logfire instance. Disable, reload, or exit flushes
 and shuts down that instance without shutting down application-global providers.
@@ -1471,6 +1603,15 @@ and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letter
 numbers, and underscores, starting with a letter or underscore. Saving an existing
 name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
 the secret on the command line.
+
+Consumers store a key's name, not its value, and look it up each time they
+connect, so replacing a value in `/keys` updates every consumer and a deleted key
+makes them fail with an error. Renaming a key that vLLM, OpenRouter, or a
+plugin uses is refused until they are pointed at another key. Several
+consumers can share one entry: name keys with the conventional variable name for
+the service, such as `LINEAR_API_KEY` or `GITHUB_TOKEN`, and every plugin for that
+service can pick the same entry. The names are labels only; CLAI does not export
+them as environment variables.
 
 When saved keys exist, vLLM's token prompt and OpenRouter's **Enter API key** flow
 show a searchable list of names. Choose one, enter a different key privately, or

@@ -22,13 +22,13 @@ from pydantic_ai import Agent, AgentStreamEvent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import DEFAULT_PLUGINS, Session, chat
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands, set_completions
 from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, TurnEnd, TurnStart
-from pydantic_clai2.prompt_surface import PromptSurface
-from pydantic_clai2.settings_store import SettingsStore
-from pydantic_clai2.splash import Splash
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.rendering.splash import Splash
 
 
 async def test_existing_handler_and_structured_output() -> None:
@@ -201,6 +201,7 @@ def test_set_autocomplete() -> None:
     codex = list(commands.get_completions(Document('/set model openai-codex'), CompleteEvent()))
     assert {item.text for item in codex} >= {
         'openai-codex:',
+        'openai-codex:gpt-6.1-sol',
         'openai-codex:gpt-6-astra',
         'openai-codex:gpt-6-sol',
         'openai-codex:gpt-6-luna',
@@ -249,7 +250,7 @@ async def test_prompt_frame_stays_visible_during_tools(
                 if any(text in line for line in frame):
                     event.set()
 
-    monkeypatch.setattr('pydantic_clai2.live_prompt.PromptSurface', Surface)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
     output = io.StringIO()
     store = SettingsStore(tmp_path / 'config.db')
     terminal = DummyOutput()

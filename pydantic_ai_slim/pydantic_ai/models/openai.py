@@ -18,12 +18,12 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import cached_property
-from typing import Any, Literal, cast, get_args, overload
+from typing import Any, Generic, Literal, TypeVar, cast, get_args, overload
 
 from httpx2 import Timeout as HTTPX2Timeout
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import to_json
-from typing_extensions import Never, Protocol, TypedDict, assert_never
+from typing_extensions import Never, Protocol, Self, TypedDict, assert_never
 
 from .. import ModelAPIError, ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from .._http import to_httpx2_timeout
@@ -134,6 +134,7 @@ try:
     from openai import (
         NOT_GIVEN,
         APIConnectionError,
+        APIError,
         APIStatusError,
         AsyncAzureOpenAI,
         AsyncOpenAI,
@@ -241,6 +242,49 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         raise ModelAPIError(model_name=model_name, message=e.message) from e  # pragma: lax no cover
     except APIConnectionError as e:
         raise ModelAPIError(model_name=model_name, message=e.message) from e
+    except APIError as e:
+        # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
+        # been received, so there is no status code to report.
+        raise ModelAPIError(model_name=model_name, message=e.message) from e
+
+
+def _response_error(model_name: str, code: str | None, message: str) -> ModelAPIError:
+    """Build the error for a Responses API failure reported in a 200 body or stream, which has no HTTP status."""
+    return ModelAPIError(model_name=model_name, message=f'{code}: {message}' if code else message)
+
+
+@contextmanager
+def _map_decode_errors(model_name: str) -> Generator[None]:
+    """Map a response body the SDK could not decode as JSON to `ModelAPIError`.
+
+    Wrap only the SDK's own work: our processing of a response parses JSON too, and those errors stay unmapped.
+    """
+    try:
+        yield
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as JSON: {e}') from e
+
+
+_ChunkT = TypeVar('_ChunkT')
+
+
+class _MapStreamDecodeErrors(Generic[_ChunkT]):
+    """Apply `_map_decode_errors` to the SDK decoding each chunk, but not to the code consuming it.
+
+    A plain iterator rather than an async generator, so it adds no generator for the event loop to finalize when a stream
+    is abandoned.
+    """
+
+    def __init__(self, stream: AsyncIterable[_ChunkT], model_name: str):
+        self._iterator = aiter(stream)
+        self._model_name = model_name
+
+    def __aiter__(self) -> Self:
+        return self
+
+    async def __anext__(self) -> _ChunkT:
+        with _map_decode_errors(self._model_name):
+            return await anext(self._iterator)
 
 
 __all__ = (
@@ -286,7 +330,7 @@ DEPRECATED_OPENAI_MODELS: frozenset[str] = frozenset(
 
 _DEFAULT_CLIENT_TOOL_SEARCH_DESCRIPTION = 'Search for relevant tools.'
 
-OpenAIModelName = str | AllModels
+OpenAIModelName = str | AllModels | Literal['gpt-6.1-sol']
 """
 Possible OpenAI model names.
 
@@ -296,6 +340,10 @@ See [the OpenAI docs](https://platform.openai.com/docs/models) for a full list.
 
 Using this more broad type for the model name instead of the ChatModel definition
 allows this model to be used more easily with other model types (ie, Ollama, Deepseek).
+
+The id in the local `Literal` is bridged because `AllModels` doesn't list it at the floor the
+`openai` extra declares; it arrived in `openai` 3.21.0
+(https://github.com/openai/openai-python/pull/3986). Drop it once the floor is bumped past it.
 """
 
 MCP_SERVER_TOOL_CONNECTOR_URI_SCHEME: Literal['x-openai-connector'] = 'x-openai-connector'
@@ -932,7 +980,7 @@ def _resolve_openai_service_tier(
     return OMIT
 
 
-def _resolve_prompt_cache_retention(
+def _resolve_cache_retention(
     default_settings: ModelSettings | None, model_settings: ModelSettings | None
 ) -> timedelta | None:
     settings = merge_model_settings(default_settings, model_settings) or {}
@@ -1002,9 +1050,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """The model name."""
         return self._model_name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_prompt_cache_retention(self.settings, model_settings)
+        return _resolve_cache_retention(self.settings, model_settings)
 
     @property
     def system(self) -> str:
@@ -1151,7 +1199,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         _drop_unsupported_params(profile, model_settings)
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), _map_decode_errors(self.model_name):
             try:
                 extra_headers = dict(model_settings.get('extra_headers', {}))
                 extra_headers.setdefault('User-Agent', get_user_agent())
@@ -1351,7 +1399,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         peekable_response: _utils.PeekableAsyncStream[ChatCompletionChunk, AsyncStream[ChatCompletionChunk]] = (
             _utils.PeekableAsyncStream(response)
         )
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), _map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             raise UnexpectedModelBehavior(  # pragma: no cover
@@ -2033,9 +2081,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The model name."""
         return self._model_name
 
-    def resolve_prompt_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
+    def resolve_cache_retention(self, model_settings: ModelSettings | None) -> timedelta | None:
         """Resolve the extended prompt cache retention requested by OpenAI settings."""
-        return _resolve_prompt_cache_retention(self.settings, model_settings)
+        return _resolve_cache_retention(self.settings, model_settings)
 
     @property
     def system(self) -> str:
@@ -2058,7 +2106,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and response.provider_response_id
             and response.provider_name == self.system
         ):
-            with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+            with (
+                _map_api_errors(self.model_name, self._provider.model_id_namespace),
+                _map_decode_errors(self.model_name),
+            ):
                 await self.client.responses.cancel(response.provider_response_id)
 
     def continuation_delay(self, response: ModelResponse) -> float | None:
@@ -2175,13 +2226,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             instructions = instructions_override
 
         try:
-            return await self.client.responses.compact(
-                input=openai_messages,
-                model=self.model_name,
-                instructions=instructions,
-                previous_response_id=previous_response_id or OMIT,
-            )
-        except APIStatusError as e:  # pragma: no cover
+            with _map_decode_errors(self.model_name):
+                return await self.client.responses.compact(
+                    input=openai_messages,
+                    model=self.model_name,
+                    instructions=instructions,
+                    previous_response_id=previous_response_id or OMIT,
+                )
+        except APIStatusError as e:  # pragma: lax no cover
             if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                 return model_response
             if (status_code := e.status_code) >= 400:
@@ -2192,7 +2244,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                     headers=dict(e.response.headers),
                 ) from e
             raise
-        except APIConnectionError as e:  # pragma: no cover
+        except APIConnectionError as e:  # pragma: lax no cover
             raise ModelAPIError(model_name=self.model_name, message=e.message) from e
 
     async def request(
@@ -2274,7 +2326,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
 
         extra_headers, timeout = self._build_request_options(settings)
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), _map_decode_errors(self.model_name):
             response = await self.client.responses.input_tokens.count(
                 model=request_params.model,
                 input=request_params.input,
@@ -2365,6 +2417,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_request_parameters: ModelRequestParameters,
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
+        if error := response.error:
+            raise _response_error(self.model_name, error.code, error.message)
         items: list[ModelResponsePart] = []
         refusal_text: str | None = None
         tool_search_output_call_ids = _tool_search_output_call_ids(response)
@@ -2568,11 +2622,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         peekable_response: _utils.PeekableAsyncStream[
             responses.ResponseStreamEvent, AsyncStream[responses.ResponseStreamEvent]
         ] = _utils.PeekableAsyncStream(response)
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), _map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             # Covered by the Codex forced-stream path, which drains empty streams through here.
             raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+        if isinstance(first_chunk, responses.ResponseErrorEvent):
+            # Raise while the stream is being opened, so `FallbackModel` can still fall back on it.
+            raise _response_error(self.model_name, first_chunk.code, first_chunk.message)
 
         if isinstance(first_chunk, responses.ResponseCreatedEvent):
             model_name = first_chunk.response.model
@@ -2815,7 +2872,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if (cache_options := model_settings.get('openai_prompt_cache_options')) is not None:
             prompt_cache_options = ResponsesPromptCacheOptions(**cache_options)
 
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), _map_decode_errors(self.model_name):
             try:
                 return await self.client.responses.create(
                     model=request_params.model,
@@ -2938,7 +2995,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Retrieve a background response by ID, optionally streaming."""
         include = self._build_include(model_settings, is_retrieve=True)
         extra_headers, timeout = self._build_request_options(model_settings)
-        with _map_api_errors(self.model_name, self._provider.model_id_namespace):
+        with _map_api_errors(self.model_name, self._provider.model_id_namespace), _map_decode_errors(self.model_name):
             try:
                 return await self.client.responses.retrieve(
                     response_id=response_id,
@@ -3993,7 +4050,7 @@ class OpenAIStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name, self._model_id_namespace):
-            async for chunk in self._validate_response():
+            async for chunk in _MapStreamDecodeErrors(self._validate_response(), self._model_name):
                 if self._provider_timestamp is None and chunk.created:
                     self._provider_timestamp = number_to_datetime(chunk.created)
                     self.provider_details = {
@@ -4309,7 +4366,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             if self._provider_timestamp is not None:  # pragma: no branch
                 self.provider_details = {'timestamp': self._provider_timestamp}
 
-            async for chunk in self._response:
+            async for chunk in _MapStreamDecodeErrors(self._response, self._model_name):
                 self._last_sequence_number = chunk.sequence_number
                 if isinstance(
                     chunk,
@@ -4386,11 +4443,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseFailedEvent):
                     self._usage += self._map_usage(chunk.response)
+                    # Record the terminal state first, so a failed background job isn't cancelled after the raise.
+                    self._set_state(chunk.response.status)
+                    if error := chunk.response.error:
+                        raise _response_error(self._model_name, error.code, error.message)
                     # Parity with the non-streaming `_process_response`: a `failed` status maps to 'error'.
                     if not self._has_refusal:
                         self.provider_details = {**(self.provider_details or {}), 'finish_reason': 'failed'}
                         self.finish_reason = _RESPONSES_FINISH_REASON_MAP.get('failed')
-                    self._set_state(chunk.response.status)
 
                 elif isinstance(chunk, responses.ResponseFunctionCallArgumentsDeltaEvent):
                     maybe_event = self._parts_manager.handle_tool_call_delta(
@@ -4854,6 +4914,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
                 elif isinstance(chunk, responses.ResponseFileSearchCallInProgressEvent):
                     pass  # there's nothing we need to do here
+
+                elif isinstance(chunk, responses.ResponseErrorEvent):
+                    raise _response_error(self._model_name, chunk.code, chunk.message)
 
                 else:  # pragma: no cover
                     warnings.warn(

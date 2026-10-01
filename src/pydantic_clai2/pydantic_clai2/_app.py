@@ -3,7 +3,7 @@
 import asyncio
 import math
 import sys
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -25,14 +25,10 @@ from pydantic_ai.messages import BinaryContent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
-
-from . import theme, warm_imports
-from ._branding import print_banner
-from ._completion_adapter import COMPLETION_STYLE, PromptCompleter
-from ._rendering import StreamRenderer
-from ._session import Session
-from .command_context import CommandContext, CommandProvider
-from .commands import (
+from pydantic_clai2 import warm_imports
+from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
+from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
+from pydantic_clai2.commands import (
     Command,
     Commands,
     config_command,
@@ -42,46 +38,59 @@ from .commands import (
     is_silent,
     set_completions,
 )
-from .config import PluginSettings, Settings
-from .customization import customization_guide
-from .errors import error_message
-from .forks import Forks
-from .image_input import ImageInput
-from .input_history import input_history
-from .interrupts import Interrupts
-from .key_menu import keys_command
-from .live_prompt import LivePrompt
-from .menu_worker import holding_output
-from .model_picker import model_command, model_completions
-from .plugin_loader import PluginError, PluginLoader
-from .plugin_menu import open_plugins_menu
-from .plugins import Renderer, SessionEndReason, SessionStart, TurnEnd, TurnStart, bare_screen
-from .project_settings import ProjectSettings
-from .prompt_transcript import TranscriptBuffer
-from .reloading import reload_clai
-from .screen import Screen
-from .session_settings import SessionSettings
-from .sessions import Sessions
-from .set_menu import set_command
-from .settings_store import SettingsStore
-from .shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
-from .speculation import Speculation
-from .spinner_picker import spinner_command, spinner_completions
-from .spinners import Spinner, Spinners
-from .status import Status, StatusLine
-from .theme_picker import theme_command
-from .tool_output import terminal_text
-from .usage_report import cost_line, session_usage
+from pydantic_clai2.config import PluginSettings, Settings
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.customization import customization_guide
+from pydantic_clai2.errors import error_message
+from pydantic_clai2.plugins import (
+    ModelProvider,
+    Renderer,
+    SessionEndReason,
+    SessionStart,
+    TurnEnd,
+    TurnStart,
+    bare_screen,
+)
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.runtime._session import Session
+from pydantic_clai2.runtime.forks import Forks
+from pydantic_clai2.runtime.reloading import reload_clai
+from pydantic_clai2.runtime.session_settings import SessionSettings
+from pydantic_clai2.runtime.sessions import Sessions
+from pydantic_clai2.runtime.speculation import Speculation
+from pydantic_clai2.ui.menus.key_menu import keys_command
+from pydantic_clai2.ui.menus.menu_worker import holding_output
+from pydantic_clai2.ui.menus.model_picker import model_command, model_completions
+from pydantic_clai2.ui.menus.plugin_menu import open_plugins_menu
+from pydantic_clai2.ui.menus.set_menu import set_command
+from pydantic_clai2.ui.menus.spinner_picker import spinner_command, spinner_completions
+from pydantic_clai2.ui.menus.theme_picker import theme_command
+from pydantic_clai2.ui.prompt._completion_adapter import COMPLETION_STYLE, PromptCompleter
+from pydantic_clai2.ui.prompt.image_input import ImageInput
+from pydantic_clai2.ui.prompt.input_history import input_history
+from pydantic_clai2.ui.prompt.interrupts import Interrupts
+from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
+from pydantic_clai2.ui.prompt.prompt_transcript import TranscriptBuffer
+from pydantic_clai2.ui.prompt.screen import Screen
+from pydantic_clai2.ui.rendering import theme
+from pydantic_clai2.ui.rendering._branding import print_banner
+from pydantic_clai2.ui.rendering._rendering import StreamRenderer
+from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
+from pydantic_clai2.ui.rendering.status import Status, StatusLine
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
+from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
 
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup
 
 if TYPE_CHECKING:
-    from .auth import CodexAuth
+    from pydantic_clai2.auth import CodexAuth
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
-_PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload')
+_PLUGIN_ACTIONS = ('list', 'add', 'enable', 'disable', 'remove', 'reload', 'configure')
+_PLUGINS_OFF = 'Plugins are off for this session; saved plugin settings are unchanged.'
 
 
 DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
@@ -90,13 +99,25 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
         factory='pydantic_ai_harness.coder:Coder',
         settings={'unrestricted_filesystem': True, 'repo_context': False, 'sub_agents': False},
     ),
-    PluginSettings(id='ask_user', factory='pydantic_clai2.ask_user_menu:activate'),
-    PluginSettings(id='repo_context', factory='pydantic_clai2.repo_context'),
-    PluginSettings(id='compaction', factory='pydantic_clai2.compaction', settings={}),
-    PluginSettings(id='persistence', factory='pydantic_clai2.sessions'),
-    PluginSettings(id='logfire', factory='pydantic_clai2.logfire'),
-    PluginSettings(id='notifications', factory='pydantic_clai2.notifications'),
+    PluginSettings(id='ask_user', factory='pydantic_clai2.builtin_plugins.ask_user_menu:activate'),
+    PluginSettings(id='repo_context', factory='pydantic_clai2.builtin_plugins.repo_context'),
+    PluginSettings(id='compaction', factory='pydantic_clai2.builtin_plugins.compaction', settings={}),
+    PluginSettings(id='persistence', factory='pydantic_clai2.runtime.sessions'),
+    PluginSettings(id='logfire', factory='pydantic_clai2.builtin_plugins.logfire'),
+    PluginSettings(id='notifications', factory='pydantic_clai2.builtin_plugins.notifications'),
     PluginSettings(id='mcp', factory='pydantic_clai2.mcp'),
+    PluginSettings(id='github', factory='pydantic_clai2.builtin_plugins.github', enabled=False),
+    PluginSettings(id='pylon', factory='pydantic_clai2.builtin_plugins.pylon', enabled=False),
+    PluginSettings(id='google_workspace', factory='pydantic_clai2.builtin_plugins.google_workspace', enabled=False),
+    PluginSettings(id='day_ai', factory='pydantic_clai2.builtin_plugins.day_ai', enabled=False),
+    PluginSettings(id='ordinal', factory='pydantic_clai2.builtin_plugins.ordinal', enabled=False),
+    PluginSettings(id='notion', factory='pydantic_clai2.builtin_plugins.notion', enabled=False),
+    PluginSettings(id='slack', factory='pydantic_clai2.builtin_plugins.slack', enabled=False),
+    PluginSettings(id='logfire_mcp', factory='pydantic_clai2.builtin_plugins.logfire_mcp', enabled=False),
+    PluginSettings(id='posthog', factory='pydantic_clai2.builtin_plugins.posthog', enabled=False),
+    PluginSettings(id='grain', factory='pydantic_clai2.builtin_plugins.grain', enabled=False),
+    PluginSettings(id='linear', factory='pydantic_clai2.builtin_plugins.linear', enabled=False),
+    PluginSettings(id='herdr', factory='pydantic_clai2.builtin_plugins.herdr', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 
@@ -123,12 +144,15 @@ async def chat(
     builtin_plugins: Sequence[PluginSettings] = (),
     project: ProjectSettings | None = None,
     resume: str | None = None,
+    load_plugins: bool = True,
 ) -> None:
     """Start an asyncio terminal conversation with a caller-supplied agent.
 
     Esc cancels the current turn; Ctrl-C also clears idle input. Ctrl-D and `/exit` quit.
     Failed and cancelled turns retain their captured history. Resume never replays tools.
     `project` is the parsed `.clai/settings.json`; layer its overrides into `settings` yourself.
+    `load_plugins=False` loads no built-in, project, saved, or drop-in plugin and turns `/plugins` off for this
+    session only; saved plugin preferences are untouched.
     """
     console = console or Console()
     transcript = TranscriptBuffer()
@@ -153,6 +177,7 @@ async def chat(
             builtin_plugins=builtin_plugins,
             project=project,
             transcript=transcript,
+            load_plugins=load_plugins,
         )
     fresh = False
     warming: Thread | None = None
@@ -203,6 +228,7 @@ async def chat(
                         message_history=shell.session.messages,
                         summary=shell.session.summary,
                         transcript=shell.transcript,
+                        load_plugins=load_plugins,
                     )
                 )
             except Exception as exc:
@@ -222,34 +248,40 @@ class _ModelResolver:
     """Load provider integrations on demand, retaining Codex authentication per conversation."""
 
     console: Console
+    plugins: Callable[[], Mapping[str, ModelProvider]] = lambda: {}
+    """Model prefixes registered by loaded plugins, read per resolution so enabling one applies at once."""
     _auth: 'CodexAuth | None' = None
 
     def codex_auth(self) -> 'CodexAuth':
         if self._auth is None:
-            from .auth import CodexAuth
+            from pydantic_clai2.auth import CodexAuth
 
             self._auth = CodexAuth(self.console)
         return self._auth
 
     async def login(self, args: list[str]) -> str:
-        from .auth import login_command
+        from pydantic_clai2.auth import login_command
 
         return await login_command(args, codex=self.codex_auth())
 
     async def resolve(self, name: str) -> Model | str:
         if name.startswith('openrouter:'):
-            from . import openrouter
+            from pydantic_clai2.models import openrouter
 
             return await asyncio.to_thread(openrouter.model, name)
         if name.startswith('vllm:'):
-            from . import vllm
+            from pydantic_clai2.models import vllm
 
             return await asyncio.to_thread(vllm.model, name)
         if name.startswith('github-copilot:'):
-            from . import github_copilot
+            from pydantic_clai2.models import github_copilot
 
             return await asyncio.to_thread(github_copilot.model, name)
-        return self.codex_auth().model(name) if name.startswith('openai-codex:') else name
+        if name.startswith('openai-codex:'):
+            return self.codex_auth().model(name)
+        prefix, separator, model_name = name.partition(':')
+        provider = self.plugins().get(prefix) if separator else None
+        return name if provider is None else await asyncio.to_thread(provider.resolve, model_name)
 
 
 def create_shell(
@@ -267,6 +299,7 @@ def create_shell(
     summary: ConversationSummary | None = None,
     transcript: TranscriptBuffer | None = None,
     headless: bool = False,
+    load_plugins: bool = True,
 ) -> '_Shell[DepsT, OutputT]':
     """Build shared session services, without attaching terminal input in headless mode."""
     settings = Settings.model_validate(settings.model_dump()) if settings is not None else Settings(model=None)
@@ -298,17 +331,43 @@ def create_shell(
     async def add_model(args: list[str]) -> str:
         if args:
             return context.set_setting(['model', *args])
-        from .model_menu import open_add_model_menu
+        from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
 
         return await open_add_model_menu(context)
 
     async def model_settings(args: list[str]) -> str:
-        from .model_menu import model_settings_command
+        from pydantic_clai2.ui.menus.model_menu import model_settings_command
 
         return await model_settings_command(context, args)
 
+    def fast(args: list[str]) -> str:
+        if args not in ([], ['on'], ['off']):
+            raise ValueError('Usage: /fast [on|off]')
+        model = session.model or _model_label(agent)
+        current = context.model_settings(model) or {}
+        saved = store.model_settings(model)
+        custom = saved.get('custom_params')
+        if isinstance(custom, dict) and any(key.partition('.')[0] == 'service_tier' for key in custom):
+            raise ValueError('Custom service_tier overrides fast mode. Remove it with /model_settings first.')
+        enabled = args == ['on'] or (not args and current.get('service_tier') != 'priority')
+        tier = 'priority' if enabled else 'default'
+        store.save_model_settings(model, {**saved, 'service_tier': tier})
+        return (
+            f'Fast mode {"on" if enabled else "off"} for {model} (service_tier={tier}). Applies on the next prompt.'
+            + (' Uses more ChatGPT credits; availability depends on your model and account.' if enabled else '')
+        )
+
     sessions = Sessions(session=session, store=conversations, context=context)
     commands = Commands()
+    commands.register(
+        Command(
+            name='fast',
+            description='Toggle Codex priority processing: /fast [on|off] (uses more ChatGPT credits)',
+            handler=fast,
+            complete=lambda args: ('on', 'off') if len(args) <= 1 else (),
+            available=lambda: (session.model or _model_label(agent)).startswith('openai-codex:'),
+        )
+    )
     commands.register(Command(name='resume', description='Browse or restore a saved session', handler=sessions.command))
     commands.register(Command(name='keys', description='Manage saved API keys', handler=keys_command))
     commands.register(
@@ -324,7 +383,7 @@ def create_shell(
             name='set',
             description='Change settings; no arguments opens the menu',
             handler=lambda args: set_command(context, args),
-            complete=set_completions,
+            complete=lambda args: set_completions(args, plugin_models=context.plugin_models()),
             during_turn=True,
         )
     )
@@ -351,7 +410,9 @@ def create_shell(
             name='add_model',
             description='Add and use a model, or browse providers and model settings',
             handler=add_model,
-            complete=lambda args: set_completions(['model', *args]) if len(args) <= 1 else (),
+            complete=lambda args: (
+                set_completions(['model', *args], plugin_models=context.plugin_models()) if len(args) <= 1 else ()
+            ),
             during_turn=True,
         )
     )
@@ -410,7 +471,10 @@ def create_shell(
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,
         status=status,
+        enabled=load_plugins,
     )
+    models.plugins = loader.model_providers
+    context.plugin_models = loader.model_names
     spinners = Spinners(selected=lambda: context.settings.spinner, registered=loader.spinners)
     commands.register(
         Command(
@@ -425,7 +489,9 @@ def create_shell(
         Command(
             name='plugins',
             description='Manage plugins; no arguments opens the menu',
-            handler=lambda args: loader.command(args) if args else open_plugins_menu(loader),
+            handler=lambda args: (
+                _PLUGINS_OFF if not loader.enabled else loader.command(args) if args else open_plugins_menu(loader)
+            ),
             complete=lambda args: _PLUGIN_ACTIONS if len(args) <= 1 else (entry.name for entry in loader.entries()),
         )
     )
