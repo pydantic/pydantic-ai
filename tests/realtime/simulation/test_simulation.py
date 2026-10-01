@@ -168,6 +168,40 @@ def test_known_turn_spoken_before_a_reply_filed_before_it() -> None:
     reproduce('SIM-11', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual')), scenario)
 
 
+@known('SIM-11')
+def test_known_second_commit_takes_the_turn_of_earlier_audio() -> None:
+    """Audio streamed before each of two replies, committed as one turn after them, then a second turn committed:
+    the session gives the second turn the place of the audio before the second reply."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.send_text()
+        sim.settle()
+        sim.send_audio()
+        sim.send_text()
+        sim.settle()
+        sim.commit_audio()
+        sim.send_audio()
+        sim.commit_audio()
+        sim.settle()
+
+    reproduce('SIM-11', OpenAISimulation(openai=OpenAIOptions(turn_detection='manual')), scenario)
+
+
+@known('SIM-11')
+def test_known_live_utterance_spoken_before_a_reply_filed_before_it() -> None:
+    """On GPT-Live, audio streamed before the model's reply is transcribed as a turn only after that reply."""
+
+    def scenario(sim: LiveSimulation) -> None:
+        sim.send_audio()
+        sim.speak()
+        sim.settle()
+        sim.user_says()
+        sim.settle()
+
+    reproduce('SIM-11', LiveSimulation(), scenario)
+
+
 @known('SIM-12')
 def test_known_refused_tool_results_request_leaves_wait_hanging() -> None:
     def scenario(sim: OpenAISimulation) -> None:
@@ -925,6 +959,41 @@ def run_tolerant(sim: Simulation, scenario: Callable[[Any], object]) -> None:
         s.close()
         s.settle()
         s.check_handoff()
+
+
+def test_scenario_later_turn_takes_the_place_of_earlier_audio() -> None:
+    """SIM-11 also covers the later of two turns, placed where the session saw audio the earlier turn took."""
+
+    def scenario(sim: OpenAISimulation) -> None:
+        sim.send_audio()
+        sim.create_response()
+        sim.settle()
+        sim.send_audio()
+        sim.send_text()
+        sim.settle()
+        sim.commit_audio()
+        sim.send_audio()
+        sim.commit_audio()
+
+    run_tolerant(
+        OpenAISimulation(
+            openai=OpenAIOptions(dialect='azure', transcription=True, vad_interrupts=False, vad_responds=False)
+        ),
+        scenario,
+    )
+
+
+def test_scenario_live_later_utterance_takes_the_place_of_earlier_audio() -> None:
+    def scenario(sim: LiveSimulation) -> None:
+        sim.send_audio()
+        sim.speak(deliver=False)
+        sim.settle()
+        sim.send_audio()
+        sim.user_says(deliver=False)
+        sim.settle()
+        sim.user_says(deliver=False)
+
+    run_tolerant(LiveSimulation(), scenario)
 
 
 def test_scenario_openai_server_vad_edges() -> None:
