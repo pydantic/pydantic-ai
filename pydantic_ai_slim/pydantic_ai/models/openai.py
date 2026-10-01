@@ -2483,7 +2483,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputRefusal):
                         refusal_text = content.refusal
-                    elif isinstance(content, responses.ResponseOutputText):  # pragma: no branch
+                    # Like a stream, which only builds text from its deltas, empty text (such as the message that
+                    # follows a generated image, or `text=null` from gateways like Bifrost) doesn't make a part.
+                    elif isinstance(content, responses.ResponseOutputText) and content.text:
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
@@ -2495,11 +2497,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         if item.phase is not None:
                             part_provider_details = part_provider_details or {}
                             part_provider_details['phase'] = item.phase
-                        # Some OpenAI-compatible gateways (e.g. Bifrost) return text=null;
-                        # coalesce to '' so the part (and its ID) is preserved for round-tripping.
                         items.append(
                             TextPart(
-                                content.text or '',
+                                content.text,
                                 id=item.id,
                                 provider_name=self.system,
                                 provider_details=part_provider_details,
@@ -3960,12 +3960,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         such an id without an explicit `image/*` media type also maps to `input_file`.
         """
         self._validate_uploaded_file_provider(item)
-        if item.media_type.startswith('image/'):
-            detail: Literal['auto', 'low', 'high'] = 'auto'
-            if metadata := item.vendor_metadata:
-                detail = metadata.get('detail', 'auto')
-            return ResponseInputImageContentParam(type='input_image', file_id=item.file_id, detail=detail)
-        return ResponseInputFileContentParam(type='input_file', file_id=item.file_id)
+        return _uploaded_file_to_response_content(item)
 
     @staticmethod
     async def _map_file_to_response_content(
@@ -4390,6 +4385,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         if response.background:
             self.provider_details = {**(self.provider_details or {}), 'background': True}
 
+    def _handle_terminal_response(self, response: responses.Response) -> None:
+        """Take what the complete response that ends the stream reports as `_process_response` does."""
+        # A stream resumed with `starting_after` has no `response.created`, so this is where it first sees these.
+        self._model_name = response.model or self._model_name
+        self.provider_response_id = self.provider_response_id or response.id
+        if response.created_at and 'timestamp' not in (self.provider_details or {}):
+            self.provider_details = {
+                **(self.provider_details or {}),
+                'timestamp': number_to_datetime(response.created_at),
+            }
+        # Only terminal events report the tier that served the request; earlier ones echo the requested tier.
+        if service_tier := response.service_tier:
+            self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier}
+
     async def close_stream(self) -> None:
         await self._response.source.close()
 
@@ -4427,7 +4436,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
                     # relies on it to cancel the server-side job.
                     self._track_background(chunk.response)
-                    # Only terminal events report the tier that served the request; earlier ones echo the requested tier.
                     if isinstance(
                         chunk,
                         (
@@ -4435,8 +4443,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             responses.ResponseFailedEvent,
                             responses.ResponseIncompleteEvent,
                         ),
-                    ) and (service_tier := chunk.response.service_tier):
-                        self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier}
+                    ):
+                        self._handle_terminal_response(chunk.response)
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
@@ -4834,7 +4842,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
                     if (phase := _phase_by_item.get(chunk.item_id)) is not None:
                         provider_details['phase'] = phase
-                    if provider_details:
+                    # Empty text makes no part, as in `_process_response`.
+                    if provider_details and chunk.text:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=chunk.item_id,
                             content='',
@@ -4893,7 +4902,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseCodeInterpreterCallInterpretingEvent):
                     pass  # there's nothing we need to do here
 
-                elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):  # pragma: no cover
+                elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):
                     pass  # there's nothing we need to do here
 
                 elif isinstance(chunk, responses.ResponseImageGenCallGeneratingEvent):
@@ -5215,17 +5224,16 @@ def _map_logprobs(
     | list[responses.response_output_text.Logprob]
     | list[responses.response_text_done_event.Logprob],
 ) -> list[dict[str, Any]]:
+    # The SDK's `output_text.done` logprob types don't declare the `bytes` the API sends, but keep it as an extra field.
     return [
         {
             'token': lp.token,
-            'bytes': lp.bytes if not isinstance(lp, responses.response_text_done_event.Logprob) else None,
+            'bytes': getattr(lp, 'bytes', None),
             'logprob': lp.logprob,
             'top_logprobs': [
                 {
                     'token': tlp.token,
-                    'bytes': tlp.bytes
-                    if not isinstance(tlp, responses.response_text_done_event.LogprobTopLogprob)
-                    else None,
+                    'bytes': getattr(tlp, 'bytes', None),
                     'logprob': tlp.logprob,
                 }
                 for tlp in (lp.top_logprobs or [])
@@ -5808,6 +5816,18 @@ def _build_tool_search_return_part(
             'status': output_item.status,
         },
     )
+
+
+def _uploaded_file_to_response_content(
+    item: UploadedFile,
+) -> ResponseInputImageContentParam | ResponseInputFileContentParam:
+    """Map an `UploadedFile` whose provider has already been checked to its OpenAI Responses API content param."""
+    if item.media_type.startswith('image/'):
+        detail: Literal['auto', 'low', 'high'] = 'auto'
+        if metadata := item.vendor_metadata:
+            detail = metadata.get('detail', 'auto')
+        return ResponseInputImageContentParam(type='input_image', file_id=item.file_id, detail=detail)
+    return ResponseInputFileContentParam(type='input_file', file_id=item.file_id)
 
 
 def _map_web_search_tool_call(
