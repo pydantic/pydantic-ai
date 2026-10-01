@@ -63,6 +63,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.native_tools import ImageGenerationTool, WebSearchTool
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
@@ -85,7 +86,7 @@ from .mock_openai import (
 )
 
 with try_import() as imports_successful:
-    from openai import APIConnectionError, APIStatusError, AsyncAzureOpenAI, AsyncOpenAI
+    from openai import APIConnectionError, APIError, APIStatusError, AsyncAzureOpenAI, AsyncOpenAI
     from openai.types import chat
     from openai.types.chat.chat_completion import ChoiceLogprobs
     from openai.types.chat.chat_completion_chunk import (
@@ -318,6 +319,23 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
             ),
         ]
     )
+
+
+async def test_response_without_id_created_or_finish_reason(allow_model_requests: None):
+    """OpenAI-compatible providers may send an empty `id`, a zero `created`, and no `finish_reason`.
+
+    These build the same response as a stream without them does: none of them is reported as a provider value.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    c.id = ''
+    c.created = 0
+    c.choices[0].finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)))
+
+    response = await direct_model_request(model, [ModelRequest.user_text_prompt('hello')])
+    assert response.provider_response_id is None
+    assert response.provider_details is None
+    assert response.finish_reason == 'stop'
 
 
 async def test_openai_chat_image_detail_vendor_metadata(allow_model_requests: None):
@@ -2083,6 +2101,78 @@ def test_responses_model_connection_error(allow_model_requests: None) -> None:
         agent.run_sync('hello')
     assert exc_info.value.model_name == 'o3-mini'
     assert 'Connection to http://localhost:11434/v1 timed out' in str(exc_info.value.message)
+
+
+_STREAM_ERROR_SSE_CHUNK = (
+    b'data: {"id":"1","object":"chat.completion.chunk","created":0,"model":"gpt-4o",'
+    b'"choices":[{"index":0,"delta":{"role":"assistant","content":"Hello"},"finish_reason":null}]}\n\n'
+)
+_STREAM_ERROR_SSE_ERROR = b'data: {"error":{"message":"upstream model failed","type":"server_error","code":500}}\n\n'
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+@pytest.mark.parametrize(
+    'content',
+    [
+        pytest.param(_STREAM_ERROR_SSE_ERROR, id='first-chunk'),
+        pytest.param(_STREAM_ERROR_SSE_CHUNK + _STREAM_ERROR_SSE_ERROR, id='mid-stream'),
+    ],
+)
+async def test_stream_error_object_raises_model_api_error(allow_model_requests: None, content: bytes) -> None:
+    """An error object inside a 200 SSE stream surfaces as `ModelAPIError`, with no status code invented for it.
+
+    A mock transport stands in for a cassette because no real provider returns such a stream on demand.
+    https://github.com/pydantic/pydantic-ai/issues/8722
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200, content=content, headers={'content-type': 'text/event-stream'})
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        model = OpenAIChatModel(
+            'gpt-4o', provider=OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client)
+        )
+        with pytest.raises(ModelAPIError) as exc_info:
+            async with Agent(model).run_stream('hello') as result:
+                await result.get_output()
+
+    assert type(exc_info.value) is ModelAPIError
+    assert exc_info.value.message == 'upstream model failed'
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, APIError)
+    assert cause.body == snapshot({'message': 'upstream model failed', 'type': 'server_error', 'code': 500})
+
+
+@pytest.mark.vcr(ignore_hosts=['gateway.example'])
+async def test_stream_error_object_falls_back(allow_model_requests: None) -> None:
+    """`FallbackModel`'s default `fallback_on` covers an error object that opens a 200 SSE stream.
+
+    https://github.com/pydantic/pydantic-ai/issues/8722
+    """
+    requests_made = {'primary': 0, 'fallback': 0}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        model_name = json.loads(request.content)['model']
+        if model_name == 'primary':
+            requests_made['primary'] += 1
+            return httpx2.Response(200, content=_STREAM_ERROR_SSE_ERROR, headers={'content-type': 'text/event-stream'})
+        requests_made['fallback'] += 1
+        return httpx2.Response(
+            200,
+            content=_STREAM_ERROR_SSE_CHUNK + b'data: [DONE]\n\n',
+            headers={'content-type': 'text/event-stream'},
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
+        provider = OpenAIProvider(base_url='https://gateway.example/v1', api_key='test', http_client=client)
+        model = FallbackModel(
+            OpenAIChatModel('primary', provider=provider), OpenAIChatModel('fallback', provider=provider)
+        )
+        async with Agent(model).run_stream('hello') as result:
+            output = await result.get_output()
+
+    assert output == 'Hello'
+    assert requests_made == {'primary': 1, 'fallback': 1}
 
 
 @pytest.mark.parametrize('model_name', ['o3-mini', 'gpt-4o-mini', 'gpt-4.5-preview'])

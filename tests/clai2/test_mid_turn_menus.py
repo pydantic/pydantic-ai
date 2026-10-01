@@ -19,14 +19,14 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session, chat
-from pydantic_clai2.command_context import CommandContext
+from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command, Commands
 from pydantic_clai2.config import Settings
-from pydantic_clai2.menu_worker import holding_output, run_worker
-from pydantic_clai2.prompt_surface import PromptSurface
-from pydantic_clai2.screen import Screen
-from pydantic_clai2.session_settings import SessionSettings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.runtime.session_settings import SessionSettings
+from pydantic_clai2.ui.menus.menu_worker import holding_output, run_worker
+from pydantic_clai2.ui.prompt.prompt_surface import PromptSurface
+from pydantic_clai2.ui.prompt.screen import Screen
 
 
 def test_only_bare_opted_in_commands_run_during_a_turn() -> None:
@@ -128,7 +128,7 @@ async def _open_menu_mid_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
                 streamed.set()
             return super().write(text)
 
-    monkeypatch.setattr('pydantic_clai2.live_prompt.PromptSurface', Surface)
+    monkeypatch.setattr('pydantic_clai2.ui.prompt.live_prompt.PromptSurface', Surface)
 
     def menu() -> str:
         opened.set()

@@ -2,7 +2,7 @@
 
 from pydantic_ai_harness.ask_user._capability import AskUser
 from pydantic_ai_harness.ask_user._events import ASK_USER_EVENTS, AskUserAnsweredEvent, AskUserRequestedEvent
-from pydantic_ai_harness.ask_user._toolset import DECLINED, TOOL_NAME, AskUserToolset
+from pydantic_ai_harness.ask_user._toolset import DECLINED, TIMED_OUT, TOOL_NAME, AskUserToolset, ask_user_result
 from pydantic_ai_harness.ask_user._types import (
     MAX_QUESTIONS,
     Answerer,
@@ -28,6 +28,8 @@ __all__ = [
     'MAX_QUESTIONS',
     'Question',
     'QuestionOption',
+    'TIMED_OUT',
     'TOOL_NAME',
+    'ask_user_result',
     'check_response',
 ]
