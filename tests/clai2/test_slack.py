@@ -13,16 +13,17 @@ from termflow.tui.textinput import TextInputResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_clai2 import DEFAULT_PLUGINS, slack as slack_plugin
-from pydantic_clai2.api_keys import KeyReference, delete_key, load_keys, rename_key, save_key
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins import slack as slack_plugin
 from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
-from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
-from pydantic_clai2.field_menu import FieldMenu
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
-from pydantic_clai2.plugin_menu import PluginMenu, open_plugins_menu
+from pydantic_clai2.config.api_keys import KeyReference, delete_key, load_keys, rename_key, save_key
+from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.plugin_menu import PluginMenu, open_plugins_menu
 from tests.clai2.menu_script import pick, typed
 from tests.clai2.slack_shell import BUILTIN, ENABLED, ESC, script, shell
 
@@ -45,11 +46,11 @@ def key_choice(monkeypatch: pytest.MonkeyPatch, choice: str | KeyReference | Non
         await anyio.sleep(think)
         return choice
 
-    monkeypatch.setattr('pydantic_clai2.plugin_keys.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
 
 
 def test_declared_as_disabled_builtin() -> None:
-    assert BUILTIN == PluginSettings(id='slack', factory='pydantic_clai2.slack', enabled=False)
+    assert BUILTIN == PluginSettings(id='slack', factory='pydantic_clai2.builtin_plugins.slack', enabled=False)
 
 
 async def test_enable_opens_the_menu_and_every_option_saves_immediately(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -151,8 +152,8 @@ async def test_a_key_saved_meanwhile_by_another_session_still_needs_confirmation
     def keys_before_the_other_session() -> dict[str, SecretStr]:
         return {}
 
-    monkeypatch.setattr('pydantic_clai2.plugin_keys.load_keys', keys_before_the_other_session)
-    monkeypatch.setattr('pydantic_clai2.plugin_keys.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.plugins.keys.load_keys', keys_before_the_other_session)
+    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
     shown = script(monkeypatch, lists=[pick('token')], choices=[pick(replace)])
     app = await shell()
     await app.plugins.command(['configure', 'slack'])
@@ -238,7 +239,7 @@ async def test_closing_the_menu_mid_pick_cancels_the_key_prompt(monkeypatch: pyt
         finally:
             cancelled.set()
 
-    monkeypatch.setattr('pydantic_clai2.plugin_keys.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
     script(monkeypatch, lists=[pick('token')])
     app = await shell()
     async with anyio.create_task_group() as group:
@@ -259,9 +260,9 @@ class Redraw:
 async def test_add_replacing_the_builtin_opens_the_menu(monkeypatch: pytest.MonkeyPatch) -> None:
     script(monkeypatch, lists=[pick('read_only')], choices=[pick('true')])
     app = await shell(BUILTIN)
-    assert await app.plugins.command(['add', 'slack', 'pydantic_clai2.slack', '{"read_only": false}']) == (
-        'Replaced built-in slack.\nSaved Tools.'
-    )
+    assert await app.plugins.command(
+        ['add', 'slack', 'pydantic_clai2.builtin_plugins.slack', '{"read_only": false}']
+    ) == ('Replaced built-in slack.\nSaved Tools.')
     assert app.slack().read_only
     await app.plugins.close('exit')
 
@@ -270,7 +271,7 @@ async def test_configure_needs_a_loaded_plugin_with_a_menu() -> None:
     app = await shell(BUILTIN)
     with pytest.raises(ValueError, match='not loaded; enable it before configuring'):
         await app.plugins.command(['configure', 'slack'])
-    app.store.save_plugin(PluginSettings(id='plain', factory='pydantic_clai2.repo_context'))
+    app.store.save_plugin(PluginSettings(id='plain', factory='pydantic_clai2.builtin_plugins.repo_context'))
     assert await app.plugins.command(['enable', 'plain']) == 'Enabled plain.'
     with pytest.raises(ValueError, match='no settings menu'):
         await app.plugins.configure('plain')
@@ -308,7 +309,7 @@ async def test_closing_the_menu_mid_save_waits_for_the_save(monkeypatch: pytest.
         order.append('saved')
         return save_key(name=name, value=value, replace=replace)
 
-    monkeypatch.setattr('pydantic_clai2.plugin_keys.save_key', slow_save)
+    monkeypatch.setattr('pydantic_clai2.plugins.keys.save_key', slow_save)
     script(monkeypatch, lists=[pick('token')], texts=[typed('xoxp-new')])
     app = await shell()
     async with anyio.create_task_group() as group:
@@ -342,7 +343,7 @@ async def test_the_token_is_resolved_off_the_event_loop(monkeypatch: pytest.Monk
 async def test_settings_reject_a_token() -> None:
     app = await shell(BUILTIN)
     with pytest.raises(PluginError, match='token'):
-        await app.plugins.command(['add', 'slack', 'pydantic_clai2.slack', '{"token": "xoxp-inline"}'])
+        await app.plugins.command(['add', 'slack', 'pydantic_clai2.builtin_plugins.slack', '{"token": "xoxp-inline"}'])
     assert app.plugins.capabilities() == []
     await app.plugins.close('exit')
 
