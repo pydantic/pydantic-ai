@@ -5,7 +5,7 @@ description: "Give a Pydantic AI agent a todo list it plans and updates itself, 
 
 # Planning
 
-`Planning` gives the model a structured, self-updating task list through a small toolset -- and surfaces each plan change back to the model without rewriting the cached prompt prefix. It can stay in memory for a single run or persist to SQLite/Postgres, break steps into subtasks with dependencies, and emit events from granular changes.
+`Planning` gives the model a structured, self-updating task list through a small toolset -- and surfaces the current plan back to the model every turn without ever invalidating the prompt cache. It can stay in memory for a single run or persist to SQLite/Postgres, break steps into subtasks with dependencies, and emit events from granular changes.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)
 
@@ -30,15 +30,12 @@ Long agentic runs drift: the model loses track of what it set out to do and what
 
 ## The solution
 
-The model owns the plan through the `planning` toolset. The current plan is surfaced back as a reminder that `Planning` appends to `message_history` whenever the plan differs from the last reminder there:
+The model owns the plan through the `planning` toolset. The current plan is surfaced back as an ephemeral reminder appended to the tail of each request, with the single cache breakpoint anchored on the last durable user content:
 
-- An unchanged plan adds nothing, and a changed plan appends one reminder with the current plan. Clearing a plan appends a reminder saying there is no plan, so the old one isn't left as the latest.
-- History stays append-only, so each request is a prefix of the next. That includes caches that store past the explicit breakpoint, such as Anthropic automatic caching and OpenAI's server-side prefix caching, which match as far as the request bytes agree.
-- A `CachePoint` goes on the last user content of each request once a reminder exists, on that request's copy only, so breakpoints don't accumulate in `message_history`.
+- The reminder is added after the durable history is persisted, so it reaches the model but is never written to `message_history`. No reminders accumulate across turns.
+- The `CachePoint` sits on the last durable user content, so the prefix it saves is a prefix of the next request and cache hits survive turn over turn. The reminder carries no breakpoint, so re-sending its mutable content never invalidates the cache.
 
-The cost is one reminder in history per plan change. In a long run the latest reminder can sit well behind the end of the conversation; the model can call `read_plan` to see the current plan.
-
-As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit cache control.
+As with all capability cache breakpoints, provider mapping applies: OpenAI models only receive the `CachePoint` when the model profile enables explicit cache control, and with no durable user content to anchor on the reminder is sent without a breakpoint.
 
 Note that the anchor lands on the last `UserPromptPart` present in the request. A capability listed before `Planning` that appends user content each request (for example `SystemReminders`) displaces the anchor onto that part, so the prefix stays cache-stable only while that content is stable across turns.
 
@@ -171,12 +168,16 @@ Addressing steps by mutable integer index (insert/remove/reorder) is error-prone
 
 ## Caching guarantee
 
-The plan is never injected into the system prompt or instructions. Static usage guidance goes there (cache-stable); the plan itself is appended to `message_history` as a reminder when it changes, so nothing already sent is rewritten. Reminders are stored with the rest of the conversation and returned by `new_messages()`, so a UI that renders message history shows them as user content. Set `inject=False` to disable them. Pydantic AI maps `CachePoint` for models whose profiles support prompt caching; on other models it is ignored.
+The plan is never injected into the system prompt or instructions. Static usage guidance goes there (cache-stable); only the mutable plan rides the ephemeral tail reminder, which lives solely in the per-request copy and is never persisted. Set `inject=False` to disable it. Pydantic AI maps `CachePoint` for models whose profiles support prompt caching; on other models it is ignored.
 
 With a durable-execution capability attached, the plan read used to build that reminder is a
 journaled capability operation. Replay reuses the recorded plan instead of reading the store again.
 `Planning` carries the stable default `id='planning'`, so durable recovery works without
 configuration.
+Engines that run tools and capability operations in a separate worker, like Temporal, don't
+carry the run's in-memory plan there: each call resolves its store from the run context. Pass a
+persistent `store` or a `store_resolver` (such as `SqlitePlanStore` or `PostgresPlanStore`) to keep
+the plan across steps.
 
 ## Configuration
 

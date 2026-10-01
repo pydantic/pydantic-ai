@@ -21,9 +21,9 @@ Start with `SubAgents` when unsure; its sub-agents move to a `DynamicWorkflow` c
 
 ## Planning
 
-Gives the model plan tools and appends the current plan to `message_history` as a reminder whenever
-it changes (never in the system prompt), so history stays append-only and plan edits do not break the
-prompt cache.
+Gives the model plan tools and re-shows the current plan as an ephemeral reminder at the tail of each
+request (never written to `message_history`, never in the system prompt), so plan edits do not break
+the prompt cache.
 
 ```python
 from pydantic_ai import Agent
@@ -60,7 +60,7 @@ Key parameters:
 - `guidance=None`: `None` = built-in guidance, `''` = none, a string replaces it.
 - `store=None`: `None` = fresh in-memory plan per run. Pass a `PlanStore` to persist.
 - `store_resolver=None`: `Callable[[RunContext], PlanStore]`, wins over `store` (per-tenant stores).
-- `enable_subtasks=False`, `inject=True` (the plan reminder), `cache_ttl='5m'` (`'5m'` or `'1h'`).
+- `enable_subtasks=False`, `inject=True` (the tail reminder), `cache_ttl='5m'` (`'5m'` or `'1h'`).
 - `tools=None`: allowlist, e.g. `tools=['write_plan']`. Naming a tool the mode does not register
   raises `ValueError`; so does an unknown key in `descriptions`.
 
@@ -87,7 +87,7 @@ Gotchas:
 
 - `SqlitePlanStore(':memory:')` raises `ValueError`; use `InMemoryPlanStore`. The SQLite file lives on
   the agent's host, not in the workspace.
-- `Planning` reads the store on every model request to compare the plan with the last reminder; a store that raises fails the run. Wrap the
+- The reminder reads the store on every model request; a store that raises fails the run. Wrap the
   store yourself for fallback behaviour.
 - `parent_id`, `depends_on`, and `blocked` are rejected by `write_plan` unless `enable_subtasks=True`.
 - Events: `PlanCreatedEvent`, `PlanUpdatedEvent`, `PlanStatusChangedEvent`, `PlanCompletedEvent`,
@@ -127,9 +127,11 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
 
 `SubAgents` parameters that change behaviour:
 
-- `agent_folders=None` (default): no disk loading. Pass `'agents'` to load every `*.md` under
-  `.agents/agents/` (fallback `.claude/agents/`) from the run's workspace; a run without a workspace
-  skips it. A sequence of paths reads exactly those (and fails at run start without a workspace).
+- `agent_folders=None` (default): no disk loading. Pass `'agents'` to load every Claude-style `*.md`
+  and Codex-style `*.toml` under `.agents/agents/`, `.claude/agents/`, and `.codex/agents/` (in that
+  order) from the run's workspace. TOML needs `name`, `description`, and `developer_instructions`;
+  unknown keys, including sandbox or permission settings, skip the file with a warning. A run without
+  a workspace skips it. A sequence of paths reads exactly those (and fails at run start without a workspace).
   Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere.
 - `forward_usage=True`: children share the parent's usage, so a parent `usage_limits` bounds the tree.
   A `SubAgent.usage_limits` gives that child isolated accounting (its tokens stop aggregating).
@@ -159,6 +161,23 @@ Gotchas:
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
   `DelegationEndEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).
+
+## DelegationReports
+
+Delivers finished background-task reports from a `DelegationTasks` owner into a parent run, as
+automated, untrusted task data rather than user messages.
+
+```python
+from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+
+tasks = DelegationTasks()
+reports = DelegationReports(tasks, conversation_id='conversation-1')
+```
+
+- `priority='when_idle'` (default) lets an active parent finish its current work first.
+- For a host-started, report-only continuation, use `priority='asap'` with `agent.run(None, ...)`, so
+  the reports reach the first model request with no synthetic user prompt.
+- Reports are marked delivered once consumed and are not replayed. The host owns idle wake-up.
 
 ## DynamicWorkflow
 
