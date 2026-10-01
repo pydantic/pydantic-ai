@@ -24,8 +24,8 @@ Run with:
 
 import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from textwrap import dedent
 from typing import Any
 
@@ -38,7 +38,7 @@ MODEL = 'openai:gpt-5.2'
 
 
 # Structured Outputs
-class Specialty(str, Enum):
+class Specialty(StrEnum):
     general = 'general'
     cardiology = 'cardiology'
     neurology = 'neurology'
@@ -249,7 +249,7 @@ class MedicalTriageSystem:
     async def handle_patient(
         self, complaint: str, patient: PatientInfo
     ) -> dict[str, Any]:
-        timestamp = datetime.now(tz=timezone.utc).isoformat()
+        timestamp = datetime.now(tz=UTC).isoformat()
         print(f'\n[{timestamp}] Processing complaint: {complaint}')
 
         triage_prompt = (

@@ -314,8 +314,7 @@ class Session(Generic[DepsT, OutputT]):
                         with move_on_after(5, shield=True):
                             await self._save_turn(outcome='cancelled')
                     except Exception as exc:
-                        if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
-                            cancelled.add_note(f'Could not save cancelled turn: {exc}')
+                        cancelled.add_note(f'Could not save cancelled turn: {exc}')
                         logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
                     raise
                 except Exception:

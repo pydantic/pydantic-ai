@@ -30,7 +30,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -46,7 +45,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Internet",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.urls]
 Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/pydantic_ai_slim"
@@ -63,8 +62,7 @@ dependencies = [
     "httpx2>=2.7",
     "pydantic>=2.12",
     "pydantic-graph=={{ version }}",
-    "exceptiongroup>=1.2.2; python_version < '3.11'",
-    "opentelemetry-api>=1.28.0",
+        "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
     "genai-prices>=0.1.9",
 ]

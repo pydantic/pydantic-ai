@@ -2,7 +2,7 @@
 
 import asyncio
 import math
-import sys
+from builtins import BaseExceptionGroup
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
@@ -80,9 +80,6 @@ from pydantic_clai2.ui.rendering.spinners import Spinner, Spinners
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.tool_output import terminal_text
 from pydantic_clai2.ui.rendering.usage_report import cost_line, session_usage
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import BaseExceptionGroup
 
 if TYPE_CHECKING:
     from pydantic_clai2.auth import CodexAuth

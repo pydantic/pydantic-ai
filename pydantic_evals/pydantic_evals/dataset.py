@@ -10,10 +10,10 @@ a task function to produce an evaluation report.
 from __future__ import annotations as _annotations
 
 import functools
-import sys
 import time
 import traceback
 import warnings
+from builtins import ExceptionGroup
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
@@ -52,11 +52,6 @@ from .reporting import EvaluationReport, ReportCase, ReportCaseAggregate, Report
 
 if TYPE_CHECKING:
     from pydantic_ai.retries import RetryConfig
-
-if sys.version_info < (3, 11):
-    from exceptiongroup import ExceptionGroup  # pragma: lax no cover
-else:
-    ExceptionGroup = ExceptionGroup  # pragma: lax no cover
 
 __all__ = (
     'Case',

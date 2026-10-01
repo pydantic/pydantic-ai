@@ -106,7 +106,7 @@ The repo contains a `uv` workspace defining multiple Python packages:
 
 The project uses:
 
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.10 through 3.13
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/), supporting Python 3.11 through 3.14
     - Install all dependencies with `make install`
 - `pre-commit`, can be installed with `uv tool install pre-commit`
 - `ruff` via `make lint` and `make format`
