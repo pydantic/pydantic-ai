@@ -1,5 +1,6 @@
 """Fail-soft run setup: a plugin capability that rejects its configuration costs itself, not the turn."""
 
+import sys
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -14,7 +15,10 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import Session
-from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard, without
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard, setup_errors, without
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup
 
 
 @dataclass
@@ -68,6 +72,35 @@ async def test_unguarded_or_foreign_setup_errors_still_fail(tmp_path: Path) -> N
     assert (
         without([RefusesWrapRun()], CapabilitySetupError(plugin='x', capability=object(), error=UserError('x'))) is None
     )
+
+
+async def test_simultaneous_setup_errors_drop_every_failing_capability(tmp_path: Path) -> None:
+    """Core sets capabilities up concurrently, so two refusing at once arrive as one exception group."""
+    reported: list[CapabilitySetupError] = []
+    conversation = session(
+        Agent(TestModel(custom_output_text='done')),
+        tmp_path,
+        PluginGuard[None](RefusesForRun(), plugin='one'),
+        PluginGuard[None](RefusesForRun(), plugin='two'),
+    )
+    conversation.on_setup_error = reported.append
+    assert (await conversation.prompt('hello')).output == 'done'
+    assert sorted(error.plugin for error in reported) == ['one', 'two']
+
+
+async def test_simultaneous_foreign_setup_errors_still_fail(tmp_path: Path) -> None:
+    guards = [PluginGuard[None](RefusesForRun(), plugin=name) for name in ('one', 'two')]
+    bound = Agent(TestModel(), deps_type=type(None), capabilities=guards)
+    with pytest.raises(ExceptionGroup):
+        await session(bound, tmp_path).prompt('hello')
+
+
+def test_setup_errors_only_when_every_failure_is_one() -> None:
+    error = CapabilitySetupError(plugin='x', capability=object(), error=UserError('x'))
+    assert setup_errors(error) == [error]
+    assert setup_errors(ValueError('x')) is None
+    assert setup_errors(ExceptionGroup('x', [error, ExceptionGroup('y', [error])])) == [error, error]
+    assert setup_errors(ExceptionGroup('x', [error, ValueError('x')])) is None
 
 
 async def test_errors_after_setup_propagate(tmp_path: Path) -> None:

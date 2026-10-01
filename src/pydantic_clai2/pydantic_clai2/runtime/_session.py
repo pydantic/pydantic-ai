@@ -34,7 +34,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     SqliteConversationStore,
     ensure_inactive,
 )
-from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, without
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, setup_errors, without
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -289,14 +289,18 @@ class Session(Generic[DepsT, OutputT]):
                                 content, model=model, plugins=plugins, previous=previous, run_id=run_id
                             )
                             break
-                        except CapabilitySetupError as exc:
-                            # Nothing has run yet: go again without the plugin capability that refused its settings.
-                            remaining = without(plugins, exc)
-                            if remaining is None:
+                        except Exception as exc:
+                            # Nothing has run yet: go again without the plugin capabilities that refused their settings.
+                            errors = setup_errors(exc)
+                            remaining: list[AgentCapability[DepsT]] | None = plugins
+                            for error in errors or ():
+                                remaining = without(remaining, error) if remaining is not None else None
+                            if not errors or remaining is None:
                                 raise
                             plugins = remaining
-                            if self.on_setup_error is not None:
-                                self.on_setup_error(exc)
+                            for error in errors:
+                                if self.on_setup_error is not None:
+                                    self.on_setup_error(error)
                 self._accepting_steering = False
                 self._messages = result.all_messages()
                 await self._save_turn(outcome='completed')

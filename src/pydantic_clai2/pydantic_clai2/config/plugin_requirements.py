@@ -132,5 +132,9 @@ def merged_requirements(
 def _previous(old_row: JsonValue | None, key: str) -> JsonValue | None:
     """The stored entry for `key`; a row that is not an object makes every entry unreadable."""
     if isinstance(old_row, dict):
-        return old_row.get(key)
+        if key not in old_row:
+            return None
+        # A stored `null` entry is unreadable, not absent, so it must survive the save.
+        entry = old_row[key]
+        return [UNREADABLE] if entry is None else entry
     return None if old_row is None else [UNREADABLE]

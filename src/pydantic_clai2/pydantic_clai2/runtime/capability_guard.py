@@ -8,14 +8,19 @@ Only setup is guarded: `for_run`, and `wrap_run` until it hands over to the rest
 Anything raised once the run is under way, by the model, a tool, or a hook, propagates as is.
 """
 
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import cast
 
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapperCapability
 from pydantic_ai.capabilities.abstract import WrapRunHandler
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.tools import AgentDepsT
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup
 
 
 class CapabilitySetupError(Exception):
@@ -65,6 +70,25 @@ class PluginGuard(WrapperCapability[AgentDepsT]):
             if started:
                 raise
             raise self._setup_error(exc) from exc
+
+
+def setup_errors(error: BaseException) -> list[CapabilitySetupError] | None:
+    """The setup errors `error` carries, also when several guards failed at once; `None` if anything else failed.
+
+    Core sets capabilities up concurrently, so two failing at once arrive as an exception group.
+    """
+    if isinstance(error, CapabilitySetupError):
+        return [error]
+    if not isinstance(error, BaseExceptionGroup):
+        return None
+    found: list[CapabilitySetupError] = []
+    group = cast('BaseExceptionGroup[BaseException]', error)
+    for inner in group.exceptions:
+        errors = setup_errors(inner)
+        if errors is None:
+            return None
+        found.extend(errors)
+    return found
 
 
 def without(

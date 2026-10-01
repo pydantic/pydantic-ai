@@ -164,6 +164,9 @@ def test_tags_survive_writers_that_do_not_change_the_value() -> None:
         'odd': {'future': 'format'},
         'added': ['new-feature'],
     }
+    # A stored `null` entry stays unreadable rather than counting as untagged.
+    nulled = merged_requirements(old_settings=old, old_row={'same': None}, new_settings=new, declared={})
+    assert nulled == {'same': [UNREADABLE]}
     unreadable = merged_requirements(old_settings=old, old_row='garbage', new_settings=new, declared={})
     assert unreadable == {'same': [UNREADABLE], 'odd': [UNREADABLE], 'untagged': [UNREADABLE]}
     assert merged_requirements(old_settings={}, old_row=None, new_settings=new, declared={}) == {}
@@ -209,6 +212,21 @@ def test_store_keeps_tags_beside_declarations(tmp_path: Path) -> None:
     store.save_plugin(plugin, requires={'mode': frozenset({'fancy-mode'})})
     store.delete_plugin('p')
     assert tags(store, 'p') is None and store.plugins() == []
+
+
+def test_replacing_the_factory_drops_the_old_plugins_tags(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.save_plugin(
+        PluginSettings(id='p', factory='old', settings={'mode': 'fancy'}), requires={'mode': frozenset({'old-only'})}
+    )
+    store.save_plugin(PluginSettings(id='p', factory='new', settings={'mode': 'fancy'}))
+    assert tags(store, 'p') is None
+
+
+def test_null_requirements_row_is_unreadable(tmp_path: Path) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    save_raw(store, 'p', '{"id": "p", "factory": "p", "settings": {"mode": "fancy"}}', 'null')
+    assert stored_requirements(store.plugin_requirements('p'), {'mode': 'fancy'}) == {'mode': frozenset({UNREADABLE})}
 
 
 def test_renamed_plugin_tags_follow_its_stored_id(tmp_path: Path) -> None:
@@ -401,6 +419,11 @@ def delegates(capabilities: Sequence[AgentCapability[None]]) -> bool:
         assert isinstance(capability, AbstractCapability)
         cast(AbstractCapability[None], capability).apply(leaves.append)
     return any(isinstance(leaf, SubAgents) for leaf in leaves)
+
+
+def test_forks_report_setup_errors_like_the_foreground(tmp_path: Path) -> None:
+    shell = coder_shell(tmp_path, io.StringIO(), sub_agents_tags=None)
+    assert shell.fork_session(None, []).on_setup_error == shell.capability_failed
 
 
 async def test_coder_delegation_saved_by_another_build_is_ignored(tmp_path: Path) -> None:

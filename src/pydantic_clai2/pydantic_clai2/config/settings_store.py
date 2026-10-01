@@ -149,10 +149,14 @@ class SettingsStore:
         plugin = plugin.model_copy(update={'id': _stored_plugin_id(current_id)})
         with self._connect() as connection:
             old = connection.execute('SELECT declaration FROM plugins WHERE id = ?', (plugin.id,)).fetchone()
-            # Tags without a declaration were left by a build that deleted it without knowing this table.
-            old_row = self._requirements_row(connection, plugin.id) if old is not None else None
+            saved = _saved_declaration(old[0]) if old is not None else {}
+            # Tags without a declaration were left by a build that deleted it without knowing this table,
+            # and tags on another factory's declaration describe that plugin, not this one.
+            same_plugin = old is not None and saved.get('factory') == plugin.factory
+            old_row = self._requirements_row(connection, plugin.id) if same_plugin else None
+            settings = saved.get('settings')
             row = merged_requirements(
-                old_settings=_saved_settings(old[0]) if old is not None else {},
+                old_settings=settings if same_plugin and isinstance(settings, dict) else {},
                 old_row=old_row,
                 new_settings=plugin.settings,
                 declared=requires or {},
@@ -181,9 +185,11 @@ class SettingsStore:
         if row is None:
             return None
         try:
-            return _JSON.validate_json(row[0])
+            value = _JSON.validate_json(row[0])
         except ValidationError:
             return row[0]
+        # A stored JSON `null` is not "no tags": hand back the text, which readers treat as unreadable.
+        return row[0] if value is None else value
 
     def delete_plugin(self, plugin_id: str) -> None:
         """Forget a declaration and its requirement tags; a plugin file in the plugins folder is not deleted."""
@@ -217,10 +223,9 @@ class SettingsStore:
         return self.path.parent / 'plugins'
 
 
-def _saved_settings(declaration: str) -> dict[str, JsonValue]:
-    """A stored declaration's `settings`, read leniently: the row may come from another build."""
+def _saved_declaration(declaration: str) -> dict[str, JsonValue]:
+    """A stored declaration as plain JSON, read leniently: the row may come from another build."""
     try:
-        settings = _JSON_OBJECT.validate_json(declaration).get('settings')
+        return _JSON_OBJECT.validate_json(declaration)
     except ValidationError:
         return {}
-    return settings if isinstance(settings, dict) else {}

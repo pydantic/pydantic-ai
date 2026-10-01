@@ -628,6 +628,7 @@ class _Shell(Generic[DepsT, OutputT]):
         child.tool_retries = self.session.tool_retries
         child.resolve_model = self.session.resolve_model
         child.model_settings = self.context.model_settings(child.model or _model_label(self.agent))
+        child.on_setup_error = self.capability_failed
         return child
 
     def request_reload(self, args: list[str]) -> str:
