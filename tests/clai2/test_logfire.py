@@ -107,7 +107,7 @@ def recorder(monkeypatch: pytest.MonkeyPatch) -> Generator[Recorder]:
 
 
 def make_host(**settings: JsonValue) -> PluginHost[None]:
-    return PluginHost(name='logfire', console=Console(file=io.StringIO()), settings=settings)
+    return PluginHost(name='observability', console=Console(file=io.StringIO()), settings=settings)
 
 
 def load_logfire(host: PluginHost[None]) -> LoadedPlugin[None]:
@@ -209,7 +209,7 @@ async def test_disable_reload_and_existing_agent_instrumentation(
     if not explicit:
         agent.instrument = original
     store = SettingsStore(tmp_path / 'config.db')
-    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'logfire')
+    builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability')
     assert builtin.enabled
     loader: PluginLoader[None] = PluginLoader(
         store=store,
@@ -224,15 +224,15 @@ async def test_disable_reload_and_existing_agent_instrumentation(
         await agent.run('first', capabilities=loader.capabilities())
         assert len([span for span in recorder.spans() if operation(span) == 'invoke_agent']) == 1
         assert not existing_exporter.get_finished_spans()
-        await loader.disable('logfire')
+        await loader.disable('observability')
         assert not loader.capabilities()
         assert recorder.exporters[0].closed
         before = len(recorder.spans())
         await agent.run('disabled', capabilities=loader.capabilities())
         assert len(recorder.spans()) == before
         assert len([span for span in existing_exporter.get_finished_spans() if operation(span) == 'invoke_agent']) == 1
-        await loader.enable('logfire')
-        await loader.reload('logfire')
+        await loader.enable('observability')
+        await loader.reload('observability')
         assert recorder.exporters[1].closed
         await agent.run('reloaded', capabilities=loader.capabilities())
         assert len([span for span in recorder.spans() if operation(span) == 'invoke_agent']) == 2
@@ -413,17 +413,17 @@ async def test_interrupted_startup_shuts_down_plugin_providers(
         console=Console(file=io.StringIO()),
         commands=Commands(),
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
-        builtin=(next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'logfire'),),
+        builtin=(next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability'),),
     )
     if cancel:
         with anyio.fail_after(10):
             async with anyio.create_task_group() as tasks:
-                tasks.start_soon(loader.load, 'logfire')
+                tasks.start_soon(loader.load, 'observability')
                 await started.wait()
                 tasks.cancel_scope.cancel()
     else:
         with pytest.raises(PluginError, match='startup failed'):
-            await loader.load('logfire')
+            await loader.load('observability')
     assert recorder.exporters[0].closed
     assert not loader.capabilities()
     assert loader.entries()[0].loaded is None

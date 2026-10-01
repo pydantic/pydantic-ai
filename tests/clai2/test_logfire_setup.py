@@ -1,4 +1,4 @@
-"""The `logfire` plugin's setup menu: destination, Logfire's device sign-in, project, and a saved write token."""
+"""The `observability` plugin's setup menu: destination, Logfire's device sign-in, project, and a saved write token."""
 
 import io
 import json
@@ -116,7 +116,9 @@ class Harness:
 
 
 def make_host(**settings: object) -> PluginHost[None]:
-    return PluginHost(name='logfire', console=Console(file=io.StringIO()), settings=json.loads(json.dumps(settings)))
+    return PluginHost(
+        name='observability', console=Console(file=io.StringIO()), settings=json.loads(json.dumps(settings))
+    )
 
 
 Configure = Callable[[PluginHost[None], Setup], Awaitable[str]]
@@ -134,7 +136,7 @@ def recorder() -> Generator[Recorder]:
 
 @pytest.fixture
 def configure(monkeypatch: pytest.MonkeyPatch, recorder: Recorder) -> Configure:
-    """Open the plugin's real setup menu, as `/plugins configure logfire` does, with `setup` in place."""
+    """Open the plugin's real setup menu, as `/plugins configure observability` does, with `setup` in place."""
 
     # The recorder keeps the SDK local: a saved token would otherwise make it check the token over the network.
     monkeypatch.setattr(logfire_plugin.logfire, 'configure', recorder.configure)
@@ -258,7 +260,7 @@ async def test_polling_survives_blips_and_expires(monkeypatch: pytest.MonkeyPatc
     await configure(make_host(), Harness(server=blips).setup(scripted([US, logfire_setup.Project(**PROJECTS[0])])))
     assert not blips.polls
     monkeypatch.setattr(logfire_setup, 'SIGN_IN_TIMEOUT', 0)
-    with pytest.raises(SetupError, match='sign-in link expired'):
+    with pytest.raises(SetupError, match='Run /plugins configure observability to retry'):
         await configure(make_host(), Harness().setup(scripted([US])))
 
 

@@ -1483,12 +1483,17 @@ shows how to put a different one, a web form for instance, in its place.
 
 ## Telemetry and references
 
-The stock CLI enables the built-in `logfire` plugin by default. It adds Pydantic
+The stock CLI enables the built-in `observability` plugin by default. It adds Pydantic
 AI's [`Instrumentation`](https://pydantic.dev/docs/ai/capabilities/overview/)
 capability to CLAI turns for agent, model-request, and tool
 spans, including timing, token usage, and failures. It adds CLAI's own UI spans
 only when `ui_events` is on (see below), and does not instrument HTTP clients or
 unrelated agents globally.
+
+This plugin was previously named `logfire`. Existing enabled/disabled choices,
+settings, and saved token references carry over without reconfiguration. Existing
+commands and project or drop-in declarations using `logfire` still target this
+same plugin; it appears as `observability` in `/plugins`.
 
 Set `LOGFIRE_TOKEN` to a write token for your Logfire project. Alternatively,
 place the SDK's `logfire_credentials.json` in your user config directory at
@@ -1510,10 +1515,10 @@ destination. Review that destination before supplying
 credentials. Keep tokens out of plugin settings, which are saved as plaintext.
 
 ```text
-/plugins disable logfire
-/plugins enable logfire
-/plugins reload logfire
-/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
+/plugins disable observability
+/plugins enable observability
+/plugins reload observability
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
 The last command replaces the built-in configuration. Its options are
@@ -1536,7 +1541,7 @@ values, or secrets.
 
 ### Setting up where traces go
 
-`/plugins configure logfire` (or `C` on `logfire` in `/plugins`) opens a setup menu:
+`/plugins configure observability` (or `C` on `observability` in `/plugins`) opens a setup menu:
 
 1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
 2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
@@ -1552,11 +1557,11 @@ again to switch projects.
 ### Sending UX telemetry to the Pydantic shared project
 
 `@pydantic.dev` staff can send CLAI UX telemetry to the team's shared Logfire
-project: run `/plugins configure logfire`, pick Logfire US, sign in with your
+project: run `/plugins configure observability`, pick Logfire US, sign in with your
 Pydantic account, and pick the shared CLAI project. Then turn on UI events:
 
 ```text
-/plugins add logfire pydantic_clai2.builtin_plugins.logfire '{"token": {"name": "LOGFIRE_TOKEN_<ORG>_<PROJECT>"}, "ui_events": true}'
+/plugins add observability pydantic_clai2.builtin_plugins.logfire '{"token": {"name": "LOGFIRE_TOKEN_<ORG>_<PROJECT>"}, "ui_events": true}'
 ```
 
 using the key name the setup menu printed (Esc closes the menu that `/plugins add`

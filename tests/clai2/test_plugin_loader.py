@@ -116,7 +116,8 @@ async def test_status_segments_follow_load_and_unload(tmp_path: Path) -> None:
     assert harness.loader.status_segments() == []
 
 
-async def test_registration_order_follows_the_shipped_declarations(tmp_path: Path) -> None:
+@pytest.mark.parametrize(('first', 'shown'), [('zulu', 'zulu'), ('logfire', 'observability')])
+async def test_registration_order_follows_the_shipped_declarations(tmp_path: Path, first: str, shown: str) -> None:
     """Names order the menu and the list; the built-in declarations order what a turn sees first."""
 
     def shipped(name: str) -> PluginSettings:
@@ -126,11 +127,11 @@ async def test_registration_order_follows_the_shipped_declarations(tmp_path: Pat
         )
         return PluginSettings(id=name, factory=name, path=str(path))
 
-    harness = Harness(tmp_path, builtin=(shipped('zulu'), shipped('alpha')))
+    harness = Harness(tmp_path, builtin=(shipped(first), shipped('alpha')))
     harness.write('mike')
     await harness.loader.load_all()
-    assert [entry.name for entry in harness.loader.entries()] == ['alpha', 'mike', 'zulu']
-    assert harness.text.index('zulu started') < harness.text.index('alpha started')
+    assert [entry.name for entry in harness.loader.entries()] == ['alpha', 'mike', shown]
+    assert harness.text.index(f'{first} started') < harness.text.index('alpha started')
     assert harness.text.index('alpha started') < harness.text.index('mike started')
 
 
@@ -584,7 +585,7 @@ async def test_remove_restores_a_project_plugin_that_names_a_file(tmp_path: Path
         'repo_context',
         'compaction',
         'persistence',
-        'logfire',
+        'observability',
         'notifications',
         'github',
         'slack',
