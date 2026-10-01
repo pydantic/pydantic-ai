@@ -78,7 +78,7 @@ simulated mid-stream disconnect: requests=1, errors seen by wrap_model_request=0
 Core's streamed `ModelRequestNode` passes the stream to its consumer and cancels
 the wrapper task if consumption fails. The wrapper does not receive that failure
 as a retryable request error. The source is the installed
-`pydantic_ai/_agent_graph.py`, `ModelRequestNode.stream`, normal-stream cleanup.
+`pydantic_ai/_agent_graph/model_request.py`, `ModelRequestNode.stream`, normal-stream cleanup.
 Wrapping the entire run instead would need checkpoint recovery and careful tool
 side-effect accounting, not just a sleep and another call to `Agent.run`.
 

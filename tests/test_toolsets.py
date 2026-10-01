@@ -1501,7 +1501,7 @@ async def test_tool_manager_multiple_failed_tools():
         """Tool C that works"""
         return x * 3
 
-    # Create tool manager with max_retries=1, matching what _agent_graph.py sets in a real run
+    # Create tool manager with max_retries=1, matching what _agent_graph/ sets in a real run
     context = build_run_context(TestDeps(), max_retries=1)
     tool_manager = await ToolManager[TestDeps](toolset).for_run_step(context)
 

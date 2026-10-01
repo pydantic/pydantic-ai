@@ -5001,7 +5001,7 @@ async def test_empty_response_skipped_in_history(allow_model_requests: None):
     """Empty `ModelResponse(parts=[])` from a previous turn must not be sent back as an assistant
     message with `content=None`, which the Chat Completions API rejects with a 400 error.
 
-    The agent graph (see `_agent_graph.py`) retries empty responses by emitting a `RetryPromptPart`
+    The agent graph (see `_agent_graph/`) retries empty responses by emitting a `RetryPromptPart`
     that tells the model which kinds of output are valid, while relying on the model adapter to omit
     the empty response from the API payload.
     """

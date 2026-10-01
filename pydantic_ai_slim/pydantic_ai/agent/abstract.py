@@ -36,6 +36,7 @@ from .. import (
     tool_manager,
     usage as _usage,
 )
+from .._agent_graph import graph as _graph, state as _state
 from .._cancel import CancellationToken, RunBinding, provide_run_binding
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
@@ -256,7 +257,7 @@ class AgentRunEvents(
         agent_run = self._binding.agent_run
         if agent_run is None:
             return
-        _agent_graph.run_cancelled_snapshot(
+        _state.run_cancelled_snapshot(
             'The agent run was cancelled by an external asyncio cancellation.',
             agent_run.ctx.state,
             agent_run.ctx.deps,
@@ -635,16 +636,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
             # replace the node) and INSIDE wrap_node_run.
             _stream_step: (
                 Callable[
-                    [_agent_graph.AgentNode[AgentDepsT, Any]],
-                    Awaitable[_agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
+                    [_graph.AgentNode[AgentDepsT, Any]],
+                    Awaitable[_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]],
                 ]
                 | None
             ) = None
             if (_handler := event_stream_handler) is not None:
 
                 async def _stream_and_advance(
-                    n: _agent_graph.AgentNode[AgentDepsT, Any],
-                ) -> _agent_graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
+                    n: _graph.AgentNode[AgentDepsT, Any],
+                ) -> _graph.AgentNode[AgentDepsT, Any] | End[FinalResult[Any]]:
                     if self.is_model_request_node(n) or self.is_call_tools_node(n):
                         # `node.stream()` applies the capability chain, so the handler sees the same
                         # events a capability's `wrap_run_event_stream` yields.
@@ -1020,7 +1021,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
             first_node = agent_run.next_node  # start with the first node
             assert isinstance(first_node, _agent_graph.UserPromptNode)  # the first node should be a user prompt node
-            node: _agent_graph.AgentNode[Any, Any] = first_node
+            node: _graph.AgentNode[Any, Any] = first_node
             while not yielded:
                 graph_ctx = agent_run.ctx
                 # Fire before_node_run BEFORE streaming so that node replacement
@@ -1105,7 +1106,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                         )
                                     )
 
-                                await agent_run.next(_agent_graph.SetFinalResult(final_result))
+                                await agent_run.next(_graph.SetFinalResult(final_result))
 
                             yield StreamedRunResult(
                                 messages,
@@ -1142,11 +1143,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                     )
                     yielded = True
                     break
-                if not isinstance(next_node, _agent_graph.AgentNode):
+                if not isinstance(next_node, _graph.AgentNode):
                     raise exceptions.AgentRunError(  # pragma: lax no cover
                         'Should have produced a StreamedRunResult before getting here'
                     )
-                node = cast(_agent_graph.AgentNode[Any, Any], next_node)
+                node = cast(_graph.AgentNode[Any, Any], next_node)
 
         if not yielded:
             raise exceptions.AgentRunError('Agent run finished without producing a final result')  # pragma: no cover
@@ -1974,7 +1975,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     @contextmanager
-    def using_sleep(sleep_func: _agent_graph.AgentGraphSleepFunc) -> Generator[None]:
+    def using_sleep(sleep_func: _state.AgentGraphSleepFunc) -> Generator[None]:
         """Use a custom async sleep function for agent-graph delays during the context.
 
         By default the agent graph uses `asyncio.sleep` when it needs to wait during a run (e.g. between
@@ -1982,12 +1983,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         DBOS, ...) register their own durable sleep here so delays survive workflow replays and don't
         waste activity time.
         """
-        with _agent_graph.set_agent_graph_sleep(sleep_func):
+        with _state.set_agent_graph_sleep(sleep_func):
             yield
 
     @staticmethod
     def is_model_request_node(
-        node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
+        node: _graph.AgentNode[T, S] | End[result.FinalResult[S]],
     ) -> TypeIs[_agent_graph.ModelRequestNode[T, S]]:
         """Check if the node is a `ModelRequestNode`, narrowing the type if it is.
 
@@ -1997,7 +1998,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     def is_call_tools_node(
-        node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
+        node: _graph.AgentNode[T, S] | End[result.FinalResult[S]],
     ) -> TypeIs[_agent_graph.CallToolsNode[T, S]]:
         """Check if the node is a `CallToolsNode`, narrowing the type if it is.
 
@@ -2007,7 +2008,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     def is_user_prompt_node(
-        node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
+        node: _graph.AgentNode[T, S] | End[result.FinalResult[S]],
     ) -> TypeIs[_agent_graph.UserPromptNode[T, S]]:
         """Check if the node is a `UserPromptNode`, narrowing the type if it is.
 
@@ -2017,7 +2018,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
     @staticmethod
     def is_end_node(
-        node: _agent_graph.AgentNode[T, S] | End[result.FinalResult[S]],
+        node: _graph.AgentNode[T, S] | End[result.FinalResult[S]],
     ) -> TypeIs[End[result.FinalResult[S]]]:
         """Check if the node is a `End`, narrowing the type if it is.
 

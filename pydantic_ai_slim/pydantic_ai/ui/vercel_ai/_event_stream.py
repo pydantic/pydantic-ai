@@ -122,7 +122,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
 
     Used by `_handle_tool_result` to backfill `tool-input-available` if the agent raises
     before the call event fires (e.g. output-tool `UnexpectedModelBehavior` with no prior
-    `final_result`, where `_agent_graph.py` raises without yielding `OutputToolCallEvent`).
+    `final_result`, where `_tool_execution.py` raises without yielding `OutputToolCallEvent`).
     Without the backfill, both v5 and v6 frontends would transition `input-streaming` ->
     `output-error` with no input announcement in between.
     """

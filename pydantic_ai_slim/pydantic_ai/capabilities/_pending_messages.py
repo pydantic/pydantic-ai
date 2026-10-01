@@ -14,7 +14,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_graph import End
 
 if TYPE_CHECKING:
-    from pydantic_ai import _agent_graph
+    from pydantic_ai._agent_graph import graph as _graph
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.result import FinalResult
 
@@ -103,8 +103,8 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
 
 def drain_pending_messages_at_end(
     ctx: RunContext[Any],
-    result: _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]],
-) -> _agent_graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
+    result: _graph.AgentNode[Any, Any] | End[FinalResult[Any]],
+) -> _graph.AgentNode[Any, Any] | End[FinalResult[Any]]:
     """Drain pending messages after all capability hooks if the agent would terminate.
 
     Drain `'asap'` messages first (anything that arrived after the most recent

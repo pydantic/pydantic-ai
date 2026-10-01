@@ -11,7 +11,7 @@ from temporalio import workflow
 from temporalio.client import Client, WorkflowHandle
 from temporalio.workflow import ActivityConfig
 
-from pydantic_ai._agent_graph import set_agent_graph_sleep
+from pydantic_ai._agent_graph.state import set_agent_graph_sleep
 from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
