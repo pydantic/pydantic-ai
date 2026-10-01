@@ -147,10 +147,9 @@ jobs:
             echo 'touched=false' >> "$GITHUB_OUTPUT"
           fi
   flag_failed_review:
-    # Labels the PR when no review came out of this run (failed, or ended with no
-    # output), and clears the label once a later run reviews it.
+    # Labels the PR when this run posted no review; a later run that does clears it.
     needs: [agent, safe_outputs]
-    if: always() && github.event.pull_request.number && (needs.agent.result == 'success' || needs.agent.result == 'failure')
+    if: (!cancelled()) && needs.agent.result != 'skipped' && github.event.pull_request.number
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions:
@@ -159,7 +158,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           LABELS: repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels
-          FAILED: ${{ needs.agent.result != 'success' || needs.safe_outputs.result != 'success' || needs.agent.outputs.output_types == '' }}
+          FAILED: ${{ needs.safe_outputs.result != 'success' || needs.agent.outputs.output_types == '' }}
         run: |
           if [ "$FAILED" = true ]; then
             gh api "$LABELS" -f 'labels[]=ui-security-review-failed' --silent

@@ -20,22 +20,15 @@ safe-outputs:
       steps:
         - env:
             WEBHOOK: ${{ secrets.PYDANTIC_AI_TRIAGE_SLACK_WEBHOOK_URL }}
-            RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           run: |
-            jq -c --arg run "$RUN_URL" '.items[] | select(.type == "report_security_finding")
-              | {text: ":lock: *Security finding:* \(.summary)\n\n\(.details[:3500])\n\n<\($run)|run>"}' \
-              "$GH_AW_AGENT_OUTPUT" | curl --fail-with-body -sS -H 'Content-Type: application/json' --data @- "$WEBHOOK"
+            jq -c '.items[] | select(.type == "report_security_finding") | {text: "\(.summary)\n\n\(.details)"}' \
+              "$GH_AW_AGENT_OUTPUT" | curl --fail -sS -H 'Content-Type: application/json' --data @- "$WEBHOOK"
 ---
 
 ## Security problems in released code are never public
 
 Issues, PR comments, reviews and `noop` messages from this workflow are all public. If you
-find a security problem (injection, SSRF, path traversal, auth or approval bypass, a secret
-or cross-user data leak, unsafe deserialization, sandbox escape) in code that has already
-shipped, rather than in changes made by the pull request under review:
-
-1. Call `report_security_finding`. It reaches the maintainers privately.
-2. Do not mention it in any issue, comment or review.
-3. End with `mcp__safeoutputs__noop` and the message `One finding was reported privately.`
-
-A problem introduced by the pull request under review is normal review feedback.
+find a security vulnerability in code that has already shipped (not in changes made by the
+pull request under review), report it only with `report_security_finding`, mention it
+nowhere else, and end with `mcp__safeoutputs__noop` and the message
+`One finding was reported privately.`
