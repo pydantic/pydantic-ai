@@ -1821,11 +1821,13 @@ tags in `CAPABILITY_REQUIREMENTS`, keyed by that factory string.
 `clai2 plugins add` from the command line imports nothing, so it attaches only
 those; a plugin's own tags are attached the next time it saves or is enabled.
 
-If an untagged setting still makes a capability raise `UserError` while a run is
+If an untagged setting still makes a capability that CLAI built from a
+`module:Class` declaration (such as `coder`) raise `UserError` while a run is
 set up, that turn fails closed with the plugin named, and CLAI leaves that
 capability out of later turns; `/plugins reload NAME` brings it back. Nothing is
 retried, so no other capability is set up twice. Errors from the model, from tools, or
-from a raising `host.on` handler still fail the turn as before.
+from a raising `host.on` handler still fail the turn as before, and capabilities an
+`activate` adds, or that contain a `Hooks`, are never left out.
 
 ### Keep secrets in `/keys`: `KeyReference`, `SavedKey`, `host.save_settings`
 

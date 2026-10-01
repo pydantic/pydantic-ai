@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Generic, cast
+from typing import Generic
 
 from anyio import CancelScope, fail_after
 from anyio.lowlevel import checkpoint
@@ -17,7 +17,7 @@ from pydantic import JsonValue, ValidationError
 from rich.console import Console
 
 from pydantic_ai import AgentStreamEvent
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, WrapperCapability
 from pydantic_clai2.commands import Commands, added_plugin
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
@@ -183,6 +183,8 @@ class PluginLoader(Generic[DepsT]):
         self._staged: dict[str, PluginSettings] = {}
         # Capabilities that rejected their configuration while a run was set up, by plugin, until it loads again.
         self._suspended: dict[str, list[object]] = {}
+        # The capability CLAI built from a `module:Class` declaration's settings, by plugin.
+        self._from_settings: dict[str, AbstractCapability[DepsT]] = {}
         self.enabled = enabled
 
     @property
@@ -293,11 +295,20 @@ class PluginLoader(Generic[DepsT]):
         return [capability for _, capability in self._active_capabilities()]
 
     def run_capabilities(self) -> list[AgentCapability[DepsT]]:
-        """`capabilities()` as a run binds them: each one guarded, so a setup `UserError` names its plugin.
+        """`capabilities()` as a run binds them, with settings-built capabilities guarded.
 
-        `Hooks`, where `host.on` handlers live, are not guarded: a raising handler still fails closed.
+        Only a capability CLAI built itself from a `module:Class` declaration's saved settings is
+        guarded, and only when nothing in it is a `Hooks`: there a setup `UserError` can only mean
+        those settings are wrong. Capabilities a plugin's `activate` adds, and any policy hook, stay
+        unguarded, so whatever they raise still fails closed every turn.
         """
-        return [_guarded(name, capability) for name, capability in self._active_capabilities()]
+        return [self._guarded(name, capability) for name, capability in self._active_capabilities()]
+
+    def _guarded(self, name: str, capability: AgentCapability[DepsT]) -> AgentCapability[DepsT]:
+        built = self._from_settings.get(name)
+        if built is None or capability is not built or _has_hooks(built):
+            return capability
+        return PluginGuard[DepsT](built, plugin=name)
 
     def _active_capabilities(self) -> list[tuple[str, AgentCapability[DepsT]]]:
         return [
@@ -393,8 +404,10 @@ class PluginLoader(Generic[DepsT]):
         try:
             module = self._import(entry, fresh=fresh)
             activating = True
-            _activate(module, declaration, host)
+            built = _activate(module, declaration, host)
             activating = False
+            if built is not None:
+                self._from_settings[name] = built
             self._commands.register_many(host.commands)
             entry.host = host
             self._loaded[name] = host
@@ -494,6 +507,7 @@ class PluginLoader(Generic[DepsT]):
         entry.host = None
         self._loaded.pop(entry.name, None)
         self._suspended.pop(entry.name, None)
+        self._from_settings.pop(entry.name, None)
 
     async def close(self, reason: SessionEndReason) -> None:
         """Unload every plugin, last loaded first."""
@@ -659,15 +673,16 @@ class PluginLoader(Generic[DepsT]):
         return importlib.reload(module) if fresh else module
 
 
-def _guarded(plugin: str, capability: AgentCapability[DepsT]) -> AgentCapability[DepsT]:
-    if _guardable(capability):
-        return PluginGuard[DepsT](cast('AbstractCapability[DepsT]', capability), plugin=plugin)
-    return capability
-
-
-def _guardable(capability: object) -> bool:
-    """A capability, but not `Hooks`, where `host.on` handlers live: a raising handler still fails closed."""
-    return isinstance(capability, AbstractCapability) and not isinstance(capability, Hooks)
+def _has_hooks(capability: AbstractCapability[DepsT]) -> bool:
+    """Whether any part of `capability` is a `Hooks`, which may gate a run on purpose."""
+    if isinstance(capability, Hooks):
+        return True
+    # `apply` does not descend into a wrapper's lone leaf, so look behind every wrapper too.
+    if isinstance(capability, WrapperCapability) and _has_hooks(capability.wrapped):
+        return True
+    parts: list[AbstractCapability[DepsT]] = []
+    capability.apply(parts.append)
+    return any(part is not capability and _has_hooks(part) for part in parts)
 
 
 def _requested(action: str, name: str) -> None:
@@ -715,7 +730,10 @@ def _import_file(name: str, path: Path) -> ModuleType:
     return module
 
 
-def _activate(module: ModuleType, declaration: PluginSettings, host: PluginHost[DepsT]) -> None:
+def _activate(
+    module: ModuleType, declaration: PluginSettings, host: PluginHost[DepsT]
+) -> AbstractCapability[DepsT] | None:
+    """Run the plugin's `activate`, or build its capability class; return a capability built from saved settings."""
     attr = declaration.factory.partition(':')[2] or 'activate'
     target: object = getattr(module, attr, None)
     if isinstance(target, type):
@@ -723,10 +741,11 @@ def _activate(module: ModuleType, declaration: PluginSettings, host: PluginHost[
             raise TypeError(f'{declaration.factory} is not a capability class')
         capability: AbstractCapability[DepsT] = target(**declaration.settings)  # pyright: ignore[reportUnknownVariableType]
         host.add(capability)
-    elif callable(target):
+        return capability
+    if callable(target):
         target(host)
-    else:
-        raise TypeError(f'{declaration.factory} has no callable {attr!r}')
+        return None
+    raise TypeError(f'{declaration.factory} has no callable {attr!r}')
 
 
 async def _dispatch(host: PluginHost[DepsT], event: HostEvent) -> None:

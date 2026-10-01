@@ -14,7 +14,7 @@ from rich.console import Console
 from termflow.tui import MenuItem
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Capability, Hooks
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.subagents import SubAgents
@@ -36,7 +36,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import PluginHost, SessionStart, TurnStart
 from pydantic_clai2.plugins.loader import PluginLoader
 from pydantic_clai2.runtime._session import Session
-from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.ui.menus.plugin_menu import PluginMenu
 
 CODER = 'pydantic_ai_harness.coder:Coder'
@@ -375,20 +375,58 @@ def activate(host: PluginHost) -> None:
 """
 
 
-async def test_hook_handlers_stay_unguarded_and_fail_closed(tmp_path: Path) -> None:
-    """Fail-soft covers capabilities only: a handler that raises still stops the run."""
-    harness = Harness(tmp_path)
-    (harness.store.plugins_dir / 'fancy.py').unlink()
-    (harness.store.plugins_dir / 'gate.py').write_text(GATE)
-    await harness.loader.load_all()
-    guarded = harness.loader.run_capabilities()
-    assert [type(capability) for capability in guarded] == [PluginGuard, Hooks]
+WRAPPED_GATE = """
+from dataclasses import dataclass, field
+
+from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapperCapability
+from pydantic_ai.exceptions import UserError
+
+
+async def refuse(ctx, *, handler):
+    raise UserError('blocked by policy')
+
+
+@dataclass
+class Gated(WrapperCapability[None]):
+    wrapped: AbstractCapability[None] = field(default_factory=lambda: Hooks(run=refuse))
+"""
+
+
+async def run_unguarded(tmp_path: Path, guarded: list[AgentCapability[None]]) -> None:
     reported: list[CapabilitySetupError] = []
     conversation = Session(Agent(TestModel()), deps=None, plugins=guarded, workspace=tmp_path)
     conversation.on_setup_error = reported.append
     with pytest.raises(UserError, match='blocked by policy'):
         await conversation.prompt('hello')
     assert reported == []
+
+
+async def test_hook_handlers_and_activate_capabilities_stay_unguarded(tmp_path: Path) -> None:
+    """Fail-soft covers only capabilities built from saved settings: a gate that raises still stops every run."""
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'fancy.py').unlink()
+    (harness.store.plugins_dir / 'gate.py').write_text(GATE)
+    await harness.loader.load_all()
+    guarded = harness.loader.run_capabilities()
+    assert [type(capability) for capability in guarded] == [Capability, Hooks]
+    await run_unguarded(tmp_path, guarded)
+
+
+async def test_settings_built_capability_with_nested_hooks_stays_unguarded(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    (harness.store.plugins_dir / 'fancy.py').unlink()
+    path = harness.store.plugins_dir / 'wrapped_gate.py'
+    path.write_text(WRAPPED_GATE)
+    save_raw(
+        harness.store,
+        'wrapped_gate',
+        f'{{"id": "wrapped_gate", "factory": "wrapped_gate:Gated", "path": "{path}"}}',
+        None,
+    )
+    await harness.loader.load_all()
+    guarded = harness.loader.run_capabilities()
+    assert [type(capability).__name__ for capability in guarded] == ['Gated']
+    await run_unguarded(tmp_path, guarded)
 
 
 def coder_shell(tmp_path: Path, output: io.StringIO, *, sub_agents_tags: str | None) -> _Shell[None, str]:

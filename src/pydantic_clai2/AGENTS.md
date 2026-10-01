@@ -316,8 +316,9 @@ switches. Different versions can share the same settings database.
   never add a field to `PluginSettings`, a key to its `settings`, or bump
   `user_version`, since older builds reject all three. A build lacking a feature
   drops only that setting and uses the default. Run setup `UserError`s are caught
-  only by `PluginGuard` around `host.add` capabilities; `Hooks` stay unguarded so
-  handlers still fail closed. See "Settings that need a feature" in `customization.md`.
+  only by `PluginGuard`, and only around a capability CLAI built from a
+  `module:Class` declaration's settings with no `Hooks` inside, so policy hooks
+  and `activate`-added capabilities always fail closed. See "Settings that need a feature" in `customization.md`.
 
 ## Local verification
 
