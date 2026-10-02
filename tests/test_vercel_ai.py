@@ -135,6 +135,7 @@ with try_import() as starlette_import_successful:
         FileChunk,
         SourceDocumentChunk,
         SourceUrlChunk,
+        TextEndChunk,
         ToolInputStartChunk,
     )
 
@@ -1815,8 +1816,8 @@ def _cited_text_parts() -> list[TextPart]:
 
 
 async def test_event_stream_citations():
-    """Citations of merged text parts go on the `text-end` chunk, anchored to the combined text, and each web source
-    URL is listed once as a `source-url` chunk.
+    """Citations of merged text parts go on the `text-end` chunk, both anchored to the combined text and per part, and
+    each web source URL is listed once as a `source-url` chunk.
 
     Not a VCR test: no recorded provider streams two consecutive text parts that both carry anchored citations.
     """
@@ -1910,6 +1911,66 @@ async def test_event_stream_citations():
                                 'provider_details': None,
                             },
                         ],
+                        'parts': [
+                            {
+                                'length': 25,
+                                'provider_name': 'google',
+                                'citations': [
+                                    {
+                                        'sources': [
+                                            {
+                                                'url': 'https://github.com/pydantic/pydantic-ai',
+                                                'title': 'pydantic/pydantic-ai',
+                                                'excerpts': [],
+                                                'provider_details': None,
+                                                'kind': 'web',
+                                            }
+                                        ],
+                                        'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
+                                        'provider_details': None,
+                                    }
+                                ],
+                            },
+                            {
+                                'length': 21,
+                                'provider_name': 'google',
+                                'citations': [
+                                    {
+                                        'sources': [
+                                            {
+                                                'url': 'https://github.com/pydantic/pydantic-ai',
+                                                'title': 'pydantic/pydantic-ai',
+                                                'excerpts': [],
+                                                'provider_details': None,
+                                                'kind': 'web',
+                                            },
+                                            {
+                                                'url': 'https://pydantic.dev/docs/ai/',
+                                                'title': 'Pydantic AI docs',
+                                                'excerpts': [],
+                                                'provider_details': None,
+                                                'kind': 'web',
+                                            },
+                                        ],
+                                        'anchor': {'start': 1, 'end': 20, 'kind': 'content'},
+                                        'provider_details': None,
+                                    },
+                                    {
+                                        'sources': [
+                                            {
+                                                'document_id': 'file-1',
+                                                'title': 'notes.txt',
+                                                'excerpts': [],
+                                                'provider_details': None,
+                                                'kind': 'document',
+                                            }
+                                        ],
+                                        'anchor': None,
+                                        'provider_details': None,
+                                    },
+                                ],
+                            },
+                        ],
                     }
                 },
             },
@@ -1933,7 +1994,7 @@ async def test_event_stream_citations():
 
 def test_dump_and_load_citations():
     """`dump_messages` carries citations on the merged text part and lists web sources after it; `load_messages`
-    restores the citations and skips the source parts.
+    restores the original text parts with their citations and skips the source parts.
 
     Not a VCR test: no recorded provider returns two consecutive text parts that both carry anchored citations.
     """
@@ -1999,6 +2060,66 @@ def test_dump_and_load_citations():
                                 'provider_details': None,
                             },
                         ],
+                        'parts': [
+                            {
+                                'length': 25,
+                                'provider_name': 'google',
+                                'citations': [
+                                    {
+                                        'sources': [
+                                            {
+                                                'url': 'https://github.com/pydantic/pydantic-ai',
+                                                'title': 'pydantic/pydantic-ai',
+                                                'excerpts': [],
+                                                'provider_details': None,
+                                                'kind': 'web',
+                                            }
+                                        ],
+                                        'anchor': {'start': 0, 'end': 24, 'kind': 'content'},
+                                        'provider_details': None,
+                                    }
+                                ],
+                            },
+                            {
+                                'length': 21,
+                                'provider_name': 'google',
+                                'citations': [
+                                    {
+                                        'sources': [
+                                            {
+                                                'url': 'https://github.com/pydantic/pydantic-ai',
+                                                'title': 'pydantic/pydantic-ai',
+                                                'excerpts': [],
+                                                'provider_details': None,
+                                                'kind': 'web',
+                                            },
+                                            {
+                                                'url': 'https://pydantic.dev/docs/ai/',
+                                                'title': 'Pydantic AI docs',
+                                                'excerpts': [],
+                                                'provider_details': None,
+                                                'kind': 'web',
+                                            },
+                                        ],
+                                        'anchor': {'start': 1, 'end': 20, 'kind': 'content'},
+                                        'provider_details': None,
+                                    },
+                                    {
+                                        'sources': [
+                                            {
+                                                'document_id': 'file-1',
+                                                'title': 'notes.txt',
+                                                'excerpts': [],
+                                                'provider_details': None,
+                                                'kind': 'document',
+                                            }
+                                        ],
+                                        'anchor': None,
+                                        'provider_details': None,
+                                    },
+                                ],
+                            },
+                        ],
                     }
                 },
             ),
@@ -2017,7 +2138,7 @@ def test_dump_and_load_citations():
     assert loaded[1].parts == snapshot(
         [
             TextPart(
-                content='Pydantic AI is on GitHub. Its docs are online.',
+                content='Pydantic AI is on GitHub.',
                 provider_name='google',
                 citations=[
                     Citation(
@@ -2027,7 +2148,13 @@ def test_dump_and_load_citations():
                             )
                         ],
                         anchor=ContentCitationAnchor(start=0, end=24),
-                    ),
+                    )
+                ],
+            ),
+            TextPart(
+                content=' Its docs are online.',
+                provider_name='google',
+                citations=[
                     Citation(
                         sources=[
                             WebCitationSource(
@@ -2035,17 +2162,18 @@ def test_dump_and_load_citations():
                             ),
                             WebCitationSource(url='https://pydantic.dev/docs/ai/', title='Pydantic AI docs'),
                         ],
-                        anchor=ContentCitationAnchor(start=26, end=45),
+                        anchor=ContentCitationAnchor(start=1, end=20),
                     ),
                     Citation(sources=[DocumentCitationSource(document_id='file-1', title='notes.txt')]),
                 ],
-            )
+            ),
         ]
     )
 
 
 def test_load_invalid_citations():
-    """Provider metadata is client-controlled, so citations that don't validate are dropped and the text still loads."""
+    """Provider metadata is client-controlled, so a citation that doesn't validate is dropped, and the text and the
+    other citations still load."""
     ui_messages = [
         UIMessage(
             id='assistant-1',
@@ -2053,15 +2181,31 @@ def test_load_invalid_citations():
             parts=[
                 TextUIPart(
                     text='Hello',
-                    provider_metadata={'pydantic_ai': {'provider_name': 'anthropic', 'citations': [{'sources': []}]}},
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'provider_name': 'anthropic',
+                            'citations': [
+                                {'sources': []},
+                                {'sources': [{'url': 'https://example.com', 'kind': 'web'}]},
+                            ],
+                        }
+                    },
                 ),
                 SourceUrlUIPart(source_id='https://example.com', url='https://example.com'),
+                TextUIPart(text='Bye', provider_metadata={'pydantic_ai': {'citations': 'not a list'}}),
             ],
         )
     ]
 
     assert VercelAIAdapter.load_messages(ui_messages)[0].parts == snapshot(
-        [TextPart(content='Hello', provider_name='anthropic')]
+        [
+            TextPart(
+                content='Hello',
+                provider_name='anthropic',
+                citations=[Citation(sources=[WebCitationSource(url='https://example.com')])],
+            ),
+            TextPart(content='Bye'),
+        ]
     )
 
 
@@ -2099,6 +2243,145 @@ def test_load_citations_outside_text():
                     )
                 ],
             )
+        ]
+    )
+
+
+def _anthropic_web_search_parts() -> list[TextPart]:
+    """Text parts shaped like an Anthropic web search answer: plain and cited parts alternate, and the citations have
+    no anchor, so the part a citation is on is the only record of where it applies."""
+
+    def cited(text: str, url: str, excerpt: str) -> TextPart:
+        source = WebCitationSource(url, title='Pydantic AI', excerpts=[excerpt])
+        return TextPart(text, citations=[Citation([source], provider_details={'encrypted_index': 'EpIBCioIBhgC'})])
+
+    return [
+        TextPart('I found the docs. '),
+        cited('Pydantic AI is a Python agent framework', 'https://pydantic.dev/docs/ai/', 'a Python agent framework'),
+        TextPart(', and '),
+        cited('its source is on GitHub', 'https://github.com/pydantic/pydantic-ai', 'pydantic/pydantic-ai'),
+        TextPart('.'),
+    ]
+
+
+def _bedrock_document_parts() -> list[TextPart]:
+    """Text parts shaped like a Bedrock document answer: a cited part has one citation covering all of its text,
+    which is the only shape Bedrock replays natively."""
+    excerpt = 'Refunds are accepted within 30 days.'
+    location = {'documentChar': {'documentIndex': 0, 'start': 0, 'end': len(excerpt)}}
+    source = DocumentCitationSource(title='policy', excerpts=[excerpt], provider_details={'location': location})
+    return [
+        TextPart('Per the policy: '),
+        TextPart('Thirty days.', citations=[Citation([source], anchor=ContentCitationAnchor(start=0, end=12))]),
+    ]
+
+
+@pytest.mark.parametrize(
+    'parts', [_anthropic_web_search_parts(), _bedrock_document_parts()], ids=['anthropic', 'bedrock']
+)
+async def test_merged_text_parts_round_trip(parts: list[TextPart]):
+    """Consecutive text parts are shown as one UI text part, but loading it gives back the original parts, with each
+    citation on the part it came from, whether the message was dumped or streamed."""
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='What is Pydantic AI?')]),
+        ModelResponse(parts=parts),
+    ]
+    dumped = VercelAIAdapter.dump_messages(messages)
+    assert sum(isinstance(part, TextUIPart) for part in dumped[1].parts) == 1
+    assert VercelAIAdapter.load_messages(dumped)[1].parts == parts
+
+    async def event_generator():
+        for index, part in enumerate(parts):
+            yield PartStartEvent(index=index, part=part, previous_part_kind='text' if index else None)
+            yield PartEndEvent(index=index, part=part, next_part_kind='text' if index < len(parts) - 1 else None)
+
+    event_stream = VercelAIEventStream()
+    chunks = [chunk async for chunk in event_stream.transform_stream(event_generator())]
+    [text_end] = [chunk for chunk in chunks if isinstance(chunk, TextEndChunk)]
+    text_ui_part = dumped[1].parts[0]
+    assert isinstance(text_ui_part, TextUIPart)
+    assert text_end.provider_metadata == text_ui_part.provider_metadata
+    streamed = UIMessage(
+        id='assistant-1',
+        role='assistant',
+        parts=[TextUIPart(text=''.join(part.content for part in parts), provider_metadata=text_end.provider_metadata)],
+    )
+    assert VercelAIAdapter.load_messages([streamed])[0].parts == parts
+
+
+@pytest.mark.parametrize(
+    'text_parts',
+    [
+        pytest.param([{'length': 5}], id='lengths-too-short'),
+        pytest.param([{'length': 5}, {'length': 10}], id='lengths-too-long'),
+        pytest.param([{'length': -1}, {'length': 13}], id='negative-length'),
+        pytest.param('not a list', id='not-a-list'),
+        pytest.param([], id='empty'),
+    ],
+)
+def test_load_invalid_text_parts(text_parts: object):
+    """Provider metadata is client-controlled, so text part boundaries that don't fit the text are ignored and the
+    text loads as one part, with the top-level citations."""
+    citation = {'sources': [{'url': 'https://example.com', 'kind': 'web'}]}
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                TextUIPart(
+                    text='Hello, world!',
+                    provider_metadata={'pydantic_ai': {'citations': [citation], 'parts': text_parts}},
+                )
+            ],
+        )
+    ]
+
+    assert VercelAIAdapter.load_messages(ui_messages)[0].parts == [
+        TextPart('Hello, world!', citations=[Citation([WebCitationSource('https://example.com')])])
+    ]
+
+
+def test_load_text_parts_drops_citations_outside_their_part():
+    """A citation whose anchor doesn't fit in its own part is dropped, even if it fits in the merged text."""
+    source = {'url': 'https://example.com', 'kind': 'web'}
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                TextUIPart(
+                    text='Hello, world!',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'parts': [
+                                {'length': 7, 'id': 'msg-1'},
+                                {
+                                    'length': 6,
+                                    'citations': [
+                                        {'sources': [source], 'anchor': {'start': 0, 'end': 5, 'kind': 'content'}},
+                                        {'sources': [source], 'anchor': {'start': 0, 'end': 12, 'kind': 'content'}},
+                                    ],
+                                },
+                            ]
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    assert VercelAIAdapter.load_messages(ui_messages)[0].parts == snapshot(
+        [
+            TextPart(content='Hello, ', id='msg-1'),
+            TextPart(
+                content='world!',
+                citations=[
+                    Citation(
+                        sources=[WebCitationSource(url='https://example.com')],
+                        anchor=ContentCitationAnchor(start=0, end=5),
+                    )
+                ],
+            ),
         ]
     )
 

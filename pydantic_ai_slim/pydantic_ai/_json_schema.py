@@ -126,7 +126,11 @@ class JsonSchemaTransformer(ABC):
                     return self._walk_def(key, siblings)
                 return deepcopy(self._walked_def(key))
 
-        # Handle the schema based on its type / structure
+        # Handle the schema based on its type / structure. Object and array keywords are only walked when `type` is
+        # exactly `'object'` or `'array'` respectively, not when it's absent or a list like `['object', 'null']`:
+        # walking them there would reshape subtrees that otherwise pass through unchanged, collapsing their
+        # single-member unions and running `transform()` on them, and an inlining transformer would raise `UserError`
+        # on a `$ref` that doesn't resolve into `$defs`.
         type_ = schema.get('type')
         if type_ == 'object':
             schema = self._handle_object(schema)
@@ -243,7 +247,15 @@ class JsonSchemaTransformer(ABC):
 
 
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
-    """Transforms the JSON Schema to inline $defs."""
+    """Transforms the JSON Schema to inline `$defs`.
+
+    Object keywords (`properties`, `additionalProperties`, `patternProperties`) are only walked when `type` is
+    `'object'`, and array keywords (`items`, `prefixItems`) only when it is `'array'`. On a schema with no `type`, or
+    with a `type` list such as `['object', 'null']`, they are left as written, so a `$ref` inside them is not inlined
+    and can point at a definition the output no longer contains. If the schema is only meant to accept objects (or
+    arrays), set `type` to `'object'` (or `'array'`) to have it inlined; for a nullable one, put it in an `anyOf`
+    with `{'type': 'null'}` instead of using a `type` list.
+    """
 
     def __init__(self, schema: JsonSchema, *, strict: bool | None = None):
         super().__init__(schema, strict=strict, prefer_inlined_defs=True)

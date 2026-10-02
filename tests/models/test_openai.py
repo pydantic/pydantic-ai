@@ -325,6 +325,23 @@ async def test_response_with_created_timestamp_but_no_provider_details(allow_mod
     )
 
 
+async def test_response_without_id_created_or_finish_reason(allow_model_requests: None):
+    """OpenAI-compatible providers may send an empty `id`, a zero `created`, and no `finish_reason`.
+
+    These build the same response as a stream without them does: none of them is reported as a provider value.
+    """
+    c = completion_message(ChatCompletionMessage(content='world', role='assistant'))
+    c.id = ''
+    c.created = 0
+    c.choices[0].finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
+    model = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(openai_client=MockOpenAI.create_mock(c)))
+
+    response = await direct_model_request(model, [ModelRequest.user_text_prompt('hello')])
+    assert response.provider_response_id is None
+    assert response.provider_details is None
+    assert response.finish_reason == 'stop'
+
+
 async def test_openai_chat_image_detail_vendor_metadata(allow_model_requests: None):
     c = completion_message(
         ChatCompletionMessage(content='done', role='assistant'),
@@ -4147,16 +4164,8 @@ async def test_openai_chat_citation_without_content(allow_model_requests: None):
 
     response = await model.request([], {}, ModelRequestParameters())
 
-    assert response.parts == [
-        TextPart(
-            '',
-            citations=[
-                Citation(
-                    sources=[WebCitationSource(url='https://example.com', title='Example')],
-                )
-            ],
-        )
-    ]
+    # No content makes no part, so its citations are dropped with it, as in a stream.
+    assert response.parts == []
 
 
 async def test_openai_chat_invalid_citation_range_is_unanchored(allow_model_requests: None):
@@ -4378,12 +4387,8 @@ async def test_openai_chat_stream_citation_without_text(allow_model_requests: No
         _ = [event async for event in streamed]
         response = streamed.get()
 
-    assert response.parts == [
-        TextPart(
-            '',
-            citations=[Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])],
-        )
-    ]
+    # No text makes no part, so its citations are dropped with it, as without streaming.
+    assert response.parts == []
 
 
 async def test_openai_chat_raw_annotations_non_streaming(allow_model_requests: None):

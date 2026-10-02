@@ -39,6 +39,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
 | [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
+| [System One API](system-one.md) | [Decision models](decision.md) such as CLM, Laya, and Ollama's | `system-one:` |
 | [Together AI](compatible-apis.md#together-ai) | Inference platform | `together:` |
 | [TypeSafe (Jev)](typesafe.md) | [Decision model](decision.md) | `typesafe:` |
 | [Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway) | Gateway | `vercel:` |
@@ -208,6 +209,17 @@ async def main():
     print(len(results))
     #> 20
 ```
+
+An agent and the `ConcurrencyLimitedModel` used for its own model request must use separate
+`ConcurrencyLimiter` instances. If you set `Agent(max_concurrency=...)` as well as
+`ConcurrencyLimitedModel(limiter=...)`, using the same instance raises
+[`UserError`][pydantic_ai.exceptions.UserError].
+Nested `ConcurrencyLimitedModel` wrappers also need different limiter instances.
+
+Re-entering a `ConcurrencyLimiter` through an agent on the same task raises `RuntimeError`; use a separate limiter
+for the nested run. When an agent delegates to another agent through a tool, each run or model
+request acquires its own slot. A shared pool must have enough capacity for the parent and nested
+operation to run at the same time.
 
 When instrumentation is enabled, requests waiting for a concurrency slot appear as spans with
 attributes showing the queue depth and configured limits. The `name` parameter on

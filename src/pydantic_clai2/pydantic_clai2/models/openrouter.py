@@ -1,10 +1,11 @@
 """Authenticate and discover models through the native OpenRouter provider."""
 
-import asyncio
 import json
+from functools import partial
 from typing import Annotated
 
 import httpx
+from anyio import to_thread
 from prompt_toolkit import PromptSession
 from pydantic import BaseModel, Field, SecretStr, ValidationError
 from rich.console import Console
@@ -42,7 +43,7 @@ class ModelList(BaseModel):
 
 async def discover(connection: Connection, *, transport: httpx.AsyncBaseTransport | None = None) -> list[str]:
     """Query only the requested endpoint; do not forward credentials across redirects."""
-    token = await asyncio.to_thread(resolve_key, token=connection.token)
+    token = await to_thread.run_sync(partial(resolve_key, token=connection.token), abandon_on_cancel=True)
     headers = {'Authorization': f'Bearer {token}'} if token else {}
     async with httpx.AsyncClient(transport=transport, timeout=20, follow_redirects=False) as client:
         try:
@@ -100,7 +101,7 @@ async def connect(context: CommandContext, args: list[str]) -> str:
     if args:
         raise ValueError('Usage: /openrouter (choose browser login or enter an API key privately)')
     try:
-        raw = await asyncio.to_thread(load_codex_credentials, account='openrouter')
+        raw = await to_thread.run_sync(partial(load_codex_credentials, account='openrouter'), abandon_on_cancel=True)
         connection = Connection.model_validate_json(raw) if raw else None
     except (ValidationError, UserError):
         connection = None
@@ -118,7 +119,7 @@ async def connect(context: CommandContext, args: list[str]) -> str:
     selected = await run_worker(lambda: choose(names))
     if selected is None:
         return 'Connection cancelled.'
-    await asyncio.to_thread(save_connection, connection)
+    await to_thread.run_sync(save_connection, connection, abandon_on_cancel=True)
     return context.set_setting(['model', f'openrouter:{selected}'])
 
 

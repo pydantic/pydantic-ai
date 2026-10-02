@@ -178,7 +178,7 @@ async def test_cancel_stops_polling(device_flow: None, monkeypatch: pytest.Monke
 def test_environment_token(monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
     monkeypatch.setenv('GH_TOKEN', 'not-for-copilot')
     monkeypatch.setenv('GITHUB_TOKEN', 'not-for-copilot')
-    with pytest.raises(UserError, match='/login github-copilot'):
+    with pytest.raises(UserError, match='/login copilot'):
         github_copilot.token()
     monkeypatch.setenv(variable, 'environment-token')
     assert github_copilot.token() == 'environment-token'
@@ -201,7 +201,7 @@ def test_saved_credentials(stored: str) -> None:
     if stored == 'valid':
         assert github_copilot.token() == 'fake-access'
     else:
-        with pytest.raises(UserError, match='/login github-copilot'):
+        with pytest.raises(UserError, match='/login copilot'):
             github_copilot.token()
 
 
@@ -267,7 +267,7 @@ async def test_login_command(device_flow: None, tmp_path: Path, monkeypatch: pyt
     output = io.StringIO()
     await chat(Agent(TestModel()), deps=None, console=Console(file=output), store=SettingsStore(tmp_path / 'config.db'))
     assert github_copilot.token() == 'fake-access'
-    assert 'Usage: /login [openai-codex|github-copilot]' in output.getvalue()
+    assert 'Usage: /login [codex|copilot]' in output.getvalue()
     assert 'fake-access' not in output.getvalue()
 
 

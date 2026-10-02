@@ -3,9 +3,10 @@
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import replace
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, NonNegativeInt, TypeAdapter, ValidationError
+from typing_extensions import NotRequired, TypedDict
 
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.messages import (
@@ -14,6 +15,7 @@ from pydantic_ai.messages import (
     ForceDownloadMode,
     ModelMessage,
     ProviderDetailsDelta,
+    TextPart,
     ToolReturnPart,
     WebCitationSource,
     tool_return_ta,
@@ -122,6 +124,7 @@ def dump_provider_metadata(
 
 
 _citations_ta: TypeAdapter[list[Citation]] = TypeAdapter(list[Citation])
+_citation_ta: TypeAdapter[Citation] = TypeAdapter(Citation)
 
 
 def dump_citations(citations: Sequence[Citation] | None) -> list[dict[str, Any]] | None:
@@ -132,20 +135,23 @@ def dump_citations(citations: Sequence[Citation] | None) -> list[dict[str, Any]]
 def load_citations(data: object, text: str) -> list[Citation] | None:
     """Load citations from a text part's provider metadata.
 
-    Provider metadata is client-controlled, so citations that don't validate, or whose anchor doesn't fit in `text`,
-    are dropped instead of failing the request: the text itself still loads, and the model sees it without citations.
+    Provider metadata is client-controlled, so each citation that doesn't validate, or whose anchor doesn't fit in
+    `text`, is dropped instead of failing the request. The text and the other citations still load.
     """
-    if data is None:
+    if not isinstance(data, list):
         return None
-    try:
-        citations = _citations_ta.validate_python(data)
-    except ValidationError:
-        return None
-    return [citation for citation in citations if not citation.anchor or citation.anchor.end <= len(text)] or None
+    citations: list[Citation] = []
+    for item in cast(list[Any], data):
+        try:
+            citation = _citation_ta.validate_python(item)
+        except ValidationError:
+            continue
+        if not citation.anchor or citation.anchor.end <= len(text):
+            citations.append(citation)
+    return citations or None
 
 
-def offset_citations(citations: Sequence[Citation], offset: int) -> list[Citation]:
-    """Shift citation anchors by `offset` characters, for text parts merged into one UI text part."""
+def _offset_citations(citations: Sequence[Citation], offset: int) -> list[Citation]:
     return [
         replace(
             citation,
@@ -154,6 +160,94 @@ def offset_citations(citations: Sequence[Citation], offset: int) -> list[Citatio
         if citation.anchor and offset
         else citation
         for citation in citations
+    ]
+
+
+def merged_text_citations(parts: Sequence[TextPart]) -> list[Citation]:
+    """Citations of text parts merged into one UI text part, with anchors shifted onto the merged text."""
+    citations: list[Citation] = []
+    offset = 0
+    for part in parts:
+        citations.extend(_offset_citations(part.citations or [], offset))
+        offset += len(part.content)
+    return citations
+
+
+def dump_text_metadata(parts: Sequence[TextPart]) -> dict[str, Any] | None:
+    """Dump provider metadata for a UI text part holding one or more consecutive text parts.
+
+    The first part's fields and all citations go at the top level. When several parts were merged and any of them
+    has citations, `parts` also keeps each one's length, fields and citations, so that loading the message gives back
+    the original parts, with each citation on the part it belongs to.
+    """
+    first = parts[0]
+    split = len(parts) > 1 and any(part.citations for part in parts)
+    return dump_provider_metadata(
+        id=first.id,
+        provider_name=first.provider_name,
+        provider_details=first.provider_details,
+        citations=dump_citations(merged_text_citations(parts)),
+        parts=[_dump_text_part_metadata(part) for part in parts] if split else None,
+    )
+
+
+def _dump_text_part_metadata(part: TextPart) -> dict[str, Any]:
+    metadata = dump_provider_metadata(
+        wrapper_key=None,
+        id=part.id,
+        provider_name=part.provider_name,
+        provider_details=part.provider_details,
+        citations=dump_citations(part.citations),
+    )
+    return {'length': len(part.content), **(metadata or {})}
+
+
+class _TextPartMetadata(TypedDict):
+    length: NonNegativeInt
+    id: NotRequired[str | None]
+    provider_name: NotRequired[str | None]
+    provider_details: NotRequired[dict[str, Any] | None]
+    citations: NotRequired[Any]
+
+
+_text_parts_metadata_ta: TypeAdapter[list[_TextPartMetadata]] = TypeAdapter(list[_TextPartMetadata])
+
+
+def load_text_parts(text: str, provider_meta: dict[str, Any]) -> list[TextPart]:
+    """Load the text parts held by a UI text part, from its text and provider metadata.
+
+    Provider metadata is client-controlled, so if `parts` doesn't validate or its lengths don't add up to `text`, the
+    text loads as one part with the top-level fields and citations.
+    """
+    if (data := provider_meta.get('parts')) is not None:
+        try:
+            entries = _text_parts_metadata_ta.validate_python(data)
+        except ValidationError:
+            entries = None
+        if entries and sum(entry['length'] for entry in entries) == len(text):
+            parts: list[TextPart] = []
+            start = 0
+            for entry in entries:
+                content = text[start : start + entry['length']]
+                start += entry['length']
+                parts.append(
+                    TextPart(
+                        content=content,
+                        id=entry.get('id'),
+                        provider_name=entry.get('provider_name'),
+                        provider_details=entry.get('provider_details'),
+                        citations=load_citations(entry.get('citations'), content),
+                    )
+                )
+            return parts
+    return [
+        TextPart(
+            content=text,
+            id=provider_meta.get('id'),
+            provider_name=provider_meta.get('provider_name'),
+            provider_details=provider_meta.get('provider_details'),
+            citations=load_citations(provider_meta.get('citations'), text),
+        )
     ]
 
 
