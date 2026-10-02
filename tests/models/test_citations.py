@@ -51,7 +51,7 @@ with try_import() as xai_available:
     from pydantic_ai.native_tools import XSearchTool
     from pydantic_ai.providers.xai import XaiProvider
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = pytest.mark.vcr
 
 # The Anthropic recordings sent this explicitly; without it, requests are streamed behind the scenes.
 ANTHROPIC_SETTINGS = ModelSettings(max_tokens=4096)
