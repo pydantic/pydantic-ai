@@ -5253,7 +5253,6 @@ async def test_openai_gateway_prefix_preserves_sampling(allow_model_requests: No
         await agent.run('hello')
 
 
-@pytest.mark.vcr()
 async def test_openai_text_verbosity_chat_completions(
     allow_model_requests: None, openai_api_key: str, request_capture: RequestCapture
 ):

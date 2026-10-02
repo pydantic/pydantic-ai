@@ -142,10 +142,9 @@ def test_nonreasoning_openai_hides_verbosity() -> None:
     assert 'openai_text_verbosity' not in model_options(model='openai:gpt-4o')
 
 
-@pytest.mark.parametrize('provider', ['openai-chat', 'openrouter', 'vllm'])
-def test_chat_compatible_reasoning_defaults_can_be_overridden(tmp_path: Path, provider: str) -> None:
+@pytest.mark.parametrize('name', ['openai-chat:gpt-6', 'openrouter:openai/gpt-6', 'vllm:openai/gpt-6'])
+def test_chat_compatible_reasoning_defaults_can_be_overridden(tmp_path: Path, name: str) -> None:
     context, _ = make_context(tmp_path)
-    name = f'{provider}:openai/gpt-6'
     source = ModelSettingsSource(context.store, name)
     menu = FieldMenu(source)
     row = menu.row_for('openai_reasoning_effort')
