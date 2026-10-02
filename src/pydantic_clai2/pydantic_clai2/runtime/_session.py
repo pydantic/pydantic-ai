@@ -5,7 +5,7 @@ import os
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from contextlib import nullcontext
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
@@ -85,7 +85,7 @@ def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic
     if isinstance(leaf, DynamicCapability):
         # A capability function's capability, and so its workspace, is known only once the run starts.
         return include_dynamic
-    return not isinstance(leaf, _LocalFallback) and type(leaf).get_workspace is not AbstractCapability.get_workspace
+    return type(leaf).get_workspace is not AbstractCapability.get_workspace
 
 
 @dataclass
@@ -97,18 +97,24 @@ class _LocalFallback(LocalWorkspace[DepsT]):
     """
 
     resolved: bool = False
+    _asking: bool = field(default=False, init=False, repr=False)
 
     async def for_run(self, ctx: RunContext[DepsT]) -> AbstractCapability[DepsT]:
         # A fresh instance also tells core the tree changed in `for_run`, so it selects again afterwards.
         return replace(self, resolved=True)
 
     def get_workspace(self, ctx: RunContext[DepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        if not self.resolved:
+        if not self.resolved or self._asking:
             return None
         assert ctx.root_capability is not None, 'core sets the root capability before selecting a workspace'
-        if _supplies_workspace([ctx.root_capability], include_dynamic=False):
-            return None
-        return super().get_workspace(ctx, ref=ref)
+        # Ask the resolved tree itself, so a provider of any shape (a group, a wrapper) is found; this
+        # instance declines while asking. Selection does no I/O, so asking twice is harmless.
+        self._asking = True
+        try:
+            other = ctx.root_capability.get_workspace(ctx, ref=ref)
+        finally:
+            self._asking = False
+        return None if other is not None else super().get_workspace(ctx, ref=ref)
 
 
 def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:

@@ -6,22 +6,29 @@ from typing import Literal
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Capability, DynamicCapability, LocalWorkspace
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentCapability,
+    Capability,
+    CombinedCapability,
+    DynamicCapability,
+    LocalWorkspace,
+)
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.coder import Coder
 from pydantic_clai2 import Session
 from pydantic_clai2._app import create_stock_agent
 
 
 @pytest.mark.parametrize('stock', [False, True])
-@pytest.mark.parametrize('contribution', ['none', 'instructions', 'workspace'])
+@pytest.mark.parametrize('contribution', ['none', 'instructions', 'workspace', 'group workspace'])
 @pytest.mark.parametrize('on_agent', [False, True])
 async def test_dynamic_plugins_do_not_suppress_the_local_default(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     stock: bool,
-    contribution: Literal['none', 'instructions', 'workspace'],
+    contribution: Literal['none', 'instructions', 'workspace', 'group workspace'],
     on_agent: bool,
 ) -> None:
     monkeypatch.chdir(tmp_path)
@@ -34,11 +41,19 @@ async def test_dynamic_plugins_do_not_suppress_the_local_default(
         async def before_run(self, ctx: RunContext[None]) -> None:
             working_dirs.append(await ctx.workspace.working_dir())
 
+    class SandboxGroup(CombinedCapability[None]):
+        # The group supplies the workspace itself, not through any of its members.
+        def get_workspace(self, ctx: RunContext[None], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+            backend = LocalWorkspaceBackend(sandbox)
+            return backend if ref is None or ref == backend.ref else None
+
     def dynamic(ctx: RunContext[None]) -> AbstractCapability[None] | None:
         nonlocal factory_calls
         factory_calls += 1
         if contribution == 'workspace':
             return LocalWorkspace(sandbox, read_only=True)
+        if contribution == 'group workspace':
+            return SandboxGroup([Capability(instructions='Sandboxed.')])
         if contribution == 'instructions':
             return Capability(instructions='Keep working in the configured workspace.')
         return None
@@ -58,7 +73,7 @@ async def test_dynamic_plugins_do_not_suppress_the_local_default(
     session = Session(agent, deps=None, plugins=plugins)
     await session.prompt('first')
     result = await session.prompt('second')
-    expected_dir = str((sandbox if contribution == 'workspace' else tmp_path).resolve())
+    expected_dir = str((sandbox if contribution.endswith('workspace') else tmp_path).resolve())
     assert working_dirs == [expected_dir, expected_dir]
     assert factory_calls == 2
     assert result.response.workspace_ref == WorkspaceRef(provider='local', id=expected_dir)
