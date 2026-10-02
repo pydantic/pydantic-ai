@@ -918,14 +918,23 @@ async def test_nested_run_cancellation_in_before_run_uses_realtime_history() -> 
     assert isinstance(exc_info.value.__cause__, RunCancelled)
 
 
-async def test_run_error_hook_cannot_recover_realtime_cancellation() -> None:
-    """A unit test because cancellation recovery is in-process lifecycle control flow, not provider behavior."""
-
-    class RecoverCancellation(AbstractCapability[None]):
-        async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+class _RecoverCancellationInWrapRun(AbstractCapability[None]):
+    async def wrap_run(self, ctx: RunContext[None], *, handler: WrapRunHandler) -> AgentRunResult[str]:
+        try:
+            return await handler()
+        except asyncio.CancelledError:
             return AgentRunResult(output='recovered')
 
-    agent = Agent[None, str](capabilities=[RecoverCancellation()], deps_type=type(None))
+
+class _RecoverCancellationInRunError(AbstractCapability[None]):
+    async def on_run_error(self, ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[str]:
+        return AgentRunResult(output='recovered')
+
+
+@pytest.mark.parametrize('capability', [_RecoverCancellationInRunError(), _RecoverCancellationInWrapRun()])
+async def test_run_hooks_cannot_recover_realtime_cancellation(capability: AbstractCapability[None]) -> None:
+    """A unit test because cancellation recovery is in-process lifecycle control flow, not provider behavior."""
+    agent = Agent[None, str](capabilities=[capability], deps_type=type(None))
 
     @agent.tool
     async def cancel(ctx: RunContext[None]) -> None:
