@@ -1679,7 +1679,11 @@ def types_from_output_spec(output_spec: OutputSpec[T]) -> Sequence[T | type[str]
         elif isinstance(output, PromptedOutput):
             outputs_flat.extend(types_from_output_spec(output.outputs))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         elif isinstance(output, TextOutput):
-            outputs_flat.append(str)
+            type_hints = get_function_type_hints(output.output_function)
+            if return_annotation := type_hints.get('return', None):
+                outputs_flat.extend(types_from_output_spec(return_annotation))
+            else:
+                outputs_flat.append(str)
         elif isinstance(output, ToolOutput):
             outputs_flat.extend(types_from_output_spec(output.output))  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
         # A union's members keep their `Annotated` metadata, as they do when listed: `X | Y` is `[X, Y]`.
