@@ -86,8 +86,9 @@ def create_async_httpx2_client(
         limits: The connection pool limits. Defaults to 1000 connections, of which up to 100 are kept
             alive while idle, matching the OpenAI and Anthropic SDKs' own clients.
 
-    A number of seconds passed as an individual request's timeout can shorten the client's connect and
-    pool timeouts, but never lengthen them; see `ConnectPoolTimeoutCap`.
+    A request timeout whose phases are all equal, such as a number of seconds, can shorten the
+    client's connect and pool timeouts but never lengthen them; see
+    [`ModelSettings.timeout`][pydantic_ai.settings.ModelSettings.timeout].
     """
     from .models import get_user_agent
 
