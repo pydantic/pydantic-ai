@@ -1436,6 +1436,38 @@ class TestBedrock:
         assert isinstance(group, BaseExceptionGroup)
         assert exc_info.value in group.exceptions  # pyright: ignore[reportUnknownMemberType]
 
+    @pytest.mark.parametrize('model_errors', [0, 2], ids=['no-model-error', 'model-error-among-others'])
+    async def test_mixed_errors_on_concurrent_requests(self, bedrock_provider: BedrockProvider, model_errors: int):
+        """A model error is raised whenever one of the failed requests produced one, whatever order they failed in;
+        when none did, the group of the other errors propagates."""
+        model = BedrockEmbeddingModel('amazon.titan-embed-text-v2:0', provider=bedrock_provider)
+
+        error_response = {
+            'Error': {'Code': 'ThrottlingException', 'Message': 'Too many requests'},
+            'ResponseMetadata': {'HTTPStatusCode': 429},
+        }
+        all_sent = threading.Barrier(3, timeout=5)
+        calls = iter(range(3))
+        lock = threading.Lock()
+
+        def invoke_model(**kwargs: Any) -> Any:
+            with lock:
+                call = next(calls)
+            all_sent.wait()
+            if call < model_errors:
+                raise ClientError(error_response, 'InvokeModel')  # pyright: ignore[reportArgumentType]
+            raise ValueError('unexpected response body')
+
+        with patch.object(model.client, 'invoke_model', side_effect=invoke_model):
+            if model_errors:
+                with pytest.raises(ModelHTTPError):
+                    await model.embed(['a', 'b', 'c'], input_type='document')
+            else:
+                with pytest.raises(BaseExceptionGroup) as group_info:
+                    await model.embed(['a', 'b', 'c'], input_type='document')
+                exceptions: tuple[BaseException, ...] = group_info.value.exceptions  # pyright: ignore[reportUnknownMemberType]
+                assert all(isinstance(e, ValueError) for e in exceptions)
+
     @pytest.mark.parametrize('error_type', ['read-timeout', 'endpoint-connection'])
     async def test_transport_error(self, bedrock_provider: BedrockProvider, error_type: str):
         """botocore raises transport failures as `BotoCoreError`, which maps to `ModelAPIError` like `BedrockConverseModel`."""

@@ -635,10 +635,10 @@ class BedrockEmbeddingModel(EmbeddingModel):
             # Requests already sent to a thread can't be cancelled, so a throttle or validation error that fails every
             # request surfaces several times. Raise the first model error, so callers see the same `ModelHTTPError` or
             # `ModelAPIError` whatever the number of inputs; the full group stays reachable as its `__context__`.
-            first = eg.exceptions[0]
-            if isinstance(first, ModelAPIError):
+            first = next((e for e in eg.exceptions if isinstance(e, ModelAPIError)), None)
+            if first is not None:
                 raise first
-            raise  # pragma: no cover
+            raise
 
         all_embeddings = [embedding for embedding, _ in results]
         total_input_tokens = sum(tokens for _, tokens in results)
