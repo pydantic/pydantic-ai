@@ -8,7 +8,7 @@ import importlib.util
 import os
 import sys
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from importlib.metadata import distributions
@@ -1219,7 +1219,36 @@ def test_replace_no_init() -> None:
     assert self_copying.name == 'a', 'the original must not be mutated in place'
 
 
-def test_trio_guest_mode_is_not_asyncio() -> None:
+def _in_asyncio_task() -> bool:
+    async def main() -> bool:
+        return running_on_asyncio()
+
+    return asyncio.run(main())
+
+
+def _in_asyncio_loop_callback() -> bool:
+    # `anyio.from_thread.run_sync` runs the function on the loop, but outside any asyncio task.
+    async def main() -> bool:
+        return await anyio.to_thread.run_sync(anyio.from_thread.run_sync, running_on_asyncio)
+
+    return asyncio.run(main())
+
+
+def _in_worker_thread() -> bool:
+    async def main() -> bool:
+        return await anyio.to_thread.run_sync(running_on_asyncio)
+
+    return asyncio.run(main())
+
+
+def _in_trio_task() -> bool:
+    async def main() -> bool:
+        return running_on_asyncio()
+
+    return trio.run(main)
+
+
+def _in_trio_guest_on_asyncio() -> bool:
     # Trio guest mode runs Trio tasks on a thread whose asyncio loop is running.
     results: list[bool] = []
 
@@ -1236,15 +1265,30 @@ def test_trio_guest_mode_is_not_asyncio() -> None:
         await done.wait()
 
     asyncio.run(host())
-    assert results == [False]
+    [result] = results
+    return result
 
 
-async def test_loop_callback_from_a_thread_is_asyncio():
-    # `anyio.from_thread.run_sync` runs on the loop but outside any asyncio task.
-    assert await anyio.to_thread.run_sync(anyio.from_thread.run_sync, running_on_asyncio)
+ASYNCIO_CONTEXTS = [
+    pytest.param(_in_asyncio_task, True, id='asyncio-task'),
+    pytest.param(_in_asyncio_loop_callback, True, id='asyncio-loop-callback'),
+    pytest.param(_in_worker_thread, False, id='worker-thread'),
+    pytest.param(_in_trio_task, False, id='trio-task'),
+]
 
 
-async def test_without_sniffio_a_running_asyncio_loop_decides(monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize(
+    ('context', 'expected'),
+    [*ASYNCIO_CONTEXTS, pytest.param(_in_trio_guest_on_asyncio, False, id='trio-guest-on-asyncio')],
+)
+def test_running_on_asyncio(context: Callable[[], bool], expected: bool):
+    assert context() is expected
+
+
+@pytest.mark.parametrize(('context', 'expected'), ASYNCIO_CONTEXTS)
+def test_running_on_asyncio_without_sniffio(
+    monkeypatch: pytest.MonkeyPatch, context: Callable[[], bool], expected: bool
+):
+    # A clean install has no `sniffio`; only Trio guest mode, which needs it installed anyway, would then be misread.
     monkeypatch.setattr(utils_module, '_sniffio', None)
-    assert running_on_asyncio()
-    assert not await anyio.to_thread.run_sync(running_on_asyncio)
+    assert context() is expected
