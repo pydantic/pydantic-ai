@@ -2218,16 +2218,22 @@ class ModelRequest:
     """
 
     def __post_init__(self) -> None:
-        for part in self.parts:
+        # A tool part whose kind is registered outside core is left a base part by deserialization and
+        # promoted here; checked only while such a kind exists, as this runs for every message.
+        promote = _promotes_after_validation()
+        promoted: list[Any] | None = None
+        for index, part in enumerate(self.parts):
             if isinstance(part, SpeechPart) and part.speaker != 'user':
                 # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
                 # message history, where a `ValueError` becomes a `ValidationError` with location info.
                 raise ValueError(
                     f"`SpeechPart` in `ModelRequest.parts` must have `speaker='user'`, got {part.speaker!r}"
                 )
-        # Promote a tool part whose kind is registered but that deserialization left a base part.
-        promoted = [_promote_registered_part(part) for part in self.parts]
-        if any(new is not old for new, old in zip(promoted, self.parts)):
+            if promote and (new := _promote_registered_part(part)) is not part:
+                if promoted is None:
+                    promoted = list(self.parts)
+                promoted[index] = new
+        if promoted is not None:
             self.parts = promoted
 
     @classmethod
@@ -2744,6 +2750,22 @@ def _narrow_call(part: _CallPartT, tool_kind: ToolPartKind | None) -> _CallPartT
     return _utils.copy_dataclass_fields(part, typed.cls, args=args, tool_kind=kind)
 
 
+_post_validation_kinds_cache: tuple[int, int, bool] = (-1, -1, False)
+
+
+def _promotes_after_validation() -> bool:
+    """Whether any registered kind is promoted after validation, i.e. isn't in the deserialization union.
+
+    Recomputed only when either registry has grown, so the common case (core's kinds alone) costs a
+    tuple comparison per message.
+    """
+    global _post_validation_kinds_cache
+    sizes = (len(_TYPED_TOOL_PARTS), len(_TYPED_PART_TAGS))
+    if _post_validation_kinds_cache[:2] != sizes:
+        _post_validation_kinds_cache = (*sizes, any(key not in _TYPED_PART_TAGS for key in _TYPED_TOOL_PARTS))
+    return _post_validation_kinds_cache[2]
+
+
 def _promote_registered_part(part: Any) -> Any:
     """Promote a tool part whose `tool_kind` was registered outside the deserialization union.
 
@@ -3019,16 +3041,22 @@ class ModelResponse:
     """
 
     def __post_init__(self) -> None:
-        for part in self.parts:
+        # A tool part whose kind is registered outside core is left a base part by deserialization and
+        # promoted here; checked only while such a kind exists, as this runs for every message.
+        promote = _promotes_after_validation()
+        promoted: list[Any] | None = None
+        for index, part in enumerate(self.parts):
             if isinstance(part, SpeechPart) and part.speaker != 'assistant':
                 # `ValueError`, not `UserError`: `__post_init__` also runs when Pydantic deserializes
                 # message history, where a `ValueError` becomes a `ValidationError` with location info.
                 raise ValueError(
                     f"`SpeechPart` in `ModelResponse.parts` must have `speaker='assistant'`, got {part.speaker!r}"
                 )
-        # Promote a tool part whose kind is registered but that deserialization left a base part.
-        promoted = [_promote_registered_part(part) for part in self.parts]
-        if any(new is not old for new, old in zip(promoted, self.parts)):
+            if promote and (new := _promote_registered_part(part)) is not part:
+                if promoted is None:
+                    promoted = list(self.parts)
+                promoted[index] = new
+        if promoted is not None:
             self.parts = promoted
 
     @property
