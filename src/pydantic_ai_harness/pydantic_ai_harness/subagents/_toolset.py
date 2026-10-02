@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Coroutine, Mapping, Sequence
+from collections.abc import AsyncIterable, Coroutine, Mapping, Sequence
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
+from functools import partial
 from typing import Any, Generic
 
+import anyio
 from typing_extensions import TypeIs
 
+from pydantic_ai import AgentStreamEvent
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AgentCapability, HookTimeoutError
 from pydantic_ai.exceptions import (
@@ -35,6 +38,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 # toolsets apart from the agent's own in `agent.toolsets`.
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace
 from pydantic_ai_harness.subagents._events import (
     DelegationEndEvent,
     DelegationOutcome,
@@ -42,6 +46,7 @@ from pydantic_ai_harness.subagents._events import (
     bounded_text,
 )
 from pydantic_ai_harness.subagents._models import ModelOption, validate_restriction
+from pydantic_ai_harness.subagents._tasks import DelegationReports, DelegationTask, DelegationTasks
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +67,9 @@ parent step each read the level their parent set.
 
 def at_max_depth(max_depth: int) -> bool:
     """Whether the current run is as deep in its delegation tree as `max_depth` allows, so it may not delegate."""
-    return _depth.get() >= max_depth
+    owner = DelegationTasks.current()
+    limit = owner.max_depth if owner is not None and max_depth == DEFAULT_MAX_DEPTH else max_depth
+    return _depth.get() >= limit
 
 
 _MODEL_ARG = 'model'
@@ -166,6 +173,9 @@ class SubAgent(Generic[AgentDepsT]):
     propagate regardless. Unset inherits `SubAgents.contain_errors` (default off).
     Orthogonal to `on_failure`, which only sets the message for expected soft
     degradations; a contained crash always raises the loud `ModelRetry`."""
+
+    read_only: bool = dataclass_field(default=False, kw_only=True)
+    """Run in a `ReadOnlyWorkspace`; supply only trusted read-only tools as well."""
 
     @property
     def resolved_name(self) -> str | None:
@@ -296,6 +306,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             }
         else:
             properties.pop(_MODEL_ARG, None)
+        if DelegationTasks.current() is None:
+            properties.pop('background', None)
+            properties.pop('resume', None)
         schema['properties'] = properties
         return replace(tool_def, parameters_json_schema=schema)
 
@@ -358,7 +371,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         return key
 
     async def delegate_task(
-        self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, model: str | None = None
+        self,
+        ctx: RunContext[AgentDepsT],
+        agent_name: str,
+        task: str,
+        model: str | None = None,
+        background: bool = False,
+        resume: str | None = None,
     ) -> str:
         """Delegate a self-contained task to a named sub-agent and return its result.
 
@@ -373,8 +392,18 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             model: Which model to run the sub-agent on, as one of the model keys
                 listed in the instructions. Omit it to use the sub-agent's default
                 model. Only offered when a model menu is configured.
+            background: Return an acceptance receipt while the child runs, within a task owner.
+            resume: Continue the saved child with this ID, within a task owner.
         """
+        owner = DelegationTasks.current()
+        if owner is not None:
+            agent_name = owner.aliases.get(agent_name, agent_name)
+        elif background or resume is not None:
+            raise ModelRetry('Background execution and resume require an open `DelegationTasks` owner')
         sub_agent = self._resolve_agent(ctx, agent_name)
+
+        if owner is not None and resume is not None and model is None and resume in owner.records:
+            model = owner.records[resume].model
 
         # Resolved before the call budget is charged, so a bad model key costs nothing.
         key = self._resolve_model_key(agent_name, sub_agent, model)
@@ -385,6 +414,21 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 f'Delegate budget for {agent_name!r} is exhausted for this run '
                 f'({sub_agent.max_calls} call(s)). Synthesize from existing evidence and '
                 f'choose the next action; do not delegate to {agent_name!r} again.',
+            )
+        if owner is not None:
+
+            async def run(record: DelegationTask) -> str:
+                return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key, record=record)
+
+            return await owner.delegate(
+                agent_name=agent_name,
+                prompt=task,
+                conversation_id=ctx.conversation_id or ctx.run_id or '',
+                model=key,
+                background=background,
+                resume=resume,
+                run=run,
+                backgroundable=not ctx.workspace.attached or isinstance(ctx.workspace.backend, LocalWorkspaceBackend),
             )
         return await self._run_delegation(ctx, agent_name, sub_agent, task=task, key=key)
 
@@ -399,6 +443,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if agent is None:  # pragma: no cover - the running agent is always set during a run
                 raise UserError('Delegating to the running agent requires `RunContext.agent`.')
             return SubAgent(agent, name=SELF_AGENT_NAME)
+        owner = DelegationTasks.current()
+        if owner is not None and agent_name in owner.agents:
+            return owner.agents[agent_name]
         sub_agent = self._agents.get(agent_name)
         if sub_agent is None:
             names = [*self._agents, SELF_AGENT_NAME] if self._include_self else list(self._agents)
@@ -413,6 +460,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         *,
         task: str,
         key: str | None,
+        record: DelegationTask | None = None,
     ) -> str:
         """Run one accepted delegation, announcing its start and how it ended."""
         # A delegation to the running agent already carries the parent's tools, so inheriting them
@@ -421,10 +469,19 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         inherit_tools = self._inherit_tools and not is_self
         # Announced before the child coroutine exists, so an emit that does not return
         # (a cancellation landing on the await) leaves no never-awaited coroutine behind.
-        emits = _emits_events(ctx)
+        owner = DelegationTasks.current() if record is not None else None
+        emits = owner is not None or _emits_events(ctx)
+
+        async def emit(event: DelegationStartEvent | DelegationEndEvent) -> None:
+            if owner is not None and record is not None:
+                event.task_id, event.parent_id = record.id, record.parent_id
+                await owner.notify(record, event)
+            elif emits:
+                await ctx.emit(event)
+
         if emits:
             text, truncated = bounded_text(task)
-            await ctx.emit(
+            await emit(
                 DelegationStartEvent(
                     agent_name=agent_name, task=text, truncated=truncated, model=key, inherits_tools=inherit_tools
                 )
@@ -432,17 +489,23 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         started = time.perf_counter()
 
         toolsets = self._inherited_toolsets(ctx) if inherit_tools else None
-        capabilities = self._shared_capabilities or None
+        capabilities = list(self._shared_capabilities)
+        if owner is not None and record is not None:
+            capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
+            capabilities.extend(owner.persistence_capabilities())
         usage_limits: UsageLimits | None
         if sub_agent.usage_limits is not None:
             # Isolated accounting so the per-child budget counts only this child.
             own_budget = True
             child_usage = RunUsage()
             usage_limits = sub_agent.usage_limits
+            if owner is not None and self._forward_usage:
+                child_usage = None
+                usage_limits = _managed_limits(ctx.usage, parent=ctx.usage_limits, child=sub_agent.usage_limits)
         else:
             own_budget = False
             child_usage = None if self._forward_usage else RunUsage()
-            usage_limits = None
+            usage_limits = ctx.usage_limits if owner is not None else None
 
         # A selected menu option decides the model and how it runs. Without one, a
         # sub-agent with no model of its own (e.g. one loaded from disk) inherits the
@@ -475,19 +538,43 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             usage_limits=usage_limits,
             toolsets=toolsets,
             capabilities=capabilities,
-            workspace=ctx.workspace,
-            event_stream_handler=self._event_stream_handler,
+            workspace=ReadOnlyWorkspace(ctx.workspace) if sub_agent.read_only else ctx.workspace,
+            event_stream_handler=partial(self._stream_child, owner=owner, record=record)
+            if record is not None
+            else self._event_stream_handler,
+            message_history=record.messages if record is not None else None,
+            conversation_id=record.id if record is not None else None,
+            run_id=record.run_id if record is not None else None,
         )
         token = _depth.set(_depth.get() + 1)
         try:
             ended = await self._settle(agent_name, sub_agent, run, own_budget=own_budget)
+        except BaseException as exc:
+            outcome: DelegationOutcome = (
+                'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
+            )
+            if owner is not None:
+                with anyio.move_on_after(5, shield=True):
+                    await emit(
+                        DelegationEndEvent(
+                            agent_name=agent_name,
+                            outcome=outcome,
+                            output=str(exc),
+                            truncated=False,
+                            usage=child_usage,
+                            duration_seconds=time.perf_counter() - started,
+                        )
+                    )
+            raise
         finally:
             _depth.reset(token)
             if child_usage is not None and self._forward_usage:
                 ctx.usage.incr(child_usage)
+        if record is not None:
+            record.outcome = ended.outcome
         if emits:
             text, truncated = bounded_text(ended.output)
-            await ctx.emit(
+            await emit(
                 DelegationEndEvent(
                     agent_name=agent_name,
                     outcome=ended.outcome,
@@ -500,6 +587,27 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if ended.cause is not None:
             raise ModelRetry(ended.output) from ended.cause
         return ended.output
+
+    async def _stream_child(
+        self,
+        child_ctx: RunContext[AgentDepsT],
+        events: AsyncIterable[AgentStreamEvent],
+        *,
+        owner: DelegationTasks | None,
+        record: DelegationTask | None,
+    ) -> None:
+        async def observed() -> AsyncIterable[AgentStreamEvent]:
+            async for event in events:
+                if owner is not None and record is not None:
+                    record.messages = child_ctx.messages
+                    await owner.notify(record, event)
+                yield event
+
+        if self._event_stream_handler is not None:
+            await self._event_stream_handler(child_ctx, observed())
+        else:
+            async for _ in observed():
+                pass
 
     async def _settle(
         self,
@@ -579,3 +687,36 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if on_failure is not None:
             return on_failure
         return default
+
+
+def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: UsageLimits) -> UsageLimits:
+    """Cap shared accounting by both budgets, including concurrent sibling spend.
+
+    Managed children never hide usage in a private counter until completion. A child's
+    relative budget becomes an absolute ceiling at launch; concurrent spend can reach it
+    earlier, but cannot bypass the parent's ceiling.
+    """
+    parent = parent or UsageLimits(request_limit=None)
+
+    def limit(parent_limit: int | None, child_limit: int | None, baseline: int = 0) -> int | None:
+        if child_limit is None:
+            return parent_limit
+        absolute = baseline + child_limit
+        return absolute if parent_limit is None else min(parent_limit, absolute)
+
+    cost = parent.cost_limit
+    if child.cost_limit is not None:
+        absolute_cost = (usage.cost or 0) + child.cost_limit
+        cost = absolute_cost if cost is None else min(cost, absolute_cost)
+    return UsageLimits(
+        request_limit=limit(parent.request_limit, child.request_limit, usage.requests),
+        tool_calls_limit=limit(parent.tool_calls_limit, child.tool_calls_limit, usage.tool_calls),
+        input_tokens_limit=limit(parent.input_tokens_limit, child.input_tokens_limit, usage.input_tokens),
+        output_tokens_limit=limit(parent.output_tokens_limit, child.output_tokens_limit, usage.output_tokens),
+        total_tokens_limit=limit(parent.total_tokens_limit, child.total_tokens_limit, usage.total_tokens),
+        per_request_input_tokens_limit=limit(
+            parent.per_request_input_tokens_limit, child.per_request_input_tokens_limit
+        ),
+        cost_limit=cost,
+        count_tokens_before_request=parent.count_tokens_before_request or child.count_tokens_before_request,
+    )

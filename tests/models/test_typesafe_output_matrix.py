@@ -262,6 +262,7 @@ def unreachable(request: httpx2.Request) -> httpx2.Response:  # pragma: no cover
 GAPS = [
     'field: None | None',
     'field: bounded int',
+    'field: discriminated union',
     'field: list with a size limit',
     'field: list | None',
     'field: mapping of anything',

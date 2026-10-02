@@ -208,9 +208,9 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# termflow-md 0.9.3 is the first release supporting Python 3.10, which `pydantic-clai2` needs.
-# TODO(Kludex): Remove after 2026-10-01 16:36 UTC.
-termflow-md = "2026-09-24T16:36:46Z"
+# Admit termflow-md 0.11.0 for CLAI2's swappable agent-history primitives; later releases stay quarantined.
+# TODO: Remove after 2026-10-07 15:58 UTC.
+termflow-md = "2026-09-30T15:58:29Z"
 # Anthropic 1.9.0 is the first release listing `claude-sonnet-5-5` and the `between_tools` thinking type.
 # TODO(dsfaccini): Remove after 2026-10-05 18:04 UTC. https://github.com/pydantic/pydantic-ai/issues/8972
 # This admits only the reviewed 1.9.0 artifacts; later Anthropic artifacts remain quarantined.
@@ -274,7 +274,7 @@ dev = [
     "cassetter>=0.13.0",
     # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
     # interleavings of client operations and provider events, shrunk to a minimal failing trace.
-    "hypothesis>=6.100",
+    "hypothesis>=6.153.2",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -339,6 +339,7 @@ include = [
     ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
+    ".github/scripts/test_ci_content_classifier.py",
 ]
 
 [tool.ruff.lint]
@@ -403,6 +404,7 @@ quote-style = "single"
 ".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
+".github/scripts/test_ci_content_classifier.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 
 [tool.pyright]
@@ -521,6 +523,12 @@ filterwarnings = [
     # TODO: Drop once starlette moves to `anyio.from_thread.BlockingPortal`.
     # https://github.com/Kludex/starlette/issues/3497
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
+    # `anthropic` 1.11.0 warns on every request for `claude-sonnet-4-5`, which reaches end of life on
+    # 2026-11-30. Recordings across the suite were made against it and replay offline, so the warning
+    # carries no signal here; users still get it from the SDK.
+    # TODO: Move these tests to a current model; the API stops serving this one on 2026-11-30, so any
+    # re-recording after that date needs the move first.
+    "ignore:The model 'claude-sonnet-4-5(-20250929)?' is deprecated and will reach end-of-life:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
@@ -603,7 +611,7 @@ snap = ["create"]
 
 [tool.codespell]
 # Ref: https://github.com/codespell-project/codespell#using-a-config-file
-skip = '.git*,*.svg,*.lock,*.css,*.yaml'
+skip = '.git*,*.svg,*.lock,*.css,*.yaml,tests/harness/absurd/fixtures/absurd.sql'
 check-hidden = true
 # Ignore "formatting" like **L**anguage
 ignore-regex = '\*\*[A-Z]\*\*[a-z]+\b'
