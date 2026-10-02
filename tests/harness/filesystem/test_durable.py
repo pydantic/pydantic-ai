@@ -25,9 +25,10 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxR
 from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
-from tests.harness.conftest import skip_temporal_sandbox_on_314
+from tests.harness._temporal import skip_temporal_sandbox_on_314
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
-pytestmark = skip_temporal_sandbox_on_314
+pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), skip_temporal_sandbox_on_314]
 
 
 @workflow.defn
@@ -85,7 +86,7 @@ def anyio_backend() -> str:
 
 async def test_temporal_default_runner_veto(tmp_path: Path) -> None:
     (tmp_path / 'protected.txt').write_text('original')
-    async with await WorkflowEnvironment.start_local() as env:  # pyright: ignore[reportUnknownMemberType]
+    async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
         client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
         async with Worker(client, task_queue='default-veto', workflows=[DefaultFileWorkflow]):
             returns = await client.execute_workflow(
@@ -145,7 +146,7 @@ async def test_temporal_vetoes_before_mutation(
 
     FileWorkflow.agent = agent
     FileWorkflow.__pydantic_ai_agents__ = [agent]
-    async with await WorkflowEnvironment.start_local() as env:  # pyright: ignore[reportUnknownMemberType]
+    async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
         client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
         # The test's dynamically configured agent lives in this test module; production
         # agents are normally constructed at module scope instead of injected by the test.

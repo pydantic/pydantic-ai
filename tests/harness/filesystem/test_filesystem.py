@@ -56,7 +56,9 @@ from pydantic_ai_harness.filesystem._toolset import (
 )
 from pydantic_ai_harness.shell._toolset import ShellToolset
 
+from ...workspace_fakes import RunOnlyWorkspaceBackend
 from .._tool_calls import call_tool, call_tools
+from .conftest import tools_path
 
 
 class ReadOnlyMount(LocalWorkspaceBackend):
@@ -315,6 +317,20 @@ class TestPathSecurity:
         with pytest.raises(ModelRetry, match='leads outside root_dir'):
             await toolset.write_file('escape/new.txt', 'x', workspace=ws)
         assert not (outside / 'new.txt').exists()
+
+    async def test_symlink_to_outside_fails_closed_when_readlink_is_missing(
+        self,
+        toolset: FileSystemToolset[None],
+        fs_root: Path,
+        outside: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        (fs_root / 'escape').symlink_to(outside)
+        path = tools_path(tmp_path_factory.mktemp('bin'), exclude=frozenset({'readlink'}))
+        workspace = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(fs_root, env={'PATH': path}))
+
+        with pytest.raises(ToolFailed, match='readlink'):
+            await toolset.read_file('escape/secret.txt', workspace=workspace)
 
     async def test_symlink_to_a_protected_file_is_protected(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
@@ -717,14 +733,46 @@ class TestReadFile:
 
 
 class TestWriteFile:
-    async def test_default_patterns_protect_nested_env_and_git(self, fs_root: Path, ws: LocalWorkspaceBackend) -> None:
-        (fs_root / 'subdir' / '.git').mkdir()
+    @pytest.mark.parametrize(
+        'path',
+        [
+            '.env',
+            '.env.local',
+            '.git/config',
+            'server.pem',
+            'deploy.key',
+            'secrets.yaml',
+            'apps/api/.env',
+            'apps/.env.local',
+            'sub/.git/config',
+            'certs/server.pem',
+            'config/deploy.key',
+            'config/secrets.yaml',
+        ],
+    )
+    async def test_default_patterns_protect_files_at_any_depth(
+        self, fs_root: Path, ws: LocalWorkspaceBackend, path: str
+    ) -> None:
+        target = fs_root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('original\n')
         toolset = FileSystem[None]().get_toolset()
         assert isinstance(toolset, FileSystemToolset)
-        for path in ('subdir/.env', 'subdir/.env.local', 'subdir/.git/config'):
-            with pytest.raises(ModelRetry, match='protected'):
-                await toolset.write_file(path, 'secret', workspace=ws)
-            assert not (fs_root / path).exists()
+
+        assert 'original' in await toolset.read_file(path, workspace=ws)
+        with pytest.raises(ModelRetry, match='protected'):
+            await toolset.write_file(path, 'overwritten\n', workspace=ws)
+        assert target.read_text() == 'original\n'
+
+    @pytest.mark.parametrize('path', ['apps/env.example', 'apps/api/prod.env', 'docs/git/config.md'])
+    async def test_default_patterns_leave_lookalikes_writable(
+        self, fs_root: Path, ws: LocalWorkspaceBackend, path: str
+    ) -> None:
+        (fs_root / path).parent.mkdir(parents=True, exist_ok=True)
+        toolset = FileSystem[None]().get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+
+        assert 'Wrote' in await toolset.write_file(path, 'content\n', workspace=ws)
 
     async def test_write_new_file(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend

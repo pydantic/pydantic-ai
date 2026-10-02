@@ -311,9 +311,12 @@ need `**`.
 
 A directory pattern also applies to descendants: `denied_patterns=['private']` denies `private/notes.txt` as well as `private`. Read-only directory patterns similarly protect writes below them.
 
-`read_only_patterns` defaults to `**/.git/*`, `**/.env`, `**/.env.*` (at any depth), `*.pem`, `*.key`,
-and `**/secrets*`, and `**/.pydantic-ai-harness/**`, where harness capabilities keep
-their own files (spilled tool output, background job status). Pass an empty list to make every path writable.
+`read_only_patterns` defaults to `**/.git/*`, `**/.env`, `**/.env.*`, `*.pem`, `*.key`,
+`**/secrets*`, and `**/.pydantic-ai-harness/**`, which match at any depth. For example,
+`apps/api/.env` and `sub/.git/config` are protected along with root-level files. Protected paths stay
+readable; add a path to `denied_patterns` to make it unreadable. Harness capabilities keep their own files,
+such as spilled tool output and background job status, under `.pydantic-ai-harness/`. Pass an empty list to
+make every path writable.
 `protected_patterns` is its deprecated name and still works, with a warning.
 
 ```python

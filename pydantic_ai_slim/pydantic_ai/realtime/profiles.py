@@ -64,7 +64,8 @@ class RealtimeModelProfile(TypedDict, total=False):
 
     Distinct from [`supports_interruption`][pydantic_ai.realtime.RealtimeModelProfile.supports_interruption]:
     a provider may support cancelling a response (barge-in) without supporting output truncation. OpenAI
-    supports both; xAI Grok Voice supports cancellation but not truncation."""
+    supports both; xAI Grok Voice supports cancellation, but its truncation only lands after a response
+    has ended, and unreliably, so it reports `False`."""
     supports_text_output: bool
     """Whether the model can generate text instead of speech, via
     [`output_modality='text'`][pydantic_ai.realtime.RealtimeModelSettings.output_modality].
@@ -82,7 +83,8 @@ class RealtimeModelProfile(TypedDict, total=False):
     [`create_client_secret`][pydantic_ai.realtime.RealtimeModel.create_client_secret], and
     [`connect_webrtc`][pydantic_ai.realtime.RealtimeModel.connect_webrtc].
 
-    Supported by OpenAI and Azure OpenAI. Gemini Live and xAI Grok Voice are WebSocket-only."""
+    Supported by OpenAI and Azure OpenAI. OpenAI GPT-Live supports the offer relay and the sideband but has
+    no client secrets. Gemini Live and xAI Grok Voice are WebSocket-only."""
     supports_seeding_images: bool
     """Whether prior images can be included when seeding a session with `message_history`."""
     supports_seeding_audio: bool
@@ -90,9 +92,10 @@ class RealtimeModelProfile(TypedDict, total=False):
     supports_thinking: bool
     """Whether the model supports reasoning/thinking configuration via the
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
-    reasoning models, Gemini's native-audio models, and xAI's `grok-voice-latest` and
-    `grok-voice-think-*` models. When `False` (the default), a `thinking` setting is silently ignored
-    rather than sent to a model that would reject it."""
+    reasoning models, Gemini's native-audio models, xAI's `grok-voice-latest` and
+    `grok-voice-think-*` models, and OpenAI GPT-Live, whose delegated backend does the reasoning. When
+    `False` (the default), a `thinking` setting is silently ignored rather than sent to a model that
+    would reject it."""
     async_tool_call_mode: AsyncToolCallMode
     """Whether the model keeps the conversation going while a tool call runs. Default: `'never'`.
 

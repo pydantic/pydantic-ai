@@ -11,8 +11,10 @@ the `pydantic-ai` id to this path, but only to suggest it: naming the engine
 without the import fails to compile with a tip carrying the line to add.
 
 The engine runs the [Pydantic AI](https://ai.pydantic.dev) CLI (`pai`) with `Coder`
-by default, providing filesystem access and unrestricted shell commands inside the sandbox,
-plus the gh-aw gateway's MCP tools.
+by default, in a `LocalWorkspace` on the checkout, providing filesystem access and
+unrestricted shell commands inside the sandbox, plus the gh-aw gateway's MCP tools. Shell
+commands get the step's environment minus provider credential variables (`OPENAI_*`,
+`ANTHROPIC_*` and the like).
 
 ## Quick start
 
@@ -24,7 +26,7 @@ on:
 permissions:
   contents: read
 imports:
-  - pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
 engine:
   id: pydantic-ai
   model: copilot/claude-sonnet-4-5
@@ -36,10 +38,10 @@ Read the issue and summarize what changed.
 ```
 
 To freeze the definition instead, import a commit SHA that contains this file, or a
-release tag of this repository cut after the definition landed on `main`; gh-aw
+release tag of this repository cut after the harness moved into it; gh-aw
 resolves the ref at compile time, so `@main` re-resolves on every recompile while a
-tag or SHA does not. The ref has to be one that carries the file: `v0.26.0` and
-every earlier tag predate it, so an import naming one has nothing to fetch. The two
+tag or SHA does not. The ref has to be one that carries the file: older tags
+predate the move, so an import naming one has nothing to fetch. The two
 pins are separate: the ref decides which definition compiles, and `engine.version`
 inside it decides which harness release runs. A workflow's own `engine: version:`
 overrides the package version the definition pins, because gh-aw applies the
@@ -111,7 +113,7 @@ on:
 permissions:
   contents: read
 imports:
-  - pydantic/pydantic-ai-harness/gh-aw/pydantic.md@main
+  - pydantic/pydantic-ai/src/pydantic_ai_harness/gh-aw/pydantic.md@main
 engine:
   id: pydantic-ai
   model: copilot/claude-sonnet-4-5
@@ -376,5 +378,5 @@ Consumers pinned to a tag or a SHA stay where they are until they move the ref.
 A harness release does not move the engine. `engine.version` is an ordinary line in
 the file, so a new release reaches consumers only once a pull request bumps it --
 and lint refuses a pin that is not on PyPI, so that pull request is green only after
-the release is published. The release workflow opens an issue when the tag it just
-published and the pinned version differ.
+the release is published. The release workflow opens an issue when the harness
+version it just published and the pinned version differ.

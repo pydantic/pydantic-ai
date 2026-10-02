@@ -45,6 +45,7 @@ from ..messages import (
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
     CodeExecutionTool,
     FileSearchTool,
@@ -256,9 +257,11 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
     google_labels: dict[str, str]
-    """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
+    """User-defined metadata attached to the request.
 
-    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    On Vertex AI, labels break down billed charges; see the [Vertex AI docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls).
+    The Gemini API accepts them from `google-genai` 2.26.0; earlier versions raise `ValueError` before sending the request.
+    See the [Gemini API reference](https://ai.google.dev/api/generate-content) for label requirements.
     """
 
     google_video_resolution: MediaResolution
@@ -594,7 +597,32 @@ class GoogleModel(Model[Client]):
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
-        return cast(GoogleModelProfile, super().profile)
+        """The model profile.
+
+        When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
+        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
+        `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
+
+        `ImageGenerationTool` is only supported when `supports_image_output` is true, so a text model
+        falls back to the local tool an `ImageGeneration` capability provides.
+        """
+        profile: GoogleModelProfile = cast(GoogleModelProfile, super().profile)
+        if not profile.get('supports_image_output', False):
+            native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ImageGenerationTool}
+            profile = {**profile, 'supported_native_tools': native_tools}
+        # Google documents only `minimal` and `high` for this model on both APIs, but the Gemini API
+        # alone enforces that: verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` for this
+        # id and its `-preview`, while Vertex (`global`, `us`, `eu`) accepts them. So the level set
+        # follows the client's transport, which `google_model_profile` can't see from the model name.
+        # https://ai.google.dev/gemini-api/docs/image-generation
+        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+        if (
+            self._model_name.startswith('gemini-3.1-flash-image')
+            and 'google_thinking_levels' not in profile
+            and not self._is_google_cloud
+        ):
+            return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
+        return profile
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
@@ -604,12 +632,25 @@ class GoogleModel(Model[Client]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        # Ignore optional infrastructure native tools (e.g. auto-injected `ToolSearchTool`) —
-        # they're dropped by `Model.prepare_request` when inert and shouldn't trigger the
-        # "native tool + output tools" path.
-        user_native_tools = [t for t in model_request_parameters.native_tools if not t.optional]
+        # Check before base validation so a text model points at an image model, not the generic error.
         if (
-            user_native_tools
+            not self.profile.get('supports_image_output', False)
+            and any(
+                isinstance(t, ImageGenerationTool) and not t.optional for t in model_request_parameters.native_tools
+            )
+            and not any(t.unless_native == 'image_generation' for t in model_request_parameters.function_tools)
+        ):
+            raise UserError(
+                f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
+                "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
+            )
+        # Count only native tools this model supports. `Model.prepare_request` swaps an unsupported
+        # one for its local fallback, drops it when optional, or rejects it, so it never reaches the
+        # wire beside output tools. A supported one is sent even when optional.
+        supported_native_tools = tuple(self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))
+        sent_native_tools = [t for t in model_request_parameters.native_tools if isinstance(t, supported_native_tools)]
+        if (
+            sent_native_tools
             and model_request_parameters.output_tools
             and not self.profile.get('google_supports_tool_combination', False)
         ):
@@ -688,11 +729,14 @@ class GoogleModel(Model[Client]):
                 ),
             )
 
-        response = await self.client.aio.models.count_tokens(
-            model=self._model_name,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response = await self.client.aio.models.count_tokens(
+                model=self._model_name,
+                contents=contents,
+                config=config,
+            )
+        except errors.APIError as e:
+            raise _map_api_error(e, self._model_name, self._provider.model_id_namespace) from e
         if response.total_tokens is None:
             raise UnexpectedModelBehavior(  # pragma: no cover
                 'Total tokens missing from Gemini response', str(response)
@@ -792,10 +836,6 @@ class GoogleModel(Model[Client]):
                     file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
                     tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
-                    if not self.profile.get('supports_image_output', False):
-                        raise UserError(
-                            "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
-                        )
                     image_config = self._build_image_config(tool)
                 else:  # pragma: no cover
                     raise UserError(
@@ -1113,6 +1153,13 @@ class GoogleModel(Model[Client]):
             provider_details['avg_logprobs'] = candidate.avg_logprobs
 
         usage = _metadata_as_usage(response, provider=self._provider.name, provider_url=self._provider.base_url)
+        web_search_queries, returned_web_source = _grounding_searches(response)
+        _set_web_search_usage(
+            usage,
+            web_search_queries,
+            returned_web_source,
+            billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
+        )
         grounding_metadata = candidate.grounding_metadata if candidate else None
         url_context_metadata = candidate.url_context_metadata if candidate else None
 
@@ -1154,6 +1201,7 @@ class GoogleModel(Model[Client]):
             _model_id_namespace=self._provider.model_id_namespace,
             _provider_url=self._provider.base_url,
             _provider_timestamp=first_chunk.create_time,
+            _web_search_billed_per_prompt=self.profile.get('google_web_search_billed_per_prompt', False),
         )
 
     async def _map_messages(  # noqa: C901
@@ -1434,6 +1482,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _model_id_namespace: str
     _provider_url: str
     _provider_timestamp: datetime | None = None
+    _web_search_billed_per_prompt: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc)
     _file_search_tool_call_id: str | None = field(default=None, init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
@@ -1455,6 +1504,17 @@ class GeminiStreamedResponse(StreamedResponse):
         try:
             async for chunk in self._response:
                 self._usage = _metadata_as_usage(chunk, self._provider_name, self._provider_url, self._usage)
+                # Grounding is counted from each chunk alone, and `web_searches` isn't carried forward like the token
+                # fields in `_usage_metadata_as_usage`: Gemini sends all grounding metadata once, on the final chunk,
+                # with the last `usage_metadata`. Seen in every grounded stream cassette and in live streams on
+                # Gemini 3, 3.1 Pro and 2.5, with and without server-side tool invocations (2026-09-30).
+                web_search_queries, returned_web_source = _grounding_searches(chunk)
+                _set_web_search_usage(
+                    self._usage,
+                    web_search_queries,
+                    returned_web_source,
+                    billed_per_prompt=self._web_search_billed_per_prompt,
+                )
 
                 if (
                     chunk.sdk_http_response
@@ -2079,6 +2139,35 @@ def _metadata_as_usage(
     )
 
 
+def _grounding_searches(response: GenerateContentResponse) -> tuple[set[str], bool]:
+    """Return the unique non-empty Google Search grounding queries and whether any web source came back."""
+    grounding = [c.grounding_metadata for c in response.candidates or [] if c.grounding_metadata is not None]
+    queries = {query for g in grounding for query in g.web_search_queries or [] if query.strip()}
+    returned_web_source = any(chunk.web and chunk.web.uri for g in grounding for chunk in g.grounding_chunks or [])
+    return queries, returned_web_source
+
+
+def _set_web_search_usage(
+    request_usage: usage.RequestUsage, queries: set[str], returned_web_source: bool, *, billed_per_prompt: bool
+) -> None:
+    """Record Google Search grounding on `request_usage` as the count Google bills.
+
+    Gemini 3 bills each unique non-empty query; Gemini 2.5 and older bill once per grounded prompt, and only when it
+    returned a web source. See https://ai.google.dev/gemini-api/docs/google-search#pricing and
+    https://cloud.google.com/vertex-ai/generative-ai/pricing. genai-prices can't extract either from the raw payload,
+    so the billed count is set as first-class `web_searches` and the query count as a `web_search_requests` detail.
+    """
+    if not queries:
+        return
+    request_usage.details['web_search_requests'] = len(queries)
+    if billed_per_prompt:
+        web_searches = 1 if returned_web_source else 0
+    else:
+        web_searches = len(queries)
+    if web_searches:
+        request_usage.web_searches = web_searches  # pyright: ignore[reportAttributeAccessIssue]
+
+
 def _usage_metadata_as_usage(
     *,
     prompt_token_count: int | None,
@@ -2104,6 +2193,21 @@ def _usage_metadata_as_usage(
     [`RequestUsage.extract`][pydantic_ai.usage.RequestUsage.extract] reads for the typed fields; it
     speaks the generate-content field names, so a Live caller translates before handing it over.
     """
+    if not any(
+        (
+            prompt_token_count,
+            output_token_count,
+            cached_content_token_count,
+            thoughts_token_count,
+            tool_use_prompt_token_count,
+            prompt_tokens_details,
+            cache_tokens_details,
+            output_tokens_details,
+            tool_use_prompt_tokens_details,
+        )
+    ):
+        return existing_usage or usage.RequestUsage()
+
     details: dict[str, int] = {}
     if cached_content_token_count:
         details['cached_content_tokens'] = cached_content_token_count

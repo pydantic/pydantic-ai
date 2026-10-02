@@ -34,7 +34,8 @@ from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkfl
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
-from tests.harness.conftest import skip_temporal_sandbox_on_314
+from tests.harness._temporal import skip_temporal_sandbox_on_314
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
 
 @pytest.fixture
@@ -202,9 +203,13 @@ class ShellRestartWorkflow(PydanticAIWorkflow):
         return [str(p.content) for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
 
 
+@pytest.mark.temporal
+@pytest.mark.xdist_group(name='harness-temporal')
 @skip_temporal_sandbox_on_314
-async def test_temporal_new_worker_keeps_shell_cwd(tmp_path: Path) -> None:
+async def test_temporal_new_worker_keeps_shell_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     global _restart_ready, _restart_continue
+    # Debug mode runs workflow activations inline, but this test needs the first activation to outlive its worker.
+    monkeypatch.delenv('TEMPORAL_DEBUG', raising=False)
     (tmp_path / 'dir').mkdir()
     _restart_ready = anyio.Event()
     _restart_continue = anyio.Event()
@@ -220,7 +225,7 @@ async def test_temporal_new_worker_keeps_shell_cwd(tmp_path: Path) -> None:
     )
     queue = f'restart-{uuid4().hex}'
     try:
-        async with await WorkflowEnvironment.start_local() as env:  # pyright: ignore[reportUnknownMemberType]
+        async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
             client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
             async with Worker(client, task_queue=queue, workflows=[ShellRestartWorkflow], workflow_runner=runner):
                 handle = await client.start_workflow(

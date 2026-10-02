@@ -19,7 +19,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import ImageGeneration, NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelRequest,
@@ -36,10 +36,11 @@ from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsDatetime, IsStr, try_import
+from ...conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
 
 if TYPE_CHECKING:
     GoogleModelFactory = Callable[..., GoogleModel]
@@ -97,9 +98,13 @@ async def test_function_tools_with_builtin_tools_unsupported(
         await agent.run('What is the largest city in the user country?')
 
 
-async def test_tool_output_with_builtin_tools_unsupported(allow_model_requests: None, google_model: GoogleModelFactory):
+@pytest.mark.parametrize('optional', [False, True])
+async def test_tool_output_with_builtin_tools_unsupported(
+    allow_model_requests: None, google_model: GoogleModelFactory, optional: bool
+):
+    """A supported native tool goes on the wire even when optional, so it counts against output tools."""
     m = google_model('gemini-2.5-flash')
-    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebSearchTool())])
+    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebSearchTool(optional=optional))])
 
     with pytest.raises(
         UserError,
@@ -351,8 +356,9 @@ async def test_native_output_with_builtin_tools_stream(allow_model_requests: Non
                     input_tokens=87,
                     output_tokens=78,
                     input_text_tokens=87,
-                    details={'thoughts_tokens': 78, 'text_prompt_tokens': 87},
+                    details={'thoughts_tokens': 78, 'text_prompt_tokens': 87, 'web_search_requests': 1},
                     output_reasoning_tokens=78,
+                    web_searches=1,
                     cost=Decimal('0.0002775'),
                 ),
                 model_name='gemini-3-flash-preview',
@@ -609,8 +615,9 @@ As for the weather in Tokyo, it is currently **cloudy** with a temperature of ap
                     input_tokens=132,
                     output_tokens=183,
                     input_text_tokens=132,
-                    details={'thoughts_tokens': 121, 'text_prompt_tokens': 132},
+                    details={'thoughts_tokens': 121, 'text_prompt_tokens': 132, 'web_search_requests': 1},
                     output_reasoning_tokens=121,
+                    web_searches=1,
                     cost=Decimal('0.000615'),
                 ),
                 model_name='gemini-3-flash-preview',
@@ -725,9 +732,15 @@ async def test_native_output_with_function_and_builtin_tools(
                     input_tokens=526,
                     output_tokens=27,
                     input_text_tokens=341,
-                    details={'thoughts_tokens': 27, 'tool_use_prompt_tokens': 86, 'text_prompt_tokens': 341},
+                    details={
+                        'thoughts_tokens': 27,
+                        'tool_use_prompt_tokens': 86,
+                        'text_prompt_tokens': 341,
+                        'web_search_requests': 1,
+                    },
                     output_reasoning_tokens=27,
                     input_tool_tokens=86,
+                    web_searches=1,
                     cost=Decimal('0.000344'),
                 ),
                 model_name='gemini-3-flash-preview',
@@ -793,8 +806,9 @@ async def test_native_output_with_builtin_tools(allow_model_requests: None, goog
                     input_tokens=417,
                     output_tokens=71,
                     input_text_tokens=351,
-                    details={'thoughts_tokens': 71, 'text_prompt_tokens': 351},
+                    details={'thoughts_tokens': 71, 'text_prompt_tokens': 351, 'web_search_requests': 1},
                     output_reasoning_tokens=71,
+                    web_searches=1,
                     cost=Decimal('0.0004215'),
                 ),
                 model_name='gemini-3-flash-preview',
@@ -1056,6 +1070,7 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                         'tool_use_prompt_tokens': 132,
                         'text_prompt_tokens': 85,
                         'text_tool_use_prompt_tokens': 132,
+                        'web_search_requests': 1,
                     },
                     output_reasoning_tokens=54,
                     input_tool_tokens=132,
@@ -1072,5 +1087,58 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+        ]
+    )
+
+
+async def test_google_image_generation_local_fallback_with_tool_output(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """A swapped-out native tool doesn't count against output tools on a model without tool combination."""
+
+    class Axolotl(BaseModel):
+        color: str
+
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    model = GoogleModel('gemini-2.5-flash', provider=provider)
+    assert model.profile.get('google_supports_tool_combination') is False
+
+    prompts: list[str] = []
+
+    def generate_image(prompt: str) -> str:
+        """Generate an image from a text prompt."""
+        prompts.append(prompt)
+        return 'The image of a pink axolotl was generated and shown to the user.'
+
+    agent = Agent(model, output_type=ToolOutput(Axolotl), capabilities=[ImageGeneration(local=generate_image)])
+    result = await agent.run('Generate an image of an axolotl, then report its color.')
+
+    assert prompts == snapshot(['an axolotl'])
+    assert result.output == snapshot(Axolotl(color='pink'))
+    assert request_capture.body(':generateContent')['tools'] == snapshot(
+        [
+            {
+                'functionDeclarations': [
+                    {
+                        'description': 'Generate an image from a text prompt.',
+                        'name': 'generate_image',
+                        'parameters_json_schema': {
+                            'additionalProperties': False,
+                            'properties': {'prompt': {'type': 'string'}},
+                            'required': ['prompt'],
+                            'type': 'object',
+                        },
+                    },
+                    {
+                        'description': 'The final response which ends this conversation',
+                        'name': 'final_result',
+                        'parameters_json_schema': {
+                            'properties': {'color': {'type': 'string'}},
+                            'required': ['color'],
+                            'type': 'object',
+                        },
+                    },
+                ]
+            }
         ]
     )
