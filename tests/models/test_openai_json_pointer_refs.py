@@ -157,6 +157,24 @@ def test_ref_strict_compatibility(ref: str, strict_compatible: bool):
     assert transformer.is_strict_compatible is strict_compatible
 
 
+@pytest.mark.parametrize('strict', [True, False])
+def test_explicit_strict_ignores_json_pointer_ref(strict: bool):
+    """With `strict` set explicitly, a JSON-pointer `$ref` leaves `is_strict_compatible` as it was.
+
+    Unit test: only an inferred `strict` reads the flag, so no request can show it.
+    """
+    schema: dict[str, Any] = {
+        'type': 'object',
+        'properties': {'from': ADDRESS_SCHEMA, 'to': {'$ref': '#/properties/from'}},
+        'required': ['from', 'to'],
+        'additionalProperties': False,
+    }
+    transformer = OpenAIJsonSchemaTransformer(schema, strict=strict)
+
+    assert transformer.walk()['properties']['to'] == {'$ref': '#/properties/from'}
+    assert transformer.is_strict_compatible is True
+
+
 def test_recursive_model_stays_strict_compatible():
     """A recursive model's self-reference is rewritten to `#`, which strict mode resolves.
 
