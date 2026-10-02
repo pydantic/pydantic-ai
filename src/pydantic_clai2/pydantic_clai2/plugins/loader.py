@@ -508,7 +508,7 @@ class PluginLoader(Generic[DepsT]):
             return
         try:
             await entry.loaded.dispatch(SessionEnd(reason=reason))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- unloading must finish even if the plugin misbehaves.
             self._console.print(str(PluginError(name, exc)), style=theme.color(theme.ERROR), markup=False)
         finally:
             self._drop(entry)
@@ -724,6 +724,6 @@ async def _end_failed_session(plugin: Plugin[BaseModel, DepsT]) -> BaseException
     try:
         with fail_after(5):
             await plugin.on_session_end(SessionEnd(reason='error'))
-    except (Exception, asyncio.CancelledError) as exc:
+    except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001 -- reported by the caller.
         return exc
     return None

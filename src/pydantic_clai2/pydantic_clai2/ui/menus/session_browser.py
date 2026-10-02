@@ -375,6 +375,6 @@ class SessionBrowser:
                     finally:
                         refreshed = time.monotonic()
                     dirty = True
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- storage errors stay inside the alternate screen.
                 self.notice = plain(str(exc))
                 dirty = True

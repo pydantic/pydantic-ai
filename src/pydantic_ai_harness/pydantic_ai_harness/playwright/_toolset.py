@@ -419,7 +419,7 @@ def is_blocked_address(host: str) -> bool:
     `PlaywrightBrowserSession.decide` resolving it first and passing the answers
     to `refuse`.
     Neither is rebinding-proof, since Chromium resolves the name again before it
-    connects (https://github.com/pydantic/pydantic-ai-harness/issues/415).
+    connects (https://github.com/pydantic/pydantic-ai/issues/9204).
     A trailing dot is stripped so the fully-qualified spelling gets the same
     verdict, and an IPv4-mapped IPv6 literal is classified by its embedded IPv4
     address. The named category flags are checked alongside `is_global` because

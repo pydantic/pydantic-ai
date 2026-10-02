@@ -193,7 +193,7 @@ def default_client(timeout_ms: int) -> YouClient:
         app_name='pydantic-ai-harness',
         app_version=_harness_version(),
         app_title='Pydantic AI Harness',
-        app_url='https://github.com/pydantic/pydantic-ai-harness',
+        app_url='https://github.com/pydantic/pydantic-ai',
     )
 
 
