@@ -27,7 +27,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
 from pydantic_clai2 import warm_imports
 from pydantic_clai2.cli.command_context import CommandContext, CommandProvider
-from pydantic_clai2.cli.self_update import Updates
+from pydantic_clai2.cli.self_update import Relaunch, Updates
 from pydantic_clai2.cli.shell_passthrough import HELP as SHELL_HELP, run_shell_command, shell_command
 from pydantic_clai2.commands import (
     Command,
@@ -236,6 +236,9 @@ async def chat(
                     with transcript.capture(console):
                         await shell.loader.close(reason)
             if not shell.reload_requested:
+                if (executable := shell.updates.relaunch) is not None:
+                    summary = shell.session.summary
+                    raise Relaunch(executable=executable, session_id=summary.id if summary.revision else None)
                 return
             shell.reload_requested = False
             if warming is not None:  # pragma: no branch -- a reload follows a run, which started warming
@@ -264,7 +267,7 @@ async def chat(
                         load_plugins=load_plugins,
                     )
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- development edits must not discard the conversation.
                 with transcript.capture(console):
                     console.print(
                         f'Reload failed: {type(exc).__name__}: {exc}', style=theme.color(theme.ERROR), markup=False
@@ -825,7 +828,11 @@ class _Shell(Generic[DepsT, OutputT]):
                 [self.editor.buffer.text, *self.editor.queued_messages] if self.editor is not None else []
             )
             try:
-                self.status.model = self.session.model or _model_label(self.agent)
+                model = self.session.model or _model_label(self.agent)
+                if model != self.status.model:
+                    self.status.context_window = None
+                    self.status.context_alert = False
+                self.status.model = model
                 self.status.workspace = self.session.workspace
                 self.status.status_segments = (*self.loader.status_segments(), self.updates.segment)
                 if self.editor is not None:
@@ -957,7 +964,7 @@ class _Shell(Generic[DepsT, OutputT]):
         if headless:
             try:
                 result = await self.session.prompt(None if automated else start.text)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- report a failed headless turn to the CLI.
                 return TurnEnd(text=start.text, outcome='failed', error=exc)
             return TurnEnd(text=start.text, outcome='completed', result=result)
         # Menus open mid-turn only after this turn has captured its settings; session changes
@@ -1017,7 +1024,7 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
         if not is_silent(result):
             console.print(result, markup=False)
             console.print()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- command failures must not exit the interactive shell.
         console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
         console.print()
     _reset_status(text, status)
@@ -1026,6 +1033,7 @@ async def _execute_command(commands: Commands, text: str, *, console: Console, s
 def _reset_status(command: str, status: Status) -> None:
     if command.split(maxsplit=1)[0] in ('/new', '/clear', '/resume'):
         status.context_tokens = None
+        status.context_window = None
         status.context_alert = False
         status.output_tokens = None
         status.cost = None
@@ -1107,7 +1115,7 @@ async def _run_prompt(
     except asyncio.CancelledError:
         await renderer.abort()
         raise
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 -- interactive boundary reports plugin/provider failures.
         await renderer.finish()
         console.print(f'{type(exc).__name__}: {error_message(exc)}', style=theme.color(theme.ERROR), markup=False)
         console.print(

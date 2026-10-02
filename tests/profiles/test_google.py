@@ -13,7 +13,12 @@ from typing import Literal
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai.profiles.google import GoogleJsonSchemaTransformer, google_model_profile
+from pydantic_ai._json_schema import JsonSchema
+from pydantic_ai.profiles.google import (
+    GoogleJsonSchemaTransformer,
+    GoogleOpenAPISchemaTransformer,
+    google_model_profile,
+)
 
 from .._inline_snapshot import snapshot
 
@@ -179,6 +184,29 @@ def test_format_appended_to_existing_description():
 
     assert 'format' not in transformed
     assert transformed == snapshot({'type': 'string', 'description': 'User email address (format: email)'})
+
+
+def test_openapi_schema_transformer_prunes_map_schemas_before_traversal():
+    """Direct assertions pin the public walk result and transform hooks hidden by the final Live declaration."""
+    schema: JsonSchema = {
+        'type': 'object',
+        'properties': {'kept': {'type': 'string'}},
+        'additionalProperties': {'type': 'integer'},
+        'patternProperties': {'^x': {'type': 'boolean'}},
+    }
+    visited_types: list[str] = []
+
+    class RecordingTransformer(GoogleOpenAPISchemaTransformer):
+        def transform(self, schema: JsonSchema) -> JsonSchema:
+            schema_type = schema['type']
+            assert isinstance(schema_type, str)
+            visited_types.append(schema_type)
+            return super().transform(schema)
+
+    transformed = RecordingTransformer(schema).walk()
+
+    assert transformed == snapshot({'type': 'object', 'properties': {'kept': {'type': 'string'}}})
+    assert visited_types == ['string', 'object']
 
 
 # =============================================================================
