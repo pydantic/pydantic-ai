@@ -230,6 +230,7 @@ On Temporal an activity has 60 seconds by default, which `research` can
 exceed: it waits up to `timeout_ms`, 600 seconds by default. Give the tool calls
 longer with
 `TemporalDurability(toolset_activity_config={'you_research': ActivityConfig(...)})`,
+keyed by the capability's `id`,
 as in [Temporal timeouts](durable-execution.md#temporal-timeouts).
 
 The records are named after the capability's `id`, which defaults to

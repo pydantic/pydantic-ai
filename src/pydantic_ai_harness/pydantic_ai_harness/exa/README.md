@@ -314,6 +314,7 @@ polling it to completion.
 On Temporal an activity has 60 seconds by default, which `deep_search` can
 exceed. Give the tool calls longer with
 `TemporalDurability(toolset_activity_config={'exa_search': ActivityConfig(...)})`,
+keyed by the capability's `id`,
 as in [Temporal timeouts](https://pydantic.dev/docs/ai/harness/durable-execution/#temporal-timeouts). `ExaAgent` polls its run in a capability
 activity, which takes the base `activity_config`, so set its
 `start_to_close_timeout` above `timeout_ms`.

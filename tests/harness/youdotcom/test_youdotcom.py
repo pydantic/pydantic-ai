@@ -768,6 +768,10 @@ class TestAgentSpec:
         assert capability.boost_domains == ['a.dev']
         assert capability.client is None
 
+    def test_from_spec_sets_a_distinct_id(self) -> None:
+        assert YouSearch[None].from_spec(include_domains=['sec.gov'], id='sec_search').id == 'sec_search'
+        assert YouResearch[None].from_spec(research_effort='deep', id='deep_research').id == 'deep_research'
+
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('YDC_API_KEY', 'test-key')
         spec = tmp_path / 'agent.yaml'

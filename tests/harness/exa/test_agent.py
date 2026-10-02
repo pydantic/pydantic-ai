@@ -460,6 +460,9 @@ class TestAgentSpec:
         assert capability.guidance == 'Delegate.'
         assert capability.runs is None
 
+    def test_from_spec_sets_a_distinct_id(self) -> None:
+        assert ExaAgent[None].from_spec(effort='low', id='low_effort_agent').id == 'low_effort_agent'
+
     def test_agent_loads_from_spec_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv('EXA_API_KEY', 'test-key')
         spec = tmp_path / 'agent.yaml'
