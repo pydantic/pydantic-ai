@@ -40,12 +40,14 @@ RUN_ID_METADATA_KEY = 'exa_agent_run_id'
 """Key under which the Exa run ID is stored in a deferred call's metadata."""
 
 _OWNER_METADATA_KEY = 'exa_agent_owner_id'
-"""Key under which the owning capability instance's token is stored in a deferred call's metadata.
+"""Key under which the owning capability's token is stored in a deferred call's metadata.
 
 The inline resolver claims a deferred call by this token rather than by tool
 name, so wrapper capabilities that rename or prefix tools (e.g. `PrefixTools`)
 do not break resolution, and multiple `ExaAgent` instances in one agent never
 claim each other's calls (each has its own `output_schema` and poll settings).
+The token is the capability's `id`, which also holds in a process that
+recovers a durable run.
 """
 
 _AGENT_TOOL_NAME = 'exa_agent'
@@ -293,9 +295,8 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
     id: str | None = 'exa_agent'
     """Stable identity for durable execution, which records each Exa run's creation and result under it."""
 
-    _owner_id: str = field(default_factory=lambda: uuid4().hex, init=False, repr=False, compare=False)
-    """Per-instance token stamped into deferred-call metadata so the inline
-    resolver only claims this instance's calls (see `_OWNER_METADATA_KEY`)."""
+    _instance_token: str = field(default_factory=lambda: uuid4().hex, init=False, repr=False, compare=False)
+    """Owner token for a capability constructed with `id=None`, which has no stable one."""
 
     def get_instructions(self) -> AgentInstructions[AgentDepsT] | None:
         """Static delegation guidance: when to hand a task to `exa_agent`, and run ID continuation.
@@ -319,7 +320,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
             effort=self.effort,
             output_schema=self.output_schema,
             system_prompt=self.system_prompt,
-            owner_id=self._owner_id,
+            owner_id=self._owner_token,
             id=self.id,
             create_run=self._create_run,
         )
@@ -352,7 +353,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         resolve; the Exa run ID is available in
         `requests.metadata[tool_call_id][RUN_ID_METADATA_KEY]`.
 
-        Calls are claimed by the instance token in the deferred-call metadata
+        Calls are claimed by the owner token in the deferred-call metadata
         rather than by tool name, so tool renaming or prefixing wrappers (e.g.
         `PrefixTools`) do not break inline resolution.
         """
@@ -362,7 +363,7 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
         for call in requests.calls:
             metadata = requests.metadata.get(call.tool_call_id, {})
             run_id = metadata.get(RUN_ID_METADATA_KEY)
-            if metadata.get(_OWNER_METADATA_KEY) == self._owner_id and isinstance(run_id, str):
+            if metadata.get(_OWNER_METADATA_KEY) == self._owner_token and isinstance(run_id, str):
                 result = await self._resolve_run(run_id)
                 calls[call.tool_call_id] = ModelRetry(result.message) if isinstance(result, RetryRequest) else result
         if not calls:
@@ -404,6 +405,15 @@ class ExaAgent(AbstractCapability[AgentDepsT]):
             return agent_run_result(run, output_schema=self.output_schema)
         except ModelRetry as retry:
             return RetryRequest(retry.message)
+
+    @property
+    def _owner_token(self) -> str:
+        """The token stamped into deferred-call metadata so the inline resolver only claims this capability's calls.
+
+        The capability's `id`, which a process that recovers a durable run gives it too, unlike a
+        per-instance token: replaying the run there must claim the same calls the original did.
+        """
+        return self.id if self.id is not None else self._instance_token
 
     def _resolved_runs(self) -> ExaAgentRuns:
         return self.runs if self.runs is not None else _default_runs()
