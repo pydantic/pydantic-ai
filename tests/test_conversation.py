@@ -252,6 +252,7 @@ def test_a_paused_conversation_carries_what_it_is_waiting_on() -> None:
     conversation = ConversationTypeAdapter.validate_json(stored)
 
     requests = conversation.deferred_tool_requests
+    assert requests is not None
     assert requests == paused.output
     assert [call.tool_call_id for call in requests.approvals] == ['refund-1']
     assert [call.tool_call_id for call in requests.calls] == ['lookup-1']

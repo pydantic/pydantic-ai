@@ -6,7 +6,7 @@ import dataclasses
 from collections.abc import Sequence
 from copy import copy
 from dataclasses import KW_ONLY
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import pydantic
 
@@ -30,13 +30,16 @@ def _dump_messages_json(messages: list[_messages.ModelMessage], info: pydantic.S
     return _messages.ModelMessagesTypeAdapter.dump_python(
         messages,
         mode='json',
-        include=info.include,
-        exclude=info.exclude,
+        # `SerializationInfo` types these as `IncExCall`, the same shapes `dump_python` takes as `IncEx`.
+        include=cast(Any, info.include),
+        exclude=cast(Any, info.exclude),
         by_alias=info.by_alias,
         exclude_unset=info.exclude_unset,
         exclude_defaults=info.exclude_defaults,
         exclude_none=info.exclude_none,
+        exclude_computed_fields=info.exclude_computed_fields,
         round_trip=info.round_trip,
+        serialize_as_any=info.serialize_as_any,
     )
 
 
