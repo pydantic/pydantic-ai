@@ -104,7 +104,7 @@ def test_saved_logfire_opens_observability_setup_when_enabled(tmp_path: Path) ->
     plugins = _loader(store, (builtin,))
     menu = PluginMenu(plugins, apply=_apply)
     item, _save_and_close = menu.items()
-    assert item.value == 'observability' and '[ ] observability' in item.label
+    assert item.value == 'observability' and '○ observability' in item.label
     assert plugins.entries()[0].state == 'disabled'
     try:
         result = menu.toggle(Menu(), item)
@@ -190,8 +190,8 @@ def test_capability_saved_from_the_old_catalog_still_loads(tmp_path: Path) -> No
     assert len(plugins.capabilities()) == 1
     menu = PluginMenu(plugins, apply=_apply)
     item, _save_and_close = menu.items()
-    assert '(built-in)' not in menu.details(item)
-    assert 'enabled, loaded' in menu.details(item)
+    assert 'built-in' not in menu.details(item)
+    assert 'installed' in item.description and 'on' in item.description
     menu.remove(Menu(), item)
     assert store.plugins() == []
     assert plugins.entries() == []
