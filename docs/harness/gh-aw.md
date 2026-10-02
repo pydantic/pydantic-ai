@@ -62,9 +62,10 @@ import-based engine like this one, so it is not part of the configuration below.
 
 ## Start from `Coder`, `Researcher`, or your own
 
-**Use `Coder` by default.** Omit `PAI_AGENT` to use [`Coder`](coder.md),
-with filesystem access and unrestricted shell commands inside the sandbox.
-No agent module is needed:
+**Use `Coder` by default.** Omit `PAI_AGENT` to use [`Coder`](coder.md) in a
+[`LocalWorkspace`](../workspace.md) on the checkout, with filesystem access and unrestricted
+shell commands inside the sandbox. Commands get the step's environment minus provider
+credential variables (`OPENAI_*`, `ANTHROPIC_*` and the like). No agent module is needed:
 
 ```yaml
 ---
@@ -101,11 +102,14 @@ steps:
 [`Researcher`](researcher.md) needs its own extra for the local search and fetch
 fallbacks, which is what the `steps:` block installs, and its searches need the hosts it
 reaches on the workflow's `network:` allowlist. `pydantic_ai_harness.coder:coder_agent` is
-the same shape for the coder agent, and is worth naming explicitly when a workflow wants
-the default composition but also wants `PAI_AGENT` set for clarity.
+the same shape for the coder agent. It differs from the default composition in one way: its
+`LocalWorkspace` passes commands only `PATH`, `HOME` and the locale variables, not the step's
+environment.
 
 **Your own agent.** The rest of this page. Reach for it when the agent needs its own tools,
-its own instructions, or a composition the harness does not ship.
+its own instructions, or a composition the harness does not ship. A harness capability that
+reads files or runs commands, such as `Coder`, needs a workspace: add `LocalWorkspace('.')`
+next to it for the checkout.
 
 ## The agent module
 

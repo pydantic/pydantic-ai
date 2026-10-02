@@ -1,4 +1,6 @@
-"""The built-in `linear` plugin: harness `Linear`, set up in a settings menu, with its key named in `/keys`.
+"""Use Linear, with its key kept in /keys.
+
+The built-in `linear` plugin: harness `Linear`, set up in a settings menu, with its key named in `/keys`.
 
 `/plugins configure linear` (also opened on `/plugins add`, `/plugins enable`, and Space or C in `/plugins`) edits
 every setting harness `Linear` takes from a user: how to sign in, which `/keys` entry to use, read-only access,

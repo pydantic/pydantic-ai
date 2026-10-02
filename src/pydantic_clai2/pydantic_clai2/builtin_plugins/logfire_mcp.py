@@ -1,4 +1,6 @@
-"""The built-in `logfire_mcp` plugin: harness `LogfireMCP`, a settings menu, and keys kept in `/keys`.
+"""Query your Logfire data from the agent through the Logfire MCP server.
+
+The built-in `logfire_mcp` plugin: harness `LogfireMCP`, a settings menu, and keys kept in `/keys`.
 
 Plugin settings are plaintext SQLite, so they hold only the name of a `/keys` entry plus `LogfireMCP`'s
 non-secret options, all edited in the menu that `/plugins configure logfire_mcp` opens.
