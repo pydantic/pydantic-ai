@@ -48,7 +48,8 @@ def _key_name(key: Keys | str) -> str:
 
 def _modified_key(sequence: str) -> str | None:
     """Normalize the CSI-u and xterm reports requested by the editor."""
-    if match := _CSI_KEY.fullmatch(sequence):
+    # Known Alt reports become two decoder tokens; leave both on the legacy path.
+    if (match := _CSI_KEY.fullmatch(sequence)) and sequence not in ANSI_SEQUENCES:
         code, modifier, suffix = match.groups()
         modifiers = (int(modifier) - 1) & ~192
         if modifiers & ~7:

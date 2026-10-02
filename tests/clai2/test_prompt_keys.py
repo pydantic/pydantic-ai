@@ -182,7 +182,7 @@ async def test_modified_reporting_preserves_editor_keys(
 
 
 @pytest.mark.parametrize('split', [False, True])
-@pytest.mark.parametrize('lock', [64, 128])
+@pytest.mark.parametrize('lock', [0, 64, 128])
 @pytest.mark.parametrize(
     ('code', 'modifier', 'suffix', 'expected'),
     [
@@ -198,6 +198,8 @@ async def test_modified_reporting_preserves_editor_keys(
         (6, 1, '~', 'pagedown'),
         (1, 5, 'D', 'ctrl-left'),
         (1, 3, 'C', 'alt-right'),
+        (1, 3, 'D', 'alt-left'),
+        (3, 3, '~', 'alt-delete'),
     ],
 )
 async def test_navigation_reports_with_lock_modifiers(

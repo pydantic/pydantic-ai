@@ -29,6 +29,15 @@ async def test_kitty_navigation_with_lock_keys(modifier: int) -> None:
         assert live.buffer.text == 'aXb'
 
 
+@pytest.mark.parametrize('modifier', [3, 67, 131])
+async def test_alt_delete_does_not_delete_unmodified_text(modifier: int) -> None:
+    async with editor() as (live, pipe, _):
+        pipe.send_text(f'abc\x1b[D\x1b[D\x1b[3;{modifier}~')
+        live.keys.read()
+        assert live.buffer.text == 'abc'
+        assert live.buffer.cursor == 1
+
+
 async def test_kitty_control_shortcuts_on_non_latin_layouts() -> None:
     async with editor() as (live, pipe, _):
         pipe.send_text('discard\x1b[1089::99;5u')
