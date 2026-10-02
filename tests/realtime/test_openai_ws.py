@@ -728,18 +728,20 @@ async def test_auto_input_transcription_uses_gpt_live_transcribe(
     agent = Agent(instructions='Reply in a few words.')
     pcm = assets_path.joinpath('marcelo_24khz.pcm').read_bytes()
 
-    turn_complete = user_transcribed = False
+    order: list[str] = []
     async with agent.realtime(model).session() as session:
         for start in range(0, len(pcm), 4800):
             await session.send_audio(pcm[start : start + 4800])
         with anyio.fail_after(45):
             async for event in session:  # pragma: no branch
                 if isinstance(event, RealtimeTurnCompleteEvent):
-                    turn_complete = True
+                    order.append('turn complete')
                 elif isinstance(event, PartEndEvent) and isinstance(event.part, SpeechPart):
-                    user_transcribed = user_transcribed or event.part.speaker == 'user'
-                if turn_complete and user_transcribed:
+                    order.append(f'{event.part.speaker} part end')
+                if 'turn complete' in order and 'user part end' in order:
                     break
+
+    assert order == snapshot(['assistant part end', 'turn complete', 'user part end'])
 
     [session_update] = [
         frame
