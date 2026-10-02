@@ -1969,28 +1969,72 @@ class TestCodeMode:
         assert 'async def duckduckgo_search' in description
         assert 'duckduckgo_search' not in tools
 
-    async def test_deferred_execution_tools_sandboxed(self) -> None:
-        """Tools with `kind='external'`/`'unapproved'` are sandboxed like any other tool; resolution happens via a `HandleDeferredToolCalls` capability."""
-        td_external = ToolDefinition(
+    @pytest.mark.parametrize('kind', ['external', 'unapproved'])
+    async def test_deferred_execution_tools_native_under_all(self, kind: Literal['external', 'unapproved']) -> None:
+        """`tools='all'` keeps approval-required and external tools native, so their deferred calls work without a handler."""
+        td_deferred = ToolDefinition(
             name='approve_action',
             description='Needs approval.',
             parameters_json_schema={'type': 'object', 'properties': {'x': {'type': 'string'}}, 'required': ['x']},
             return_schema={'type': 'string'},
-            kind='external',
+            kind=kind,
         )
-        static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_external])
+        static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_deferred])
         wrapper = CodeMode[object]().get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
-        ctx = build_run_context(None)
-        tools = await wrapper.get_tools(ctx)
+        tools = await wrapper.get_tools(build_run_context(None))
 
         description = tools['run_code'].tool_def.description
         assert description is not None
-        # The external tool appears as a sandboxed function signature.
-        assert 'async def approve_action' in description
-        # Not exposed as a native tool.
-        assert 'approve_action' not in tools
+        assert 'async def get_user' in description
+        assert 'approve_action' not in description
+        assert tools['approve_action'].tool_def is td_deferred
+
+    async def test_explicit_selector_sandboxes_approval_required_tool(self) -> None:
+        """An explicit selector opts a `requires_approval=True` tool into the sandbox, where a handler resolves it inline."""
+        from pydantic_ai.capabilities import HandleDeferredToolCalls  # optional-version probe
+
+        def delete_file(path: str) -> str:
+            """Delete a file."""
+            return f'deleted {path}'
+
+        async def handler(ctx: RunContext[object], requests: DeferredToolRequests) -> DeferredToolResults:
+            return DeferredToolResults(approvals={call.tool_call_id: ToolApproved() for call in requests.approvals})
+
+        toolset = FunctionToolset[object](tools=[Tool(delete_file, requires_approval=True)])
+        wrapper = CodeMode[object](tools=['delete_file']).get_wrapper_toolset(toolset)
+        assert isinstance(wrapper, CodeModeToolset)
+        ctx = await build_ctx(None, wrapper, root_capability=HandleDeferredToolCalls(handler=handler))
+        tools = await wrapper.get_tools(ctx)
+
+        assert 'delete_file' not in tools
+        result = await wrapper.call_tool(
+            'run_code', {'code': "await delete_file(path='a.txt')"}, ctx, tools['run_code']
+        )
+        assert result.return_value == 'deleted a.txt'
+
+    async def test_default_approval_required_tool_returns_deferred_requests(self) -> None:
+        """With a bare `CodeMode()`, the model calls an approval-required tool natively and the run ends with a deferred request."""
+
+        def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            assert [t.name for t in info.function_tools] == ['delete_file', 'run_code']
+            return ModelResponse(parts=[ToolCallPart('delete_file', {'path': 'a.txt'}, tool_call_id='call-1')])
+
+        agent = Agent(
+            FunctionModel(model_function),
+            capabilities=[CodeMode()],
+            output_type=[str, DeferredToolRequests],
+        )
+
+        @agent.tool_plain(requires_approval=True)
+        def delete_file(path: str) -> str:  # pragma: no cover -- never approved in this run
+            """Delete a file."""
+            return f'deleted {path}'
+
+        result = await agent.run('delete a.txt')
+        assert isinstance(result.output, DeferredToolRequests)
+        assert [call.tool_name for call in result.output.approvals] == ['delete_file']
 
     async def test_tool_without_return_schema_warns(self) -> None:
         """A sandboxed tool with no return_schema triggers a one-time warning."""

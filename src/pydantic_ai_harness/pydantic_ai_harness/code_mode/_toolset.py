@@ -501,15 +501,12 @@ def _functions_header(*, has_sync: bool, has_async: bool) -> str:
     )
 
 
-_SEARCH_TOOLS_MODIFIER = (
-    ' Note: discovered tools become callable as functions inside the run_code sandbox in subsequent invocations.'
+TOOL_DISCOVERY_GUIDANCE = (
+    'Only tools in the available-functions catalog can be called inside `run_code`; '
+    'call separately exposed tools directly.'
 )
-
-_TOOL_SEARCH_ADDENDUM = (
-    f'\n\nNot all functions may be available initially.'
-    f' Use the `{_SEARCH_TOOLS_NAME}` tool to discover additional functions'
-    f' that will become callable in subsequent `run_code` invocations.'
-)
+_SEARCH_TOOLS_MODIFIER = f' Note: {TOOL_DISCOVERY_GUIDANCE}'
+_TOOL_SEARCH_ADDENDUM = f'\n\nUse `{_SEARCH_TOOLS_NAME}` to discover additional tools. {TOOL_DISCOVERY_GUIDANCE}'
 
 _INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
 
@@ -741,6 +738,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.
 
+    Approval-required and external tools (`ToolDefinition.defer`) stay native under the
+    default `'all'` selector; an explicit selector can sandbox them for agents with a
+    `HandleDeferredToolCalls` handler.
+
     To keep a Tool Search corpus native even after discovery (e.g. for prompt-cache
     stability), pass a `tool_selector` that excludes tools with `with_native` set.
     """
@@ -791,8 +792,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     `run_code` description, which lives in the prompt-cache-keyed tool-definitions block.
     When `True`, the description keeps only the static base prose and the catalog is
     surfaced as a dynamic [`InstructionPart`][pydantic_ai.messages.InstructionPart] via
-    [`get_instructions`][pydantic_ai_harness.code_mode.CodeModeToolset.get_instructions],
-    so Tool Search discoveries don't bust the tool-definitions cache prefix.
+    [`get_instructions`][pydantic_ai_harness.code_mode.CodeModeToolset.get_instructions].
+    Discovering sandboxed tools then preserves the tool-definitions cache prefix;
+    discovering native tools can still change the tool-definitions block.
     """
 
     capability: AbstractCapability[AgentDepsT] | None = field(default=None, kw_only=True, repr=False)
@@ -929,6 +931,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             elif _is_code_execution_tool(tool.tool_def):
                 # A tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
                 # `run_workflow`) is a peer of `run_code`, not something to fold inside it.
+                native_tools[name] = tool
+            elif tool.tool_def.defer and self.tool_selector == 'all':
+                # Approval-required and external tools can't run inside the sandbox without a
+                # `HandleDeferredToolCalls` handler, so only an explicit selector sandboxes them.
                 native_tools[name] = tool
             elif await matches_tool_selector(self.tool_selector, ctx, tool.tool_def):
                 sandboxed_tools[name] = tool

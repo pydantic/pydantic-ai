@@ -29,6 +29,7 @@ from pydantic_ai_harness.code_mode._speculation import (
     SpeculationStats,
 )
 from pydantic_ai_harness.code_mode._toolset import (
+    TOOL_DISCOVERY_GUIDANCE,
     CodeModeMount,
     CodeModeOS,
     CodeModeResourceLimits,
@@ -43,10 +44,7 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 
-_DISCOVERY_ANNOUNCEMENT_PREFIX = (
-    'New functions are now available inside `run_code`. Their signatures have been '
-    'added to the available-functions catalog in the system prompt'
-)
+_DISCOVERY_ANNOUNCEMENT_PREFIX = f'{TOOL_DISCOVERY_GUIDANCE} Newly available tools'
 _DISCOVERY_ANNOUNCEMENT_RE = re.compile(
     rf'{re.escape(_DISCOVERY_ANNOUNCEMENT_PREFIX)}: '
     r'(?P<names>`[^`]+`(?:, `[^`]+`)*)\.'
@@ -61,8 +59,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     By default (`tools='all'`) every eligible regular tool the agent has is wrapped
     behind a single `run_code` tool -- the model writes Python that calls them as
     functions instead of issuing tool calls directly. Framework control tools,
-    undiscovered deferred tools, native fallbacks, and other code-execution tools
-    remain native.
+    undiscovered deferred tools, approval-required and external tools, native
+    fallbacks, and other code-execution tools remain native.
 
     Pass a list of tool names or a callable predicate to `tools` to split the
     toolset: matching tools become callables inside the sandbox, and the rest
@@ -103,9 +101,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     """Which wrapped tools should be sandboxed inside `run_code`.
 
     - `'all'` (default): every eligible regular tool the agent has is sandboxed.
+      Approval-required and external tools stay native so their deferred calls work
+      as usual.
     - `Sequence[str]`: only tools whose names are listed are sandboxed.
     - Callable `(ctx, tool_def) -> bool | Awaitable[bool]`: tools where the
       callable returns `True` are sandboxed; the rest stay as native tool calls.
+
+    An explicit selector can sandbox approval-required and external tools too, but calling
+    one from `run_code` then needs a `HandleDeferredToolCalls` capability to resolve it inline.
     """
 
     max_retries: int = 3
@@ -187,8 +190,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     Set `dynamic_catalog=True` to instead:
 
     - keep only the static base prose (sandbox restrictions, return-value contract) in
-      `run_code.description`, so the tool-definitions block stays byte-stable across
-      discoveries;
+      `run_code.description`, so discovering sandboxed tools does not change its entry
+      in the tool-definitions block;
     - move the "available functions" catalog (TypedDict definitions + signatures) into
       agent instructions as a dynamic
       [`InstructionPart`][pydantic_ai.messages.InstructionPart], which providers with
@@ -196,13 +199,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       breakpoint;
     - announce newly-discovered tools via a short
       [`SystemPromptPart`][pydantic_ai.messages.SystemPromptPart] enqueued through
-      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], so the model knows the
-      new functions are callable without rewriting the cached description.
+      [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]. Announcements direct
+      the model to the catalog for sandbox calls and to call native tools directly.
 
-    This pays off when paired with [`ToolSearch`][pydantic_ai.capabilities.ToolSearch]: the
-    tool-definitions cache survives discoveries at the cost of a larger (but
-    cache-friendly) system prompt. With a fixed toolset and no `ToolSearch`, the default
-    keeps the system prompt shorter and is the better choice.
+    With [`ToolSearch`][pydantic_ai.capabilities.ToolSearch], this preserves the
+    tool-definitions cache across discoveries of sandboxed tools, at the cost of a larger
+    system prompt. Discovering native tools can still change the tool-definitions block.
+    With a fixed toolset and no `ToolSearch`, the default keeps the system prompt shorter
+    and is the better choice.
     """
 
     speculation_stats: SpeculationStats = field(default_factory=SpeculationStats, init=False, repr=False)

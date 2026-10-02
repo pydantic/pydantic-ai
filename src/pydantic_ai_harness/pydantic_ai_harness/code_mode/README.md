@@ -86,7 +86,8 @@ The `code-mode` extra is also supported as an alias.
 ## Selective tool sandboxing
 
 By default, `CodeMode(tools='all')` sandboxes every eligible regular tool. Framework control tools,
-undiscovered deferred tools, native fallbacks, and other code-execution tools remain native. Shell
+undiscovered deferred tools, approval-required and external tools, native fallbacks, and other
+code-execution tools remain native. Shell
 surfaces count as code-execution tools: `Shell`'s `run_command` and `start_command` sit beside `run_code` rather than inside it, so the model never has
 to quote a shell command inside a generated Python string. `CapabilityCreation`'s
 `author_capability` stays native for the same reason: its argument is a complete Python module.
@@ -110,7 +111,7 @@ Tools that match the selector are wrapped inside `run_code`. Non-matching tools 
 
 ### Tool Search
 
-When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](https://ai.pydantic.dev/tools-advanced/#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered -- they pass straight through, so Tool Search drives them as usual (sent on the wire with `defer_loading` on providers with native tool search; otherwise dropped until discovered, with a `search_tools` tool alongside `run_code`). `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. Once the model discovers a tool -- or loads the deferred capability that owns it -- `CodeMode` folds it into `run_code` like any other tool from then on, so it's callable from generated code. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
+When you mark tools or whole toolsets `defer_loading=True` ([Tool Search](https://ai.pydantic.dev/tools-advanced/#tool-search)), `CodeMode` keeps them out of `run_code` while they're undiscovered -- they pass straight through, so Tool Search drives them as usual (sent on the wire with `defer_loading` on providers with native tool search; otherwise dropped until discovered, with a `search_tools` tool alongside `run_code`). `CodeMode` uses `RunContext.is_tool_available` to follow that reveal state. After discovery or capability loading, the tool follows the same sandboxing rules as any other tool: eligible tools matching `tools` become callable inside `run_code`, while the rest stay native. In particular, approval-required and external tools stay native under `tools='all'` even after discovery. (The tool keeps `defer_loading=True`, which records what its author asked for; what changes is its availability for the run.)
 
 That fold-in grows `run_code`'s description, which invalidates the prompt-cache prefix once at the moment of discovery (turns with no discovery stay cache-warm). Two ways to avoid the bust:
 
@@ -122,7 +123,7 @@ from pydantic_ai_harness import CodeMode
 CodeMode(dynamic_catalog=True)
 ```
 
-  This pays off when paired with Tool Search: the tool-definitions block stays byte-stable so the prefix cache survives discoveries, at the cost of a larger (but cache-friendly) system prompt. With a fixed toolset and no Tool Search, the default keeps the system prompt shorter and is the better choice.
+  For tools folded into `run_code`, this keeps the tool-definitions block byte-stable across discoveries, at the cost of a larger (but cache-friendly) system prompt. Discovering native tools can still change the tool-definitions block. With a fixed toolset and no Tool Search, the default keeps the system prompt shorter and is the better choice.
 
 - To instead keep a Tool Search corpus fully native -- never folded into `run_code`, but not callable from inside it -- exclude it with a `tools` selector; corpus members carry `with_native` set to the managing native tool:
 
@@ -674,7 +675,7 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
 - No clock or randomness by default (`datetime.datetime.now()`, `datetime.date.today()`, `time.time()`, unseeded `random`) -- they become available when an `os_access` handler implements them (the built-in `OSAccess` does); `time.sleep` and `asyncio.sleep` really wait, up to the allowance described under resource limits; inside a Temporal workflow a sleep is a durable timer
 - No `import *`
 - Filesystem I/O needs an `os_access` handler or a `mount`; `os.getenv`/`os.environ` need an `os_access` handler
-- Tools requiring approval or with deferred (`CallDeferred`) execution are sandboxed like any other tool; without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
+- Approval-required (`requires_approval=True`) and external (`kind='external'`) tools stay native under `tools='all'`, so their [deferred calls](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/) work as usual. Tools an explicit selector sandboxes anyway, and tools that raise `ApprovalRequired` or `CallDeferred` from their body, need resolving inline once sandboxed: without a `HandleDeferredToolCalls` (or equivalent) capability on the agent to resolve them inline, calling one from `run_code` raises an error that surfaces to the model as a retry
 - Tool results reach the sandbox in the JSON shape their generated stub declares, since the stub is derived from the tool's JSON schema: `Decimal`, `UUID` and `datetime` arrive as strings, and mapping keys are stringified, so a `dict[int, str]` of `{1: 'a'}` arrives as `{'1': 'a'}`. `bytes` and `bytearray` are the exception: Monty carries binary natively, so they cross unchanged even though the stub declares `str` for them
 
 ## API
