@@ -93,7 +93,7 @@ class LogfirePlugin(SimplePlugin):
         self.setup_logfire = setup_logfire
         self.metrics = metrics
         self.metric_periodicity = metric_periodicity
-        self.replay_safe = replay_safe
+        self._replay_safe = replay_safe
         self._logfire: Logfire | None = None
 
         super().__init__(  # type: ignore[reportUnknownMemberType]
@@ -104,7 +104,7 @@ class LogfirePlugin(SimplePlugin):
     def _get_logfire(self) -> Logfire:
         if self.setup_logfire is None:
             return _default_setup_logfire()
-        if not self.replay_safe:
+        if not self._replay_safe:
             return self.setup_logfire()
         # Replay-safe setup runs at every client, worker and replayer hook, and a callback that calls
         # `logfire.configure()` would reset Logfire (shutting down its span processor) each time, so call it once.
@@ -124,24 +124,24 @@ class LogfirePlugin(SimplePlugin):
         return instance
 
     def configure_client(self, config: ClientConfig) -> ClientConfig:
-        if self.replay_safe:
+        if self._replay_safe:
             self._setup_replay_safe_instrumentation()
         return super().configure_client(config)
 
     def configure_replayer(self, config: ReplayerConfig) -> ReplayerConfig:
-        if self.replay_safe:
+        if self._replay_safe:
             self._setup_replay_safe_instrumentation()
         return super().configure_replayer(config)
 
     def configure_worker(self, config: WorkerConfig) -> WorkerConfig:
-        if self.replay_safe:
+        if self._replay_safe:
             self._setup_replay_safe_instrumentation()
         return super().configure_worker(config)
 
     async def connect_service_client(
         self, config: ConnectConfig, next: Callable[[ConnectConfig], Awaitable[ServiceClient]]
     ) -> ServiceClient:
-        logfire = self._setup_replay_safe_instrumentation() if self.replay_safe else self._get_logfire()
+        logfire = self._setup_replay_safe_instrumentation() if self._replay_safe else self._get_logfire()
 
         if self.metrics:
             logfire_config = logfire.config
