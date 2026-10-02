@@ -3148,12 +3148,20 @@ async def test_audio_whose_send_was_cancelled_doesnt_hold_the_pump_back(monkeypa
     monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
 
     class _Stuck(_AudioSink):
+        def __init__(self) -> None:
+            super().__init__()
+            self.sending = anyio.Event()
+
         async def _send_event(self, event: dict[str, Any]) -> None:
+            self.sending.set()
             await anyio.sleep_forever()
 
     connection = _Stuck()
     sending = asyncio.create_task(connection.send(BinaryAudio(data=bytes(48000), media_type='audio/pcm')))
-    await asyncio.sleep(0)
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await connection.sending.wait()
+    # A second of audio booked while it was going out.
+    assert connection._idle_frame_due() == pytest.approx(6.3)  # pyright: ignore[reportPrivateUsage]
     sending.cancel()
     with pytest.raises(asyncio.CancelledError):
         await sending
