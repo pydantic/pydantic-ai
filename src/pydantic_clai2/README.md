@@ -149,6 +149,28 @@ interrupted turns are closed out by core on the next prompt, without replaying
 those tools. External application cancellation still propagates, and completed
 tool side effects cannot be undone.
 
+## Rewinding a conversation
+
+Between turns, press Esc twice within half a second to open **Rewind conversation**.
+Use Up/Down to choose an earlier prompt, then Enter to rewind. The newest prompt
+is selected first. Esc or Ctrl-C closes the menu without changing your draft or
+conversation. An empty conversation shows a disabled placeholder.
+
+Rewinding removes the selected prompt and all later messages from the saved
+conversation, then restores that prompt and its image attachments to the editor.
+This replaces any unsent draft and its attachments; cancel the menu to keep them.
+Edit the restored prompt and press Enter when ready. It does **not** undo file changes or other
+tool side effects, replay tools, or erase the terminal scrollback. Only prompts
+still present in the retained history are available. Prompts predating retained
+rewritten context, such as a compaction summary, are disabled even if compaction
+kept a copy of the prompt. That summary can contain later facts, so the original
+rewind boundary no longer exists. Prompts with attachment types the editor
+cannot restore are also disabled.
+
+A press that cancels a running turn, closes completions, or leaves history search
+does not count toward the shortcut. Wait for queued prompts to finish first.
+Typing another key or opening another menu resets the double-Esc sequence.
+
 ## Shell commands with `!`
 
 A line that starts with `!`, after trimming surrounding whitespace, runs in the

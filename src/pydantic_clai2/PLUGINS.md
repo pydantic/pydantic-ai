@@ -2141,6 +2141,10 @@ events, including an explicit window override, and clears the window when unload
 `Transcript` and a detached `Status`, so tests need no special case. The status
 row itself is CLAI's; a plugin adds to it with `get_status_segments`.
 
+The double-Esc rewind menu also uses `commit_messages` between turns. It removes
+the selected prompt and later history, but does not undo plugin state, file
+changes, or other tool side effects. It never replays tools or fires turn hooks.
+
 ### Add to the status row: `get_status_segments()`
 
 Each segment is a function that takes no arguments and returns a short string. It
