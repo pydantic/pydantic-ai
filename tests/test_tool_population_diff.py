@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-from pydantic_ai.capabilities import PrepareTools, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, PrepareTools, ProcessHistory
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -26,7 +27,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile, ToolAdditionMode, ToolDeferralMode
@@ -70,6 +71,16 @@ def _unlock_then_call_later(messages: list[ModelMessage], info: AgentInfo) -> Mo
     if 'unlock' not in returned:
         return ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='c1')])
     if 'later' in names and 'later' not in returned:
+        return ModelResponse(parts=[ToolCallPart('later', {}, tool_call_id='c2')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+def _unlock_later_done(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call `unlock`, then `later`, then finish, whatever `info.function_tools` lists (it omits a `via_history` tool)."""
+    returned = {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolReturnPart)}
+    if 'unlock' not in returned:
+        return ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='c1')])
+    if 'later' not in returned:
         return ModelResponse(parts=[ToolCallPart('later', {}, tool_call_id='c2')])
     return ModelResponse(parts=[TextPart('done')])
 
@@ -338,11 +349,13 @@ async def test_stripped_delta_falls_back_to_an_ordinary_tools_entry():
         toolset.add_function(_later, name='later')
         return 'unlocked'
 
-    model = FunctionModel(_recording(_unlock_then_call_later, seen), profile={'tool_addition_mode': 'with_definitions'})
+    model = FunctionModel(_recording(_unlock_later_done, seen), profile={'tool_addition_mode': 'with_definitions'})
     result = await Agent(model, toolsets=[toolset], capabilities=[ProcessHistory(strip_deltas)]).run('go')
 
     assert result.output == 'done'
-    assert seen[1].tool_visibility == {'unlock': 'visible', 'later': 'visible'}
+    # The delta is recorded after history processing, so the processor first sees (and strips) it a step later.
+    assert seen[1].tool_visibility == {'unlock': 'visible', 'later': 'via_history'}
+    assert seen[2].tool_visibility == {'unlock': 'visible', 'later': 'visible'}
 
 
 @pytest.mark.parametrize(
@@ -367,6 +380,34 @@ async def test_newcomer_visibility_follows_the_addition_channel(
 
     assert seen[1].introduced_tool_names == {'later'}
     assert seen[1].tool_visibility == {'unlock': 'visible', 'later': visibility}
+
+
+async def test_hook_filtered_tool_is_diffed_as_sent():
+    """The diff runs on what `before_model_request` returns, so a tool a hook withheld from the first request is a newcomer when it appears."""
+    seen: list[ModelRequestParameters] = []
+
+    class HideLaterOnFirstStep(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if ctx.run_step == 1:
+                params = request_context.model_request_parameters
+                request_context.model_request_parameters = replace(
+                    params, function_tools=[tool for tool in params.function_tools if tool.name != 'later']
+                )
+            return request_context
+
+    agent = Agent(
+        FunctionModel(_recording(_unlock_then_call_later, seen), profile={'tool_addition_mode': 'with_definitions'}),
+        capabilities=[HideLaterOnFirstStep()],
+    )
+    agent.tool_plain(name='unlock')(lambda: 'unlocked')
+    agent.tool_plain(name='later')(_later)
+
+    result = await agent.run('go')
+
+    assert _deltas(result.all_messages()) == [['later']]
+    assert seen[1].tool_visibility == {'unlock': 'visible', 'later': 'via_history'}
 
 
 def _responses_text() -> Any:

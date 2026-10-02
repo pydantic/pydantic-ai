@@ -1720,7 +1720,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             raise exceptions.UserError('No message history, user prompt, or instructions provided')
 
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
-        model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, self.request)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 
@@ -1752,6 +1751,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         # Fill in framework metadata the history processors may have left unset on a new `ModelRequest`.
         fill_run_metadata(messages[-1], run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
+
+        # Diff the tools this request will actually carry — after the hooks, which may have changed them —
+        # and record newcomers on the outgoing tail before it becomes the durable history.
+        model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, messages[-1])
 
         # The hook may have rewritten the instruction parts the model will actually be sent, so bring
         # the request that records them back in step. It's the request this step created and set
@@ -1936,8 +1939,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         instruction_parts = [_messages.InstructionPart(content=instructions)] if instructions else None
 
         model_request_parameters = await _prepare_request_parameters(ctx, instruction_parts)
-        # A continuation completes a turn the provider already has, so nothing is appended to it.
-        model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, None)
         model_settings = ctx.deps.get_model_settings(run_context) or ModelSettings()
         run_context.model_settings = model_settings
 
@@ -1966,6 +1967,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         ):
             raise exceptions.UserError('Processed history must end with a suspended `ModelResponse` to resume.')
 
+        # A continuation completes a turn the provider already has, so nothing is appended to it.
+        model_request_parameters = _record_tool_population_changes(ctx, model_request_parameters, None)
         model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
 
         # History bookkeeping operates on the base history ending in the `ModelRequest` that
@@ -2783,6 +2786,10 @@ def _record_tool_population_changes(
 ) -> models.ModelRequestParameters:
     """Diff this step's tool population against what the model has been given, and record the difference.
 
+    It runs on the parameters `before_model_request` hooks return, so it compares what requests
+    actually carry, and appends to the outgoing history's last request after history processing; a
+    processor sees the delta from the next step on.
+
     This is the one place a mid-run change to the set of immediately-available function tools enters
     history, whatever caused it: a `FunctionToolset.add_function()` call from inside a tool, a dynamic
     toolset or MCP server returning a different list, a `prepare_tools` hook letting a tool through.
@@ -2821,7 +2828,7 @@ def _record_tool_population_changes(
     announced = [name for name in introduced if name not in discovered]
     if announced and request is not None:
         request.parts = [*request.parts, _messages.ToolAvailabilityDeltaPart(tools_added=announced)]
-        # Shared by reference with the run's `RunContext`s, so hooks later in this step see the reveal.
+        # Shared by reference with the run's `RunContext`s, so tool calls this step dispatches see the reveal.
         discovered.update(announced)
     return replace(parameters, introduced_tool_names=set(introduced))
 

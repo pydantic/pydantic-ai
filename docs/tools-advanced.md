@@ -1045,6 +1045,8 @@ The record lives in the message history, so a retried request or a later run ove
 
 Only tools that appear within a single run are detected. A tool that's new to a later run over the same history, such as one unlocked after a [tool approval](deferred-tools.md#human-in-the-loop-tool-approval), is sent in `tools[]` from that run's first request. Tools that disappear, and tools whose definition changes under the same name, are also sent as-is.
 
+Under [durable execution](durable_execution/overview.md), drive mid-run changes from code that runs as part of the workflow, such as a `prepare_tools` function or a dynamically built toolset that reads run state. On Temporal, tools run in activities, which aren't re-executed when the workflow is replayed, so a tool that calls `add_function()` makes a change that replay won't reproduce.
+
 For a genuinely open-ended tool universe, route everything through a single, stable tool. The harness [`CodeMode`](https://pydantic.dev/docs/ai/harness/code-mode/) capability collapses many tools into one `run_code` tool whose definition stays byte-stable; newly discovered tools are surfaced as callables inside the sandbox rather than as new tool schemas, keeping the tool-definitions prefix — and its cache — intact across discoveries.
 
 #### Seeing it in a trace
