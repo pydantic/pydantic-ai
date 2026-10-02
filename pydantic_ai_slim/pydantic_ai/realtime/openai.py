@@ -27,8 +27,6 @@ try:
     from openai.types.realtime import (
         RealtimeErrorEvent,
         RealtimeResponseUsage,
-        RealtimeSessionCreateRequest,
-        SessionCreatedEvent,
     )
     from openai.types.realtime.conversation_item_input_audio_transcription_completed_event import (
         UsageTranscriptTextUsageDuration,
@@ -163,12 +161,18 @@ class _SidebandContentPartAdded(BaseModel):
     part: _SidebandContentPart
 
 
-class _SidebandSession(BaseModel):
+class _HandshakeSession(BaseModel):
     model: str | None = None
 
 
-class _SidebandSessionUpdated(BaseModel):
-    session: _SidebandSession
+class _HandshakeSessionEvent(BaseModel):
+    """The slice of a handshake's `session.created` or `session.updated` frame the connection reads.
+
+    The SDK's session models close their enums (modalities, formats, turn detection, truncation, ...) to
+    today's values, so a server-side default it doesn't know yet would fail the whole handshake.
+    """
+
+    session: _HandshakeSession
 
 
 LatestOpenAIRealtimeModelNames = Literal['gpt-realtime', 'gpt-realtime-2.1', 'gpt-realtime-2.1-mini']
@@ -1535,7 +1539,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             # for `session.updated` instead of using `connect_openai_protocol`'s new-session handshake.
             await ws.send(to_json({'type': SESSION_UPDATE_EVENT, 'session': session_config}).decode())
             updated = await expect_event(ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout)
-            server_model = _SidebandSessionUpdated.model_validate(updated).session.model
+            server_model = _HandshakeSessionEvent.model_validate(updated).session.model
             return ws
 
         try:
@@ -1577,13 +1581,11 @@ class OpenAIRealtimeModel(RealtimeModel):
     def _session_model_name(self, created: dict[str, Any], model_settings: OpenAIRealtimeModelSettings) -> str | None:
         """The server-reported model name from the `session.created` handshake frame.
 
-        Settings-aware because a provider's handshake shape can vary by *session*: Azure Voice Live's
-        beta `session.created` doesn't carry the GA `type` discriminator this SDK model requires.
+        Settings-aware because a provider's handshake shape can vary by *session*, as Azure's does for
+        Voice Live.
         """
         del model_settings
-        session = SessionCreatedEvent.model_validate(created).session
-        model = session.model if isinstance(session, RealtimeSessionCreateRequest) else None
-        return model if isinstance(model, str) else None
+        return _HandshakeSessionEvent.model_validate(created).session.model
 
     @asynccontextmanager
     async def connect(

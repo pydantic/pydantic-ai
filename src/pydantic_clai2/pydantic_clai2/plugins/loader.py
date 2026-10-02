@@ -13,9 +13,17 @@ from anyio.lowlevel import checkpoint
 from pydantic import BaseModel, JsonValue, ValidationError
 from rich.console import Console
 
-from pydantic_ai.capabilities import AgentCapability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, WrapperCapability
 from pydantic_clai2.commands import Commands, added_plugin
 from pydantic_clai2.config import PluginSettings
+from pydantic_clai2.config.features import CAPABILITY_REQUIREMENTS
+from pydantic_clai2.config.plugin_requirements import (
+    Requirements,
+    apply_requirements,
+    ignored_notice,
+    stored_requirements,
+    withheld,
+)
 from pydantic_clai2.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
 from pydantic_clai2.plugins import (
     Conversation,
@@ -35,7 +43,8 @@ from pydantic_clai2.plugins import (
     bare_screen,
     collect,
 )
-from pydantic_clai2.plugins._factories import build, import_file
+from pydantic_clai2.plugins._factories import build, import_file, settings_capability
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, PluginGuard
 from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.spinners import Spinner
@@ -105,6 +114,8 @@ class PluginEntry(Generic[DepsT]):
     project: bool = False
     loaded: LoadedPlugin[DepsT] | None = None
     error: str | None = None
+    ignored: str | None = None
+    """The notice for saved settings this build ignored at the last load, if any."""
 
     @property
     def name(self) -> str:
@@ -172,6 +183,11 @@ class PluginLoader(Generic[DepsT]):
         self._loaded: dict[str, LoadedPlugin[DepsT]] = {}
         # A `/plugins add` declaration being tried before it is saved, so rejected settings never reach the store.
         self._staged: dict[str, PluginSettings] = {}
+        # Capabilities that rejected their configuration while a run was set up, by plugin, until it loads again.
+        self._suspended: dict[str, list[object]] = {}
+        # The capability CLAI built from a `module:Class` declaration's settings, by plugin.
+        self._from_settings: dict[str, AbstractCapability[DepsT]] = {}
+        self._guards: dict[str, PluginGuard[DepsT]] = {}
         self.enabled = enabled
 
     @property
@@ -202,6 +218,7 @@ class PluginLoader(Generic[DepsT]):
                 project=_same_plugin(declared[name], self._project.get(name)),
                 loaded=previous.loaded if previous else None,
                 error=previous.error if previous else None,
+                ignored=previous.ignored if previous else None,
             )
         for name, previous in self._entries.items():
             if name not in refreshed and previous.loaded is not None:
@@ -277,8 +294,42 @@ class PluginLoader(Generic[DepsT]):
         return entry
 
     def capabilities(self) -> list[AgentCapability[DepsT]]:
-        """Bound on every run, in load order."""
-        return [capability for loaded in self._loaded.values() for capability in loaded.capabilities]
+        """Bound on every run, in load order, minus capabilities left out by `suspend`."""
+        return [capability for _, capability in self._active_capabilities()]
+
+    def run_capabilities(self) -> list[AgentCapability[DepsT]]:
+        """`capabilities()` as a run binds them, with settings-built capabilities guarded.
+
+        Only a capability CLAI built itself from a `module:Class` declaration's saved settings is
+        guarded, and only when nothing in it is a `Hooks`: there a setup `UserError` can only mean
+        those settings are wrong. Capabilities a plugin's `get_capabilities` returns, and any policy hook, stay
+        unguarded, so whatever they raise still fails closed every turn.
+        """
+        return [self._guarded(name, capability) for name, capability in self._active_capabilities()]
+
+    def _guarded(self, name: str, capability: AgentCapability[DepsT]) -> AgentCapability[DepsT]:
+        built = self._from_settings.get(name)
+        if built is None or capability is not built or _has_hooks(built):
+            return capability
+        if name not in self._guards:
+            self._guards[name] = PluginGuard[DepsT](built, plugin=name)
+        return self._guards[name]
+
+    def _active_capabilities(self) -> list[tuple[str, AgentCapability[DepsT]]]:
+        return [
+            (name, capability)
+            for name, host in self._loaded.items()
+            for capability in host.capabilities
+            if not any(capability is suspended for suspended in self._suspended.get(name, ()))
+        ]
+
+    def suspend(self, error: CapabilitySetupError) -> str:
+        """Leave the failed capability out of later runs until its plugin loads again; return the notice."""
+        self._suspended.setdefault(error.plugin, []).append(error.capability)
+        return (
+            f'Leaving the failing {error.plugin} capability out of later turns; '
+            f'fix its settings, then run /plugins reload {error.plugin}.'
+        )
 
     def renderers(self) -> list[Renderer]:
         """Consulted before the default display, in load order."""
@@ -328,6 +379,10 @@ class PluginLoader(Generic[DepsT]):
                 except PluginError as exc:
                     if not _module_absent(entry, exc.error):
                         self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
+                # `load` refreshed the entries, so read the notice from the current one.
+                ignored = self._entries[entry.name].ignored
+                if ignored is not None:
+                    self._console.print(ignored, style=theme.color(theme.WARNING), markup=False)
 
     async def load(self, name: str, *, fresh: bool = False) -> None:
         """Import, build the plugin, collect its contributions, and fire `session_start`.
@@ -337,21 +392,31 @@ class PluginLoader(Generic[DepsT]):
         entry = self._entry(name)
         if entry.loaded is not None:
             return
+        declaration, ignored = self._applied(entry)
+        entry.ignored = ignored
+
+        def save(settings: dict[str, JsonValue]) -> None:
+            self._save(entry, host, settings)
+
         host = PluginHost[DepsT](
             name=name,
             console=self._console,
-            settings=entry.declaration.settings,
+            settings=declaration.settings,
             full_screen=self._full_screen,
             conversation=self._conversation,
             status=self._status,
-            save_settings=lambda settings: self._save(entry, settings),
+            save_settings=save,
+            requirements=CAPABILITY_REQUIREMENTS.get(declaration.factory),
         )
         activating = False
         plugin: Plugin[BaseModel, DepsT] | None = None
         try:
             module = self._import(entry, fresh=fresh)
             activating = True
-            plugin = build(module, entry.declaration, host)
+            plugin = build(module, declaration, host)
+            built = settings_capability(plugin)
+            if built is not None:
+                self._from_settings[name] = built
             loaded = collect(plugin)
             activating = False
             self._commands.register_many(loaded.commands)
@@ -369,15 +434,49 @@ class PluginLoader(Generic[DepsT]):
             raise PluginError(name, exc) from exc
         entry.error = None
 
-    def _save(self, entry: PluginEntry[DepsT], settings: dict[str, JsonValue]) -> None:
-        """Persist a host's saved settings, or, while `/plugins add` is trying them, update what it will save."""
+    def _applied(self, entry: PluginEntry[DepsT]) -> tuple[PluginSettings, str | None]:
+        """The declaration to load, without saved settings that need features this build lacks, and the notice.
+
+        A dropped setting takes the shipped declaration's value, else the plugin's own default. Shipped
+        and staged declarations are this build's own or the user's just now, so they are taken as they are.
+        """
+        saved = entry.declaration
+        if entry.name in self._staged or entry.shipped or not saved.settings:
+            return saved, None
+        shipped = self._project.get(entry.name) or self._builtin.get(entry.name)
+        defaults = shipped.settings if shipped is not None and shipped.factory == saved.factory else {}
+        requirements = stored_requirements(self._store.plugin_requirements(entry.name), saved.settings)
+        applied = apply_requirements(saved.settings, requirements, defaults=defaults)
+        if not applied.ignored:
+            return saved, None
+        # Validated again so the declaration's own defaults, such as `Coder`'s `sub_agents`, apply.
+        declaration = PluginSettings.model_validate({**saved.model_dump(), 'settings': applied.settings})
+        return declaration, ignored_notice(entry.name, applied.ignored)
+
+    def _save(self, entry: PluginEntry[DepsT], host: PluginHost[DepsT], settings: dict[str, JsonValue]) -> None:
+        """Persist a host's saved settings, or, while `/plugins add` is trying them, update what it will save.
+
+        Saved values this build ignored are written back unchanged, with their tags: it cannot judge them.
+        """
         update: dict[str, object] = {'settings': settings, 'enabled': True}
         staged = self._staged.get(entry.name)
         if staged is not None:
             self._staged[entry.name] = staged.model_copy(update=update)
             return
         # The declaration saved now, not at load: another CLAI process may have replaced it since.
-        self._store.save_plugin(self._saved(entry).model_copy(update=update))
+        stored = next((saved for saved in self._store.plugins() if saved.id == entry.name), None)
+        if stored is None:
+            self._store.save_plugin(entry.declaration.model_copy(update=update), requires=host.requirements)
+            return
+        tags = stored_requirements(self._store.plugin_requirements(entry.name), stored.settings)
+        update['settings'] = {**settings, **withheld(stored.settings, tags)}
+        self._store.save_plugin(stored.model_copy(update=update), requires=host.requirements)
+
+    def _requirements(self, entry: PluginEntry[DepsT]) -> Requirements:
+        """What the plugin declares for its settings: its host's, or the capability table's while it is not loaded."""
+        if entry.loaded is not None:
+            return entry.loaded.plugin.host.requirements
+        return CAPABILITY_REQUIREMENTS.get(entry.declaration.factory, {})
 
     async def _failed_load(self, entry: PluginEntry[DepsT], plugin: Plugin[BaseModel, DepsT] | None) -> None:
         """Give a plugin that was built the `session_end` it would get on unload, then drop it."""
@@ -419,6 +518,9 @@ class PluginLoader(Generic[DepsT]):
             self._commands.unregister(command.name for command in entry.loaded.commands)
         entry.loaded = None
         self._loaded.pop(entry.name, None)
+        self._suspended.pop(entry.name, None)
+        self._from_settings.pop(entry.name, None)
+        self._guards.pop(entry.name, None)
 
     async def close(self, reason: SessionEndReason) -> None:
         """Unload every plugin, last loaded first."""
@@ -439,23 +541,31 @@ class PluginLoader(Generic[DepsT]):
         """Remember the plugin as enabled and load it now."""
         entry = self._entry(name)
         _requested('enable', name)
-        self._store.save_plugin(entry.declaration.model_copy(update={'enabled': True}))
+        declaration = entry.declaration.model_copy(update={'enabled': True})
+        self._store.save_plugin(declaration, requires=self._requirements(entry))
         await self.load(name)
+        # `load` refreshed the entries; only a loaded plugin can say what its settings need.
+        loaded = self._entries[name].loaded
+        host = loaded.plugin.host if loaded is not None else None
+        if host is not None and host.requirements:
+            self._store.save_plugin(self._saved(entry), requires=host.requirements)
 
     async def disable(self, name: str) -> None:
         """Unload the plugin now and remember it as disabled."""
         entry = self._entry(name)
         _requested('disable', name)
+        requires = self._requirements(entry)
         await self.unload(name)
-        self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}))
+        self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
 
     async def remove(self, name: str) -> str:
         """Unload the plugin and forget its saved declaration; a shipped declaration comes back as declared."""
         entry = self._entry(name)
         _requested('remove', name)
+        requires = self._requirements(entry)
         await self.unload(name)
         if entry.path is not None and not entry.shipped:
-            self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}))
+            self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
             return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
         self._store.delete_plugin(name)
         shipped = self._project.get(name) or self._builtin.get(name)
@@ -530,9 +640,11 @@ class PluginLoader(Generic[DepsT]):
                     await self.load(rest[0])
                 raise
             except BaseException:
-                self._store.save_plugin(self._staged.pop(rest[0]))
+                requires = self._requirements(self._entry(rest[0]))
+                self._store.save_plugin(self._staged.pop(rest[0]), requires=requires)
                 raise
-            self._store.save_plugin(self._staged.pop(rest[0]))
+            requires = self._requirements(self._entry(rest[0]))
+            self._store.save_plugin(self._staged.pop(rest[0]), requires=requires)
             _requested('add', rest[0])
             if existing is None:
                 return await self._configure_new(rest[0], f'Added and loaded {rest[0]}.')
@@ -550,7 +662,7 @@ class PluginLoader(Generic[DepsT]):
             return await self.configure(name)
         if action == 'enable' and self._entry(name).loaded is None:
             await self.enable(name)
-            return await self._configure_new(name, f'Enabled {name}.')
+            return await self._configure_new(name, self._with_notice(name, f'Enabled {name}.'))
         actions = {
             'enable': (self.enable, 'Enabled'),
             'disable': (self.disable, 'Disabled'),
@@ -560,7 +672,12 @@ class PluginLoader(Generic[DepsT]):
             raise ValueError(f'Unknown plugins action: {action}')
         run, past = actions[action]
         await run(name)
-        return f'{past} {name}.'
+        return self._with_notice(name, f'{past} {name}.')
+
+    def _with_notice(self, name: str, message: str) -> str:
+        """`message`, then the plugin's ignored-settings notice when its last load had one."""
+        ignored = self._entry(name).ignored
+        return f'{message}\n{ignored}' if ignored else message
 
     def _import(self, entry: PluginEntry[DepsT], *, fresh: bool) -> ModuleType:
         if entry.path is not None:
@@ -568,6 +685,18 @@ class PluginLoader(Generic[DepsT]):
         module_name = entry.declaration.factory.partition(':')[0]
         module = importlib.import_module(module_name)
         return importlib.reload(module) if fresh else module
+
+
+def _has_hooks(capability: AbstractCapability[DepsT]) -> bool:
+    """Whether any part of `capability` is a `Hooks`, which may gate a run on purpose."""
+    if isinstance(capability, Hooks):
+        return True
+    # `apply` does not descend into a wrapper's lone leaf, so look behind every wrapper too.
+    if isinstance(capability, WrapperCapability) and _has_hooks(capability.wrapped):
+        return True
+    parts: list[AbstractCapability[DepsT]] = []
+    capability.apply(parts.append)
+    return any(part is not capability and _has_hooks(part) for part in parts)
 
 
 def _requested(action: str, name: str) -> None:
