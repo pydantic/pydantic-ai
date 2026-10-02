@@ -2809,7 +2809,7 @@ class WorkspaceRef:
     """Provider-specific identifier for the environment."""
 
 
-@dataclass(repr=False, kw_only=True)
+@dataclass(repr=False, kw_only=True, frozen=True)
 class ModelRequestAttempt:
     """An attempt at a model request that did not produce the response it is recorded on.
 
