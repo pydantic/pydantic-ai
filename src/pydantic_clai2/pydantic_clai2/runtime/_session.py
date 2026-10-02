@@ -37,6 +37,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -214,6 +215,8 @@ class Session(Generic[DepsT, OutputT]):
         self._run_context: RunContext[DepsT] | None = None
         self._pending_steering: list[Sequence[UserContent]] = []
         self.on_context_usage: Callable[[int], None] | None = None
+        self.on_setup_error: Callable[[CapabilitySetupError], None] | None = None
+        """Told when a guarded plugin capability rejected its configuration, before the failed turn's error propagates."""
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -404,8 +407,9 @@ class Session(Generic[DepsT, OutputT]):
                             cancelled.add_note(f'Could not save cancelled turn: {exc}')
                         logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
                     raise
-                except Exception:
+                except Exception as exc:
                     self._accepting_steering = False
+                    self._report_setup_errors(exc)
                     if self.conversations is not None:
                         self._messages = messages or self._messages
                         self._mark_interrupted()
@@ -416,6 +420,14 @@ class Session(Generic[DepsT, OutputT]):
             self._run_context = None
             self._pending_steering.clear()
             self._running = False
+
+    def _report_setup_errors(self, error: BaseException) -> None:
+        """Tell `on_setup_error` about each setup failure from one of this session's guards; the turn still fails."""
+        if self.on_setup_error is None:
+            return
+        for setup_error in setup_errors(error) or ():
+            if raised_here(self.plugins, setup_error):
+                self.on_setup_error(setup_error)
 
     async def _stream(self, ctx: RunContext[DepsT], events: AsyncIterable[AgentStreamEvent]) -> None:
         self._accepting_steering = True
