@@ -716,8 +716,8 @@ def test_inline_defs_recursive_json_pointer_ref_raises(schema: dict[str, Any], r
 def test_inline_defs_dangling_ref_raises(ref: str):
     """A `$ref` that resolves to no schema object raises rather than inlining something else.
 
-    RFC 6901 array indexes are ASCII digits without a leading zero, so `01`, an Arabic-Indic `1` and a
-    superscript `2` resolve to nothing, even where a looser match would reach a schema in `prefixItems`.
+    RFC 6901 array indexes are ASCII digits without a leading zero. Under a looser digit check, `01` and an
+    Arabic-Indic `1` would reach `prefixItems[1]`, and a superscript `2` passes `str.isdigit()` but crashes `int()`.
     Unit test: the walker raises before any request is built.
     """
     schema = {
