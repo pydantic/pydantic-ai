@@ -42,8 +42,12 @@ Python 3.10+ is required.
 CLAI file tools can access paths outside the workspace, including `/tmp`, and do
 not protect secret files or repository metadata. OS permissions still apply.
 CLAI attaches the launch directory as the agent's workspace, so relative paths
-and commands start there. Commands get CLAI's environment minus LLM provider API
-keys. Use a custom agent with `Coder()` to retain workspace-scoped file tools.
+and commands start there. A plugin or agent capability that supplies its own
+workspace, such as a sandbox, takes the launch directory's place; a capability
+function that supplies none leaves the launch directory in use. Commands get
+CLAI's environment minus LLM provider API keys. To keep the file tools inside the
+launch directory, set **Unrestricted filesystem** to `false` in
+`/plugins configure coder`. Shell commands are not restricted either way.
 
 Tool calls show a single-line summary followed by a blank line by default.
 Tool and argument names are pink; argument values and bullet markers are muted grey. Shell output, exit details and
