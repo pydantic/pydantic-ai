@@ -1182,6 +1182,7 @@ class RealtimeSession:
                     if report.context_window_used is not None:
                         self._reported_context_window_used = report.context_window_used
                     self.usage.incr(report.usage)  # usage-attribution: the session owns its spans
+                    self._span_usage.incr(report.usage)  # usage-attribution: what the session span reports
                     recorded = True
         except self._connection.transport_errors:
             pass
