@@ -308,6 +308,102 @@ RunContext and the event, or core's @on_event(EventClass) on a capability method
 Match on event classes rather than tool-name strings. If an event supports
 cancel(), use its documented cancellation semantics.
 
+## Settings that need a feature: requirement tags
+
+Every CLAI on a machine shares one settings database (~/.config/pydantic-clai2/config.db),
+whatever code it runs: other worktrees, branches, and installs. A plugin setting that one
+build supports can break another. Version numbers cannot tell them apart, because worktrees
+are diverging branches that report the same dev version. Feature names can.
+
+### When a setting needs a tag
+
+Tag a setting whenever its valid values or its meaning depend on code that other builds may
+lack. Typical cases: a new value of an existing setting, a setting that only works with a new
+code path, or an old setting whose meaning changed. A setting every build understands the same
+way needs no tag.
+
+Tag only settings whose default is the safe choice. A build without the feature drops the
+saved value and uses the default, so dropping must never loosen a restriction.
+
+### Name the feature and declare it
+
+1. Pick a stable, descriptive name: lowercase words joined by hyphens, such as
+   stock-bound-delegation. Name the capability, not the branch or ticket. Never rename or reuse
+   a name; other builds compare names as plain strings.
+2. Add it to SUPPORTED_FEATURES in pydantic_clai2/config/features.py, in the same change that
+   adds the code behind it:
+
+```python
+SUPPORTED_FEATURES: frozenset[str] = frozenset({'stock-bound-delegation'})
+```
+
+### Tag the setting
+
+A Plugin subclass declares tags where it reads its settings. Override from_host so
+requirements are recorded before the plugin is built. Keys are the saved names,
+aliases included:
+
+```python
+class Fancy(Plugin[Options]):
+    @classmethod
+    def from_host(cls, host):
+        settings = host.settings(Options, requires={'mode': ['fancy-mode']})
+        return cls(host, settings)
+```
+
+A capability class declared as module:Class has no Plugin subclass, so list its tags in
+CAPABILITY_REQUIREMENTS in config/features.py, keyed by the factory string.
+
+That is all. Writers attach the tags for you: host.save_settings, /plugins add, /plugins
+enable and disable, and the settings menus all store them beside the declaration, in a separate
+plugin_requirements table. Never put tags in the settings JSON or in PluginSettings: builds
+before this feature pass settings to the plugin and validate declarations strictly, so an
+unknown key would break their plugin loading.
+
+### What each build does with a tag
+
+- A build that lists every feature a setting needs applies it as saved.
+- A build that lacks one, or does not recognize a name, ignores that one setting. It uses the
+  shipped declaration's value (for a built-in) or the plugin's own default, keeps every other
+  setting, and prints one line per plugin, such as
+  coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
+- Reading never rewrites anything. When that build saves the plugin's settings, it writes the
+  ignored values back unchanged, still tagged. A tag only goes away when its value changes.
+- Builds older than requirement tags never read the table, so they apply every setting as
+  before. Tags cannot protect them. The fail-soft layer below limits the damage in builds that
+  have it.
+
+### Worked example: Coder's sub_agents
+
+A branch binds Coder delegation to its stock agent, so its users can save "sub_agents": true.
+A build without that support passes Coder at run level, where SubAgents(include_self=True)
+raises UserError on every turn. The branch with support:
+
+```python
+# config/features.py on the branch with delegation support
+SUPPORTED_FEATURES: frozenset[str] = frozenset({'stock-bound-delegation'})
+CAPABILITY_REQUIREMENTS = {
+    'pydantic_ai_harness.coder:Coder': {'sub_agents': frozenset({'stock-bound-delegation'})},
+}
+```
+
+Saving coder there stores {"sub_agents": ["stock-bound-delegation"]} for it. Another build
+with tags but without the feature loads coder with the built-in "sub_agents": false and shows
+the notice. A build older than tags still applies true; with fail-soft, only its first turn fails.
+
+### Fail-soft at run setup
+
+A setting that slips through untagged costs one turn and then one capability, not every
+turn. CLAI guards each capability it builds itself from a module:Class declaration's saved
+settings (such as coder), unless any part of it is a Hooks. Capabilities a plugin's get_capabilities
+returns, and every policy hook, are never guarded. When a guarded one raises UserError while
+the run is set up (in for_run, or in wrap_run before it hands over to the run), that turn fails
+closed with the plugin named, and CLAI leaves the capability out of later turns until
+/plugins reload. The turn is not retried, so no other capability's setup runs twice, and a
+capability that refuses to run never gets skipped within the turn it refused.
+Errors from the model, tools, or hooks once the run is under way propagate as before, and
+Plugin handlers are never guarded, so a raising handler still fails closed.
+
 ## CLI UX and rendering
 
 Command handlers receive list[str] arguments and return a string or an awaitable

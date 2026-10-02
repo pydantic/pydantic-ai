@@ -13,6 +13,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Syst
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.compaction import FallbackCompaction
+from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import Session, chat
 from pydantic_clai2.builtin_plugins.compaction import CompactionPlugin
 from pydantic_clai2.config import PluginSettings, Settings
@@ -49,15 +50,28 @@ def two_turns() -> list[ModelMessage]:
     ]
 
 
-async def test_compact_sends_the_history_and_focus_to_the_summariser() -> None:
+@pytest.mark.parametrize(
+    'focus',
+    [
+        '',
+        'the auth work',
+        'don\'t lose the "auth" notes',
+        r'keep C:\work\notes and  the "unfinished section',
+        'preserve the decisions\nand the open questions',
+    ],
+)
+async def test_compact_sends_the_history_and_focus_to_the_summariser(focus: str) -> None:
     transcript = Transcript(messages=two_turns(), model=TestModel(custom_output_text='the gist'))
     plugin = make_plugin(transcript, protected_tokens=0)
     plugin.host.status.context_alert = True
     with capture_run_messages() as summary_run:
-        notice = await plugin.commands.execute_async('/compact the auth work')
+        notice = await plugin.commands.execute_async(f'/compact {focus}')
     prompt = summary_prompt(summary_run)
     assert 'User: hello there\nAssistant: hi\nUser: and again' in prompt
-    assert prompt.endswith('Give particular weight to: the auth work')
+    if focus:
+        assert prompt.endswith(f'Give particular weight to: {focus}')
+    else:
+        assert 'Give particular weight to:' not in prompt
     assert notice.startswith('Compacted 4 messages down to 3; about ') and notice.endswith(' tokens saved.')
     summary, first_request, last_response = transcript.messages
     assert isinstance(summary, ModelRequest) and isinstance(first_request, ModelRequest)
@@ -142,23 +156,62 @@ async def test_direct_fallback_capability_compacts_before_gauging(strategy: str)
     )
     assert not plugin.host.status.context_alert, 'the gauge measures the compacted request'
     assert plugin.host.status.context_tokens is not None and plugin.host.status.context_tokens < 850
+    assert plugin.host.status.context_window == 1000
     cramped = make_plugin(session, strategy=strategy, context_window=1, protected_tokens=50_000)
     session.plugins = cramped.capabilities
     await session.prompt('again')
     assert cramped.host.status.context_alert, 'a protected tail can still exceed the threshold'
 
 
-async def test_unloading_clears_the_context_alert() -> None:
+@pytest.mark.parametrize(
+    ('model_window', 'override', 'expected'),
+    [(1_000_000, None, 1_000_000), (1_000_000, 200_000, 200_000), (None, None, None)],
+)
+async def test_gauge_uses_known_window_not_fallback(
+    model_window: int | None, override: int | None, expected: int | None
+) -> None:
+    model = TestModel(profile={'context_window': model_window})
+    session = Session(Agent(model), deps=None)
+    plugin = make_plugin(session, context_window=override)
+    plugin.host.status.context_window = 123
+    session.plugins = plugin.capabilities
+    await session.prompt('hello')
+    assert plugin.host.status.context_window == expected
+    assert plugin.host.status.context_tokens is not None
+
+
+async def test_unloading_clears_the_context_window_and_alert() -> None:
     plugin = make_plugin()
     plugin.host.status.context_alert = True
     plugin.host.status.context_tokens = 123
+    plugin.host.status.context_window = 1_000_000
     await plugin.dispatch(SessionEnd(reason='exit'))
     assert not plugin.host.status.context_alert
+    assert plugin.host.status.context_window is None
     assert plugin.host.status.context_tokens == 123
 
 
+@pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
+async def test_compact_is_saved_without_another_turn(tmp_path: Path, strategy: str) -> None:
+    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    agent = Agent(TestModel(custom_output_text='the gist'))
+    session = Session(agent, deps=None, conversations=store, workspace=tmp_path)
+    await session.prompt('first')
+    await session.prompt('second')
+    before = session.messages
+    plugin = make_plugin(session, strategy=strategy, protected_tokens=0)
+
+    notice = await plugin.commands.execute_async('/compact don\'t lose the "auth" notes')
+
+    assert notice.startswith('Compacted 4 messages down to ')
+    assert session.messages != before
+    restored = Session(agent, deps=None, conversations=store, workspace=tmp_path)
+    await restored.resume(session.summary.id)
+    assert restored.messages == session.messages
+
+
 async def test_shell_loads_the_plugin_and_compacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    inputs(monkeypatch, ['first', 'second', '/compact', '/plugins list', '/exit'])
+    inputs(monkeypatch, ['first', 'second', '/compact don\'t lose the "auth" notes', '/plugins list', '/exit'])
     output = io.StringIO()
     await chat(
         Agent(TestModel()),

@@ -218,6 +218,44 @@ def test_saved_coder_declarations_keep_delegation_off(tmp_path: Path) -> None:
     }
 
 
+def test_database_without_requirement_tags_loads_unchanged(tmp_path: Path) -> None:
+    """A database from before requirement tags, written as those builds wrote it, keeps every setting."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('CREATE TABLE plugins (id TEXT PRIMARY KEY, declaration TEXT NOT NULL)')
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_ai_harness.coder:Coder", "enabled": true, '
+                '"settings": {"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true}}',
+            ),
+        )
+    store = SettingsStore(path)
+    assert store.plugins() == [
+        PluginSettings(
+            id='coder',
+            factory='pydantic_ai_harness.coder:Coder',
+            settings={'unrestricted_filesystem': True, 'repo_context': False, 'sub_agents': True},
+        )
+    ]
+    assert store.plugin_requirements('coder') is None
+    with closing(sqlite3.connect(path)) as connection:
+        snapshot = list(connection.iterdump())
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+    SettingsStore(path)
+    SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert list(connection.iterdump()) == snapshot
+        # Older builds refuse any other version, so the requirements table must not bump it.
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+        # Tags sit in their own table; older builds never read it.
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        assert 'plugin_requirements' in tables
+
+
 def test_saved_spinner_from_a_removed_plugin_is_kept(tmp_path: Path) -> None:
     """Plugin and user spinners are unknown when settings load, so any saved name survives."""
     path = tmp_path / 'config.db'
