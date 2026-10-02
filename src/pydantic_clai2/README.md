@@ -50,11 +50,12 @@ launch directory, set **Unrestricted filesystem** to `false` in
 `/plugins configure coder`. Shell commands are not restricted either way.
 
 Tool calls show a single-line summary followed by a blank line by default.
-Tool and argument names are pink; argument values and bullet markers are muted grey. Shell output, exit details and
-log paths, grep results, and file diffs stay out of the terminal; the model still
-receives full tool results. Long summaries are clipped to the terminal width.
-Use `/set display.tool_output true` to show detailed output again, or
-`/set display.tool_output false` to return to summaries. In detailed mode,
+Tool and argument names are pink; argument values and bullet markers are muted grey.
+Successful file writes and edits also show their diffs, including in compact mode.
+Shell output, exit details and log paths, and grep results stay out of the terminal;
+the model still receives full tool results. Long summaries are clipped to the terminal width.
+Use `/set display.tool_output true` to show shell and grep details, or
+`/set display.tool_output false` to hide those details without hiding file diffs. In detailed mode,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
 
@@ -922,8 +923,8 @@ worktree directory name for detached HEAD. These labels are read when the browse
 opens, not historical branch names. Missing directories, non-Git workspaces, and
 unavailable Git fall back to directory labels. Separate repositories with the
 same name remain separate and use paths to distinguish them. Transcript previews
-and cross-directory confirmations keep the original saved path; resuming does
-not change directories or migrate saved data.
+keep the original saved path; resuming does not change directories or migrate
+saved data.
 
 CLAI saves accepted prompts before the first model request and saves the retained
 history after successful, failed, and cancelled turns. `/compact` commits its
@@ -946,6 +947,10 @@ The browser follows Code Puppy's project/session design:
 - Projects on the left, with session counts. The current directory is preselected.
   The selected project stays highlighted while browsing its sessions. **SELECT
   PROJECT** or **SELECT SESSION** labels the focused pane, with matching key hints.
+- A repository with sessions in more than one checkout (branch or worktree) lists
+  them beneath it, indented and dimmed. Select one to see only its sessions.
+  Sessions from deleted folders, such as removed worktrees, gather under
+  **missing folders** at the bottom.
 - Two-line session cards on the right: time, title, subtitle, tags, message and
   token counts. Recent sorting groups cards by local calendar date.
 - Enter opens a project or resumes a session. Right opens a scrollable transcript,
@@ -955,9 +960,9 @@ The browser follows Code Puppy's project/session design:
 - `r` sets a manual title, which the namer will not overwrite. `d` asks for
   confirmation before deletion. The active session cannot be deleted.
 - Esc goes back; Ctrl-C closes. Narrow screens show one focused pane at a time.
-- Selecting a session from another directory asks for confirmation. It does not
-  change directories or move the saved conversation out of its original project
-  group. Direct cross-directory resume asks you to use the browser.
+- Selecting a session from another directory resumes immediately, without
+  confirmation. It does not change directories or move the saved conversation out
+  of its original project group. Direct cross-directory resume asks you to use the browser.
 
 The browser counts loaded summaries, not a separate unbounded catalog. Search
 runs against the full catalog before pagination. It does not index tool output,
@@ -1405,8 +1410,9 @@ repeated completion heading before the diff or output.
 
 ## Tool details
 
-Native capability events drive specialized output: `FileEditedEvent` renders its
-bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
+File diffs are shown regardless of `display.tool_output`. Native capability events
+drive specialized output: `FileEditedEvent` renders its bounded unified diff using
+Termflow `DiffRenderer`, the same renderer Code Puppy
 uses. The default appearance keeps CLAI's existing addition and deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code uses the terminal foreground and ANSI syntax colours on the terminal
@@ -1652,6 +1658,11 @@ capability to CLAI turns for agent, model-request, and tool
 spans, including timing, token usage, and failures. It adds CLAI's own UI spans
 only when `ui_events` is on (see below), and does not instrument HTTP clients or
 unrelated agents globally.
+
+Startup plugin load failures reported in the terminal are also sent through the configured
+Logfire instance, including their exception and traceback, even when `ui_events` is off. Failures are
+reported after loading finishes, including those that happened before observability
+loaded. Disabling the plugin leaves these failures as terminal messages only.
 
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing
