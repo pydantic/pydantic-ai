@@ -68,7 +68,11 @@ def sent_timeouts(monkeypatch: pytest.MonkeyPatch) -> Callable[[dict[str, Any]],
     return install
 
 
-_DEFAULT = object()
+class _ClientDefault:
+    """No per-request timeout: the client's own applies."""
+
+
+_DEFAULT = _ClientDefault()
 
 
 @pytest.mark.parametrize('family', ['httpx2', 'httpx'])
@@ -109,7 +113,7 @@ _DEFAULT = object()
 )
 async def test_created_client_caps_scalar_connect_and_pool_timeouts(
     family: str,
-    requested: Any,
+    requested: float | tuple[float, float] | _ClientDefault | None,
     expected: dict[str, float | None],
     sent_timeouts: Callable[[dict[str, Any]], list[dict[str, float | None]]],
 ):
@@ -118,7 +122,7 @@ async def test_created_client_caps_scalar_connect_and_pool_timeouts(
     if isinstance(requested, tuple):
         timeout_type = httpx2.Timeout if family == 'httpx2' else httpx.Timeout
         request_kwargs['timeout'] = timeout_type(requested[0], connect=requested[1])
-    elif requested is not _DEFAULT:
+    elif not isinstance(requested, _ClientDefault):
         request_kwargs['timeout'] = requested
 
     async with create_async_httpx2_client() if family == 'httpx2' else create_async_http_client() as client:
