@@ -17,7 +17,7 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import LocalWorkspace
+from pydantic_ai.capabilities import LocalWorkspace, WrapperCapability
 from pydantic_ai.durable_exec._workspace import WorkspaceCall
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceTimeoutError
@@ -159,6 +159,19 @@ async def test_prefect_default_ids_without_a_workspace_survive_a_flow_retry() ->
     # Outside a flow, the agent keeps generating fresh UUID7s.
     outside = await agent.run('Outside.')
     assert [uuid.UUID(outside.run_id).version, uuid.UUID(outside.conversation_id).version] == [7, 7]
+
+
+async def test_prefect_default_ids_reach_through_a_wrapped_durability_capability() -> None:
+    agent = Agent(TestModel(), name='prefect_wrapped_run_id', capabilities=[WrapperCapability(PrefectDurability())])
+
+    @flow
+    async def run() -> tuple[str, str]:
+        result = await agent.run('Hello.')
+        return result.run_id, result.conversation_id
+
+    run_id, conversation_id = await run()
+    assert run_id.endswith(':0')
+    assert uuid.UUID(conversation_id).version == 5
 
 
 async def test_prefect_repeated_identical_reads_are_not_served_from_cache() -> None:
