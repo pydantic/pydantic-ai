@@ -2215,7 +2215,7 @@ class DocumentCitationSource:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-CitationSource: TypeAlias = Annotated[WebCitationSource | DocumentCitationSource, pydantic.Field(discriminator='kind')]
+CitationSource: TypeAlias = Annotated[WebCitationSource | DocumentCitationSource, pydantic.Discriminator('kind')]
 """A source referenced by a model-generated citation."""
 
 
@@ -2262,9 +2262,7 @@ class MarkerCitationAnchor:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-CitationAnchor: TypeAlias = Annotated[
-    ContentCitationAnchor | MarkerCitationAnchor, pydantic.Field(discriminator='kind')
-]
+CitationAnchor: TypeAlias = Annotated[ContentCitationAnchor | MarkerCitationAnchor, pydantic.Discriminator('kind')]
 """A content or citation-marker range in the containing [`TextPart.content`][pydantic_ai.messages.TextPart.content]."""
 
 

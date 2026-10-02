@@ -90,9 +90,20 @@ class ExpectedWebCitation:
 @dataclass(frozen=True)
 class WebCitationCase:
     id: str
-    provider: Literal['anthropic', 'google-gemini', 'google-vertex', 'openai', 'openai-chat', 'openrouter', 'xai']
+    provider: Literal[
+        'anthropic',
+        'google-gemini',
+        'google-vertex',
+        'openai',
+        'openai-chat',
+        'openrouter',
+        'openrouter-perplexity',
+        'xai',
+    ]
     stream: bool = False
     expected: list[ExpectedWebCitation] = field(default_factory=list[ExpectedWebCitation])
+    non_ascii: bool = False
+    """Start the answer with non-ASCII text, so offsets in bytes or UTF-16 units would select the wrong text."""
 
 
 WEB_CASES = [
@@ -273,6 +284,21 @@ WEB_CASES = [
         ),
     ),
     WebCitationCase(
+        'openai-non-ascii',
+        'openai',
+        non_ascii=True,
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    source_labels=['github.com'],
+                    excerpt_counts=[0],
+                    anchor=MarkerCitationAnchor(start=69, end=142),
+                    anchor_text='([github.com](https://github.com/pydantic/pydantic-ai?utm_source=openai))',
+                )
+            ]
+        ),
+    ),
+    WebCitationCase(
         'openrouter',
         'openrouter',
         expected=snapshot(
@@ -314,6 +340,36 @@ WEB_CASES = [
         ),
     ),
     WebCitationCase(
+        'xai-non-ascii',
+        'xai',
+        non_ascii=True,
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    source_labels=['x.com'],
+                    excerpt_counts=[0],
+                    anchor=MarkerCitationAnchor(start=275, end=331),
+                    anchor_text='[[1]](https://x.com/pydantic/status/2105281513579249831)',
+                )
+            ]
+        ),
+    ),
+    WebCitationCase(
+        'xai-stream',
+        'xai',
+        stream=True,
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    source_labels=['x.com'],
+                    excerpt_counts=[0],
+                    anchor=MarkerCitationAnchor(start=385, end=441),
+                    anchor_text='[[1]](https://x.com/pydantic/status/2105281513579249831)',
+                )
+            ]
+        ),
+    ),
+    WebCitationCase(
         'openai-chat',
         'openai-chat',
         expected=snapshot(
@@ -323,6 +379,21 @@ WEB_CASES = [
                     excerpt_counts=[0],
                     anchor=MarkerCitationAnchor(start=119, end=205),
                     anchor_text='([github.com](https://github.com/pydantic/pydantic-ai?ref=peerlist&utm_source=openai))',
+                )
+            ]
+        ),
+    ),
+    WebCitationCase(
+        'openai-chat-non-ascii',
+        'openai-chat',
+        non_ascii=True,
+        expected=snapshot(
+            [
+                ExpectedWebCitation(
+                    source_labels=['github.com'],
+                    excerpt_counts=[0],
+                    anchor=MarkerCitationAnchor(start=114, end=187),
+                    anchor_text='([github.com](https://github.com/pydantic/pydantic-ai?utm_source=openai))',
                 )
             ]
         ),
@@ -342,6 +413,55 @@ WEB_CASES = [
             ]
         ),
     ),
+    WebCitationCase(
+        'openrouter-perplexity',
+        'openrouter-perplexity',
+        expected=snapshot(
+            [
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pypi.org'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['realpython.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pydantic.dev'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['www.aibase.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['machinelearningmastery.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pydantic.dev'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['www.star-history.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pydantic.dev'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pydantic.dev'], excerpt_counts=[0], anchor=None),
+            ]
+        ),
+    ),
+    WebCitationCase(
+        'openrouter-perplexity-stream',
+        'openrouter-perplexity',
+        stream=True,
+        expected=snapshot(
+            [
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['api.github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pydantic.dev'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pydantic.dev'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pypi.org'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pydantic.dev'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pypi.org'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['pydantic.dev'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['github.com'], excerpt_counts=[0], anchor=None),
+                ExpectedWebCitation(source_labels=['gist.github.com'], excerpt_counts=[0], anchor=None),
+            ]
+        ),
+    ),
 ]
 
 
@@ -352,6 +472,7 @@ WEB_PROVIDER_AVAILABLE = {
     'openai': openai_available,
     'openai-chat': openai_available,
     'openrouter': openrouter_available,
+    'openrouter-perplexity': openrouter_available,
     'xai': xai_available,
 }
 
@@ -393,6 +514,11 @@ def _web_citation_agent(
         model = OpenRouterModel('deepseek/deepseek-chat', provider=OpenRouterProvider(api_key=openrouter_api_key))
         tool = WebSearchTool(max_uses=1)
         prompt = "Use web search to find Pydantic AI's GitHub repository and answer with its URL only."
+    elif case.provider == 'openrouter-perplexity':
+        # Perplexity's Sonar models always search, so no tool is needed.
+        model = OpenRouterModel('perplexity/sonar', provider=OpenRouterProvider(api_key=openrouter_api_key))
+        tool = None
+        prompt = "Find Pydantic AI's GitHub repository and cite it in one sentence."
     elif case.provider == 'xai':
         assert xai_provider is not None
         model = XaiModel('grok-4-fast-non-reasoning', provider=xai_provider)
@@ -401,6 +527,12 @@ def _web_citation_agent(
         prompt = 'Use X search to find a post by @pydantic about Pydantic AI. Summarize it and cite the post URL.'
     else:  # pragma: no cover
         assert_never(case.provider)
+
+    if case.non_ascii:
+        # The cassette hooks rewrite smart quotes and dashes, which would shift offsets on replay.
+        prompt += (
+            " Start your answer with exactly '🐍 Pydantic AI (café): ', cite inline, and use only ASCII punctuation."
+        )
 
     return Agent(model, capabilities=[NativeTool(tool)] if tool else [], model_settings=settings), prompt
 
@@ -475,6 +607,21 @@ async def test_web_citations(
     citations = [citation for part in cited_parts for citation in part.citations or []]
     assert all(isinstance(source, WebCitationSource) for citation in citations for source in citation.sources)
     assert _web_citation_summary(cited_parts) == case.expected
+    for part in cited_parts:
+        for citation in part.citations or []:
+            if isinstance(citation.anchor, MarkerCitationAnchor):
+                marker = part.content[citation.anchor.start : citation.anchor.end]
+                assert any(
+                    isinstance(source, WebCitationSource) and urlparse(source.url).netloc in marker
+                    for source in citation.sources
+                ), marker
+    if case.non_ascii:
+        assert any(
+            not part.content[: citation.anchor.start].isascii()
+            for part in cited_parts
+            for citation in part.citations or []
+            if citation.anchor
+        )
 
 
 @dataclass(frozen=True)

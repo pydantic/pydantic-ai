@@ -395,7 +395,7 @@ async def test_anthropic_replays_own_citations(allow_model_requests: None):
         ],
     )
 
-    await model.request(history, None, ModelRequestParameters())
+    await model.request(history, ModelSettings(include_citations=True), ModelRequestParameters())
 
     assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == snapshot(
         {
@@ -480,7 +480,7 @@ async def test_anthropic_counts_tool_return_documents_for_citation_replay(allow_
         ModelRequest(parts=[UserPromptPart('Continue.')]),
     ]
 
-    await model.request(history, None, ModelRequestParameters())
+    await model.request(history, ModelSettings(include_citations=True), ModelRequestParameters())
 
     [answer] = [
         message
@@ -497,6 +497,24 @@ async def test_anthropic_counts_tool_return_documents_for_citation_replay(allow_
             'end_char_index': 32,
         }
     ]
+
+
+async def test_anthropic_document_citations_need_include_citations_for_replay(allow_model_requests: None):
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='Done.', type='text')], BetaUsage(input_tokens=1, output_tokens=1))
+    )
+    model = AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client))
+
+    await model.request(
+        _history_with_citations('anthropic', [_document_citation('thirty days', 21, 32)]),
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'][1] == {
+        'role': 'assistant',
+        'content': [{'type': 'text', 'text': 'Thirty days.'}],
+    }
 
 
 async def test_anthropic_sends_other_providers_citations_as_text(allow_model_requests: None):

@@ -1,0 +1,133 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "189"
+      content-type:
+      - application/json
+      host:
+      - openrouter.ai
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: Find Pydantic AI's GitHub repository and cite it in one sentence.
+        model: perplexity/sonar
+        stream: true
+        stream_options:
+          include_usage: true
+  response:
+    status: 200
+    headers:
+      access-control-allow-origin:
+      - "*"
+      access-control-expose-headers:
+      - X-Generation-Id,X-Provider-Name,request-id,cf-ray
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      permissions-policy:
+      - >-
+        payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      referrer-policy:
+      - no-referrer, strict-origin-when-cross-origin
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"P","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"yd","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic","title":"github.com · pydanticPydantic - GitHub","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai","title":"pydantic/pydantic-ai: How Python does AI. Agents, realtime ...","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai/releases","title":"Releases · pydantic/pydantic-ai","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://api.github.com/repos/pydantic/pydantic-ai","title":"api.github.com","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai/issues","title":"Issues · pydantic/pydantic-ai - GitHub","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://pydantic.dev/","title":"Pydantic | The end-to-end AI engineering stack","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://pydantic.dev/docs/ai/project/contributing/","title":"Contributing | Pydantic Docs","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai/blob/main/README.md","title":"pydantic-ai/README.md at main · pydantic/pydantic-ai","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai/blob/main/AGENTS.md","title":"pydantic-ai/AGENTS.md at main - GitHub","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://pypi.org/project/pydantic/","title":"Pydantic","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://pydantic.dev/docs/ai/harness/gh-aw/","title":"Run your own Pydantic AI agent as a GitHub Agentic Workflow","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://pypi.org/project/pydantic-ai-slim/","title":"pydantic-ai-slim","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic/releases","title":"Releases","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai/issues/913","title":"PydanticAI Roadmap · Issue #913 · pydantic/pydantic-ai","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://pydantic.dev/pydantic-ai","title":"Pydantic AI","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://github.com/pydantic/pydantic-ai-harness","title":"github.com · pydantic · pydantic-ai-harnessYour agent's favorite harness, built on Pydantic AI - GitHub","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant","annotations":[{"type":"url_citation","url_citation":{"url":"https://gist.github.com/szeyu/e7c92f16ea721ba9ffbe472a127006f1","title":"Documentation for pydantic-ai","start_index":0,"end_index":0}}]},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"antic","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":" AI","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"’s","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":" Git","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"Hub","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":" repository","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":" is","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":" **","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"p","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"yd","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"antic","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"/p","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"yd","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"antic","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"-ai","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"**","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":".","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"[2]","role":"assistant"},"finish_reason":null,"native_finish_reason":null}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}]}
+        
+        data: {"id":"gen-1790938652-zbqIQhHOz4jlZJGecuVk","object":"chat.completion.chunk","created":1790938652,"model":"perplexity/sonar","provider":"Perplexity","service_tier":null,"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":15,"completion_tokens":23,"total_tokens":38,"cost":0.00504,"is_byok":false,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"audio_tokens":0,"video_tokens":0},"cost_details":{"upstream_inference_cost":0.00504,"upstream_inference_prompt_cost":0.000015,"upstream_inference_completions_cost":0.005025},"completion_tokens_details":{"reasoning_tokens":0,"image_tokens":0,"audio_tokens":0}}}
+        
+        data: [DONE]
+        
+  recorded_at: 2026-10-02T10:57:33.986667+00:00

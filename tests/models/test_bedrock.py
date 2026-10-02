@@ -1800,6 +1800,11 @@ _RETURNS_POLICY_CITATION = {
             TextPart('No citation.'),
             id='text-without-citation',
         ),
+        pytest.param(
+            {'content': [{'text': 'Empty citation.'}], 'citations': [cast(dict[str, Any], {})]},
+            TextPart('Empty citation.'),
+            id='citation-without-source-fields',
+        ),
     ],
 )
 async def test_bedrock_partial_citation_block(

@@ -208,9 +208,11 @@ def _map_citation_for_replay(citation: Citation, document_texts: list[str | None
 
 
 def _citation_document_texts(messages: Sequence[BetaMessageParam]) -> list[str | None]:
-    """Return the text of each document in `messages` in Anthropic's document index order, or `None` if it isn't text.
+    """Return the text of each document in `messages` in Anthropic's document index order.
 
-    Anthropic counts every document block in the request, across all messages and including those in tool results.
+    The text is `None` for documents that aren't plain text or don't have citations enabled. Anthropic counts every
+    document block in the request, across all messages and including those in tool results. If this numbering is ever
+    wrong, the cited text no longer matches and the citation is sent as plain text.
     """
     result: list[str | None] = []
 
@@ -221,7 +223,15 @@ def _citation_document_texts(messages: Sequence[BetaMessageParam]) -> list[str |
                 add_documents(block.get('content'))
             elif block.get('type') == 'document':
                 source = block.get('source')
-                text = source.get('data') if is_str_dict(source) and source.get('type') == 'text' else None
+                citations = block.get('citations')
+                text = (
+                    source.get('data')
+                    if is_str_dict(source)
+                    and source.get('type') == 'text'
+                    and is_str_dict(citations)
+                    and citations.get('enabled')
+                    else None
+                )
                 result.append(text if isinstance(text, str) else None)
 
     for message in messages:
