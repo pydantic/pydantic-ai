@@ -457,8 +457,7 @@ async def test_tasks_without_arguments_opens_the_live_task_browser(
 
     monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', escape)
     shell = shell_for(tmp_path, ForkModel(), io.StringIO())
-    record = task()
-    record.conversation_id = shell.session.summary.id
+    record = task(conversation_id=shell.session.summary.id)
     shell.tasks.owner.records[record.id] = record
     assert await shell.commands.execute_async('/tasks') == ''
     assert 'worker [aaaaaaaa] running' in capsys.readouterr().out
