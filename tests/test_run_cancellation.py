@@ -23,7 +23,8 @@ import asyncio
 import pickle
 import sys
 import threading
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, AsyncIterator, Generator
+from contextlib import contextmanager
 from datetime import timezone
 from typing import Any
 
@@ -43,7 +44,7 @@ from pydantic_ai import (
     capture_run_messages,
 )
 from pydantic_ai._cancel import RunCancellation
-from pydantic_ai._utils import BaseExceptionGroup
+from pydantic_ai._utils import BaseExceptionGroup, get_event_loop
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -56,7 +57,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRun, AgentRunResult
 from pydantic_ai.tools import RunContext
@@ -1033,6 +1034,113 @@ async def test_direct_await_cancellation_carries_run_cancelled_on_all_versions()
     assert [type(message) for message in cancelled.all_messages()] == [ModelRequest, ModelResponse, ModelRequest]
     assert cancelled.usage.requests == 1
     assert cancelled.run_id is not None
+
+
+@contextmanager
+def _interrupt_sync_run_once(started: asyncio.Event) -> Generator[None]:
+    """Simulate Ctrl-C reaching the caller of a sync method once `started` is set.
+
+    The first `loop.run_until_complete()` drives the loop until `started` is set and then raises
+    `KeyboardInterrupt`, as Python's default `SIGINT` handler would; later calls (the interrupt
+    cleanup) run normally. Patching the loop keeps this in-process: a real signal can't be timed
+    reliably from a test.
+    """
+    loop = get_event_loop()
+    real_run_until_complete = loop.run_until_complete
+    interrupted = False
+
+    def interrupt_once(future: Any) -> Any:
+        nonlocal interrupted
+        if interrupted:
+            return real_run_until_complete(future)
+        interrupted = True
+        real_run_until_complete(asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT))
+        raise KeyboardInterrupt
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(loop, 'run_until_complete', interrupt_once)
+        yield
+
+
+def _fast_then_slow_tool_agent(started: asyncio.Event) -> Agent[None, str]:
+    """An agent that completes `fast_tool` and then suspends in `slow_tool`, setting `started`."""
+
+    def call_tools(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        tool_returns = sum(isinstance(part, ToolReturnPart) for message in messages for part in message.parts)
+        return ModelResponse(parts=[ToolCallPart(['fast_tool', 'slow_tool'][tool_returns])])
+
+    async def stream_tool_calls(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        (part,) = call_tools(messages, info).parts
+        assert isinstance(part, ToolCallPart)
+        yield {0: DeltaToolCall(name=part.tool_name)}
+
+    agent = Agent(FunctionModel(call_tools, stream_function=stream_tool_calls))
+
+    @agent.tool_plain
+    def fast_tool() -> str:
+        return 'fast done'
+
+    @agent.tool_plain
+    async def slow_tool() -> str:
+        started.set()
+        await asyncio.Event().wait()
+        raise AssertionError  # pragma: no cover
+
+    return agent
+
+
+def _context_chain(exc: BaseException) -> list[BaseException]:
+    """The exceptions reached by following `__context__` from `exc`, stopping at a repeat."""
+    chain: list[BaseException] = []
+    node = exc.__context__
+    while node is not None and all(node is not seen for seen in chain):
+        chain.append(node)
+        node = node.__context__
+    return chain
+
+
+def _tool_returns(cancelled: RunCancelled) -> list[Any]:
+    return [
+        part.content
+        for message in cancelled.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    ]
+
+
+def test_run_sync_keyboard_interrupt_carries_run_state():
+    """Ctrl-C during `run_sync()` carries the run state, like `asyncio.run(agent.run())` does.
+
+    The interrupt cancels the run's task, whose `CancelledError` carries the state; it is chained
+    to the re-raised `KeyboardInterrupt` as a suppressed `__context__`, so the traceback is unchanged.
+    """
+    started = asyncio.Event()
+    agent = _fast_then_slow_tool_agent(started)
+
+    with _interrupt_sync_run_once(started), pytest.raises(KeyboardInterrupt) as exc_info:
+        agent.run_sync('go')
+
+    assert exc_info.value.__suppress_context__
+    assert all(node is not exc_info.value for node in _context_chain(exc_info.value))  # no cycle back to it
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert _tool_returns(cancelled) == ['fast done']
+
+
+def test_run_stream_sync_keyboard_interrupt_before_final_result_carries_run_state():
+    """Ctrl-C while `run_stream_sync()` runs tools before finding the final result carries the run state."""
+    started = asyncio.Event()
+    agent = _fast_then_slow_tool_agent(started)
+
+    with _interrupt_sync_run_once(started), pytest.raises(KeyboardInterrupt) as exc_info:
+        with agent.run_stream_sync('go') as result:
+            result.get_output()  # pragma: no cover
+
+    assert exc_info.value.__suppress_context__
+    assert all(node is not exc_info.value for node in _context_chain(exc_info.value))  # no cycle back to it
+    cancelled = RunCancelled.from_cancellation(exc_info.value)
+    assert cancelled is not None
+    assert _tool_returns(cancelled) == ['fast done']
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.timeout()` needs Python 3.11+')
