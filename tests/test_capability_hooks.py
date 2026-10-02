@@ -480,7 +480,7 @@ class TestModelRequestHooks:
         if streaming:
             async with agent.run_stream('hello') as stream:
                 assert await stream.get_output() == 'skipped model'
-            usage = stream.usage()
+            usage = stream.usage
         else:
             result = await agent.run('hello')
             assert result.output == 'skipped model'
