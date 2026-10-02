@@ -5,7 +5,7 @@ import inspect
 import types
 import warnings
 from collections.abc import Awaitable, Generator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar, get_args, get_origin
 
 from logfire_api import Logfire, LogfireSpan
@@ -92,7 +92,8 @@ def run_until_complete(coro: Awaitable[_T]) -> _T:
     `KeyboardInterrupt`) while `coro` is suspended, asyncio leaves its task pending with its
     `async with`/`finally` blocks un-run, leaking the task and any open connections. We cancel
     *our own* task and drive its cleanup to completion before re-raising, without touching any
-    other tasks on the (caller-owned) loop.
+    other tasks on the (caller-owned) loop. What the cleanup raised is chained to the re-raised
+    exception by `chain_cleanup_exception()`.
 
     Raises:
         UnsupportedEventLoopError: If the current event loop doesn't implement `run_until_complete()`.
@@ -113,12 +114,29 @@ def run_until_complete(coro: Awaitable[_T]) -> _T:
     task = asyncio.ensure_future(coro, loop=loop)
     try:
         return loop.run_until_complete(task)
-    except BaseException:
+    except BaseException as exc:
         if not task.done():
             task.cancel()
-            with suppress(BaseException):
+            try:
                 loop.run_until_complete(task)
+            except BaseException as cleanup_exc:
+                chain_cleanup_exception(exc, cleanup_exc)
         raise
+
+
+def chain_cleanup_exception(exc: BaseException, cleanup_exc: BaseException) -> None:
+    """Chain the exception raised while cleaning up after `exc` to it, as a hidden `__context__`.
+
+    When an interrupt is handled by cancelling a task and driving its cleanup, the task's exception
+    (typically its `CancelledError`) would otherwise be lost, along with anything attached to it --
+    like the run state that `pydantic_ai.RunCancelled.from_cancellation()` recovers from a cancelled
+    agent run. `__suppress_context__` keeps the traceback of `exc` as it was. An existing
+    `__context__` is left alone, as is `__cause__`.
+    """
+    # Never chain `exc` to itself: cleanup can re-raise it, e.g. `asyncio.TaskGroup` re-raises a child's `KeyboardInterrupt`.
+    if exc.__context__ is None and cleanup_exc is not exc:
+        exc.__context__ = cleanup_exc
+        exc.__suppress_context__ = True
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:

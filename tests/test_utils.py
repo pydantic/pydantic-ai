@@ -344,6 +344,41 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
         loop.run_until_complete(bystander_task)
 
 
+def test_run_until_complete_interrupt_keeps_existing_context():
+    """An interrupt that already has a `__context__` keeps it, rather than getting the cleanup's exception.
+
+    A unit test for the same reason as `test_run_until_complete_cleans_up_own_task_on_interrupt`;
+    `test_run_sync_keyboard_interrupt_carries_run_state` covers chaining the cleanup's exception.
+    """
+
+    async def coro() -> None:
+        await asyncio.Event().wait()  # suspends forever
+
+    loop = utils_module.get_event_loop()
+    real_run_until_complete = loop.run_until_complete
+    calls = 0
+
+    def interrupt_while_handling_error(future: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            loop.call_soon(loop.stop)
+            loop.run_forever()
+            try:
+                raise ValueError('being handled')
+            except ValueError:
+                raise KeyboardInterrupt
+        return real_run_until_complete(future)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(loop, 'run_until_complete', interrupt_while_handling_error)
+        with pytest.raises(KeyboardInterrupt) as exc_info:
+            utils_module.run_until_complete(coro())
+
+    assert isinstance(exc_info.value.__context__, ValueError)
+    assert not exc_info.value.__suppress_context__
+
+
 def test_run_sync_on_undrivable_event_loop():
     """`run_sync()` on an event loop that can't be driven by the caller raises a clear `UserError`.
 
