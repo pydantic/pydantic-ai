@@ -204,7 +204,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`UserError`][pydantic_ai.exceptions.UserError] at connect time, since a re-dial without
     resumption would lose the conversation.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini, xAI, and OpenAI GPT-Live, which forks a session stored
+    with `openai_live_store=True` and otherwise replays the local history into a new one.
     """
 
 

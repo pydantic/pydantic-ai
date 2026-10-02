@@ -35,8 +35,8 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
 
         `code` must define exactly one `pydantic_ai.capabilities.AbstractCapability`
         subclass that constructs with no arguments. The capability is written to
-        disk, imported, and validated immediately. It becomes usable on the next
-        agent run (the next orchestrator loop iteration), not the current run.
+        disk, imported, and validated immediately. It does not take effect in this
+        run; whether a later run loads it depends on how this agent is set up.
 
         Args:
             name: Identifier for the capability. Lowercase letters, digits, and
@@ -55,8 +55,8 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
                 f'Fix the code and call author_capability again with the same name.'
             )
         return (
-            f'Capability {name!r} ({record.class_name}) authored and validated. It becomes active on '
-            f'the next agent run (the next orchestrator loop iteration), not the current run.'
+            f'Capability {name!r} ({record.class_name}) authored, validated and saved. It does not take effect '
+            'in this run; whether a later run loads it depends on how this agent is set up.'
         )
 
     async def list_authored_capabilities(self) -> str:
@@ -72,7 +72,7 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         return '\n'.join(lines)
 
     async def disable_authored_capability(self, name: str) -> str:
-        """Disable an authored capability so it is no longer injected on the next run.
+        """Disable an authored capability so it is skipped when this agent loads its authored capabilities.
 
         Args:
             name: Name of the capability to disable.
@@ -80,5 +80,5 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         async with self._store_lock:
             found = await anyio.to_thread.run_sync(self._store.disable, name)
         if found:
-            return f'Capability {name!r} disabled; it will not be injected on the next run.'
+            return f'Capability {name!r} disabled; it is skipped when this agent loads its authored capabilities.'
         return f'No authored capability named {name!r}.'
