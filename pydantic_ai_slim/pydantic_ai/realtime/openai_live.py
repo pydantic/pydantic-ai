@@ -618,6 +618,9 @@ class OpenAILiveConnection(RealtimeConnection):
         # burst plays on Live's timeline for as long as it lasts, however quickly it was sent.
         self._idle_audio_task: asyncio.Task[None] | None = None
         self._input_audio_end = 0.0
+        # Where all the audio sent so far, idle frames included, ends on the pump's clock. Application audio
+        # sent right after an idle frame plays once that frame has.
+        self._audio_end = 0.0
         self._next_idle_frame = 0.0
         # Counts the application's audio sends. Held with the lock around every audio send, it is how the
         # pump tells that the application spoke between its wait ending and its frame going out.
@@ -705,10 +708,16 @@ class OpenAILiveConnection(RealtimeConnection):
             return
         async with self._audio_send_lock:
             self._input_audio_sends += 1
-            self._input_audio_end = (
-                max(_pump_clock(), self._input_audio_end) + len(content.data) / self._audio_bytes_per_ms / 1000
+            booked = self._input_audio_end, self._audio_end
+            self._input_audio_end = self._audio_end = (
+                max(_pump_clock(), self._audio_end) + len(content.data) / self._audio_bytes_per_ms / 1000
             )
-            await self._send_event({'type': 'session.input_audio.append', 'audio': _b64(content.data)})
+            try:
+                await self._send_event({'type': 'session.input_audio.append', 'audio': _b64(content.data)})
+            except asyncio.CancelledError:
+                # Audio that never went out doesn't hold the idle frames back.
+                self._input_audio_end, self._audio_end = booked
+                raise
 
     def _start_idle_audio(self) -> None:
         """Stream silence whenever the application sends no audio, until the connection closes.
@@ -733,6 +742,7 @@ class OpenAILiveConnection(RealtimeConnection):
                     continue
                 try:
                     await self._send_event({'type': 'session.input_audio.append', 'audio': frame})
+                    self._audio_end = max(_pump_clock(), self._audio_end) + _IDLE_AUDIO_FRAME
                 except self.transport_errors:
                     # The read loop reports the drop. While it can redial, the frames that follow go to
                     # the replacement socket; once it can't, there is nothing left to keep going.
@@ -956,6 +966,7 @@ class OpenAILiveConnection(RealtimeConnection):
         self._reported_seconds = 0.0
         # Audio still booked to play on the lost session never will, so idle frames may start right away.
         self._input_audio_end = min(self._input_audio_end, _pump_clock())
+        self._audio_end = min(self._audio_end, _pump_clock())
         self._next_idle_frame = 0.0
 
     def _start_read(self) -> asyncio.Task[str | bytes]:

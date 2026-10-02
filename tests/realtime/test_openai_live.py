@@ -3124,3 +3124,38 @@ async def test_audio_booked_on_a_lost_session_doesnt_hold_back_the_replacements_
         while not replacement.sent:
             await anyio.sleep(0.05)
     await connection.aclose()
+
+
+async def test_application_audio_after_an_idle_frame_plays_once_that_frame_has(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Audio sent just after a frame of silence queues behind it on Live's timeline, so the gap counts from there."""
+    clock = [10.0]
+    monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
+    connection = _AudioSink()
+    connection._start_idle_audio()  # pyright: ignore[reportPrivateUsage]
+    clock[0] = 10.3
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await connection.silence_sent.wait()
+
+    await connection.send(BinaryAudio(data=b'\x01\x00' * 10, media_type='audio/pcm'))
+
+    # The silence plays until 10.4, the application's 10 samples after it, and then the quiet gap.
+    assert connection._idle_frame_due() == pytest.approx(10.7 + 10 / 24000)  # pyright: ignore[reportPrivateUsage]
+    await connection.aclose()
+
+
+async def test_audio_whose_send_was_cancelled_doesnt_hold_the_pump_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = [5.0]
+    monkeypatch.setattr(live_module, '_pump_clock', lambda: clock[0])
+
+    class _Stuck(_AudioSink):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            await anyio.sleep_forever()
+
+    connection = _Stuck()
+    sending = asyncio.create_task(connection.send(BinaryAudio(data=bytes(48000), media_type='audio/pcm')))
+    await asyncio.sleep(0)
+    sending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await sending
+
+    assert connection._idle_frame_due() == pytest.approx(0.3)  # pyright: ignore[reportPrivateUsage]
