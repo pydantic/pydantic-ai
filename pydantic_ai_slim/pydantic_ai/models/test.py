@@ -12,6 +12,7 @@ import pydantic_core
 from typing_extensions import assert_never
 
 from .. import _utils
+from .._json_schema import resolve_json_pointer
 from .._run_context import RunContext
 from ..exceptions import UserError
 from ..messages import (
@@ -504,8 +505,11 @@ class _JsonSchemaTestData:
             raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
 
     def _resolve_ref(self, ref: str) -> dict[str, Any]:
-        """Look up a JSON Schema `$ref` in the schema's `$defs`."""
-        return self.defs[ref.removeprefix('#/$defs/')]
+        """Look up a JSON Schema `$ref` in the schema's `$defs`, or as a local JSON pointer like `#/properties/from`."""
+        name = ref.removeprefix('#/$defs/')
+        if name not in self.defs and (target := resolve_json_pointer(self.schema, ref)) is not None:
+            return target
+        return self.defs[name]
 
     def _one_of_gen(self, schema: dict[str, Any]) -> Any:
         """Generate data for a JSON Schema `oneOf`."""

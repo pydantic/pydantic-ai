@@ -14,6 +14,27 @@ JsonSchema = dict[str, Any]
 _JsonSchemaNode: TypeAlias = JsonSchema | bool
 
 
+def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
+    """The schema object a local JSON-pointer `$ref` (RFC 6901) like `#/properties/from` points at, if any.
+
+    Not every producer collects shared subschemas into `$defs`: `zod-to-json-schema`, which the MCP
+    TypeScript SDK uses, points a reused subschema at its first occurrence instead.
+    """
+    if ref != '#' and not ref.startswith('#/'):
+        return None
+    node: JsonValue = schema
+    for token in ref.split('/')[1:]:
+        token = token.replace('~1', '/').replace('~0', '~')
+        if isinstance(node, dict):
+            node = node.get(token)
+        elif isinstance(node, list) and token in map(str, range(len(node))):
+            # An RFC 6901 array index is written in canonical decimal: ASCII digits, no leading zero.
+            node = node[int(token)]
+        else:
+            node = None
+    return node if isinstance(node, dict) else None
+
+
 class UseEnumMemberDocstrings:
     """Mix into an `Enum` to describe each of its members by the docstring written under it.
 
@@ -171,21 +192,8 @@ class JsonSchemaTransformer(ABC):
         `key` is a `$defs` name, or else a local JSON pointer (RFC 6901) into the original schema.
         """
         def_schema = self.defs.get(key)
-        if def_schema is None and (key == '#' or key.startswith('#/')):
-            # Not every producer collects shared subschemas into `$defs`: `zod-to-json-schema`, which the
-            # MCP TypeScript SDK uses, points a reused subschema at its first occurrence, e.g. `#/properties/from`.
-            node: JsonValue = self.schema
-            for token in key.split('/')[1:]:
-                token = token.replace('~1', '/').replace('~0', '~')
-                if isinstance(node, dict):
-                    node = node.get(token)
-                elif isinstance(node, list) and token in map(str, range(len(node))):
-                    # An RFC 6901 array index is written in canonical decimal: ASCII digits, no leading zero.
-                    node = node[int(token)]
-                else:
-                    node = None
-            if isinstance(node, dict):
-                def_schema = node
+        if def_schema is None:
+            def_schema = resolve_json_pointer(self.schema, key)
         if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
 
