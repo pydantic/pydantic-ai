@@ -134,7 +134,8 @@ def chain_cleanup_exception(exc: BaseException, cleanup_exc: BaseException) -> N
     `__context__` is left alone (so an interrupt raised while another exception is being handled
     doesn't carry the cleanup's exception), as is `__cause__`.
     """
-    # Never chain `exc` to itself: cleanup can re-raise it, e.g. `asyncio.TaskGroup` re-raises a child's `KeyboardInterrupt`.
+    # Never chain `exc` to itself: cleanup can surface it again (the stream bridge's `entered` holds the error
+    # `__aenter__()` raised, and `asyncio.TaskGroup` re-raises a child's `KeyboardInterrupt`).
     if exc.__context__ is not None or cleanup_exc is exc:
         return
     # The cleanup ran while `exc` was being handled, so implicit chaining made `exc` the context of
