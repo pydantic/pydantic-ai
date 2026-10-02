@@ -312,13 +312,13 @@ def test_declared_as_a_disabled_builtin_that_enables_from_the_menu(tmp_path: Pat
     assert opened is not None and opened.item is not None
     assert opened.item.value == Configure('google_workspace')
     assert menu.notice is None
-    assert 'enabled, loaded' in menu.details(item)
+    assert 'on' in menu.items()[0].description and 'press c to configure' in menu.details(item)
     [factory] = plugins.capabilities()
     assert not isinstance(factory, AbstractCapability)
     assert isinstance(factory(context()), GoogleWorkspace)
     redraw = Redraw()
     assert menu.toggle(redraw, item) is None
-    assert redraw.items[0].label.startswith('[ ] google_workspace')
+    assert redraw.items[0].label.startswith('○ google_workspace')
     assert plugins.capabilities() == []
     asyncio.run(plugins.close('exit'))
 

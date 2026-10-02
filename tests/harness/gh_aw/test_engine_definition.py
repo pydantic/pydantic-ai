@@ -18,11 +18,15 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+from pydantic_ai import Agent, ModelMessage, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 
 if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
@@ -335,7 +339,7 @@ def test_the_default_target_is_the_generated_module(tmp_path: Path) -> None:
     # would shadow an installed one for the whole run.
     (module_dir,) = invocation.python_path
     assert module_dir.parent == tmp_path / 'sandbox-tmp'
-    assert (module_dir / 'gh_aw_agent.py').read_text().startswith('from pydantic_ai')
+    assert 'agent = Agent(' in (module_dir / 'gh_aw_agent.py').read_text()
     assert not (tmp_path / 'workspace' / '.pydantic-ai').exists()
     # gh-aw sets this for the copilot backend; the proxy holds the real credential,
     # so the agent has no use for it.
@@ -431,6 +435,47 @@ def test_pai_base_url_keeps_every_provider_on_chat_completions(tmp_path: Path, m
     assert invocation.cli_args[-2].startswith('openai-chat:')
     assert invocation.env['OPENAI_BASE_URL'] == 'https://endpoint.example.com/v1'
     assert 'ANTHROPIC_BASE_URL' not in invocation.env
+
+
+async def test_the_default_agent_runs_commands_in_the_checkout_with_the_step_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The generated module, imported as the launcher imports it, runs a shell call.
+
+    `Coder` fails at run start without a workspace, so this is the check that the
+    composition gh-aw ships attaches one, on the checkout, and that commands keep the
+    step's environment while provider credential variables stay withheld.
+    """
+    invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'))
+    (module_dir,) = invocation.python_path
+    workspace = tmp_path / 'workspace'
+    monkeypatch.chdir(workspace)
+    monkeypatch.setenv('GH_AW_TEST_MARKER', 'from-the-step')
+    monkeypatch.setenv('OPENAI_API_KEY', 'a-provider-key')
+    spec = importlib.util.spec_from_file_location('gh_aw_agent_under_test', module_dir / 'gh_aw_agent.py')
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    agent: Agent[None, str] = module.agent
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if len(messages) == 1:
+            command = 'pwd -P; echo "marker=$GH_AW_TEST_MARKER"; echo "key=${OPENAI_API_KEY:-withheld}"'
+            yield {0: DeltaToolCall(name='shell', json_args=json.dumps({'command': command}))}
+        else:
+            yield 'done'
+
+    result = await agent.run('run it', model=FunctionModel(stream_function=stream))
+
+    (shell_return,) = [
+        part.content
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'shell'
+    ]
+    assert isinstance(shell_return, str)
+    lines = shell_return.splitlines()
+    assert lines[:3] == [os.path.realpath(workspace), 'marker=from-the-step', 'key=withheld']
 
 
 @requires_safe_path

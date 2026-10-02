@@ -1,4 +1,6 @@
-"""The built-in `ordinal` plugin: harness `Ordinal`, set up in a settings menu, with no secret in plugin settings.
+"""Use Ordinal, with its token kept in /keys.
+
+The built-in `ordinal` plugin: harness `Ordinal`, set up in a settings menu, with no secret in plugin settings.
 
 `/plugins configure ordinal` (also opened by `/plugins enable ordinal`, `/plugins add`, and `C` in `/plugins`)
 edits the non-secret options, saved to plugin settings as each one changes, and picks the token from `/keys`.
