@@ -192,12 +192,15 @@ when captured. Snapshots are written at these boundaries:
   produces a `complete` snapshot; a crash mid-tool-cycle produces an
   `interrupted` one carrying every completed cycle.
 
-An `interrupted` snapshot is sendable on resume -- pydantic-ai (>= 2.10)
-repairs broken tool-call/result pairing before every model request -- but
-not necessarily *safe*: a pending tool call may be re-executed (resuming
-without a new prompt) or closed out with a synthesized `interrupted`
-return, and neither says whether the original side effect happened. That
-is the tool-effect ledger's job. So the default read path skips
+An `interrupted` snapshot is sendable, but not necessarily *safe*: a
+pending tool call may be re-executed or closed out with a synthesized
+`interrupted` return, and neither says whether the original side effect
+happened. That is the tool-effect ledger's job. Which one happens depends on
+how you continue. Resuming without a new prompt executes the pending calls.
+With a new prompt, calls are closed out if some of their batch already
+returned; if none did, the run raises `UserError` rather than abandon calls
+that could still be answered, so call `pydantic_ai.messages.repair_messages`
+on the history first to close them out yourself. So the default read path skips
 `interrupted` snapshots; pass `include_interrupted=True` to
 `continue_run` / `fork_run` / `latest_snapshot` after checking
 `list_unresolved_tool_effects`. If no matching snapshot exists,

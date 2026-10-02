@@ -58,10 +58,12 @@ from pydantic_ai.durable_exec._toolset import (
     validate_tool_args,
     wrap_tool_call_result,
 )
+from pydantic_ai.durable_exec._utils import unwrap_model
 from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID
 from pydantic_ai.messages import CapabilityEvent, CustomEvent
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.usage import RunUsage
@@ -98,6 +100,11 @@ def test_public_engine_builder_exports() -> None:
         'ToolsetValidateToolArgumentsId',
     ]
     assert all(getattr(durable_exec, name) is not None for name in durable_exec.__all__)
+
+
+def test_unwrap_model_removes_nested_wrappers() -> None:
+    model = TestModel()
+    assert unwrap_model(WrapperModel(WrapperModel(model))) is model
 
 
 JOURNAL_OPERATION_NAMES = {

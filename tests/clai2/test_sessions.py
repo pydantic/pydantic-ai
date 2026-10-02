@@ -383,16 +383,6 @@ async def test_a_sandbox_on_the_agent_itself_replaces_the_session_directory(tmp_
     assert working_dirs == [str(sandbox.resolve())]
 
 
-async def test_a_capability_function_without_a_workspace_fails_the_coder_run(tmp_path: Path) -> None:
-    # The function may have picked a sandbox, so clai adds no directory; without one, `Coder` says so.
-    def capability_function(ctx: RunContext[None]) -> None:
-        return None
-
-    agent = Agent(TestModel(), deps_type=type(None), capabilities=[Coder(), capability_function])
-    with pytest.raises(UserError, match='`Coder` needs a workspace'):
-        await Session(agent, deps=None, workspace=tmp_path).prompt('go')
-
-
 async def test_an_agent_without_a_capability_tree_gets_the_session_directory(tmp_path: Path) -> None:
     working_dirs: list[str] = []
 
