@@ -54,7 +54,7 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
       Returning `None` omits the native tool.
 
     The field keeps what was passed, so `dataclasses.replace` and merging resolve it again from the
-    new configuration, and assigning it on a constructed capability resolves it again too.
+    new configuration. Assigning it on a constructed capability resolves it again on the next read.
     [`get_native_tools()`][pydantic_ai.capabilities.AbstractCapability.get_native_tools] returns the
     tool it resolves to.
     """
@@ -69,7 +69,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     - A `Tool` or `AbstractToolset` instance: use this specific local tool.
     - A bare callable: automatically wrapped in a `Tool`.
 
-    The field keeps what was passed and is resolved again when assigned, like `native`.
+    The field keeps what was passed and is resolved again on the next read after it is assigned,
+    like `native`.
     [`get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset] returns the toolset it
     resolves to.
     """
@@ -93,8 +94,8 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     _native_tool: AgentNativeTool[AgentDepsT] | None = field(init=False, repr=False, compare=False, default=None)
     """The native tool `native` resolves to, or `None` for `native=False`.
 
-    Resolved by `_resolve_tools` at construction and again only once `native` or `local` is assigned,
-    so every `get_native_tools()` call in between returns the same tool. Excluded from `compare` and
+    Resolved by `_resolve_tools` at construction, and again on the first read after `native` or
+    `local` is assigned, so every `get_native_tools()` call in between returns the same tool. Excluded from `compare` and
     `repr` because `native` already states it, and `init=False` so `dataclasses.replace` never feeds
     it back.
     """
@@ -109,17 +110,13 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
     an entered agent reuses.
     """
 
-    _native_resolved_from: AgentNativeTool[AgentDepsT] | bool | None = field(
-        init=False, repr=False, compare=False, default=None
-    )
+    _native_resolved_from: object = field(init=False, repr=False, compare=False, default=None)
     """The `native` value `_native_tool` and `_local_tool` were resolved from.
 
     `get_native_tools()` and `get_toolset()` resolve again once `native` is no longer this object.
     """
 
-    _local_resolved_from: str | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = (
-        field(init=False, repr=False, compare=False, default=None)
-    )
+    _local_resolved_from: object = field(init=False, repr=False, compare=False, default=None)
     """The `local` value the tools were resolved from. See `_native_resolved_from`."""
 
     def __post_init__(self) -> None:
