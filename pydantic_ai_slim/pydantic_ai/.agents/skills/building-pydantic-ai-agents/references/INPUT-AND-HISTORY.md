@@ -25,7 +25,7 @@ Not every model supports every input type. Keep provider expectations in mind wh
 
 ## Work with Message History
 
-Use `message_history=` to continue a conversation across runs.
+Continue a conversation across runs with `conversation=result.conversation`. A `Conversation` carries the messages plus what lives outside them: the running `usage` (so `UsageLimits` budget the whole conversation), the `conversation_id`, and the `deferred_tool_requests` a paused run is waiting on. It is also the thing to store between requests.
 
 ```python
 from pydantic_ai import Agent
@@ -33,16 +33,19 @@ from pydantic_ai import Agent
 agent = Agent('openai:gpt-5.2', name='conversation_agent', instructions='Be a helpful assistant.')
 
 result1 = agent.run_sync('Tell me a joke.')
-result2 = agent.run_sync('Explain?', message_history=result1.new_messages())
+result2 = agent.run_sync('Explain?', conversation=result1.conversation)
 print(result2.output)
 ```
+
+`message_history=` is the lower-level form: it takes just the messages (`result.all_messages()` / `new_messages()`), for when you build or edit a history yourself.
 
 Important distinctions:
 
 - `new_messages()` returns only the current run
 - `all_messages()` returns the full history accumulated so far
 - when `message_history` is non-empty, Pydantic AI assumes the history already carries the system prompt
-- to carry the running `usage` (so `UsageLimits` budget the whole conversation, not each run) and the `conversation_id` along with the history, pass `conversation=result.conversation` instead of `message_history=`. `Conversation` (`from pydantic_ai import Conversation`) bundles `messages`, `usage` and `conversation_id`, serializes like any Pydantic value, and is accepted by `run`, `run_sync`, `run_stream`, `run_stream_sync`, `run_stream_events`, `iter` and `realtime()`; `RealtimeSession.conversation` produces one. Passing it alongside any of those three arguments raises `UserError`
+- `Conversation` (`from pydantic_ai import Conversation, ConversationTypeAdapter`) is accepted by `run`, `run_sync`, `run_stream`, `run_stream_sync`, `run_stream_events`, `iter` and `realtime()`; `RealtimeSession.conversation` produces one too. Passing it alongside `message_history`, `usage` or `conversation_id` raises `UserError`. Store it with `ConversationTypeAdapter.dump_json(...)` / `validate_json(...)` or as a field on your own Pydantic model; it serializes messages with the same fidelity as `ModelMessagesTypeAdapter` (raw `bytes` in tool returns come back as base64 strings)
+- a run that ends with `DeferredToolRequests` output leaves them on `result.conversation.deferred_tool_requests` (they can't be rebuilt from the messages: approval vs external and per-call metadata aren't recorded there). Resume later with `agent.run(conversation=conv, deferred_tool_results=conv.deferred_tool_requests.build_results(...))`
 - interrupted, hand-built, or context-evicted histories are made provider-valid automatically before each model request — no manual cleanup needed. Repairs only ADD synthesized parts or REMOVE fundamentally-unsendable ones (never silently dropping meaningful content): a tool call with no result gets a synthesized `ToolReturnPart` (marked with `{'pydantic_ai_synthesized_tool_return': True}` in `metadata`), including one whose args were cut off mid-stream; an orphaned tool result (result with no matching call) is dropped; then consecutive compatible messages are merged. Applies to regular tool calls only — builtin/native parts are left untouched (handled by each model's serializer). Duplicate tool results and provider-specific ordering rules are out of scope.
 - to cancel a whole run: pass a `CancellationToken` to any run method and call `token.cancel()` (thread-safe), call `agent_run.cancel()` on the `agent.iter()` handle, cancel via `async with agent.run_stream_events(...) as events: ... events.cancel()`, or call `ctx.cancel()` from a tool, `event_stream_handler`, or capability hook. Inside the `agent.iter()` block this surfaces as `CancelledError`; once the context exits it raises `RunCancelled`. `RunCancelled.all_messages()` returns a complete snapshot of the history (completed tool results included) and can be passed as `message_history` to a new run to resume — dangling calls are repaired per the previous bullet. Cancellation is terminal: capability hooks may clean up but cannot recover the run to success. External `asyncio.Task.cancel()` keeps raising `CancelledError` (never translated; wins if both race); catch it and call `RunCancelled.from_cancellation(exc)` to access the attached run state. `StreamedRunResult.cancel()` is different: it only stops the current model response, the run continues.
 

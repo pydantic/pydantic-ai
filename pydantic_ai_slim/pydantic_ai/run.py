@@ -30,7 +30,7 @@ from ._run_context import (
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .conversation import Conversation
 from .output import OutputDataT
-from .tools import AgentDepsT
+from .tools import AgentDepsT, DeferredToolRequests
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
@@ -936,14 +936,24 @@ class AgentRunResult(Generic[OutputDataT]):
         """This run's [`Conversation`][pydantic_ai.conversation.Conversation], ready to carry into the next one.
 
         Bundles the messages, usage and conversation ID that a following run — text, streamed, or
-        realtime — needs, so none of them is dropped on the way. The messages list and the usage are
-        copies, so the returned conversation can be stored, carried into another run, and mutated
-        without touching this result's own accounting.
+        realtime — needs, so none of them is dropped on the way, and, when this run paused with
+        [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests] as its output, the requests
+        it is waiting on. The messages list and the usage are copies, so the returned conversation
+        can be stored, carried into another run, and mutated without touching this result's own
+        accounting.
         """
+        output = self.output
         return Conversation(
             messages=list(self.all_messages()),
             usage=copy(self.usage),
             conversation_id=self.conversation_id,
+            deferred_tool_requests=(
+                DeferredToolRequests(
+                    calls=list(output.calls), approvals=list(output.approvals), metadata=dict(output.metadata)
+                )
+                if isinstance(output, DeferredToolRequests)
+                else None
+            ),
         )
 
     @property

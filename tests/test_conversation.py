@@ -11,10 +11,22 @@ from uuid import UUID
 import pytest
 from pydantic import BaseModel, TypeAdapter
 
-from pydantic_ai import Agent, Conversation, RunUsage
-from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import Agent, Conversation, ConversationTypeAdapter, RunUsage
+from pydantic_ai.exceptions import CallDeferred, UserError
+from pydantic_ai.messages import (
+    BinaryContent,
+    ModelMessage,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.tools import DeferredToolRequests
 
 
 def test_defaults() -> None:
@@ -197,3 +209,96 @@ def test_conversation_is_a_branch_point() -> None:
     assert second_branch.all_messages()[:original_message_count] == conversation.messages
     assert first_branch.new_messages() != second_branch.new_messages()
     assert first_branch.usage.requests == second_branch.usage.requests == original_requests + 1
+
+
+def _refund_agent() -> Agent[None, str | DeferredToolRequests]:
+    """An agent whose first run pauses on one call needing approval and one executed elsewhere."""
+
+    def llm(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('refund', {'amount': 10}, tool_call_id='refund-1'),
+                    ToolCallPart('look_up_order', {}, tool_call_id='lookup-1'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('Refunded order 42.')])
+
+    agent = Agent(FunctionModel(llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def refund(amount: int) -> str:
+        return f'refunded {amount}'
+
+    @agent.tool_plain
+    def look_up_order() -> str:
+        raise CallDeferred(metadata={'queue': 'orders'})
+
+    return agent
+
+
+def test_a_paused_conversation_carries_what_it_is_waiting_on() -> None:
+    """The requests travel with the conversation: the messages can't say which answer each call needs.
+
+    Stored and reloaded, the conversation still knows the refund wants approval and the lookup
+    wants an external result with its metadata, so it can be resumed from storage alone.
+    """
+    agent = _refund_agent()
+    paused = agent.run_sync('Refund my order.')
+    assert isinstance(paused.output, DeferredToolRequests)
+
+    stored = ConversationTypeAdapter.dump_json(paused.conversation)
+    conversation = ConversationTypeAdapter.validate_json(stored)
+
+    requests = conversation.deferred_tool_requests
+    assert requests == paused.output
+    assert [call.tool_call_id for call in requests.approvals] == ['refund-1']
+    assert [call.tool_call_id for call in requests.calls] == ['lookup-1']
+    assert requests.metadata == {'lookup-1': {'queue': 'orders'}}
+
+    results = requests.build_results(approve_all=True, calls={'lookup-1': 'order 42'})
+    resumed = agent.run_sync(conversation=conversation, deferred_tool_results=results)
+
+    assert resumed.output == 'Refunded order 42.'
+    assert resumed.conversation.deferred_tool_requests is None
+
+
+def test_a_conversation_s_requests_are_its_own() -> None:
+    agent = _refund_agent()
+    paused = agent.run_sync('Refund my order.')
+
+    conversation = paused.conversation
+    assert conversation.deferred_tool_requests is not None
+    conversation.deferred_tool_requests.approvals.clear()
+
+    assert isinstance(paused.output, DeferredToolRequests)
+    assert [call.tool_call_id for call in paused.output.approvals] == ['refund-1']
+
+
+def test_serializes_with_the_fidelity_of_the_messages_adapter() -> None:
+    """Every way of storing a conversation keeps what `ModelMessagesTypeAdapter` keeps.
+
+    A tool's raw `bytes` return lives in an `Any`-typed field that only an outermost adapter's
+    `ser_json_bytes` reaches, so before the conversation routed its messages through that adapter,
+    dumping it to JSON failed outright on non-UTF-8 bytes, nested in a model of the caller's or not.
+    """
+    image = BinaryContent(data=bytes([0x89, 0xFF, 0x00, 0x10]), media_type='image/png')
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart('read_file', bytes([0xFF, 0xFE]), tool_call_id='c1'),
+                UserPromptPart(content=['What is in this image?', image]),
+            ]
+        )
+    ]
+    expected = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    conversation = Conversation(messages=messages)
+
+    class Thread(BaseModel):
+        conversation: Conversation
+
+    thread = Thread(conversation=conversation)
+
+    assert ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(conversation)).messages == expected
+    assert Thread.model_validate_json(thread.model_dump_json()).conversation.messages == expected
+    assert Thread.model_validate(thread.model_dump(mode='json')).conversation.messages == expected

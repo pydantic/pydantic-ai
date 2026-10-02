@@ -154,6 +154,12 @@ To use existing messages in a run, pass them to the `message_history` parameter 
 [`Agent.run`][pydantic_ai.agent.AbstractAgent.run], [`Agent.run_sync`][pydantic_ai.agent.AbstractAgent.run_sync] or
 [`Agent.run_stream`][pydantic_ai.agent.AbstractAgent.run_stream].
 
+!!! tip "Continuing a conversation? Pass `conversation=`"
+    `message_history` carries only the messages. To carry a conversation from one run to the next, pass the
+    previous result's [`conversation`][pydantic_ai.agent.AgentRunResult.conversation] as `conversation=` instead:
+    it brings the running usage, the conversation ID, and any deferred tool requests along with the messages. See
+    [Carrying a conversation whole](#carrying-a-conversation-whole).
+
 If `message_history` is set and not empty, a new system prompt is not generated — we assume the existing message history includes a system prompt. If your history comes from a source that doesn't round-trip system prompts (a UI frontend, a database that didn't persist them, a compaction pipeline), add the [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability so the agent's configured `system_prompt` is reinjected at the head of the first request when it's missing.
 
 ```python {title="Reusing messages in a conversation" hl_lines="9 13"}
@@ -355,6 +361,11 @@ The intended way to do this is using a `TypeAdapter`.
 
 We export [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] that can be used for this, or you can create your own.
 
+To store a conversation you mean to continue, store its [`Conversation`][pydantic_ai.conversation.Conversation]
+rather than its messages alone, with [`ConversationTypeAdapter`][pydantic_ai.conversation.ConversationTypeAdapter]
+or as a field on a model of your own: it serializes its messages the same way, and keeps the usage, conversation
+ID and deferred tool requests that the messages don't. See [Persistence](persistence.md#storing-a-conversation-yourself).
+
 Here's an example showing how:
 
 ```python {title="serialize messages to json"}
@@ -500,12 +511,14 @@ Each sanitization can be turned off individually when the corresponding parts we
 ### Carrying a conversation whole
 
 A history is not quite everything a conversation carries. [`usage`][pydantic_ai.usage.RunUsage] and the
-[`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) travel alongside it, each passed to the
-next run as its own argument — so a conversation reassembled by hand tends to lose them one at a time. Losing `usage` is the one that bites: pass `message_history` without it and every turn's
-[`UsageLimits`][pydantic_ai.usage.UsageLimits] budget starts over from zero, so a cap set across the
-conversation is never reached.
+[`conversation_id`](#correlating-runs-with-run_id-and-conversation_id) travel alongside it, and so do the
+[deferred tool requests](deferred-tools.md#pausing-a-conversation) of a run that paused, which the messages show
+as unanswered calls without saying what answer each needs. Passed one argument at a time, a conversation
+reassembled by hand tends to lose them one at a time. Losing `usage` is the one that bites: pass `message_history`
+without it and every turn's [`UsageLimits`][pydantic_ai.usage.UsageLimits] budget starts over from zero, so a cap
+set across the conversation is never reached.
 
-[`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation] bundles all three as a
+[`AgentRunResult.conversation`][pydantic_ai.agent.AgentRunResult.conversation] bundles them as a
 [`Conversation`][pydantic_ai.conversation.Conversation], which serializes like any other Pydantic value, so the
 whole thing can be stored under one key and handed back intact:
 
@@ -552,7 +565,7 @@ same `Conversation` can be continued more than once, as a point to branch from.
 [`conversation`][pydantic_ai.realtime.RealtimeSession.conversation], so a conversation can move between text and
 speech in either direction without losing its running total.
 
-For a chat application that is usually the whole design: load a thread's history, pass it as `message_history`, and write back [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] once the run finishes. Appending each run's new messages rather than rewriting the full list keeps each write proportional to the turn instead of to the conversation, and leaves the stored order intact.
+For a chat application that is usually the whole design: load a thread's conversation, pass it as `conversation=`, and store the result's `conversation` back once the run finishes, with [`ConversationTypeAdapter`][pydantic_ai.conversation.ConversationTypeAdapter] or as a field on a model of your own. For a long thread, store the messages separately and append each run's [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] instead of rewriting them, which keeps each write proportional to the turn rather than to the conversation; [Persistence](persistence.md#storing-a-conversation-yourself) covers both.
 
 [Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/) packages that pattern as capabilities you add to an agent, so the load and save calls are not yours to write:
 
