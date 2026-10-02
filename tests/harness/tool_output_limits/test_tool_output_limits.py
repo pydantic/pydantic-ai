@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import os
 import time
+from collections.abc import AsyncIterable, AsyncIterator
 from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -16,10 +17,15 @@ from pydantic_core import to_json
 from pydantic_ai import Agent, FunctionToolset
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     BinaryContent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
     TextPart,
+    TextPartDelta,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -28,7 +34,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import AbstractModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.tool_output_limits import (
     Band,
@@ -39,6 +45,7 @@ from pydantic_ai_harness.tool_output_limits import (
     ToolOutputLimits,
     Truncate,
     TruncationStrategy,
+    drain_summary_events,
     indented_json,
     json_lines,
 )
@@ -106,6 +113,21 @@ def _fixed_model(text: str) -> FunctionModel:
         return ModelResponse(parts=[TextPart(content=text)])
 
     return FunctionModel(respond)
+
+
+def _stream_only_summarizer(chunks: list[str] | None = None) -> FunctionModel:
+    """A summarizer that only accepts streaming requests (#9249).
+
+    No `function` is provided, so a non-streaming request fails outright -- mirroring an
+    endpoint that returns HTTP 400 on `stream:false`.
+    """
+    parts = chunks if chunks is not None else ['STREAMED ', 'SUMMARY']
+
+    async def stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        for part in parts:
+            yield part
+
+    return FunctionModel(stream_function=stream_fn)
 
 
 def _call(tool_name: str = 'big_tool', tool_call_id: str = 'call-1') -> ToolCallPart:
@@ -849,6 +871,7 @@ class TestSummarize:
 
         assert out == 'THE SUMMARY'
         assert mock_agent.run.call_args.kwargs['usage_limits'] == UsageLimits(request_limit=4, tool_calls_limit=2)
+        assert mock_agent.run.call_args.kwargs['event_stream_handler'] is None
 
     async def test_explicit_model_overrides_ctx(self):
         ctx = _make_ctx(model=_fixed_model('FROM CTX MODEL'))
@@ -908,6 +931,82 @@ class TestSummarize:
         )
         out = await _run(cap, 'a' * 100)
         assert isinstance(out, str) and 'truncated' in out
+
+    async def test_stream_only_summarizer_without_a_handler_falls_back(self):
+        # No handler means the nested run takes the non-streaming request path, which this
+        # summarizer rejects; the failure degrades to the `then` fallback (#9249).
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=5, action=Summarize(model=_stream_only_summarizer(), then=Truncate(max_chars=95)))]
+        )
+        out = await _run(cap, 'x' * 100)
+        assert isinstance(out, str) and 'truncated' in out
+
+    async def test_stream_only_summarizer_completes_with_drain_handler(self):
+        # `drain_summary_events` selects the streaming request path and discards the events,
+        # which is what a summarizer endpoint that rejects non-streaming requests needs.
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[
+                Band(
+                    over=5,
+                    action=Summarize(model=_stream_only_summarizer(), event_stream_handler=drain_summary_events),
+                )
+            ]
+        )
+        out = await _run(cap, 'x' * 100)
+        assert out == 'STREAMED SUMMARY'
+
+    async def test_summary_events_reach_a_caller_supplied_handler(self):
+        deltas: list[str] = []
+
+        async def collect(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+            # The opening chunk of a part arrives as `PartStartEvent`; the rest are deltas.
+            async for event in events:
+                if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                    deltas.append(event.part.content)
+                elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                    deltas.append(event.delta.content_delta)
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[
+                Band(
+                    over=5,
+                    action=Summarize(
+                        model=_stream_only_summarizer(['STREA', 'MED SU', 'MMARY']),
+                        event_stream_handler=collect,
+                    ),
+                )
+            ]
+        )
+        out = await _run(cap, 'x' * 100)
+        assert out == 'STREAMED SUMMARY'
+        assert ''.join(deltas) == 'STREAMED SUMMARY'
+
+    async def test_stream_only_summarizer_completes_the_parent_run(self):
+        # Through the public surface: an oversized tool return is summarized over the
+        # streaming path inside a full agent run (#9249).
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[
+                Band(
+                    over=100,
+                    action=Summarize(model=_stream_only_summarizer(), event_stream_handler=drain_summary_events),
+                )
+            ]
+        )
+        agent = Agent(TestModel(), capabilities=[cap])
+
+        @agent.tool_plain
+        def read_log() -> str:
+            return 'log line\n' * 100
+
+        result = await agent.run('go')
+        returns = [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'read_log'
+        ]
+        assert returns == ['STREAMED SUMMARY']
 
     async def test_nested_per_tool_model_summarizer(self):
         summarize = Summarize(model=_fixed_model('NESTED SUMMARY'))
