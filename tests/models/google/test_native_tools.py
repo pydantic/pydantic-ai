@@ -15,7 +15,7 @@ Two related areas:
 
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 import pytest
@@ -435,7 +435,7 @@ _WEB_SEARCH_PARTS: list[dict[str, Any]] = [
 ]
 
 
-def _web_search_returns(parts: list[ModelResponsePart]) -> list[NativeToolReturnPart]:
+def _web_search_returns(parts: Sequence[ModelResponsePart]) -> list[NativeToolReturnPart]:
     return [p for p in parts if isinstance(p, NativeToolReturnPart) and p.tool_name == 'web_search']
 
 

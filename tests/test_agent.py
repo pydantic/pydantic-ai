@@ -12043,11 +12043,11 @@ def test_continue_conversation_that_ended_in_output_tool_call(allow_model_reques
     assert not any(isinstance(p, ToolReturnPart) and p.tool_name == 'final_result' for p in new_messages[0].parts)
 
 
-def _native_web_search_parts() -> list[ModelResponsePart]:
-    return [
+def _native_web_search_parts() -> tuple[NativeToolCallPart, NativeToolReturnPart]:
+    return (
         NativeToolCallPart('web_search', {'queries': ['weather']}, tool_call_id='search', provider_name='function'),
         NativeToolReturnPart('web_search', [{'uri': 'https://example.com'}], tool_call_id='search'),
-    ]
+    )
 
 
 def test_text_before_trailing_native_tool_call_is_output():
@@ -12079,12 +12079,13 @@ async def test_streamed_text_before_trailing_native_tool_call_is_output():
         yield 'It is '
         yield 'sunny.'
         call, tool_return = _native_web_search_parts()
-        yield {1: call}
-        yield {2: tool_return}
+        native_parts: list[BuiltinToolCallsReturns] = [{1: call}, {2: tool_return}]
+        for native_part in native_parts:
+            yield native_part
 
     agent = Agent(FunctionModel(stream_function=stream))
 
-    async def handle_events(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+    async def handle_events(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
         async for _ in events:
             pass
 

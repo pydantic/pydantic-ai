@@ -62,7 +62,8 @@ def _recorded_streams() -> dict[str, dict[str, Any]]:
 def _native_tools(request_body: dict[str, Any]) -> list[AbstractNativeTool]:
     # The streamed processor reads the enabled native tools (file search runs as `executable_code` on Gemini 2.5).
     tools: list[AbstractNativeTool] = []
-    for tool in request_body.get('tools') or []:
+    request_tools: list[dict[str, Any]] = request_body.get('tools') or []
+    for tool in request_tools:
         if 'fileSearch' in tool:
             tools.append(FileSearchTool(file_store_ids=tool['fileSearch']['file_search_store_names']))
         elif 'googleSearch' in tool:
