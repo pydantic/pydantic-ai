@@ -58,8 +58,8 @@ __all__ = ('E2BSandboxBackend',)
 
 try:
     import e2b
-except ImportError as error:  # pragma: no cover - exercised by the isolated missing-extra test
-    raise ImportError('Install `pydantic-ai-harness[e2b]` to use E2BSandbox.') from error
+except ImportError as _import_error:
+    raise ImportError('Install `pydantic-ai-harness[e2b]` to use E2BSandbox.') from _import_error
 
 logger = logging.getLogger(__name__)
 

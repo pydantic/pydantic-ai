@@ -21,7 +21,7 @@ from pydantic_ai_harness._output import truncate_head
 try:
     from youdotcom import You, models
     from youdotcom.errors import NoResponseError, YouError
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'youdotcom is required for the You.com capabilities. '
         'Install it with: pip install "pydantic-ai-harness[youdotcom]"'

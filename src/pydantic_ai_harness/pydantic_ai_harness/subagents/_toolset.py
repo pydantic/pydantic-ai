@@ -201,7 +201,7 @@ def _emits_events(ctx: RunContext[AgentDepsT]) -> bool:
     capability, and core refuses capability events from it; it emits nothing.
     """
     tool_name = ctx.tool_name
-    if tool_name is None:  # pragma: no cover - a tool call always names its tool
+    if tool_name is None:
         return False
     tool_def = ctx.tools.get(tool_name)
     return tool_def is not None and tool_def.capability_id is not None

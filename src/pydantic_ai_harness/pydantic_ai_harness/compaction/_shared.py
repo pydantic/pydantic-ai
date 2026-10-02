@@ -672,7 +672,7 @@ def find_token_cutoff(
             lo = mid + 1
 
     if candidate >= len(messages):
-        candidate = max(0, len(messages) - 1)  # pragma: no cover
+        candidate = max(0, len(messages) - 1)
 
     # Walk backward to a safe point.
     for idx in range(candidate, -1, -1):
