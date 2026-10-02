@@ -84,6 +84,8 @@ class RealtimeParityCase:
     Where it does, the spoken scenario keeps a silent microphone running so the clock can run out,
     the way a real call would.
     """
+    labels_phase: bool = False
+    """Whether the model labels each assistant message `commentary` or `final_answer` (its `phase`)."""
 
 
 # Adding a supported model generation is one row. Gateway routes intentionally have their own rows:
@@ -99,6 +101,7 @@ REALTIME_PARITY_CASES = [
         supports_manual_turn_control=True,
         supports_interruption=True,
         supports_native_tools=False,
+        labels_phase=True,
     ),
     RealtimeParityCase(
         id='openai-previous',
@@ -332,6 +335,13 @@ async def test_text_tool_round_parity(
     assert isinstance(final_part, (SpeechPart, TextPart))
     answer = final_part.transcript if isinstance(final_part, SpeechPart) else final_part.content
     assert answer is not None and 'fog' in answer.lower()
+    if case.labels_phase:
+        # Kept on the part, under the key the Responses API reads it from when the history is handed off.
+        assert [part.provider_details for part in messages[1].parts if isinstance(part, TextPart)] == [
+            {'phase': 'commentary'}
+        ]
+        assert final_part.provider_details == {'phase': 'final_answer'}
+        assert final_part.provider_name == 'openai'
     assert session.usage.requests >= 1
     assert session.usage.input_tokens >= 0
     assert session.usage.output_tokens >= 0
@@ -385,11 +395,6 @@ async def test_audio_tool_round_parity(
     model like GPT-Live can run at all. Both must produce the same history.
     """
     case, provider, cassette = parity_ws_cassette
-    if case.model_kind == 'openai':
-        # OpenAI's server VAD cancels an empty reply when the user goes on speaking, and commits the
-        # second turn after that reply ended. The shadow core files the turn after it, in the provider's
-        # order; the current core files it where the user started speaking (SIM-11).
-        request.applymarker(pytest.mark.shadow_divergence(reason='SIM-11: spoken turn in provider order'))
     model = _model(case, provider)
     profile = model.profile
     assert profile.get('synthesizes_turn_boundary', False) is case.synthesizes_turn_boundary

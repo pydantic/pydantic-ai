@@ -117,10 +117,12 @@ class OpenAIServer:
     def __init__(self, *, dialect: Dialect = 'openai', model: str = 'gpt-realtime') -> None:
         self.dialect = dialect
         self.model = model
-        self.truth = GroundTruth()
+        self.truth = GroundTruth(models_every_spoken_turn=True)
         self.network = Network(self)
         self.sessions: list[ServerSession] = []
         self._armed_rejections: list[Literal['content', 'response']] = []
+        # The turn each `input_audio_buffer.cleared` cut off (if any), until the client reads the frame.
+        self._clears_unread: list[str | None] = []
         self._next_item = 1
         # Server event id of an `error` frame -> the inputs it refused, resolved when the client reads it.
         self._refusals: dict[str, list[str]] = {}
@@ -199,6 +201,11 @@ class OpenAIServer:
             response.started_read = now
         if response is not None and response.content_read is None and frame_type.startswith(_CONTENT_FRAME_PREFIXES):
             response.content_read = now
+        if frame_type == 'input_audio_buffer.cleared' and self._clears_unread:
+            if (cleared := self._clears_unread.pop(0)) is not None:
+                self.truth.speech_cleared_read.add(cleared)
+        if frame_type == 'conversation.item.input_audio_transcription.completed':
+            self.truth.transcripts_read.setdefault(str(frame.get('transcript')), now)
         if frame_type == 'response.function_call_arguments.done' and (
             call := self.truth.tool_calls.get(frame.get('call_id', ''))
         ):
@@ -310,6 +317,13 @@ class OpenAIServer:
     def _on_audio_clear(self, session: ServerSession, frame: dict[str, Any]) -> None:
         del frame
         session.audio_ms = 0
+        self._clears_unread.append(session.speaking)
+        if (key := session.speaking) is not None:
+            self.truth.speech_cleared.add(key)
+            if self.dialect == 'xai' and session.transcription:
+                # A guess: xAI already added the turn's item when it heard speech start, and still
+                # transcribes what it had of it (no recording clears the buffer mid-speech on xAI).
+                session.pending_transcripts.append(key)
         session.speaking = None
         self._emit(session, {'type': 'input_audio_buffer.cleared'})
 
@@ -715,13 +729,20 @@ class OpenAIServer:
             self._finish_active(session, 'cancelled', reason='turn_detected', late=late)
         return key
 
-    def speech_stop(self) -> str:
-        """Server VAD hears the user stop: the audio is committed as a user turn, and answered if configured to."""
+    def speech_stop(self, *, commit: bool = True) -> str:
+        """Server VAD hears the user stop: the audio is committed as a user turn, and answered if configured to.
+
+        `commit=False` is a stop server VAD takes back: the user goes on, and the next start opens the turn
+        the audio is committed as (a guess at semantic VAD's pauses; no recording has one).
+        """
         session = self.session
         assert session is not None and session.speaking is not None
         key, session.speaking = session.speaking, None
         item_id = f'item_{key}'
         self._emit(session, {'type': 'input_audio_buffer.speech_stopped', 'item_id': item_id, 'audio_end_ms': 1000})
+        if not commit:
+            self.truth.speech_stopped_uncommitted.add(key)
+            return key
         session.audio_ms = 0
         self.truth.speech_committed.add(key)
         if self.dialect != 'xai':

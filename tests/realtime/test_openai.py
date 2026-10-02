@@ -66,8 +66,10 @@ from pydantic_ai.realtime import (
     RealtimeOutputSpeechStartEvent,
     RealtimeSession,
     RealtimeSessionReconnectEvent,
+    RealtimeTurnCompleteEvent,
     WebRTCSession,
 )
+from pydantic_ai.realtime._instrumentation import SessionInstrumentation
 from pydantic_ai.realtime._openai_protocol import (
     RealtimeHandshakeError,
     _user_content_items,  # pyright: ignore[reportPrivateUsage]
@@ -99,7 +101,7 @@ from pydantic_ai.realtime.profiles import merge_realtime_profile
 from pydantic_ai.realtime.xai import map_conversation_event as _map_conversation_wire_event
 from pydantic_ai.settings import ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import IsDatetime, try_import
 from .test_session import FakeRealtimeModel, make_tool_manager
@@ -4751,7 +4753,6 @@ async def test_image_history_cap_evicts_the_oldest_image_the_provider_added() ->
     ]
 
 
-@pytest.mark.shadow_divergence(reason='SIM-2a: turns sent after the reply started are filed after it, not before')
 @pytest.mark.anyio
 async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for_once() -> None:
     """Turns sent while a reply is in flight share one deferred response, and `wait_for_reply()` returns after it.
@@ -4933,9 +4934,6 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(stat
             await session.wait_for_reply()
 
 
-@pytest.mark.shadow_divergence(
-    reason="SIM-2a: a turn sent after the batch's answer was requested is filed after that answer"
-)
 @pytest.mark.anyio
 async def test_tool_batch_response_create_counts_as_one_request() -> None:
     """A batch's `response.create` is one request, however many outputs it follows.
@@ -4999,3 +4997,146 @@ async def test_tool_batch_response_create_counts_as_one_request() -> None:
             ws.push(frame)
         with anyio.fail_after(5):
             await waiting
+
+
+@pytest.mark.anyio
+async def test_a_reply_waits_for_the_transcript_of_the_turn_before_it_for_a_while(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """History holds the reply back until the spoken turn before it is transcribed, but not for longer than that hold."""
+    monkeypatch.setattr('pydantic_ai.realtime._session._TRANSCRIPT_HOLD_SECONDS', 0.05)
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        frames: list[dict[str, Any]] = [
+            {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
+            {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
+            {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
+            {
+                'type': 'response.created',
+                'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+            },
+            {
+                'type': 'response.output_audio_transcript.delta',
+                'response_id': 'resp_1',
+                'item_id': 'item_a1',
+                'delta': 'Hello.',
+            },
+            {
+                'type': 'response.done',
+                'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'completed', 'output': []},
+            },
+        ]
+        for frame in frames:
+            ws.push(frame)
+        async for event in session:  # pragma: no branch
+            if isinstance(event, RealtimeTurnCompleteEvent):
+                break
+        # The reply is done, but held back behind the turn before it, until the hold runs out.
+        assert session.all_messages() == []
+        with anyio.fail_after(5):
+            while not session.all_messages():
+                await asyncio.sleep(0.01)
+        # The transcript coming after all changes nothing already recorded.
+        ws.push(
+            {
+                'type': 'conversation.item.input_audio_transcription.completed',
+                'item_id': 'item_u1',
+                'content_index': 0,
+                'transcript': 'Hi.',
+            }
+        )
+        for _ in range(20):
+            await asyncio.sleep(0)
+    assert [[getattr(part, 'transcript', None) for part in message.parts] for message in session.all_messages()] == [
+        [None],
+        ['Hello.'],
+    ]
+
+
+@pytest.mark.anyio
+async def test_a_server_vad_reply_at_the_request_limit_is_not_counted_twice() -> None:
+    """The core counts the reply as its terminal frame arrives; the limit check it makes then mustn't count it again."""
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        usage_limits=UsageLimits(request_limit=1),
+    )
+    async with session:
+        frames: list[dict[str, Any]] = [
+            {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
+            {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
+            {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
+            {
+                'type': 'response.created',
+                'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+            },
+            {
+                'type': 'response.done',
+                'response': {
+                    'id': 'resp_1',
+                    'object': 'realtime.response',
+                    'status': 'completed',
+                    'output': [],
+                    'usage': {'input_tokens': 5, 'output_tokens': 0, 'total_tokens': 5},
+                },
+            },
+        ]
+        for frame in frames:
+            ws.push(frame)
+        await session.wait_for_reply()
+        for _ in range(20):
+            await asyncio.sleep(0)
+    assert session.usage.requests == 1
+
+
+@pytest.mark.anyio
+async def test_a_chat_spans_input_is_the_conversation_ahead_of_its_response(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The core records a response as its terminal arrives, before the span ends: the span's input must not hold it."""
+    ended: list[tuple[list[ModelMessage], ModelResponse | None]] = []
+    end_chat_span = SessionInstrumentation.end_chat_span
+
+    def record(
+        self: SessionInstrumentation, input_messages: list[ModelMessage], response: ModelResponse | None
+    ) -> None:
+        ended.append((input_messages, response))
+        end_chat_span(self, input_messages, response)
+
+    monkeypatch.setattr(SessionInstrumentation, 'end_chat_span', record)
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection, model=FakeRealtimeModel(connection, system='openai'), tool_manager=make_tool_manager()
+    )
+    async with session:
+        await session.send('Hi.')
+        frames: list[dict[str, Any]] = [
+            {
+                'type': 'response.created',
+                'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+            },
+            {
+                'type': 'response.output_audio_transcript.delta',
+                'response_id': 'resp_1',
+                'item_id': 'item_a1',
+                'delta': 'Hello.',
+            },
+            {
+                'type': 'response.done',
+                'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'completed', 'output': []},
+            },
+        ]
+        for frame in frames:
+            ws.push(frame)
+        await session.wait_for_reply()
+        for _ in range(20):
+            await asyncio.sleep(0)
+    [(input_messages, response)] = ended
+    assert response is not None
+    assert [type(message).__name__ for message in input_messages] == ['ModelRequest']
