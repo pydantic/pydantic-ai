@@ -26,12 +26,12 @@ def parse_repository(source: str) -> tuple[str, str]:
     if '://' in url:
         parsed = urlsplit(url)
         if (
-            parsed.scheme not in ('https', 'http', 'ssh', 'git', 'file')
+            parsed.scheme not in ('https', 'ssh', 'file')
             or (parsed.scheme != 'file' and not parsed.netloc)
             or parsed.query
             or parsed.fragment
         ):
-            raise ValueError('Use a Git HTTPS, SSH, git://, or file:// URL without a query or fragment.')
+            raise ValueError('Use an HTTPS, SSH, or local file:// Git URL without a query or fragment.')
         path = unquote(parsed.path)
     elif _SCP_URL.fullmatch(url):
         path = url.partition(':')[2]
