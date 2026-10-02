@@ -28,6 +28,8 @@ alternative: they work with every model and keep the compaction logic (and its c
 | `WarnNearLimits` | zero-LLM | Injects an URGENT/CRITICAL warning as limits approach | You want the agent to wrap up rather than have its history rewritten |
 | `ReportContextUsage` | zero-LLM | Reports context usage to your application; never edits history | You want a live context gauge in a UI |
 
+Compaction updates persistent run history and replaces the current request view. List request-only injectors such as `Memory` after compaction so they apply to the compacted request. Earlier request-only edits are discarded, even when `ClampOversizedMessages` has nothing to shorten.
+
 ## Triggers
 
 Instruction replacement and withdrawal records contribute their full rendered system text to token estimates. Superseded updates before a new instruction baseline are excluded.
@@ -321,7 +323,9 @@ It clamps two kinds of part inside each `ModelResponse`:
 
 Request-side parts (user prompts, tool *returns*, system prompts) are deliberately out of scope:
 user input should not be silently rewritten, and oversized tool returns are the job of
-`ClearToolResults`.
+[`ToolOutputLimits`](../tool_output_limits/), which reduces a return when the tool produces it.
+`ClearToolResults` keeps the newest `keep_pairs` results intact, and with `keep_pairs=0` it blanks a
+fresh return outright rather than shrinking it.
 
 Use it as the first tier of `TieredCompaction`, before `ClearToolResults`:
 

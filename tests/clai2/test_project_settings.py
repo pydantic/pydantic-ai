@@ -16,8 +16,13 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
 from pydantic_clai2.config import PluginSettings, resolve_settings
-from pydantic_clai2.project_settings import PROJECT_FILE, ProjectSettings, find_project_file, load_project_settings
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.project_settings import (
+    PROJECT_FILE,
+    ProjectSettings,
+    find_project_file,
+    load_project_settings,
+)
+from pydantic_clai2.config.settings_store import SettingsStore
 
 
 def write(directory: Path, content: dict[str, JsonValue]) -> Path:

@@ -124,6 +124,8 @@ class GroundTruth:
     """Responses the client read a second terminal for."""
     speech_started: dict[str, int] = field(default_factory=dict[str, int])
     """When server VAD heard each spoken user turn start, on the shared clock."""
+    speech_committed: set[str] = field(default_factory=set[str])
+    """The spoken user turns whose audio was committed (xAI adds a turn's item before it commits it)."""
     word_seq: dict[str, int] = field(default_factory=dict[str, int])
     """When the server generated each word a response said, on the shared clock."""
     word_read: dict[str, int] = field(default_factory=dict[str, int])

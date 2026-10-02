@@ -16,13 +16,14 @@ import json
 import wave
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel, StringConstraints
 
-from pydantic_ai import Agent, RequestUsage, RunContext
+from pydantic_ai import Agent, RequestUsage, RunContext, ToolReturn
 from pydantic_ai.capabilities import WebSearch
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
@@ -482,6 +483,114 @@ async def test_tool_call_round(gemini_ws_cassette: tuple[Provider[Any], Realtime
     assert session.usage.total_tokens == final.usage.total_tokens
 
 
+@pytest.mark.parametrize(
+    ('model_name', 'async_tool_calls'),
+    [('gemini-3.1-flash-live-preview', False), ('gemini-3.8-live', False), ('gemini-3.8-live', True)],
+)
+async def test_tool_result_image(
+    gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    model_name: str,
+    async_tool_calls: bool,
+) -> None:
+    """An image a tool returns goes in the function response, and the model sees it.
+
+    The tool's text says nothing about the picture, so naming the fruit means the model read the image.
+    Covers a blocking call and an async one, whose result is scheduled to cut into the speech.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel(model_name, provider=provider)
+    agent = Agent(instructions='Use take_photo when asked what is on the table, then answer in one short sentence.')
+    image = BinaryImage(data=assets_path.joinpath('kiwi.jpg').read_bytes(), media_type='image/jpeg')
+
+    @agent.tool_plain
+    async def take_photo() -> ToolReturn:
+        """Take a photo of the table."""
+        return ToolReturn(return_value='Photo taken.', content=[image])
+
+    # An async call's turn completes alongside the call, and the answer comes in a turn of its own.
+    turns = 2 if async_tool_calls else 1
+    async with agent.realtime(model, model_settings={'async_tool_calls': async_tool_calls}).session() as session:
+        await session.send('What fruit is on the table?')
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    turns -= 1
+                    if not turns:
+                        break
+
+    [response] = sent_frames_containing(cassette, 'Photo taken.')
+    [function_response] = response['toolResponse']['functionResponses']
+    assert [part['inlineData']['mimeType'] for part in function_response['parts']] == ['image/jpeg']
+    answer = ' '.join(
+        part.transcript or ''
+        for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'kiwi' in answer.lower()
+
+
+class _TreeNode(BaseModel):
+    name: str
+    children: dict[str, _TreeNode] = {}
+    children_by_slug: dict[Annotated[str, StringConstraints(pattern='^[a-z-]+$')], _TreeNode] = {}
+
+
+async def test_tool_with_recursive_map_values(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    """A tool taking recursive `dict[str, Node]` fields is declared, and the model calls it.
+
+    A `dict`'s values sit under `additionalProperties`, or `patternProperties` when its keys carry a pattern.
+    Live declarations drop both, so the recursion lives only in subschemas that are dropped, and each field
+    goes out as a plain object like any other `dict` field.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
+    agent = Agent(instructions='Use save_tree when asked to save a tree, then confirm it in one short sentence.')
+
+    @agent.tool_plain
+    def save_tree(tree: _TreeNode) -> str:
+        """Save a tree of named nodes."""
+        return f'Saved {tree.name}.'
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Save a tree whose root is named "oak" and has no children.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [setup] = sent_frames_containing(cassette, 'Save a tree of named nodes.')
+    assert setup['setup']['tools'] == snapshot(
+        [
+            {
+                'functionDeclarations': [
+                    {
+                        'description': 'Save a tree of named nodes.',
+                        'name': 'save_tree',
+                        'parameters': {
+                            'properties': {
+                                'name': {'type': 'STRING'},
+                                'children': {'default': {}, 'type': 'OBJECT'},
+                                'children_by_slug': {'default': {}, 'type': 'OBJECT'},
+                            },
+                            'required': ['name'],
+                            'type': 'OBJECT',
+                        },
+                    }
+                ]
+            }
+        ]
+    )
+    assert [e.part.args_as_dict() for e in events if isinstance(e, FunctionToolCallEvent)] == snapshot(
+        [{'name': 'oak'}]
+    )
+    assert [e.part.content for e in events if isinstance(e, FunctionToolResultEvent)] == snapshot(['Saved oak.'])
+
+
 async def test_asap_enqueue_waits_for_response_boundary(
     gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette],
 ) -> None:
@@ -779,6 +888,8 @@ def test_profile_allow_seeding() -> None:
         google_supports_affective_dialog=True,
         # A typed turn doesn't see an image sent just before it as a video frame (verified live).
         google_text_turns_see_video_frames=False,
+        # 2.5 guesses at media in a function response, so tool results carry text only.
+        google_supported_mime_types_in_tool_returns=(),
         # 2.5 rejects function parts in seeded turns, so seeded tool calls go in as text.
         google_supports_seeding_function_parts=False,
         google_closes_tool_call_turn_separately=False,

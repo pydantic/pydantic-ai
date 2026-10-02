@@ -101,7 +101,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolChoice, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import try_import
+from ..conftest import IsDatetime, try_import
 from .test_session import FakeRealtimeModel, make_tool_manager
 from .ws_helpers import collect_codec_events, collect_session_events
 
@@ -527,12 +527,44 @@ def test_map_response_done_without_response_object() -> None:
         map_event({'type': 'response.done'})
 
 
-def test_map_response_done_failed_and_unknown_incomplete_reason() -> None:
+def test_map_response_done_failed() -> None:
     assert map_event(_response_done({'status': 'failed'})) == ResponseDone(
         interrupted=False, finish_reason='error', provider_details={'status': 'failed'}
     )
-    with pytest.raises(ValueError):
-        map_event(_response_done({'status': 'incomplete', 'status_details': {'reason': 'network'}}))
+
+
+@pytest.mark.parametrize(
+    ('response', 'provider_details'),
+    [
+        pytest.param(
+            {'status': 'incomplete', 'status_details': {'type': 'incomplete', 'reason': 'network'}},
+            {'status': 'incomplete', 'finish_reason': 'network'},
+            id='reason',
+        ),
+        pytest.param(
+            {'status': 'incomplete', 'status_details': {'type': 'truncated'}},
+            {'status': 'incomplete'},
+            id='details-type',
+        ),
+        pytest.param({'status': 'expired'}, {'status': 'expired'}, id='status'),
+    ],
+)
+async def test_response_done_with_unknown_status_values_still_ends_the_response(
+    response: dict[str, Any], provider_details: dict[str, Any]
+) -> None:
+    """The SDK closes `status`, `status_details.type` and `.reason` to today's values; one the server adds later
+    must still end the response and report its usage, with the raw value kept and no finish reason guessed."""
+    done = _response_done({'id': 'resp-1', 'output': [], 'usage': {'input_tokens': 3, 'output_tokens': 2}, **response})
+    conn = OpenAIRealtimeConnection(FakeWebSocket([json.dumps(done)]))  # type: ignore[arg-type]
+
+    assert await collect_codec_events(conn) == [
+        SessionUsage(
+            usage=RequestUsage(input_tokens=3, output_tokens=2),
+            provider_response_id='resp-1',
+            provider_details=provider_details,
+        ),
+        ResponseDone(provider_response_id='resp-1', provider_details=provider_details),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -2131,6 +2163,22 @@ async def test_connect_captures_server_reported_model(monkeypatch: pytest.Monkey
     # the session can stamp it on `ModelResponse.model_name` (it can differ from the requested id).
     created = json.dumps({'type': 'session.created', 'session': {'model': 'gpt-realtime-2025-06-03'}})
     ws = FakeWebSocket([created, _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x') as conn:
+        assert conn.model_name == 'gpt-realtime-2025-06-03'
+
+
+async def test_connect_accepts_session_values_the_sdk_does_not_know(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The SDK's session models close their enums to today's values; a server default added later must not
+    # fail the handshake, which only needs the model name.
+    session = {
+        'type': 'realtime',
+        'model': 'gpt-realtime-2025-06-03',
+        'output_modalities': ['audio'],
+        'truncation': 'retention_ratio_v2',
+        'audio': {'input': {'turn_detection': {'type': 'neural_vad'}}},
+    }
+    ws = FakeWebSocket([json.dumps({'type': 'session.created', 'session': session}), _updated()])
     monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
     async with _connect(OpenAIRealtimeModel('gpt-realtime'), 'x') as conn:
         assert conn.model_name == 'gpt-realtime-2025-06-03'
@@ -4676,6 +4724,35 @@ def _response_frames(response_id: str, transcript: str) -> list[dict[str, Any]]:
 
 
 @pytest.mark.anyio
+async def test_image_history_cap_evicts_the_oldest_image_the_provider_added() -> None:
+    """Both session cores drop the oldest retained image to keep within `retain_images_max`."""
+    ws = _QueuedWebSocket()
+    connection = OpenAIRealtimeConnection(ws)  # type: ignore[arg-type]
+    session = RealtimeSession(
+        connection,
+        model=FakeRealtimeModel(connection, system='openai'),
+        tool_manager=make_tool_manager(),
+        retain_images_max=1,
+    )
+    images = [BinaryImage(data=f'image-{index}'.encode(), media_type='image/png') for index in range(2)]
+    async with session:
+        for index, image in enumerate(images):
+            await session.send(image)
+            ws.push(
+                {
+                    'type': 'conversation.item.added',
+                    'item': {'id': f'pydantic_ai_item_{index}', 'type': 'message', 'role': 'user', 'content': []},
+                }
+            )
+        for _ in range(20):
+            await asyncio.sleep(0)
+    assert session.all_messages() == [
+        ModelRequest(parts=[UserPromptPart(content=[images[1]], timestamp=IsDatetime())], timestamp=IsDatetime())
+    ]
+
+
+@pytest.mark.shadow_divergence(reason='SIM-2a: turns sent after the reply started are filed after it, not before')
+@pytest.mark.anyio
 async def test_text_turns_queued_behind_a_reply_are_answered_once_and_waited_for_once() -> None:
     """Turns sent while a reply is in flight share one deferred response, and `wait_for_reply()` returns after it.
 
@@ -4856,6 +4933,9 @@ async def test_single_tool_call_frames_and_timing_are_unchanged_by_batching(stat
             await session.wait_for_reply()
 
 
+@pytest.mark.shadow_divergence(
+    reason="SIM-2a: a turn sent after the batch's answer was requested is filed after that answer"
+)
 @pytest.mark.anyio
 async def test_tool_batch_response_create_counts_as_one_request() -> None:
     """A batch's `response.create` is one request, however many outputs it follows.

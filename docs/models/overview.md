@@ -39,12 +39,16 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
 | [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
+| [System One API](system-one.md) | [Decision models](decision.md) such as CLM, Laya, and Ollama's | `system-one:` |
 | [Together AI](compatible-apis.md#together-ai) | Inference platform | `together:` |
 | [TypeSafe (Jev)](typesafe.md) | [Decision model](decision.md) | `typesafe:` |
 | [Vercel AI Gateway](compatible-apis.md#vercel-ai-gateway) | Gateway | `vercel:` |
 | [vLLM](compatible-apis.md#vllm) | Self-hosted inference | `vllm:` |
 | [xAI](xai.md) | Model developer | `xai:` |
 | [Z.AI](zai.md) | Model developer | `zai:` |
+
+!!! tip "One key for every model"
+    The easiest way to try models from several providers is the [Pydantic AI Gateway](../gateway.md): one API key for models from OpenAI, Anthropic, Google Cloud, Groq, and AWS Bedrock, with spending limits and cost monitoring in [Pydantic Logfire](../logfire.md). Set `PYDANTIC_AI_GATEWAY_API_KEY` and add the `gateway/` prefix to the model string, for example `Agent('gateway/anthropic:claude-fable-5-1')`. The [Gateway quick start](../gateway.md#quick-start) shows how to create a key.
 
 The service descriptions help you find a deployment option; a company may offer more than one kind of service. Feature support depends on the model and API you select, even when two services use the same API format.
 
@@ -111,7 +115,7 @@ The profile also carries the model's [`context_window`][pydantic_ai.profiles.Mod
 
 ## HTTP Client Lifecycle
 
-When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager ensures the HTTP client is closed cleanly on exit:
+When a [`Provider`][pydantic_ai.providers.Provider] creates its own HTTP client (i.e. you don't pass a custom `http_client`), it owns that client's lifecycle. Using the [`Agent`][pydantic_ai.Agent] as an async context manager keeps the HTTP client open across every run inside the block, so the runs reuse its connections, and closes it cleanly on exit:
 
 ```python
 from pydantic_ai import Agent
@@ -127,7 +131,38 @@ async def main():
 
 You can also use a [`Model`][pydantic_ai.models.Model] or [`Provider`][pydantic_ai.providers.Provider] directly as an async context manager for the same effect.
 
-If you provide your own `http_client`, you are responsible for closing it yourself.
+An agent you don't enter this way enters its model for the duration of each run instead. The provider then closes its HTTP client when the run ends and creates a new one for the next run, so no connections are reused between runs. A model name passed to a run, as in `agent.run(..., model='openai:gpt-5.2')`, goes further: it creates a new provider, and with it a new HTTP client, for every run. In a long-lived service such as a web server, enter the agent once when the service starts and run it inside that block, and to switch models per run, pass `Model` instances you created and entered (`async with model:`) once, rather than model names.
+
+Pydantic AI only ever closes an HTTP client it created itself. A client you pass in is yours to close, whether it's an `http_client` or a provider SDK client, such as `openai_client`, `anthropic_client` (including `AsyncAnthropicVertex`), Google's `client`, or `xai_client`.
+
+### Configuring the HTTP client
+
+The HTTP clients Pydantic AI creates have a 600-second timeout with a 5-second connect timeout, and a connection pool of up to 1000 connections, of which up to 100 are kept alive while idle. These are the defaults of the OpenAI and Anthropic SDKs' own clients. To change them, create a client with [`create_async_httpx2_client()`][pydantic_ai.models.create_async_httpx2_client], which keeps the remaining defaults and Pydantic AI's `User-Agent`, and pass it to the provider as `http_client`:
+
+```python {title="configure_http_client.py"}
+import httpx2
+
+from pydantic_ai import Agent
+from pydantic_ai.models import create_async_httpx2_client
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+
+async def main():
+    async with create_async_httpx2_client(
+        timeout=httpx2.Timeout(120, connect=5, pool=10),
+        limits=httpx2.Limits(max_connections=200, max_keepalive_connections=50),
+    ) as http_client:
+        model = OpenAIChatModel('gpt-5.2', provider=OpenAIProvider(http_client=http_client))
+        agent = Agent(model)
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
+```
+
+Because you created the client, you close it, here by leaving the `async with` block. Passing the same client to several providers makes them share its connection pool.
+
+The Groq, Cohere and GitHub providers take a legacy `httpx.AsyncClient` instead, which you build yourself with the same arguments, for example `httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5), limits=httpx.Limits(max_connections=200, max_keepalive_connections=50))`.
 
 ## Custom Models
 
@@ -205,6 +240,17 @@ async def main():
     print(len(results))
     #> 20
 ```
+
+An agent and the `ConcurrencyLimitedModel` used for its own model request must use separate
+`ConcurrencyLimiter` instances. If you set `Agent(max_concurrency=...)` as well as
+`ConcurrencyLimitedModel(limiter=...)`, using the same instance raises
+[`UserError`][pydantic_ai.exceptions.UserError].
+Nested `ConcurrencyLimitedModel` wrappers also need different limiter instances.
+
+Re-entering a `ConcurrencyLimiter` through an agent on the same task raises `RuntimeError`; use a separate limiter
+for the nested run. When an agent delegates to another agent through a tool, each run or model
+request acquires its own slot. A shared pool must have enough capacity for the parent and nested
+operation to run at the same time.
 
 When instrumentation is enabled, requests waiting for a concurrency slot appear as spans with
 attributes showing the queue depth and configured limits. The `name` parameter on

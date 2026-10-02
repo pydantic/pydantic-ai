@@ -36,11 +36,11 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.providers import Provider
-from pydantic_ai.realtime import RealtimeTurnCompleteEvent
+from pydantic_ai.realtime import RealtimeSessionReconnectEvent, RealtimeTurnCompleteEvent
 
 from ..conftest import try_import
 from .conftest import REAL_SDP_OFFER
-from .ws_cassettes import RealtimeCassette
+from .ws_cassettes import CassetteMessage, RealtimeCassette
 
 with try_import() as imports_successful:
     from pydantic_ai.realtime.openai_live import OpenAILiveModel, OpenAILiveModelSettings
@@ -67,16 +67,20 @@ _BACKEND = 'openai:gpt-5.6-sol'
 _TRAILING_SILENCE_FRAMES = 150
 
 
-async def _stream(session: Any, pcm: bytes, cassette: RealtimeCassette, *, paced: bool) -> None:
+async def _stream(
+    session: Any, pcm: bytes, cassette: RealtimeCassette, *, paced: bool, frame_bytes: int = 4800
+) -> None:
     """Feed a clip, then a fixed tail of silence, in the ~100 ms frames a microphone would produce.
+
+    `frame_bytes` is 100 ms of audio at the session's rate: the default is 24 kHz PCM16.
 
     `paced` sends them at a microphone's pace. Sent in one burst, the whole tail lands at once, Live's
     timeline runs ahead of the conversation and then stops, and the model never gets to voice a
     delegated answer — so a recording made that way captures no reply at all. Replay sends as fast as
     it can instead, letting each frame wait for its recorded turn among the session's own sends.
     """
-    frames = [pcm[start : start + 4800] for start in range(0, len(pcm), 4800)]
-    frames += [b'\x00' * 4800] * _TRAILING_SILENCE_FRAMES
+    frames = [pcm[start : start + frame_bytes] for start in range(0, len(pcm), frame_bytes)]
+    frames += [b'\x00' * frame_bytes] * _TRAILING_SILENCE_FRAMES
     for frame in frames:
         await cassette.before_audio_send()
         await session.send_audio(frame)
@@ -165,6 +169,50 @@ async def test_audio_in_delegated_tool_round(
     answer = spoken_reply.parts[0]
     assert isinstance(answer, SpeechPart) and answer.speaker == 'assistant'
     assert 'fourteen' in (answer.transcript or '').lower() or '14' in (answer.transcript or '')
+
+
+async def test_thinking_sets_the_backends_reasoning_effort(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """The shared `thinking` setting reaches the delegated backend, which is the model that reasons.
+
+    Left at its default effort (`medium`, as the backend echoes it), the backend spent 75 reasoning tokens
+    on this request in a control recording made alongside this one; `thinking=False` is sent as `'none'`
+    and it spends none.
+    `parallel_tool_calls` reaches the backend the same way. The recording pins both in the session
+    config, and the backend echoes both on every response.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(thinking=False, parallel_tool_calls=False, openai_live_turn_silence_ms=1000),
+    )
+    agent = Agent(
+        _BACKEND,
+        instructions=(
+            'You answer weather questions. Use the `lookup_forecast` tool, then say whether the temperature '
+            'is above the yearly average for that city, reasoning it out from what you know.'
+        ),
+    )
+
+    @agent.tool_plain
+    async def lookup_forecast(city: str) -> str:
+        """Look up tomorrow's forecast for a city."""
+        return f'{city}: 14 degrees Celsius, light rain.'
+
+    pcm = assets_path.joinpath('weather_question_24khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    # Both backend responses (the tool call and the answer after it) reported their usage.
+    assert session.usage.requests == 2
+    assert session.usage.tool_calls == 1
+    assert session.usage.details == {'reasoning_tokens': 0}
 
 
 async def test_text_reaches_the_model_as_context(
@@ -271,6 +319,59 @@ async def test_an_image_is_described_by_the_backend(
     spoken = ' '.join(
         part.transcript or ''
         for message in session.all_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    )
+    assert 'kiwi' in spoken.lower()
+
+
+async def test_an_image_a_tool_returns_reaches_the_backend(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette],
+    assets_path: Path,
+    image_content: BinaryImage,
+    realtime_recording: bool,
+) -> None:
+    """An image a tool returns follows its output to the delegated backend, and Live speaks for it.
+
+    The session runs at 16 kHz, set through the profile, because that is the rate the recorded question is in.
+    """
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=_FAST_TURN,
+        profile={'audio_input_sample_rate': 16000, 'audio_output_sample_rate': 16000},
+    )
+    agent = Agent(
+        _BACKEND,
+        instructions=(
+            "The user's image is only available through the `get_image` tool. Call it when they ask about the "
+            'image, then say what is in it in one short sentence.'
+        ),
+    )
+
+    @agent.tool_plain
+    async def get_image() -> BinaryImage:
+        """Get the image the user is asking about."""
+        return image_content
+
+    pcm = assets_path.joinpath('what_fruit_is_in_the_image_16khz.pcm').read_bytes()
+    async with agent.realtime(model).session() as session:
+        await _stream(session, pcm, cassette, paced=realtime_recording, frame_bytes=3200)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    messages = session.all_messages()
+    # The image is recorded on the tool's return, as in a standard run.
+    tool_return = next(part for message in messages for part in message.parts if isinstance(part, ToolReturnPart))
+    assert tool_return.tool_name == 'get_image'
+    assert tool_return.content == image_content
+    spoken = ' '.join(
+        part.transcript or ''
+        for message in messages
         if isinstance(message, ModelResponse)
         for part in message.parts
         if isinstance(part, SpeechPart)
@@ -423,3 +524,94 @@ async def test_webrtc_sideband_runs_the_delegated_tool_round(
     # The browser plays the audio, so the sideband records the reply without its bytes.
     assert answer_part.audio is None
     assert session.usage.input_tokens > 0
+
+
+_FAVORITE_COLOR = [
+    ModelRequest(parts=[UserPromptPart(content='My favorite color is turquoise.')]),
+    ModelResponse(parts=[SpeechPart(speaker='assistant', transcript='Got it, turquoise.')]),
+]
+
+
+async def _ask_after_a_drop(
+    model: OpenAILiveModel, cassette: RealtimeCassette, pcm: bytes, *, paced: bool
+) -> tuple[list[Any], str]:
+    """Drop the connection as soon as the session is up, then ask about the history from before the drop."""
+    agent = Agent(_BACKEND, instructions='Answer in a few words.')
+    events: list[Any] = []
+    async with agent.realtime(model, message_history=_FAVORITE_COLOR).session() as session:
+        await cassette.disconnect()
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                # The drop is the first thing that happens, so the reconnect is the first event.
+                if isinstance(event, RealtimeSessionReconnectEvent):  # pragma: no branch
+                    break
+        await _stream(session, pcm, cassette, paced=paced)
+        with anyio.fail_after(60):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+    reply = session.all_messages()[-1]
+    assert isinstance(reply, ModelResponse)
+    return events, ' '.join(part.transcript or '' for part in reply.parts if isinstance(part, SpeechPart))
+
+
+def _session_starts(cassette: RealtimeCassette) -> list[dict[str, Any]]:
+    return [
+        interaction.data['session']
+        for interaction in cassette.interactions
+        if isinstance(interaction, CassetteMessage)
+        and interaction.direction == 'sent'
+        and interaction.data.get('type') == 'session.start'
+    ]
+
+
+async def test_a_stored_session_reconnects_by_forking(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """With `openai_live_store`, a dropped session is forked: the new one has the conversation, server-side."""
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_store=True, openai_live_turn_silence_ms=1000, reconnect={'base_delay': 0.0, 'jitter': False}
+        ),
+    )
+    pcm = assets_path.joinpath('favorite_color_question_24khz.pcm').read_bytes()
+
+    events, answer = await _ask_after_a_drop(model, cassette, pcm, paced=realtime_recording)
+
+    reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
+    # The fork starts with no configuration of its own: it inherits the stored session's, history included.
+    first, fork = _session_starts(cassette)
+    assert first['store'] is True and len(first['input']) == 2
+    assert fork == {}
+    assert 'turquoise' in answer.lower()
+
+
+async def test_a_session_that_is_not_stored_reconnects_by_replaying_its_history(
+    openai_live_ws_cassette: tuple[Provider[Any], RealtimeCassette], assets_path: Path, realtime_recording: bool
+) -> None:
+    """Without storage, the replacement session is seeded with the history so far, and nothing is stored."""
+    provider, cassette = openai_live_ws_cassette
+    model = OpenAILiveModel(
+        'gpt-live-1',
+        provider=provider,
+        settings=OpenAILiveModelSettings(
+            openai_live_turn_silence_ms=1000, reconnect={'base_delay': 0.0, 'jitter': False}
+        ),
+    )
+    pcm = assets_path.joinpath('favorite_color_question_24khz.pcm').read_bytes()
+
+    events, answer = await _ask_after_a_drop(model, cassette, pcm, paced=realtime_recording)
+
+    reconnects = [event for event in events if isinstance(event, RealtimeSessionReconnectEvent)]
+    assert reconnects == [RealtimeSessionReconnectEvent(state_restored=True)]
+    first, replacement = _session_starts(cassette)
+    assert 'store' not in first and 'store' not in replacement
+    assert replacement['input'] == first['input']
+    assert replacement['delegation'] == first['delegation']
+    assert 'turquoise' in answer.lower()

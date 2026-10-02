@@ -1,60 +1,80 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - '272'
+      - "265"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 1024
-      messages:
-      - content:
-        - text: What is the capital of France? Give me an answer that contains the word "Paris", but is not the first word.
-          type: text
-        role: user
-      model: claude-sonnet-4-5
-      stop_sequences:
-      - Paris
-      stream: false
-    uri: https://api.anthropic.com/v1/messages?beta=true
+    body:
+      type: json
+      content:
+        max_tokens: 64000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              What is the capital of France? Give me an answer that contains the word
+              "Paris", but is not the first word.
+            type: text
+        model: claude-sonnet-4-5
+        stop_sequences:
+        - Paris
+        stream: true
   response:
+    status: 200
     headers:
+      cache-control:
+      - no-cache
       connection:
       - keep-alive
-      content-length:
-      - '356'
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
       content-type:
-      - application/json
+      - text/event-stream; charset=utf-8
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-0f8f44cdcfcdc87a624b777eca5ba96c-a7ab20065920754a-01
       transfer-encoding:
       - chunked
-    parsed_body:
-      content:
-      - text: 'The beautiful city of '
-        type: text
-      id: msg_01376yZQxHcw9pER2Ab2SvQb
-      model: claude-sonnet-4-5-20250929
-      role: assistant
-      stop_reason: stop_sequence
-      stop_sequence: Paris
-      type: message
-      usage:
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        input_tokens: 32
-        output_tokens: 5
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
-version: 1
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-5-20250929","id":"msg_011CfY3qcAu7Lj1sXctUkwhT","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":32,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null}}
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}              }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" capital of France is "}    }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"stop_sequence","stop_sequence":"Paris","stop_details":null,"container":null},"usage":{"input_tokens":32,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":6}     }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-09-29T16:31:04.382388+00:00

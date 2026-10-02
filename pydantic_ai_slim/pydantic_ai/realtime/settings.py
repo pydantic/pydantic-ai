@@ -74,7 +74,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     parallel_tool_calls: bool
     """Whether to allow parallel tool calls.
 
-    Supported by: OpenAI and Azure OpenAI. xAI accepts it but ignores it.
+    Supported by: OpenAI, Azure OpenAI, and OpenAI GPT-Live, where it applies to the delegated backend
+    unless `openai_live_delegation` sets its own `parallel_tool_calls`. xAI accepts it but ignores it.
     """
 
     async_tool_calls: bool | None
@@ -156,8 +157,10 @@ class RealtimeModelSettings(TypedDict, total=False):
     (e.g. Gemini's `google_thinking_config`), which takes precedence.
 
     Supported by: OpenAI `gpt-realtime-2*` models (also on Azure), reasoning chat models like `gpt-5`
-    on Azure AI Voice Live, Gemini native-audio models, and xAI's reasoning Grok Voice models
-    (`grok-voice-latest` and the `grok-voice-think-*` family).
+    on Azure AI Voice Live, Gemini native-audio models, xAI's reasoning Grok Voice models
+    (`grok-voice-latest` and the `grok-voice-think-*` family), and OpenAI GPT-Live, where it sets the
+    reasoning effort of the delegated backend model if that model reasons, unless
+    `openai_live_delegation` sets its own `reasoning_effort`.
     """
 
     turn_detection: bool | TurnDetection
@@ -197,7 +200,8 @@ class RealtimeModelSettings(TypedDict, total=False):
     [`UserError`][pydantic_ai.exceptions.UserError] at connect time, since a re-dial without
     resumption would lose the conversation.
 
-    Supported by: OpenAI, Azure OpenAI, Gemini, and xAI.
+    Supported by: OpenAI, Azure OpenAI, Gemini, xAI, and OpenAI GPT-Live, which forks a session stored
+    with `openai_live_store=True` and otherwise replays the local history into a new one.
     """
 
 
