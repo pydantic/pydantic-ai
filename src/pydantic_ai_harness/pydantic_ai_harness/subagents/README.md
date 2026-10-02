@@ -276,7 +276,9 @@ SubAgents(
 )
 ```
 
-Every agent the capability builds runs at a minimum thinking-effort floor. `MINIMUM_EFFORT_FLOOR` and the `clamp_effort(level, floor=...)` helper are exported so an orchestrator can apply the same floor to its own agents (that orchestrator-side application is the caller's responsibility). `clamp_effort` maps `None`/`False` to the floor, leaves `True` (provider-default effort) unchanged, and raises a concrete level below the floor up to it. Effort is applied through pyai's `ModelSettings.thinking`.
+When `effort` is unset, the disk agent adds no thinking setting, so the inherited model's defaults apply. An explicit value, including `False` or `'minimal'`, is passed through unchanged via Pydantic AI's `ModelSettings.thinking`.
+
+`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable for compatibility but are deprecated. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
 
 ### Tools
 
