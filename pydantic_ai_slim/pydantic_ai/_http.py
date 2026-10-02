@@ -103,15 +103,18 @@ class ConnectPoolTimeoutCap:
         if requested is None:
             # `AsyncClient.send` sets one before hooks run; only a request handed to the hook directly lacks it.
             return
-        if len({requested['connect'], requested['read'], requested['write'], requested['pool']}) > 1:
+        # A hand-built request may carry a partial mapping; HTTPX treats a missing phase as no limit.
+        phases = {requested.get(phase) for phase in ('connect', 'read', 'write', 'pool')}
+        if len(phases) > 1:
             # Phases set separately, e.g. `httpx.Timeout(60, connect=30)`, are what the caller asked for.
             return
+        (scalar,) = phases
         request.extensions = {
             **request.extensions,
             'timeout': {
                 **requested,
-                'connect': _shorter_timeout(requested['connect'], self._connect),
-                'pool': _shorter_timeout(requested['pool'], self._pool),
+                'connect': _shorter_timeout(scalar, self._connect),
+                'pool': _shorter_timeout(scalar, self._pool),
             },
         }
 
