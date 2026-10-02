@@ -333,8 +333,9 @@ When a capability needs machinery of that weight:
   see it.
 
 The `harness-integration-changes` and `harness-localstack-integration` jobs in
-`.github/workflows/ci.yml` are the reference for this shape. Whether the heavy
-job blocks merges (listed in `check`'s `needs`) or only signals is the capability owner's call; state which in the PR.
+`.github/workflows/ci.yml` show the path scoping and the `check` wiring. Whether
+the heavy job blocks merges (listed in `check`'s `needs`) or only signals is the
+capability owner's call; state which in the PR.
 
 ## External-Service Assumptions And Refresh
 

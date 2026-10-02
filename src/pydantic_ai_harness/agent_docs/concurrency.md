@@ -2,7 +2,7 @@
 
 Rules for `asyncio`/`anyio` code, ported from Pydantic AI core's guide
 (pydantic/pydantic-ai#8097, `agent_docs/concurrency.md`) and re-anchored to
-this repository. Most of the core rules were paid for by a real bug there; the
+the harness. Most of the core rules were paid for by a real bug in core; the
 harness inherits the same runtime, so it inherits the same rules.
 
 When to check: whenever you write or review code that spawns a task, opens a
@@ -15,8 +15,8 @@ anchor is judgment, not evidence. Check the anchor before you argue with a rule
 and before you extend one: the usual way to get this wrong is to state a true
 general mechanism more broadly than the code supports, or to describe a design
 that was proposed but never shipped. If the code has moved, update the rule.
-Anchors marked "core" live in `pydantic_ai`; read the installed package source,
-not a contributor's checkout.
+Anchors marked "core" are under `pydantic_ai_slim/pydantic_ai/`; other bare
+paths are under `src/pydantic_ai_harness/pydantic_ai_harness/`.
 
 Before adding any of this, name the scope that guarantees teardown for every
 task, scope, lock, stream, subprocess, span, and connection you create. "The
@@ -35,7 +35,7 @@ garbage collector" or "the caller remembers" is a bug, not a design.
 - Prefer a task group, whose `async with` encloses everything the children
   touch, over loose tasks. Core's `LocalWorkspaceBackend.run` reads stdout and
   stderr as two children of one group inside one `move_on_after`, so a timeout
-  cancels both readers together (`pydantic_ai/workspaces/local.py`). Avoid
+  cancels both readers together (`pydantic_ai_slim/pydantic_ai/workspaces/local.py`). Avoid
   `asyncio.gather(..., return_exceptions=False)` when one failure should stop
   the batch: it propagates the first failure while siblings keep running.
   `return_exceptions=True` is fine for a cleanup-only drain.
@@ -183,7 +183,7 @@ before writing cleanup.
   path, not just that the tool returned a timeout string.
 - Reach the real trigger. Level-cancellation behavior needs a real outer
   `anyio` cancel scope, not a bare `CancelledError` raise; Trio behavior needs
-  the `trio` parametrization this suite already runs, not a mental model of it.
+  a real Trio run, not a mental model of it (see the asyncio pin below).
 - Know which backend a suite runs under before you trust it. Every `async def`
   test runs via anyio's pytest plugin (`anyio_mode = "auto"`), and the root
   `anyio_backend` fixture picks the backend from `--anyio-backend` (asyncio by

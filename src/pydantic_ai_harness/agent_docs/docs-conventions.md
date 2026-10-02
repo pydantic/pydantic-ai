@@ -19,7 +19,9 @@ Every capability package must, or CI fails:
 1. Have its own `README.md` (purpose-first lead, source-module link, spaced-words H1).
 2. Be linked from the `src/pydantic_ai_harness/README.md` capability tables.
 3. Have a `docs/harness/<slug>.md` page registered in `_CAPABILITY_PAGE_META` (source module + exact H1).
-4. Have its page in the "Pydantic AI Harness" section of `docs/navigation.yml`.
+
+Also add the page to the "Pydantic AI Harness" section of `docs/navigation.yml`. No test checks
+that entry.
 
 ## Sidebar Source Of Truth
 

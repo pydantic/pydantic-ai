@@ -28,8 +28,6 @@ change instead of reimplementing core behavior in harness.
 - **Guard**: a type of capability that validates inputs/outputs or controls tool access (e.g. `InputGuard`, `OutputGuard`)
 - **Harness**: this package -- a collection of pre-made capabilities for Pydantic AI.
 - **AICA**: AI Code Assistant -- the automated agent that implements issues, reviews plans, and handles PR feedback
-- **Ralph loop**: the state-machine-based workflow that drives AICA through phases (TRIAGE -> GOALS -> PLAN -> CODE -> VERIFY -> REVIEW -> PUBLISH)
-- **DDD+ protocol**: classification system for PR review comments (do, dismiss, discuss, waiting, done)
 
 ## AICA preflight
 
@@ -49,12 +47,13 @@ Before implementing or reviewing a capability change:
 5. Use `pydantic_ai_harness.code_mode` as the exemplar for capability shape,
    docs, tests, and public exports until another capability becomes a better
    example. Capabilities live in their own top-level submodule
-   `src/pydantic_ai_harness/pydantic_ai_harness/<name>/` (module name = capability name; one module per
-   capability or strategy) and are re-exported lazily from the root
-   `__init__.py`, which keeps each one's optional dependencies out of the root
-   import. The `experimental` tier is
-   retired; ACP is the sole remaining experimental capability (see
-   `src/pydantic_ai_harness/agent_docs/capability-authoring.md`, "Capability Submodules And Exports").
+   `src/pydantic_ai_harness/pydantic_ai_harness/<name>/` (module name = capability
+   name; one module per capability or strategy) and are re-exported lazily from
+   `src/pydantic_ai_harness/pydantic_ai_harness/__init__.py`, which keeps each
+   one's optional dependencies out of the package import. The `experimental` tier
+   is retired; ACP is the sole remaining experimental capability (see
+   `src/pydantic_ai_harness/agent_docs/capability-authoring.md`, "Capability
+   Submodules And Exports").
 
 ## Capabilities API reference
 
@@ -127,8 +126,6 @@ Applies to docs, READMEs, docstrings, comments, commit messages, and PR text.
 ## Package management
 
 - Change dependencies only when required. Use `uv` and link an issue.
-- PRs touching `pyproject.toml` or `uv.lock` require the
-  `dependencies:approved` label; pushes clear approval.
 
 ## Local verification
 
@@ -153,12 +150,9 @@ recorded here.
 Each released capability is a self-contained package under
 `src/pydantic_ai_harness/pydantic_ai_harness/<capability>/` (naming and exports are covered in the
 preflight above), with tests under `tests/harness/<capability>/`. It ships **two**
-hand-maintained docs that must stay in sync: the `README.md` next to the code
-(GitHub/PyPI) and the `docs/harness/<capability>.md` page (the docs site at
-pydantic.dev/docs/ai/harness). The `docs/harness/` folder is flat -- there are no
-`capabilities/` or `experimental/` subdirectories. A user-facing change updates
-both; `src/pydantic_ai_harness/agent_docs/review-checklist.md` "Docs" and the `docs-parity-reviewer`
-skill enforce the parity before merge.
+hand-maintained docs: the `README.md` next to the code (GitHub/PyPI) and the
+`docs/harness/<capability>.md` page (the docs site at pydantic.dev/docs/ai/harness).
+`docs/harness/AGENTS.md` covers keeping them in sync.
 
 Do not add placeholder template files for new capabilities. Start from the
 existing `CodeMode` package shape, then delete what the new capability does not

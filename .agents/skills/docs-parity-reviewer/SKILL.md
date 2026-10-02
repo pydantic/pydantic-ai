@@ -2,6 +2,7 @@
 name: docs-parity-reviewer
 description: Use as the final documentation gate before a `pydantic-ai-harness` capability PR merges. Verifies that a user-facing change keeps the capability README under `src/pydantic_ai_harness/pydantic_ai_harness/` and its `docs/harness/` page in sync with each other and with the code, that every snippet is runnable, and that links follow repo convention. Reports gaps; does not edit. Skip it for changes that touch no harness capability or its docs.
 context: fork
+agent: Plan
 model: sonnet
 ---
 

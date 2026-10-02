@@ -9,7 +9,7 @@ helpers.
 - Keep real provider calls out of tests.
 - Prefer `Agent(..., capabilities=[...])` tests for public behavior.
 - Mirror source packages under `tests/harness/<capability>/`.
-- Use `pytest-anyio` for async capability/toolset behavior.
+- Use anyio's pytest plugin for async capability/toolset behavior.
 
 ## Lower-Level Tests
 

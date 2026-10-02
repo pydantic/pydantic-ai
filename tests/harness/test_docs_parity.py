@@ -86,9 +86,9 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
     )
 
 
-# --- Unified-docs page checks (docs/*.md) -----------------------------------
+# --- Unified-docs page checks (docs/harness/*.md) ---------------------------
 #
-# The flat pages under `docs/` render on the unified site. These mechanical
+# The flat pages under `docs/harness/` render on the unified site. These mechanical
 # checks encode the capability-authoring rules agreed in the 2026-07-10 team
 # sync: purpose-first leads, a source link on every page, names that match the
 # capability, and no leftover "experimental" framing on graduated capabilities.

@@ -26,9 +26,7 @@ Use this before opening a PR or reviewing a capability change.
   `ctx.tracer`; emitting nothing is documented with its reason. See
   `capability-authoring.md` "Telemetry".
 - Capability ordering is justified when present.
-- Dependency changes are required, linked to an issue, and made through `uv`;
-  every PR touching `pyproject.toml` or `uv.lock` carries
-  `dependencies:approved` for the current head.
+- Dependency changes are required, linked to an issue, and made through `uv`.
 - A capability that adds heavy CI machinery (a Docker image, an external service
   with a secret, a large system binary, live network calls) scopes its expensive
   job to its own paths and keeps the aggregate check green when that job is
@@ -77,10 +75,9 @@ well before now, or that was built against unreleased Pydantic AI changes.
 - Behavior the PR worked around because a primitive was missing is reconsidered
   if that primitive now exists in core.
 - A flood of pyright or import errors right after merging main or rebasing is
-  usually uninstalled extras, not a real regression. Re-sync (`make install`, or
-  `uv sync --frozen --all-extras --group lint`) before treating the merge as
-  broken; errors that name third-party types (`modal`, `openai`, ...) as unknown
-  in files the PR did not touch are the tell.
+  usually uninstalled extras, not a real regression. Re-sync with `make install`
+  before treating the merge as broken; errors that name third-party types
+  (`modal`, `openai`, ...) as unknown in files the PR did not touch are the tell.
 
 ## Issue References
 
@@ -111,9 +108,9 @@ README, or source code.
   explicit, tested incompatibility. Mocked lifecycle tests alone do not
   establish state continuity across activity, process, or replay boundaries.
 - Relevant protocol-shaped output is snapshotted.
-- **Harness cassettes are re-recorded on composition change.** Each packaged
-  harness has a recorded end-to-end integration test (e.g.
-  `tests/harness/coder/test_coder_integration.py`) that runs it against a real task.
+- **Harness cassettes are re-recorded on composition change.** A packaged
+  harness with a recorded end-to-end integration test (e.g.
+  `tests/harness/researcher/test_researcher_integration.py`) runs it against a real task.
   Any change to that harness's composition, defaults, or instructions
   re-records the cassette in the same PR
   (`uv run --env-file .env --no-sync pytest -p no:cacheprovider <test> --record-mode=rewrite`) —
