@@ -611,8 +611,16 @@ class PluginLoader(Generic[DepsT]):
         if not self._entry(name).declaration.enabled:
             raise ValueError(f'Plugin {name} is disabled; enable it before reloading.')
         _requested('reload', name)
+        await self._load_again(name, fresh=True)
+
+    async def _load_again(self, name: str, *, fresh: bool = False) -> None:
+        """Unload and load again, then load what it no longer includes, also when loading fails."""
         await self.unload(name)
-        await self.load(name, fresh=True)
+        try:
+            await self.load(name, fresh=fresh)
+        finally:
+            # New settings may change what it includes, such as `coder` with `sub_agents` off.
+            await self._load_released(self._entry(name))
 
     async def configure(self, name: str) -> str:
         """Open the plugin's settings menu, then load it again if its saved settings changed."""
@@ -628,10 +636,7 @@ class PluginLoader(Generic[DepsT]):
         finally:
             # Also when the menu fails after saving, so the running plugin matches what is saved.
             if self._entry(name).declaration.settings != before:
-                await self.unload(name)
-                await self.load(name)
-                # New settings may change what it includes, such as `coder` with `sub_agents` off.
-                await self._load_released(self._entry(name))
+                await self._load_again(name)
 
     def configurable(self, name: str) -> bool:
         """Whether the plugin is loaded and offers a settings menu by overriding `configure`."""

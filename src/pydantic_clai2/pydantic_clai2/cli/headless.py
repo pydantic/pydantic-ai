@@ -61,10 +61,11 @@ async def run_headless(
                 try:
                     # Skip before activation, even when a saved declaration overrides the built-in.
                     for entry in shell.loader.entries():
-                        # Read afresh: a plugin loaded earlier in this loop may include this one.
-                        current = {other.name: other for other in shell.loader.entries()}[entry.name]
-                        if current.declaration.enabled and current.included_in is None and entry.name != 'ask_user':
-                            await shell.loader.load(entry.name)
+                        if entry.declaration.enabled and entry.name != 'ask_user':
+                            # Read afresh: a plugin loaded earlier in this loop may include this one.
+                            current = next(other for other in shell.loader.entries() if other.name == entry.name)
+                            if current.included_in is None:
+                                await shell.loader.load(entry.name)
                     if resume is not None:
                         await shell.session.resume(resume)
                     start = TurnStart(text=text)

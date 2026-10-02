@@ -17,7 +17,7 @@ from pydantic_clai2.commands import Commands
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins import SessionStart
-from pydantic_clai2.plugins.loader import PluginLoader
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
 from pydantic_clai2.ui.menus.plugin_menu import Configure, PluginMenu
 
 CURATED = {
@@ -160,6 +160,24 @@ async def test_coder_without_sub_agents_leaves_subagents_available(
         configure_sub_agents(False)
         await plugins.configure('coder')
         assert plugins.entries()[1].state == 'enabled, loaded'
+    finally:
+        await plugins.close('exit')
+
+
+async def test_failed_coder_reload_brings_back_what_it_included(tmp_path: Path) -> None:
+    """A `coder` that no longer loads includes nothing, so `compaction` runs again."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    coder, compaction = (
+        next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == name) for name in ('coder', 'compaction')
+    )
+    plugins = _loader(store, (coder, compaction))
+    try:
+        await plugins.load_all()
+        assert plugins.entries()[1].state == 'included in coder'
+        store.save_plugin(coder.model_copy(update={'settings': {'sub_agents': 'yes'}}))
+        with pytest.raises(PluginError):
+            await plugins.reload('coder')
+        assert [entry.loaded is not None for entry in plugins.entries()] == [False, True]
     finally:
         await plugins.close('exit')
 
