@@ -768,13 +768,19 @@ first: defaults, your user settings, the project file, `CLAI_MODEL`, CLI flags.
 
 `plugins` takes the same declarations as `/plugins add`: an `id`, a `factory`
 (`module` or `module:attr`), an optional `path`, and optional `settings`. A
+relative `path` is relative to the folder that holds `.clai`, whichever
+subdirectory you launch from. A
 repository cannot switch a plugin on for you: plugins are trusted code running
 as your user, so every project-declared plugin starts off, CLAI lists the ones
 waiting at startup, and `/plugins enable NAME` is your approval. Approval is
 remembered in your user settings together with the declaration you approved,
 so a later change to the repository's declaration does not run until you
 `/plugins remove NAME` (which forgets your approval and restores the project's
-current declaration, off) and enable it again. Project declarations rank just
+current declaration, off) and enable it again. The approval keeps the file's
+absolute path, so another repository cannot put its own file at the same
+relative path and have it run as the one you approved. An approval saved by an
+older CLAI with a relative path does not load; remove it and enable it again
+from its repository. Project declarations rank just
 above the built-ins: a project may redeclare `coder` or `repo_context` with
 other options, and that replacement is also off until you enable it.
 
