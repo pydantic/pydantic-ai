@@ -1102,10 +1102,14 @@ jobs:
   # CLAI2 pastes images through Pillow's native macOS and Windows clipboard readers and through
   # `xclip` on Linux. Every other job runs on Linux and skips the opt-in native clipboard test, which
   # replaces the system clipboard: safe here, where each runner's clipboard belongs to this job alone.
+  # Skipped on tags: a clipboard regression is caught on its PR and on `main`, and must not hold a release.
   test-clai2-clipboard:
     name: test clai2 clipboard on ${{ matrix.os }}
     needs: classify
-    if: needs.classify.outputs.content_only != 'true' && needs.classify.outputs.clai2_changed == 'true'
+    if: >-
+      github.ref_type != 'tag'
+      && needs.classify.outputs.content_only != 'true'
+      && needs.classify.outputs.clai2_changed == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
@@ -1442,7 +1446,7 @@ jobs:
           # Each reduced path must run its selected checks.
           # The harness integration jobs run only when their paths change (always on tags), and
           # LocalStack also skips where its secret is unreadable. `test-clai2-clipboard` runs only when
-          # a change reaches `pydantic-clai2` (always on pushes and tags).
+          # a change reaches `pydantic-clai2` (always on pushes to `main`), and never on tags.
           allowed-failures: latest-versions-canary
           allowed-skips: >-
             ${{
@@ -1455,7 +1459,7 @@ jobs:
               || needs.classify.outputs.clai2_only == 'true'
               && 'docs-only,content-checks,mypy,test-all-extras,test-durable-exec,test-lowest-versions,test-temporal-latest,test-examples,test-fastmcp-4,test-harness-browser-use,latest-versions-canary,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
               || github.ref_type == 'tag'
-              && 'docs-only,content-checks,harness-integration-changes,harness-localstack-integration'
+              && 'docs-only,content-checks,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration'
               || 'docs-only,content-checks,latest-versions-canary,test-clai2-clipboard,harness-integration-changes,harness-localstack-integration,harness-mongodb-integration,harness-redis-integration'
             }}
           jobs: ${{ toJSON(needs) }}

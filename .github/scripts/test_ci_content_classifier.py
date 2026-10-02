@@ -388,10 +388,12 @@ def test_aggregate_requires_the_selected_lightweight_job():
     assert {'docs-only', 'content-checks'} <= tag_skips
     assert {'docs-only', 'content-checks'} <= default_skips
     assert 'test-clai2-clipboard' in check['needs']
-    assert 'test-clai2-clipboard' not in clai2_skips | tag_skips
+    assert 'test-clai2-clipboard' not in clai2_skips
+    assert 'test-clai2-clipboard' in tag_skips
 
 
 def test_clai2_clipboard_job_is_gated_on_the_classifier_output():
     job = CONDITIONAL_JOB_ADAPTER.validate_python(_workflow()['jobs']['test-clai2-clipboard'])
 
     assert "needs.classify.outputs.clai2_changed == 'true'" in job['if']
+    assert "github.ref_type != 'tag'" in job['if']
