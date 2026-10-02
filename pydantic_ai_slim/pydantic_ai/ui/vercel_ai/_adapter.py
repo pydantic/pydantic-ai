@@ -407,7 +407,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                                 id=provider_meta.get('id'),
                                 provider_name=provider_meta.get('provider_name'),
                                 provider_details=provider_meta.get('provider_details'),
-                                citations=load_citations(provider_meta.get('citations')),
+                                citations=load_citations(provider_meta.get('citations'), part.text),
                             )
                         )
                     elif isinstance(part, ReasoningUIPart):

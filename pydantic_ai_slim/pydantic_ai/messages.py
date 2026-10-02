@@ -2278,7 +2278,7 @@ class Citation:
     anchor: CitationAnchor | None = None
     """The associated range in the containing text part.
 
-    `None` means the citation is associated with the text part but no normalized character range is available.
+    `None` means the citation belongs to the text part, but its position in the text is unknown.
     """
 
     provider_details: dict[str, Any] | None = None

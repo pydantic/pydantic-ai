@@ -38,6 +38,7 @@ from pydantic_ai.messages import (
     ImageUrl,
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -2061,6 +2062,44 @@ def test_load_invalid_citations():
 
     assert VercelAIAdapter.load_messages(ui_messages)[0].parts == snapshot(
         [TextPart(content='Hello', provider_name='anthropic')]
+    )
+
+
+def test_load_citations_outside_text():
+    """Citations whose anchor doesn't fit in the text part are dropped, and the others still load."""
+    source = {'url': 'https://example.com', 'kind': 'web'}
+    ui_messages = [
+        UIMessage(
+            id='assistant-1',
+            role='assistant',
+            parts=[
+                TextUIPart(
+                    text='Hello [1]',
+                    provider_metadata={
+                        'pydantic_ai': {
+                            'citations': [
+                                {'sources': [source], 'anchor': {'start': 6, 'end': 9, 'kind': 'marker'}},
+                                {'sources': [source], 'anchor': {'start': 6, 'end': 500, 'kind': 'marker'}},
+                            ]
+                        }
+                    },
+                )
+            ],
+        )
+    ]
+
+    assert VercelAIAdapter.load_messages(ui_messages)[0].parts == snapshot(
+        [
+            TextPart(
+                content='Hello [1]',
+                citations=[
+                    Citation(
+                        sources=[WebCitationSource(url='https://example.com')],
+                        anchor=MarkerCitationAnchor(start=6, end=9),
+                    )
+                ],
+            )
+        ]
     )
 
 

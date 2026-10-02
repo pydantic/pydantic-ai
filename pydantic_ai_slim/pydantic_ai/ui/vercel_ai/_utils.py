@@ -129,18 +129,19 @@ def dump_citations(citations: Sequence[Citation] | None) -> list[dict[str, Any]]
     return _citations_ta.dump_python(list(citations), mode='json') if citations else None
 
 
-def load_citations(data: object) -> list[Citation] | None:
+def load_citations(data: object, text: str) -> list[Citation] | None:
     """Load citations from a text part's provider metadata.
 
-    Provider metadata is client-controlled, so citations that don't validate are dropped instead of
-    failing the request: the text itself still loads, and the model sees it without citations.
+    Provider metadata is client-controlled, so citations that don't validate, or whose anchor doesn't fit in `text`,
+    are dropped instead of failing the request: the text itself still loads, and the model sees it without citations.
     """
     if data is None:
         return None
     try:
-        return _citations_ta.validate_python(data) or None
+        citations = _citations_ta.validate_python(data)
     except ValidationError:
         return None
+    return [citation for citation in citations if not citation.anchor or citation.anchor.end <= len(text)] or None
 
 
 def offset_citations(citations: Sequence[Citation], offset: int) -> list[Citation]:
