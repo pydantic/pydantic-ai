@@ -27,7 +27,8 @@ _TEST_NAME = re.compile(r'(?:test_.*|.*_test)\.py\Z')
 _TEST_COMMAND = re.compile(
     r'^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:'
     r'uv\s+run(?:\s+(?:--(?:directory|extra|group|package|project|python|with|with-editable|with-requirements)(?:=|\s+)\S+|--[\w-]+(?:=[^\s]+)?))*\s+'
-    r'(?:pytest|tox|nox|unittest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest))'
+    r'(?:pytest|tox|nox|unittest|coverage\s+run\s+-m\s+pytest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest))'
+    r'|coverage\s+run\s+-m\s+pytest'
     r'|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest)'
     r'|(?:pytest|tox|nox|unittest)\b'
     r'|make\s+(?:test|testcov|test-[\w-]+|integration-[\w-]+)\b'

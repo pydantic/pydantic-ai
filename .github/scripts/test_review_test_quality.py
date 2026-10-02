@@ -92,6 +92,26 @@ def test_current_ci_test_workflows_are_candidates() -> None:
         assert [candidate.path for candidate in candidates] == [path]
 
 
+@pytest.mark.parametrize(
+    'command',
+    [
+        'coverage run -m pytest',
+        'uv run coverage run -m pytest',
+        'uv run --no-sync coverage run -m pytest',
+    ],
+)
+def test_coverage_wrapped_pytest_workflow_commands_are_candidates(command: str) -> None:
+    path = '.github/workflows/coverage-tests.yml'
+    source = f'jobs:\n  tests:\n    steps:\n      - run: {command}\n'
+
+    candidates, complete, reason = build_candidates(
+        [{'filename': path, 'status': 'modified'}], workflow_contents={path: (source, source)}
+    )
+
+    assert complete, reason
+    assert [candidate.path for candidate in candidates] == [path]
+
+
 def test_changed_workflow_commands_are_detected_in_both_revisions() -> None:
     old = 'jobs:\n  test:\n    steps:\n      - run: uv run pytest tests/old.py\n'
     new = 'jobs:\n  test:\n    steps:\n      - run: |\n          uv run --no-sync \\\n            python -m unittest\n'
