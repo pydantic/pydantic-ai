@@ -4388,8 +4388,8 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
                 raise
             except KeyboardInterrupt as exc:
-                # Ctrl-C reaching the run itself (e.g. through a sync stream's teardown, or a tool) is an
-                # external cancellation too: it keeps propagating, with the run state attached the same way.
+                # Ctrl-C reaching the run itself (e.g. through a sync stream's teardown) is an external
+                # cancellation too: it keeps propagating, with the run state attached the same way.
                 _run_cancelled('The agent run was interrupted.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
                 raise
             except BaseException as exc:

@@ -842,7 +842,7 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
-Pressing Ctrl-C during [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] cancels the run too, as does any other `KeyboardInterrupt` propagating out of a run: catch the `KeyboardInterrupt` and pass it to `from_cancellation()` to recover the run state.
+Pressing Ctrl-C during [`agent.run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync] or [`agent.run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync] cancels the run too: catch the `KeyboardInterrupt` and pass it to `from_cancellation()` to recover the run state.
 
 On Python 3.10, asyncio recreates `CancelledError` across an `await task` boundary, but chains the original exception -- carrying the attached run state -- via `__context__`, which `from_cancellation()` traverses. The chain is attached only to the first `await` of the cancelled task, so later awaits of the same task see an unchained exception; [`capture_run_messages()`][pydantic_ai.agent.capture_run_messages] is the fallback when only history is needed.
 
