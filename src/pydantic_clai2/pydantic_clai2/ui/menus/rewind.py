@@ -11,6 +11,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     RetryPromptPart,
+    SystemPromptPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -34,6 +35,20 @@ class RewindPoint:
 
 def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
     """Offer run-start prompts, never a steering message amid unfinished tool calls."""
+    # Compaction inserts standalone context ahead of older preserved prompts. Their
+    # original boundary is gone: cutting at those prompts would retain later facts.
+    context_time = max(
+        (
+            part.timestamp
+            for message in messages
+            if isinstance(message, ModelRequest)
+            and message.run_id is None
+            and all(isinstance(part, SystemPromptPart) for part in message.parts)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart)
+        ),
+        default=None,
+    )
     items: list[MenuItem] = []
     seen_runs: set[str] = set()
     for index, message in enumerate(messages):
@@ -53,14 +68,18 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
         ]
         text = '\n'.join(item for item in content if isinstance(item, str))
         images = tuple(item for item in content if isinstance(item, BinaryContent))
-        supported = all(isinstance(item, (str, BinaryContent)) for item in content)
+        reason = ''
+        if context_time is not None and any(part.timestamp < context_time for part in prompts):
+            reason = 'predates rewritten context'
+        elif not all(isinstance(item, (str, BinaryContent)) for item in content):
+            reason = 'unsupported attachment'
         label = ' '.join(terminal_text(text).split()) or '[attachment]'
         items.append(
             MenuItem(
-                f'{len(items) + 1}. {label}' + ('' if supported else ' (unsupported attachment)'),
+                f'{len(items) + 1}. {label}' + (f' ({reason})' if reason else ''),
                 value=RewindPoint(message_index=index, text=text, images=images),
-                disabled=not supported,
-                description='' if supported else 'This prompt contains attachments the editor cannot restore.',
+                disabled=bool(reason),
+                description=reason,
             )
         )
     return (
@@ -69,10 +88,13 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
         .items(list(reversed(items)) or [MenuItem('No earlier prompts to rewind to.', disabled=True)])
         .preview(
             lambda item: (
-                'Remove this prompt and all\nlater messages, then edit it again.\n\n'
-                'Files and tool side effects\nare NOT undone.\n\n'
-                f'{terminal_text(item.value.text)}\n\n'
-                f'Attachments: {len(item.value.images)}'
+                (
+                    f'Cannot rewind this prompt:\n{item.description}.\n\n'
+                    if item.disabled
+                    else 'Remove this prompt and all\nlater messages, then edit it again.\n\n'
+                )
+                + 'Files and tool side effects\nare NOT undone.\n\n'
+                + f'{terminal_text(item.value.text)}\n\nAttachments: {len(item.value.images)}'
                 if isinstance(item.value, RewindPoint)
                 else 'No editable prompts in the retained history.'
             )
@@ -92,6 +114,7 @@ async def rewind(conversation: Conversation, editor: LivePrompt, *, runners: Run
     point = result.item.value
     staged = ImageInput()
     staged.pending = dict(editor.images.pending)
+    staged.retain(editor.queued_messages)
     markers = staged.attach(point.images) if point.images else ''
     await conversation.commit_messages(messages[: point.message_index])
     editor.images.pending = staged.pending

@@ -159,9 +159,11 @@ Rewinding removes the selected prompt and all later messages from the saved
 conversation, then restores that prompt and its image attachments to the editor.
 Edit it and press Enter when ready. It does **not** undo file changes or other
 tool side effects, replay tools, or erase the terminal scrollback. Only prompts
-still present in the retained history are available, so compaction can remove
-older rewind points. Prompts with attachment types the editor cannot restore
-are disabled.
+still present in the retained history are available. Prompts predating retained
+rewritten context, such as a compaction summary, are disabled even if compaction
+kept a copy of the prompt. That summary can contain later facts, so the original
+rewind boundary no longer exists. Prompts with attachment types the editor
+cannot restore are also disabled.
 
 A press that cancels a running turn, closes completions, or leaves history search
 does not count toward the shortcut. Wait for queued prompts to finish first.

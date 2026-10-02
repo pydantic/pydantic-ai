@@ -30,11 +30,12 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import ConversationConflict
 from pydantic_clai2 import chat
 from pydantic_clai2.config.settings_store import SettingsStore
-from pydantic_clai2.plugins import Conversation
+from pydantic_clai2.plugins import Conversation, Transcript
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.ui.menus.rewind import RewindPoint, build_rewind_menu, rewind
 from pydantic_clai2.ui.prompt.live_prompt import LivePrompt
 from tests.clai2.menu_script import Script, pick
+from tests.clai2.test_compaction import make_plugin, two_turns
 from tests.clai2.test_live_prompt import editor
 from tests.clai2.test_sessions import saved_session
 
@@ -81,6 +82,51 @@ def test_empty_and_unsupported_menu_cancels(monkeypatch: pytest.MonkeyPatch, mes
     result = build_rewind_menu(messages).run()
     assert result.cancelled
     assert 'No earlier prompts' in output.getvalue() or 'unsupported attachment' in output.getvalue()
+
+
+async def test_compacted_prompts_are_disabled_but_new_turns_can_rewind(monkeypatch: pytest.MonkeyPatch) -> None:
+    transcript = Transcript(messages=two_turns(), model=TestModel(custom_output_text='answer and later instruction'))
+    plugin = make_plugin(transcript, protected_tokens=0)
+    await plugin.commands.execute_async('/compact')
+    assert len(transcript.messages) == 3
+    menu = build_rewind_menu(transcript.messages)
+    assert menu.highlighted is not None and menu.highlighted.disabled
+    monkeypatch.setattr('sys.stdout', StringIO())
+    keys = iter(['enter', 'escape'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.rewind.menu_key', lambda: next(keys))
+    assert build_rewind_menu(transcript.messages).run().cancelled
+
+    session = Session(Agent(TestModel()), deps=None, message_history=transcript.messages)
+    await session.prompt('after compaction')
+    monkeypatch.setattr('sys.stdout', StringIO())
+    keys = iter(['down', 'enter'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.rewind.menu_key', lambda: next(keys))
+    result = build_rewind_menu(session.messages).run()
+    assert result.item is not None
+    assert result.item.value == RewindPoint(message_index=3, text='after compaction', images=())
+
+
+async def test_replacement_images_do_not_count_discarded_draft_against_limit() -> None:
+    image = BinaryContent(data=b'x' * (9 * 1024 * 1024), media_type='image/png')
+    queued_image = BinaryContent(data=b'queued', media_type='image/png')
+    point = RewindPoint(message_index=0, text='restore', images=(image, image))
+    script = Script(lists=[pick(point)], choices=[], texts=[])
+    session = Session(
+        Agent(TestModel()),
+        deps=None,
+        message_history=[ModelRequest(parts=[UserPromptPart(['restore', image, image])])],
+    )
+    async with editor() as (live, _, _):
+        queued = live.images.attach([queued_image])
+        live.submit(queued)
+        old_draft = live.images.attach([image, image])
+        live.buffer.replace(old_draft)
+        await rewind(session, live, runners=script.runners)
+        assert live.images.resolve(live.buffer.text) == ('restore', [image, image])
+        assert live.images.resolve(await live.read()) == ('', [queued_image])
+        assert len(live.images.pending) == 3
+        with pytest.raises(ValueError, match='expired'):
+            live.images.resolve(old_draft)
 
 
 @pytest.mark.parametrize('index', [0, 2])
