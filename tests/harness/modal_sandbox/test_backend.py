@@ -448,6 +448,22 @@ class TestRun:
             await backend.run(['sleep', '30'])
         assert any('modal-stop' in call.argv for call in fake_modal.sandboxes[0].exec_calls)
 
+    async def test_a_stop_that_exits_nonzero_is_logged(
+        self, fake_modal: FakeModal, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The stop runs while another failure is already propagating, so its own failure is only logged.
+        fake_modal.wait_error = RuntimeError('stream lost')
+        fake_modal.stop_exit_code = 1
+        backend = await started()
+        with (
+            caplog.at_level(logging.WARNING, logger=_backend.__name__),
+            pytest.raises(RuntimeError, match='stream lost'),
+        ):
+            await backend.run(['sleep', '30'])
+        assert [record.getMessage() for record in caplog.records] == [
+            f'Modal command stop exited nonzero in sandbox {fake_modal.sandboxes[0].object_id}'
+        ]
+
     async def test_output_over_the_limit_stops_the_command(self, fake_modal: FakeModal) -> None:
         # Neither stream passes 10 MiB alone; the limit is on their sum. The command never
         # exits by itself, so only the limit ends it.
@@ -792,6 +808,25 @@ class TestCreate:
         # Hang guard only: without a recovery bound the lookup never returns.
         with anyio.fail_after(5), expected:
             await ModalSandboxBackend().get_sandbox()
+
+    async def test_a_failed_recovery_lookup_keeps_the_create_failure(
+        self, fake_modal: FakeModal, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Recovery is best effort: the create failure, not the lookup's, decides whether to retry.
+        class _FailingLookup:
+            async def aio(self, *args: Any, **kwargs: Any) -> Any:
+                raise RuntimeError('lookup failed')
+
+        monkeypatch.setattr(fake_modal.module.Sandbox, 'from_name', _FailingLookup())
+        fake_modal.create_reply_error = fake_modal.exception('ConnectionError')('reply lost')
+        with (
+            caplog.at_level(logging.WARNING, logger=_backend.__name__),
+            pytest.raises(fake_modal.exception('ConnectionError'), match='reply lost'),
+        ):
+            await ModalSandboxBackend().get_sandbox()
+        assert [record.getMessage() for record in caplog.records] == [
+            'Could not check whether named Modal sandbox creation completed'
+        ]
 
     async def test_image_build_error_is_unavailable(self, fake_modal: FakeModal) -> None:
         fake_modal.create_error = fake_modal.exception('ImageBuildError')('bad image')

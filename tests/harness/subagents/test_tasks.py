@@ -2,20 +2,33 @@
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator
+from decimal import Decimal
 from pathlib import Path
 
 import anyio
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, SystemPromptPart, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    RetryPromptPart,
+    SystemPromptPart,
+    TextPart,
+    ToolCallPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.step_persistence import FileStepStore, StepPersistence
 from pydantic_ai_harness.subagents import (
+    DelegationEndEvent,
     DelegationReports,
+    DelegationStartEvent,
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
@@ -85,6 +98,48 @@ async def test_foreground_history_and_resume(tmp_path: Path) -> None:
         saved = restored.records[record.id]
         assert saved.delivered
         assert saved.messages == record.messages
+
+
+async def test_owned_child_streams_to_the_event_stream_handler_and_the_observer() -> None:
+    handled: list[AgentStreamEvent] = []
+    observed: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[object], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            handled.append(event)
+
+    async def observe(update: DelegationTaskEvent) -> None:
+        if update.event is not None:
+            observed.append(update.event)
+
+    owner = DelegationTasks(observer=observe)
+    child = Agent(TestModel(custom_output_text='child result'), deps_type=object, name='worker')
+    with anyio.fail_after(WAIT):
+        async with owner.opened():
+            with owner.bind():
+                agent: Agent[object, str] = Agent(
+                    parent_model(),
+                    capabilities=[
+                        SubAgents(agents=[SubAgent(child)], agent_folders=None, event_stream_handler=handler)
+                    ],
+                )
+                await agent.run('go', conversation_id='parent')
+    assert handled
+    assert handled == [event for event in observed if not isinstance(event, (DelegationStartEvent, DelegationEndEvent))]
+
+
+@pytest.mark.parametrize(('background', 'resume'), [(True, None), (False, 'earlier')])
+async def test_background_and_resume_need_an_owner(background: bool, resume: str | None) -> None:
+    child = Agent(TestModel(custom_output_text='child result'), deps_type=object, name='worker')
+    agent = Agent(
+        parent_model(background=background, resume=resume),
+        capabilities=[SubAgents(agents=[SubAgent(child)], agent_folders=None)],
+    )
+    result = await agent.run('go')
+    retries = [
+        part.content for message in result.all_messages() for part in message.parts if isinstance(part, RetryPromptPart)
+    ]
+    assert retries == ['Background execution and resume require an open `DelegationTasks` owner']
 
 
 async def test_background_receipt_then_automated_report(tmp_path: Path) -> None:
@@ -623,6 +678,27 @@ async def test_child_budget_cannot_hide_parent_usage() -> None:
             with pytest.raises(UsageLimitExceeded, match='request_limit'):
                 await parent.run('go', conversation_id='root', usage=usage, usage_limits=UsageLimits(request_limit=2))
             assert usage.requests == 2
+            (record,) = owner.records.values()
+            assert record.outcome == 'ok'
+
+
+async def test_child_cost_budget_counts_from_the_spend_at_launch() -> None:
+    # The parent already spent more than the child's budget; only what the child adds counts against it.
+    owner = DelegationTasks()
+    child = Agent(TestModel(custom_output_text='evidence'), deps_type=object, name='worker')
+    usage = RunUsage(cost=Decimal('0.5'))
+    async with owner.opened():
+        with owner.bind():
+            parent = Agent(
+                parent_model(),
+                capabilities=[
+                    SubAgents(
+                        agents=[SubAgent(child, usage_limits=UsageLimits(cost_limit=Decimal('0.25')))],
+                        agent_folders=None,
+                    )
+                ],
+            )
+            await parent.run('go', conversation_id='root', usage=usage)
             (record,) = owner.records.values()
             assert record.outcome == 'ok'
 

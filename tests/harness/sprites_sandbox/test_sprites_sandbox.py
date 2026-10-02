@@ -24,6 +24,7 @@ from sprites.exceptions import (
     PermissionError_,
     SpriteError,
 )
+from sprites.websocket import WSCommand
 from websockets.datastructures import Headers
 from websockets.exceptions import InvalidMessage, InvalidStatus
 from websockets.http11 import Response
@@ -35,6 +36,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
+    CommandResult,
     SupportsCommands,
     Workspace,
     WorkspaceError,
@@ -188,6 +190,13 @@ class TestSpritesSandbox:
         with pytest.raises(WorkspaceUnavailableError, match=r'^No Sprites credentials found\. Set SPRITE_TOKEN'):
             await SpritesSandbox[None]().destroy(WorkspaceRef(provider='sprites', id='target'))
         assert transport.clients == []
+
+    async def test_destroy_with_a_caller_client_leaves_it_open(self, transport: SpriteTransport) -> None:
+        client = transport.client('test-token')
+        transport.names.add('target')
+        await SpritesSandbox[None](client=client).destroy(WorkspaceRef(provider='sprites', id='target'))
+        assert 'target' not in transport.names
+        assert transport.close_calls == 0
 
     async def test_native_handle_conflict_and_identity(self, transport: SpriteTransport) -> None:
         seed = SpritesSandboxBackend()
@@ -527,6 +536,22 @@ class TestSpritesSandbox:
         assert (await backend.get_sandbox()).name == name
         assert transport.created == [name]
 
+    async def test_a_created_sprite_still_invisible_on_the_next_attempt_stays_retryable(
+        self, transport: SpriteTransport
+    ) -> None:
+        # A 404 while a created Sprite becomes visible is a transport failure, not a missing Sprite.
+        backend = SpritesSandboxBackend()
+        transport.create_error_after_commit = NetworkError('lost reply')
+        transport.get_error_once = NotFoundError('not visible yet')
+        with pytest.raises(NetworkError, match='lost reply'):
+            await backend.get_sandbox()
+        transport.get_error_once = NotFoundError('still not visible')
+        with pytest.raises(NetworkError, match='may still be becoming visible'):
+            await backend.get_sandbox()
+        [name] = transport.created
+        assert (await backend.get_sandbox()).name == name
+        assert transport.created == [name]
+
     async def test_auth_error_reports_safe_reason_without_token(self, transport: SpriteTransport) -> None:
         secret = 'secret-sprite-token-123'
         transport.get_error = AuthenticationError(f'credential expired: {secret}')
@@ -649,6 +674,29 @@ class TestSpritesSandbox:
                 transport.release_stdin_eof.set()
         assert str(caught[0]) == 'Command timed out after 0.5 seconds'
         assert caught[0].stdout == f'chdir to `{directory}`: No such file or directory\n'
+
+    async def test_a_working_directory_found_by_the_check_leaves_the_failure_to_the_command(
+        self, transport: SpriteTransport
+    ) -> None:
+        transport.names.add('remote')
+        directory = transport.root / 'late'
+        backend = SpritesSandboxBackend(ref=WorkspaceRef(provider='sprites', id='remote'), working_dir=str(directory))
+        transport.release_stdin_eof = asyncio.Event()
+        results: list[CommandResult] = []
+
+        async def run() -> None:
+            results.append(await backend.run(['touch', 'ran']))
+
+        with anyio.fail_after(30):  # Hang guard only.
+            async with anyio.create_task_group() as group:
+                group.start_soon(run)
+                await transport.exec_started.wait()
+                # The command already failed to enter the directory, which exists by the time `test -d` runs.
+                directory.mkdir()
+                transport.release_stdin_eof.set()
+        assert (results[0].exit_code, results[0].stdout) == (1, f'chdir to `{directory}`: No such file or directory\n')
+        _, check = transport.execs
+        assert check.query['cmd'][-3:] == ['test', '-d', str(directory)]
 
     async def test_a_command_in_an_existing_working_directory_is_one_exec(self, transport: SpriteTransport) -> None:
         """No `test -d` runs before or after a command, whether it succeeds or fails."""
@@ -819,6 +867,25 @@ class TestSpritesSandbox:
         result = await backend.run(['echo', 'ok'])
         assert result.stdout == 'ok\n'
         assert (transport.connects, len(transport.execs)) == (3, 1)
+
+    async def test_a_handshake_failure_after_the_socket_opened_is_not_retried(
+        self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # In sprites-py 0.7 nothing in `start` after the socket opens raises these errors; the patch
+        # stands in for a handshake step that fails once the command may have started.
+        start = WSCommand.start
+
+        async def start_then_fail(command: WSCommand) -> None:
+            await start(command)
+            raise TimeoutError('session setup stalled')
+
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        monkeypatch.setattr(WSCommand, 'start', start_then_fail)
+        with pytest.raises(WorkspaceUnavailableError, match='command may have run'):
+            await backend.run(['true'])
+        # One handshake for the command and one to read its stderr capture back; neither is retried.
+        assert transport.connects == 2
 
     async def test_lost_exit_after_side_effect_is_not_retryable(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
@@ -996,6 +1063,26 @@ class TestSpritesSandbox:
             transport.exec_latency = 1.5
         assert caught[0].stderr == 'ready'
         assert not Path(transport.execs[0].query['cmd'][4]).exists()
+
+    async def test_timeout_keeps_the_output_when_the_stderr_capture_cannot_be_read(
+        self, transport: SpriteTransport, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        backend = SpritesSandboxBackend()
+        await backend.get_sandbox()
+        caught: list[WorkspaceTimeoutError] = []
+
+        async def run() -> None:
+            with pytest.raises(WorkspaceTimeoutError) as error:
+                await backend.run('printf ready; printf lost >&2; exec sleep 5', shell=True, timeout=0.5)
+            caught.append(error.value)
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(run)
+            await transport.exec_started.wait()
+            # The exec that would read the stderr capture back cannot connect.
+            transport.connect_error = InvalidMessage('bad handshake')
+        assert (caught[0].stdout, caught[0].stderr) == ('ready', '')
+        assert 'Could not retrieve Sprite stderr capture' in caplog.text
 
     async def test_cancellation_closes_the_socket(self, transport: SpriteTransport) -> None:
         backend = SpritesSandboxBackend()
