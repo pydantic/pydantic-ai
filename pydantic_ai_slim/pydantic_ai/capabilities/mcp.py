@@ -59,7 +59,11 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     """
 
     allowed_tools: list[str] | None
-    """Filter to only these tools. Applied to both native and local."""
+    """Filter to only these tools.
+
+    Applied to every local toolset and to the native tool built from a URL. A
+    `native=MCPServerTool(...)` instance carries its own.
+    """
 
     description: str | None = None
     """Description of the MCP server. Native-only; ignored by local tools."""

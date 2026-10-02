@@ -116,7 +116,6 @@ class TestWebSearchCapability:
 
     def test_websearch_local_string_strategy(self, allow_model_requests: None):
         """WebSearch(local='duckduckgo') with non-supporting model → DuckDuckGo fallback used."""
-        from unittest.mock import patch
 
         pytest.importorskip('duckduckgo_search', reason='duckduckgo extra not installed')
         from pydantic_ai.common_tools.duckduckgo import DDGS
@@ -510,9 +509,6 @@ class TestWebFetchCapability:
 
     def test_webfetch_local_true_fallback(self, allow_model_requests: None):
         """WebFetch(local=True) with non-supporting model → markdownify fallback used."""
-        from unittest.mock import AsyncMock, patch
-
-        import httpx
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
@@ -581,9 +577,6 @@ class TestWebFetchCapability:
 
     def test_webfetch_domains_forwarded_to_local(self, allow_model_requests: None):
         """WebFetch(allowed_domains=..., local=True) with non-supporting model → falls back to local with domain filtering."""
-        from unittest.mock import AsyncMock, patch
-
-        import httpx
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             for msg in messages:
@@ -2280,8 +2273,6 @@ class TestGetModelHook:
         assert calls == ['user', 'registry']
 
     async def test_async_model_id_resolver_and_deferred_resolver(self):
-        from unittest.mock import AsyncMock
-
         calls: list[str] = []
         target = _text_model('resolved')
 

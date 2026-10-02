@@ -99,8 +99,8 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
             # user → `__init__` → here → `warn`.
             warnings.warn(
                 'WebFetch: the `local` tool you supplied never runs beside `allowed_domains` or `blocked_domains`, '
-                'which only the native tool and the bundled `local=True` fetcher enforce, so a model without '
-                'native web fetch raises `UserError`. Use `local=True`, or enforce the domains in your own tool '
+                'which only the native tool built from them and the bundled `local=True` fetcher enforce, so a model '
+                'without native web fetch raises `UserError`. Use `local=True`, or enforce the domains in your own tool '
                 'and leave them off the capability.',
                 UserWarning,
                 stacklevel=3,
