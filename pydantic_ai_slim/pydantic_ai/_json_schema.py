@@ -6,6 +6,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, TypeAlias
 
+from pydantic import JsonValue
+
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
@@ -114,6 +116,9 @@ class JsonSchemaTransformer(ABC):
         if self.prefer_inlined_defs and (ref := schema.get('$ref')):
             key = re.sub(r'^#/\$defs/', '', ref)
             if key in self.refs_stack:
+                if key not in self.defs:
+                    # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
+                    raise UserError(f'Recursive JSON pointer `$ref` {key!r} is not supported when inlining definitions')
                 # A recursive ref can't be unpacked; `walk()` emits the definition and the `$ref` stays put.
                 self.recursive_refs.add(key)
             elif key not in self.recursive_refs:
@@ -157,9 +162,26 @@ class JsonSchemaTransformer(ABC):
         return walked
 
     def _walk_def(self, key: str, siblings: JsonSchema) -> JsonSchema:
-        """Walk the definition `key` refers to, with `$ref` sibling keywords merged over it."""
+        """Walk the definition `key` refers to, with `$ref` sibling keywords merged over it.
+
+        `key` is a `$defs` name, or else a local JSON pointer (RFC 6901) into the original schema.
+        """
         def_schema = self.defs.get(key)
-        if def_schema is None:  # pragma: no cover
+        if def_schema is None and (key == '#' or key.startswith('#/')):
+            # Not every producer collects shared subschemas into `$defs`: `zod-to-json-schema`, which the
+            # MCP TypeScript SDK uses, points a reused subschema at its first occurrence, e.g. `#/properties/from`.
+            node: JsonValue = self.schema
+            for token in key.split('/')[1:]:
+                token = token.replace('~1', '/').replace('~0', '~')
+                if isinstance(node, dict):
+                    node = node.get(token)
+                elif isinstance(node, list) and token.isdigit() and int(token) < len(node):
+                    node = node[int(token)]
+                else:
+                    node = None
+            if isinstance(node, dict):
+                def_schema = node
+        if def_schema is None:
             raise UserError(f'Could not find $ref definition for {key}')
 
         self.refs_stack.append(key)
