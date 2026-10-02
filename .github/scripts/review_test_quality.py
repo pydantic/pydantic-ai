@@ -204,7 +204,7 @@ def _workflow_may_select_tests(source: str) -> bool:
             block, index = _indented_yaml_block(lines, index, indent)
             commands.extend(block)
         else:
-            commands.append(value)
+            commands.append(re.sub(r"^(['\"])(.*?)\1(?:\s+#.*)?$", r'\2', value))
 
     pending = ''
     for line in [*commands, '']:

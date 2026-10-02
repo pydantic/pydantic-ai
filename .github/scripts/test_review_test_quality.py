@@ -153,6 +153,45 @@ def test_known_workflow_test_commands_are_candidates(command: str) -> None:
     assert [candidate.path for candidate in candidates] == [path]
 
 
+@pytest.mark.parametrize(
+    ('quote', 'command'),
+    [
+        ('"', 'uv run pytest tests'),
+        ("'", 'uv run pytest tests'),
+        ('"', 'make test'),
+        ("'", 'make test'),
+        ('"', "echo '# literal hash' && uv run pytest tests"),
+        ("'", 'echo "# literal hash" && uv run pytest tests'),
+    ],
+)
+def test_quoted_workflow_test_commands_are_candidates(quote: str, command: str) -> None:
+    path = '.github/workflows/quoted-tests.yml'
+    comment_quote = quote
+    source = (
+        f'jobs:\n  tests:\n    steps:\n      - run: {quote}{command}{quote} # {comment_quote}suite{comment_quote}\n'
+    )
+
+    candidates, complete, reason = build_candidates(
+        [{'filename': path, 'status': 'modified'}], workflow_contents={path: (source, source)}
+    )
+
+    assert complete, reason
+    assert [candidate.path for candidate in candidates] == [path]
+
+
+@pytest.mark.parametrize('quote', ['"', "'"])
+def test_quoted_workflow_non_test_commands_are_not_candidates(quote: str) -> None:
+    path = '.github/workflows/quoted-docs.yml'
+    source = f'jobs:\n  docs:\n    steps:\n      - run: {quote}echo pytest is mentioned{quote}\n'
+
+    candidates, complete, reason = build_candidates(
+        [{'filename': path, 'status': 'modified'}], workflow_contents={path: (source, source)}
+    )
+
+    assert complete, reason
+    assert candidates == []
+
+
 def test_long_workflow_command_options_are_recognized_and_rejected_deterministically() -> None:
     path = '.github/workflows/long-tests.yml'
     long_selector = '--with=! ' * 1000
@@ -226,11 +265,11 @@ def test_changed_workflow_commands_are_detected_in_both_revisions() -> None:
 
 
 def test_workflow_comments_prompts_and_non_test_commands_are_not_candidates() -> None:
-    source = """# run: pytest tests/commented.py
+    source = """# run: "pytest tests/commented.py"
 # uses: ./.github/workflows/sandbox-live.yml
 name: Documentation only
 prompt: |
-  run: pytest tests/prompt.py
+  run: "pytest tests/prompt.py"
   uses: ./.github/workflows/sandbox-live.yml
   pytest tests/prompt.py
 jobs:
