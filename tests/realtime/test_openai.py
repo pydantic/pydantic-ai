@@ -5151,15 +5151,24 @@ class _DropAfterFrames(FakeWebSocket):
         raise rt_openai.websockets.ConnectionClosed(None, None)
 
 
+@pytest.mark.parametrize('transcript', ['Weather?', None])
 async def test_reconnect_replays_a_reply_held_back_behind_a_missing_transcript(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, transcript: str | None
 ) -> None:
-    """History holds the reply back for the spoken turn's transcript, but the new socket must still get both."""
+    """History holds the reply back for the spoken turn's transcript, but the new socket must still get both.
+
+    A turn with no transcript at all has no words to replay (replay leaves media behind), so only the reply
+    goes out, as it always has.
+    """
     frames: list[dict[str, Any]] = [
         {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
         {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
         {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
-        {'type': 'conversation.item.input_audio_transcription.delta', 'item_id': 'item_u1', 'delta': 'Weather?'},
+        *(
+            [{'type': 'conversation.item.input_audio_transcription.delta', 'item_id': 'item_u1', 'delta': transcript}]
+            if transcript
+            else []
+        ),
         {
             'type': 'response.created',
             'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
@@ -5196,6 +5205,6 @@ async def test_reconnect_replays_a_reply_held_back_behind_a_missing_transcript(
     assert [
         (item['role'], item['content'][0].get('text') or item['content'][0].get('transcript')) for item in replayed
     ] == [
-        ('user', 'Weather?'),
+        *([('user', transcript)] if transcript else []),
         ('assistant', 'Sunny.'),
     ]

@@ -585,3 +585,15 @@ def test_a_repeated_or_replayed_call_is_recorded_once() -> None:
         ended('r1'),
     )
     assert summary(session_core.all_messages()) == snapshot(['r1 [call:call_1] complete stop'])
+
+
+def test_a_new_call_whose_id_matches_a_replayed_item_is_recorded() -> None:
+    """Item ids and call ids are different kinds of id: one replayed as an item says nothing about a call."""
+    session_core = feed(
+        core(),
+        ConversationItemCreated(item_id='shared', replayed=True),
+        started('r1'),
+        ToolCall('shared', tool_name='lookup', args='{}', response_id='r1'),
+        ended('r1'),
+    )
+    assert summary(session_core.all_messages()) == snapshot(['r1 [call:shared] complete stop'])

@@ -295,8 +295,10 @@ class SessionCore:
         """Entities in the order they joined the provider's conversation."""
         self._responses: dict[str, _Response] = {}
         self._turns: dict[str, _UserTurn] = {}
-        self._replayed_ids: set[str] = set()
-        """Item and tool call ids of a resumed conversation's replay, whose content the core already has."""
+        self._replayed_items: set[str] = set()
+        """Item ids of a resumed conversation's replay, whose content the core already has."""
+        self._replayed_calls: set[str] = set()
+        """Tool call ids of that replay (ids of another kind, so kept apart: an item id can recur as a call id)."""
         self._inputs: dict[InputId, _Input] = {}
         """The inputs history records (not audio chunks, say, or a bare request for a response), by id."""
         self._unplaced: dict[InputId, _Input] = {}
@@ -335,7 +337,10 @@ class SessionCore:
         elif isinstance(item, ConversationItemCreated):
             if item.replayed:
                 # A resumed conversation's replay of what history already has (xAI): nothing in it is new.
-                self._replayed_ids.update(filter(None, (item.item_id, item.tool_call_id)))
+                if item.item_id is not None:
+                    self._replayed_items.add(item.item_id)
+                if item.tool_call_id is not None:
+                    self._replayed_calls.add(item.tool_call_id)
         elif isinstance(item, OutputItemDetails):
             if (response := self._open_response(item.response_id)) is not None:
                 response.item_details[item.item_id] = item.provider_details
@@ -455,7 +460,7 @@ class SessionCore:
 
     def _response_content(self, event: AudioDelta | OutputTranscript) -> None:
         response = self._open_response(event.response_id)
-        if response is None or event.item_id in self._replayed_ids:
+        if response is None or (event.item_id is not None and event.item_id in self._replayed_items):
             return
         output_text = isinstance(event, OutputTranscript) and event.output_text
         part = self._open_part(response, output_text=output_text, item_id=event.item_id)
@@ -517,7 +522,8 @@ class SessionCore:
         if (
             response is None
             or event.tool_call_id in self._call_response
-            or self._replayed_ids.intersection((event.tool_call_id, event.item_id))
+            or event.tool_call_id in self._replayed_calls
+            or (event.item_id is not None and event.item_id in self._replayed_items)
         ):
             # Repeated (a resumed conversation replaying it, say): the call is already recorded, once.
             return
