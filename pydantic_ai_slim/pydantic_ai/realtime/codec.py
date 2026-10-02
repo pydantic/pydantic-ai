@@ -498,10 +498,12 @@ class RealtimeConnection(ABC):
         """
         return aiter(self)
 
-    async def end_session(self) -> AsyncIterator[SessionUsage]:
+    async def _end_session(self) -> AsyncIterator[SessionUsage]:
         """End the provider session, yielding the usage the provider reports only as it ends.
 
-        A [`RealtimeSession`][pydantic_ai.realtime.RealtimeSession] iterates this once while closing, after
+        A private seam until the realtime session refactor gives closing a lifecycle of its own.
+
+        The session iterates this once while closing, after
         it has stopped reading the connection and before it reports the session's usage, whenever the
         session owns the provider session (not on a WebRTC sideband, where ending it would end the browser's
         call). A provider that already ended the session, or went away, has nothing more to ask: yield what

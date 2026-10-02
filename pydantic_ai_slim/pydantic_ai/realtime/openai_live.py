@@ -453,7 +453,7 @@ class _SessionEnd:
 
     unclaimed: list[SessionUsage] = field(default_factory=list[SessionUsage])
     """The final usage `session.closed` reported, until it has been yielded, so a session that stops reading in
-    between still gets it from `end_session()`."""
+    between still gets it from `_end_session()`."""
 
 
 @dataclass
@@ -647,7 +647,7 @@ class OpenAILiveConnection(RealtimeConnection):
     async def _send_event(self, event: dict[str, Any]) -> None:
         await self._ws.send(to_json(event).decode())
 
-    async def end_session(self) -> AsyncIterator[SessionUsage]:
+    async def _end_session(self) -> AsyncIterator[SessionUsage]:
         """Send `session.close`, and read on until `session.closed` reports the session's final usage.
 
         Live reports its billed seconds only periodically while a session runs, so without this the seconds
@@ -711,7 +711,7 @@ class OpenAILiveConnection(RealtimeConnection):
                 except websockets.ConnectionClosedOK:
                     # The read started above can no longer complete, and nothing will await it.
                     self._cancel_read()
-                    # The session is over, so there is nothing left for `end_session()` to ask Live for.
+                    # The session is over, so there is nothing left for `_end_session()` to ask Live for.
                     self._session_end.ended = True
                     # A graceful close ends whatever was in flight. Live never says a turn is over,
                     # so without this the last reply would be settled as interrupted even though the

@@ -2444,7 +2444,7 @@ async def test_final_usage_already_taken_is_not_returned_again() -> None:
 
 
 async def _ended(connection: OpenAILiveConnection) -> list[SessionUsage]:
-    return [report async for report in connection.end_session()]
+    return [report async for report in connection._end_session()]  # pyright: ignore[reportPrivateUsage]
 
 
 class _LiveSink(OpenAILiveConnection):

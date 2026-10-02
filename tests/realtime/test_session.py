@@ -11322,7 +11322,7 @@ async def test_user_turn_anchored_to_refused_content_is_still_recorded() -> None
 
 
 class _EndingConnection(BlockingRealtimeConnection):
-    """A connection that stays open, and reports usage only as `end_session()` ends the provider session."""
+    """A connection that stays open, and reports usage only as `_end_session()` ends the provider session."""
 
     transport_errors = (ConnectionError,)
 
@@ -11340,7 +11340,7 @@ class _EndingConnection(BlockingRealtimeConnection):
         self._hangs = hangs
         self.ended = 0
 
-    async def end_session(self) -> AsyncIterator[SessionUsage]:
+    async def _end_session(self) -> AsyncIterator[SessionUsage]:
         self.ended += 1
         for report in self._reports:
             yield report

@@ -1178,7 +1178,7 @@ class RealtimeSession:
         recorded = False
         try:
             with anyio.move_on_after(_END_SESSION_TIMEOUT):
-                async for report in self._connection.end_session():
+                async for report in self._connection._end_session():  # pyright: ignore[reportPrivateUsage]
                     if report.context_window_used is not None:
                         self._reported_context_window_used = report.context_window_used
                     self.usage.incr(report.usage)  # usage-attribution: the session owns its spans
