@@ -335,7 +335,8 @@ yourself, in PowerShell syntax on Windows.
 CLAI loads the nearest `.env` file at startup using `python-dotenv`, before reading
 settings or importing agents and plugins. It searches the launch directory first,
 then its parents, and loads only the first file found. With `--worktree`, this
-happens before switching directories. A missing `.env` is fine.
+happens before switching directories. Missing, unreadable, and non-UTF-8 files are
+ignored, and named pipes are not read.
 
 Use `.env` for provider API keys and settings such as `CLAI_MODEL` or
 `CLAI_NO_SPLASH`. Existing environment variables take precedence, including empty

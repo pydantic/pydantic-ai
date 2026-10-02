@@ -52,12 +52,21 @@ def test_startup_loads_nearest_dotenv(
     assert observed == [expected, expected]
 
 
-@pytest.mark.parametrize('state', ['missing', 'empty', 'disabled'])
+@pytest.mark.parametrize('state', ['missing', 'empty', 'disabled', 'invalid_encoding', 'unreadable'])
 def test_startup_without_dotenv_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str) -> None:
     if state == 'empty':
         (tmp_path / '.env').write_text('')
     elif state == 'disabled':
         (tmp_path / '.env').write_text('CLAI_DOTENV_TEST=ignored\n')
+    elif state == 'invalid_encoding':
+        (tmp_path / '.env').write_bytes(b'CLAI_DOTENV_TEST=ignored\nOTHER=\xff\n')
+    elif state == 'unreadable':
+        (tmp_path / '.env').write_text('CLAI_DOTENV_TEST=ignored\n')
+
+        def unreadable(dotenv_path: str) -> bool:
+            raise PermissionError('Cannot read dotenv file')
+
+        monkeypatch.setattr('pydantic_clai2.__main__.load_dotenv', unreadable)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv('PYTHON_DOTENV_DISABLED', '1' if state == 'disabled' else '0')
     monkeypatch.setattr(sys, 'argv', ['clai2', 'config'])
@@ -96,3 +105,19 @@ main()
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == 'loaded before import'
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='Named pipes require POSIX')
+def test_startup_skips_dotenv_fifo(tmp_path: Path) -> None:
+    os.mkfifo(tmp_path / '.env')
+    result = subprocess.run(
+        [sys.executable, '-m', 'pydantic_clai2', '--help'],
+        cwd=tmp_path,
+        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'usage:' in result.stdout
