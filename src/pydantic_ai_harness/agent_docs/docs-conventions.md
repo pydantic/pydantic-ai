@@ -22,8 +22,8 @@ Every capability package must, or CI fails:
 
 Also add the page to `docs/navigation.yml`, in its category subsection under "Capabilities". A
 durable-execution backend goes in the "Durable Execution" section instead (like
-`harness/aws-lambda.md`), and an interface in "Interfaces" (like `harness/acp.md`). No test checks
-that entry.
+`harness/aws-lambda.md`). An interface goes in the "Interfaces" section instead (like
+`harness/acp.md`). No test checks the `docs/navigation.yml` entry.
 
 ## Sidebar Source Of Truth
 
@@ -31,8 +31,8 @@ The harness sidebar renders from **`docs/navigation.yml`**: mostly the category
 subsections under "Capabilities", shared with core capability pages, plus a few
 pages under "Durable Execution" and "Interfaces". Harness entries carry
 `path: "harness/<page>.md"`. Adding, renaming, removing, or regrouping a harness
-docs page updates `docs/navigation.yml` in the same PR. Keep every slug as
-`harness/<page>`. When renaming a page, preserve its existing `aliases:`.
+docs page updates `docs/navigation.yml` in the same PR. Keep each harness page's
+slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
 
 ## Page Conventions
 
@@ -87,7 +87,7 @@ window — Code Mode lives here, not under execution: it changes *how* the agent
 **Execution runtime** (durable execution, persistence, observability plumbing). The same scheme
 orders the subsections under "Capabilities" in `docs/navigation.yml`. That file adds a core-only
 "Loop Customization" subsection after them. A new capability goes in the category matching its
-user-facing benefit; if none fits, raise it in the PR rather than silently inventing a new
+user-facing benefit. If no category fits, say so in the PR instead of silently adding a new
 category. Keep every table's "Package" column and one-line description style intact.
 
 ## Harness Pages Specifically
