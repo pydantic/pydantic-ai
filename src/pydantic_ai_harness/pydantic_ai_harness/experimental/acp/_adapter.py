@@ -638,7 +638,8 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         ended by a usage limit answers with the limit's `max_tokens`/`max_turn_requests` stop
         reason and commits the messages exchanged before the limit, so the next turn knows which
         tools already ran. Its usage covers the completed passes and every response the interrupted
-        pass committed, so it matches the work the history now records.
+        pass received before the limit, including one the history leaves out because its tool
+        calls never ran: those tokens were spent.
         """
         conn = self._conn
         assert conn is not None
@@ -720,11 +721,12 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             # Unlike a cancellation, the turn is committed up to the limit: its tools may already
             # have edited files, and rolling the history back would leave the next turn unaware
             # of those changes. The interrupted pass has no run result, so its usage is summed from
-            # the responses it got before the limit.
+            # the responses it got before the limit: those of a run the history does not yet hold.
             await self._fail_outstanding_tool_calls(turn, record=True)
             if captured:
-                for message in captured[len(history) :]:
-                    if isinstance(message, ModelResponse):
+                earlier_runs = {message.run_id for message in history}
+                for message in captured:
+                    if isinstance(message, ModelResponse) and message.run_id not in earlier_runs:
                         usage.incr(message.usage)
                 history = _committable_history(captured, turn.started)
             stop_reason = _usage_limit_stop_reason(exc)

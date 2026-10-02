@@ -818,6 +818,10 @@ class TestStopReason:
         # The call that ran and its result are kept; the second call, stopped before it ran, is not.
         assert isinstance(history[-1], ModelRequest) and history[-1].state != 'interrupted'
         assert sum(isinstance(part, ToolReturnPart) for part in history[-1].parts) == 1
+        # The dropped response was still generated, so its tokens are reported with the kept one's.
+        committed_input = sum(m.usage.input_tokens for m in history if isinstance(m, ModelResponse))
+        assert response.usage is not None
+        assert response.usage.input_tokens > committed_input > 0
         # A dangling call would make this prompt fail with "unprocessed tool calls".
         follow_up = await adapter.prompt(prompt=[acp.text_block('next')], session_id=session_id, message_id='m2')
         assert follow_up.stop_reason == 'end_turn'
