@@ -103,8 +103,11 @@ async def test_resume_command_uses_browser_and_naming_model(tmp_path: Path, monk
 
     session.resolve_model = resolve
     assert await service.generate('Fix tests') is not None
+    assert not service.namer.submit(saved_id), 'naming costs a model request, so it is opt-in'
+    context.set_setting(['sessions.naming', 'true'])
+    assert service.namer.submit(saved_id)
     context.set_setting(['sessions.naming', 'false'])
-    assert not service.namer.submit(saved_id)
+    assert not service.namer.enabled()
     context.set_setting(['sessions.naming_model', 'null'])
     assert context.settings.session_namer_model is None
 
