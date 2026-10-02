@@ -36,6 +36,7 @@ from pydantic_ai.exceptions import (
     SkipToolValidation,
     ToolFailed,
     UnexpectedModelBehavior,
+    UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -66,7 +67,7 @@ from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai.usage import RequestUsage, RunUsage
+from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
@@ -441,17 +442,79 @@ class TestModelRequestHooks:
         assert result.usage.output_tokens == 5
         assert [part.content for part in result.all_messages()[-1].parts if isinstance(part, TextPart)] == ['recovered']
 
-    async def test_failed_model_request_counts_as_a_request(self):
-        """`RunUsage.requests` counts requests made to the model, including ones that fail."""
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_failed_model_request_is_not_counted_as_a_request(self, streaming: bool):
+        """`RunUsage.requests` counts responses the agent acted on, so an unrecovered failure counts in neither mode."""
 
         def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             raise RuntimeError('provider failed')
 
+        async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            raise RuntimeError('provider failed')
+            yield  # pragma: no cover
+
+        agent = Agent(FunctionModel(model_function, stream_function=stream_function))
         usage = RunUsage()
         with pytest.raises(RuntimeError, match='provider failed'):
-            await Agent(FunctionModel(model_function)).run('hello', usage=usage)
+            if streaming:
+                async with agent.run_stream('hello', usage=usage) as stream:
+                    await stream.get_output()  # pragma: lax no cover
+            else:
+                await agent.run('hello', usage=usage)
 
+        assert usage.requests == 0
+
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_skipped_model_request_is_counted_as_a_request(self, streaming: bool):
+        """The agent acts on a `SkipModelRequest` response, so the step counts like any other."""
+
+        class SkipCap(AbstractCapability[Any]):
+            async def before_model_request(
+                self, ctx: RunContext[Any], request_context: ModelRequestContext
+            ) -> ModelRequestContext:
+                raise SkipModelRequest(ModelResponse(parts=[TextPart('skipped model')]))
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function), capabilities=[SkipCap()]
+        )
+        if streaming:
+            async with agent.run_stream('hello') as stream:
+                assert await stream.get_output() == 'skipped model'
+            usage = stream.usage()
+        else:
+            result = await agent.run('hello')
+            assert result.output == 'skipped model'
+            usage = result.usage
         assert usage.requests == 1
+
+    @pytest.mark.parametrize('streaming', [False, True])
+    async def test_request_limit_bounds_responses_a_wrapper_returns_without_the_model(self, streaming: bool):
+        """A step answered from a cache counts and is checked, so `request_limit` still stops a loop."""
+
+        class CachedToolCall(AbstractCapability[Any]):
+            async def wrap_model_request(
+                self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            ) -> ModelResponse:
+                return ModelResponse(parts=[ToolCallPart('noop', {})])
+
+        agent = Agent(
+            FunctionModel(simple_model_function, stream_function=simple_stream_function),
+            capabilities=[CachedToolCall()],
+        )
+
+        @agent.tool_plain
+        def noop() -> str:
+            return 'ok'
+
+        usage = RunUsage()
+        with pytest.raises(UsageLimitExceeded, match='The next request would exceed the request_limit of 3'):
+            if streaming:
+                async with agent.run_stream('hello', usage=usage, usage_limits=UsageLimits(request_limit=3)) as stream:
+                    await stream.get_output()  # pragma: lax no cover
+            else:
+                await agent.run('hello', usage=usage, usage_limits=UsageLimits(request_limit=3))
+
+        assert usage.requests == 3
 
     async def test_usage_ledger_is_shared_with_replaced_request_context(self):
         observed_responses: list[ModelResponse] = []
@@ -465,7 +528,7 @@ class TestModelRequestHooks:
                 handler: Any,
             ) -> ModelResponse:
                 response = await handler(request_context)
-                observed_responses.extend(request_context.usage_responses)
+                observed_responses.extend(request_context._usage_responses)  # pyright: ignore[reportPrivateUsage]
                 return response
 
         class CopyContext(AbstractCapability[Any]):

@@ -758,10 +758,9 @@ class TestUsageCoordination:
         """A blocked judge's claimed request stops the parent's next call at the shared limit.
 
         With `request_limit=3` and the judge's model call held in flight, the parent
-        completes two requests and its third preflight fails against the judge's slot (its
-        launch claim, handed over to its request once sent), so the shared usage never exceeds
-        the configured limit. Without the claim the parent could spend the full limit before
-        the judge's request was counted and finish at limit + 1.
+        completes two requests and its third preflight fails against the claim, so the
+        shared usage never exceeds the configured limit. Without the claim the parent could
+        spend the full limit while the judge call was in flight and finish at limit + 1.
         """
         gate = asyncio.Event()
         judge_entered = asyncio.Event()
@@ -799,8 +798,7 @@ class TestUsageCoordination:
 
         assert parent_calls == 2  # the third parent preflight saw the claim and stopped
         assert judge_calls == 1
-        # Two parent requests plus the judge's, counted when it was sent; its claim was handed over to it.
-        assert usages[0].requests == 3
+        assert usages[0].requests == 2  # the cancelled evaluation released its claim
 
     async def test_sibling_launch_skips_when_the_budget_cannot_fit_its_claim(self) -> None:
         """Concurrent judges claim atomically at launch; a claim that cannot fit skips the tick.

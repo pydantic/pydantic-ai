@@ -1388,12 +1388,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             request_start = time.perf_counter()
             # `model_request_stream` stitches the (possibly suspended → complete) segments
             # into one continuous stream, so the whole chain is presented as a single
-            # `AgentStream` and the model-request hooks wrap it once.
-            # `ctx.state.usage.requests` is bumped once here: continuations aren't
-            # separate request steps.
+            # `AgentStream` and the model-request hooks wrap it once. The step is counted in
+            # `ctx.state.usage.requests` when its response is committed, not here.
             async with model_request_stream(req_ctx.model, request_context=req_ctx, run_context=run_context) as sr:
                 self._did_stream = True
-                _usage_attribution.record_request(ctx.state.usage)
                 agent_stream = self._build_agent_stream(ctx, sr, req_ctx.model_request_parameters)
                 agent_stream_holder.append(agent_stream)
                 stream_ready.set()
@@ -1467,7 +1465,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     model_response = e.response
             except exceptions.ModelRetry as e:
                 self._did_stream = True
-                # Don't increment usage.requests — handler was never called (short-circuit)
+                # No response is committed, so the step is not counted in `usage.requests`.
                 run_context = build_run_context(ctx)
                 await self._build_retry_node(ctx, e)
                 # Must still yield from @asynccontextmanager — yield an empty stream
@@ -1531,13 +1529,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         fill_response_cost(partial_response)
                         partial_response.workspace_ref = ctx.deps.workspace_ref
                         _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
+                        _usage_attribution.record_request(ctx.state.usage)
                         ctx.state.message_history.append(partial_response)
                 else:
                     try:
                         model_response = await wrap_task
                     except exceptions.ModelRetry as e:
                         self._enforce_usage_limits(ctx, accounted_responses)
-                        # Don't increment usage.requests — _streaming_handler already did.
                         # `_handler_response` is unset only if the handler failed between stream
                         # teardown and `sr.get()` (e.g. a custom model's `get()` raising on a
                         # partially-consumed stream) and a wrap hook converted that failure to
@@ -1601,14 +1599,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             # `model_request` resolves any suspended → complete continuation chain (Anthropic
             # `pause_turn`, OpenAI background mode) and returns the final merged response, so
             # `wrap_model_request` spans the whole chain and `after_model_request` sees just
-            # the final response. Continuations are not separate request steps, so the merged
-            # usage is committed exactly once at the provider-response boundary below.
+            # the final response. Continuations are not separate request steps: the merged usage
+            # is committed once at the provider-response boundary below, and the step is counted
+            # in `ctx.state.usage.requests` when its response is committed to history.
             def on_progress(response: _messages.ModelResponse) -> None:
                 nonlocal _handler_response
                 _handler_response = response
 
             capture_model_request_span_context(req_ctx)
-            _usage_attribution.record_request(ctx.state.usage)
             try:
                 response = await model_request(
                     req_ctx.model, request_context=req_ctx, run_context=run_context, on_progress=on_progress
@@ -1716,6 +1714,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         request_context.model_id = ctx.deps.model_id
         request_context.streaming = streaming
         self.last_request_context = request_context
+        # At the start of the step, before `wrap_model_request`: a step a wrapper answers from a
+        # cache still counts in `usage.requests`, so it must not get past `request_limit` either.
+        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
 
     async def _prepare_resume_request(
@@ -1777,6 +1778,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # on the (possibly hook-modified) messages; with unmodified messages it's idempotent.
         # The request messages keep the suspended response as the continuation seed.
         _set_resumed_history(ctx, request_context.messages[:-1])
+        # At the start of the step, before `wrap_model_request`, as in `_prepare_request`.
+        ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
 
     async def _apply_before_model_request(
@@ -1881,10 +1884,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             request_context.messages = messages
 
-            usage = ctx.state.usage
             if ctx.deps.usage_limits.count_tokens_before_request:
                 # Copy to avoid modifying the original usage object with the counted usage.
-                usage = deepcopy(usage)
+                usage = deepcopy(ctx.state.usage)
                 outgoing_request = next(
                     message for message in reversed(messages) if isinstance(message, _messages.ModelRequest)
                 )
@@ -1932,6 +1934,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 counted_usage.cost = counted_price.total_price if counted_price is not None else None
                 usage.incr(counted_usage)  # usage-attribution: a deepcopy, to check a limit before the request
                 ctx.deps.usage_limits.check_per_request_input_tokens(counted_usage.input_tokens)
+                # The step-start check in `_prepare_request` ran before this request's tokens were counted.
+                ctx.deps.usage_limits.check_before_request(usage)
         else:
             if not (
                 messages
@@ -1966,11 +1970,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             )
             if instructions_target is not None:
                 _apply_instruction_parts(instructions_target, model_request_parameters.instruction_parts)
-            usage = ctx.state.usage
 
         ctx.state.last_max_tokens = model_settings.get('max_tokens') if model_settings else None
         ctx.state.last_model_request_parameters = model_request_parameters
-        ctx.deps.usage_limits.check_before_request(usage)
 
         self.last_request_context = original_request_context
 
@@ -2010,9 +2012,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         record_usage: bool = True,
     ) -> None:
-        """Append a model response to history, updating usage tracking."""
+        """Commit a step's model response to history, counting the step and updating usage tracking.
+
+        This is the one place a step is counted in `usage.requests`: a step counts once, when the
+        agent acts on its response, whatever produced it (the provider, an error hook's recovery, a
+        wrapper's short-circuit or `SkipModelRequest`). A model call that fails without recovery
+        commits no response, so it doesn't count, though any usage it reported does.
+        """
         fill_run_metadata(response, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
         response.workspace_ref = ctx.deps.workspace_ref
+        _usage_attribution.record_request(ctx.state.usage)
         if record_usage:
             ModelRequestNode._record_response_usage(ctx, response)
             ModelRequestNode._enforce_usage_limits(ctx, [response])
