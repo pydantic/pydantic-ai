@@ -17,7 +17,9 @@ tools:
 safe-outputs:
   footer: false
   activation-comments: false
+  report-failure-as-issue: false
   noop:
+    report-as-issue: false
   create-issue:
     max: 1
     title-prefix: "[regression-detector] "
@@ -33,6 +35,7 @@ env:
   # never reaches the agent container, hence this duplicate; `agentic_workflow_guard.py`
   # fails the build if the two ever diverge.
   PYDANTIC_AI_JOB_TIMEOUT_MINUTES: "30"
+if: ${{ needs.provider_health.outputs.ready == 'true' }}
 imports:
   - shared/network-vendor-domains.md
   - shared/otel-logfire.md
@@ -42,6 +45,7 @@ imports:
   - shared/adversarial-review.md
   - shared/checkout.md
   - shared/engine-minimax.md
+  - shared/provider-health.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
   - shared/issue-filing-context.md
@@ -72,5 +76,7 @@ jobs:
           logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 ${{ needs.fetch_dynamic_prompt.outputs.dynamic_prompt }}
