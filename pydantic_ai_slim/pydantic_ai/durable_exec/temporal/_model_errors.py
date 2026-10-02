@@ -32,7 +32,9 @@ def _encode(error: ModelAPIError) -> dict[str, Any] | None:
     """The JSON-compatible form of `error`, or `None` if it can't be rebuilt in the workflow."""
     error_type = type(error)
     if not error_type.__module__.startswith('pydantic_ai.'):
-        # Only Pydantic AI's own error classes are rebuilt: the workflow imports the class by name.
+        # Only Pydantic AI's own error classes are rebuilt. `pydantic_ai` is passed through the workflow
+        # sandbox, so each of its classes is one class on both sides; an application module is re-imported
+        # per sandbox, so its classes can't be relied on to resolve to the one the activity raised.
         return None
     reduced = error.__reduce__()
     if not isinstance(reduced, tuple) or len(reduced) < 2 or reduced[0] is not error_type:
