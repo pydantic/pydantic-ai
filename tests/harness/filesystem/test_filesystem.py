@@ -58,6 +58,7 @@ from pydantic_ai_harness.shell._toolset import ShellToolset
 
 from ...workspace_fakes import RunOnlyWorkspaceBackend
 from .._tool_calls import call_tool, call_tools
+from .conftest import tools_path
 
 
 class ReadOnlyMount(LocalWorkspaceBackend):
@@ -317,18 +318,18 @@ class TestPathSecurity:
             await toolset.write_file('escape/new.txt', 'x', workspace=ws)
         assert not (outside / 'new.txt').exists()
 
-    @pytest.mark.skipif(os.name != 'posix', reason='LocalWorkspaceBackend requires POSIX')
     async def test_symlink_to_outside_fails_closed_when_readlink_is_missing(
         self,
         toolset: FileSystemToolset[None],
         fs_root: Path,
         outside: Path,
-        no_readlink_path: str,
+        tmp_path_factory: pytest.TempPathFactory,
     ) -> None:
         (fs_root / 'escape').symlink_to(outside)
-        workspace = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(fs_root, env={'PATH': no_readlink_path}))
+        path = tools_path(tmp_path_factory.mktemp('bin'), exclude=frozenset({'readlink'}))
+        workspace = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(fs_root, env={'PATH': path}))
 
-        with pytest.raises(ToolFailed):
+        with pytest.raises(ToolFailed, match='readlink'):
             await toolset.read_file('escape/secret.txt', workspace=workspace)
 
     async def test_symlink_to_a_protected_file_is_protected(
