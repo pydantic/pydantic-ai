@@ -26,6 +26,7 @@ from pydantic_clai2.ui.menus.field_menu import FieldRow, first_error
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 
 _FOLDER_NAME = re.compile(r'[A-Za-z0-9_-]+')
+_JSON: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 
 
 def is_folder_name(value: str) -> bool:
@@ -130,10 +131,17 @@ class CoderSource(Generic[DepsT]):
         }
         return json.dumps(values[row.key])
 
-    def _updated(self, row: FieldRow, raw: str) -> CoderSettings:
+    def _with(self, key: str, value: JsonValue) -> CoderSettings:
         data: dict[str, JsonValue] = self.host.settings(CoderSettings).model_dump(mode='json')
-        data[row.key] = TypeAdapter(JsonValue).validate_json(raw)
+        data[key] = value
         return CoderSettings.model_validate(data)
+
+    def _updated(self, row: FieldRow, raw: str) -> CoderSettings:
+        return self._with(row.key, _JSON.validate_json(raw))
+
+    def save_agent_folders(self, folders: list[str]) -> None:
+        """Persist the folder list, keeping every other Coder preference."""
+        self.host.save_settings(self._with('agent_folders', list[JsonValue](folders)))
 
     def problem(self, row: FieldRow, text: str) -> str | None:
         try:

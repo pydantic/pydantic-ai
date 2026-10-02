@@ -373,9 +373,7 @@ class FolderMenu(Generic[DepsT]):
                         folders.append(value)
                     else:
                         folders[action.index] = value
-                data = self.source.host.settings(CoderSettings).model_dump(mode='json')
-                data['agent_folders'] = folders
-                self.source.host.save_settings(CoderSettings.model_validate(data))
+                self.source.save_agent_folders(folders)
             except (OSError, RuntimeError, ValueError, SQLiteError) as exc:
                 self.notice = f'Could not save: {exc}'
                 cursor = 0
