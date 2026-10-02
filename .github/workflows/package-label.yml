@@ -9,8 +9,8 @@ name: Package Label
 # run never holds it pending.
 
 on:
-  # zizmor: ignore[dangerous-triggers] -- pull_request_target runs the base branch's copy, so a
-  # PR cannot edit the check it has to pass. Nothing here checks out or executes PR code: it
+  # zizmor: ignore[dangerous-triggers] -- pull_request_target runs the default branch's copy, so
+  # a PR cannot edit the check it has to pass. Nothing here checks out or executes PR code: it
   # reads the PR's labels via the API.
   pull_request_target:
     # `labeled` and `unlabeled` re-run the check when the labels change, so adding the label
@@ -53,7 +53,7 @@ jobs:
           fi
 
           if [ "$COUNT" -eq 0 ]; then
-            echo "::error title=Missing package label::Add the one package label that fits this PR best: ${PACKAGE_LABELS}. Each label's description lists its paths; tests and docs count toward the package they cover, and repository infrastructure is pkg:core."
+            echo "::error title=Missing package label::Add the one package label that fits this PR best: ${PACKAGE_LABELS}. Each label's description lists its paths; tests and docs count toward the package they cover, and repository infrastructure is pkg:core. Adding a label needs triage access; without it, a maintainer adds the label."
           else
             echo "::error title=More than one package label::This PR has ${COUNT} package labels ($(jq -r 'join(", ")' <<<"$FOUND")). Keep only the one that fits it best, out of: ${PACKAGE_LABELS}."
           fi
