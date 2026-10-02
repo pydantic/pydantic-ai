@@ -1516,21 +1516,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     # We append directly rather than via `_append_response` to skip the usage-limit
                     # check; raising `UsageLimitExceeded` here would mask `stream_error`.
                     if agent_stream_holder:  # pragma: no branch
-                        partial = agent_stream_holder[0].response
-                        recorded_state = await _resolve_interrupted_stream_state(
-                            wrap_request_context.model, stream_error, partial
+                        await self._commit_interrupted_response(
+                            ctx, wrap_request_context.model, stream_error, agent_stream_holder[0].response
                         )
-                        partial_response = replace(
-                            partial,
-                            state=recorded_state,
-                            run_id=ctx.state.run_id,
-                            conversation_id=ctx.state.conversation_id,
-                        )
-                        fill_response_cost(partial_response)
-                        partial_response.workspace_ref = ctx.deps.workspace_ref
-                        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
-                        _usage_attribution.record_request(ctx.state.usage)
-                        ctx.state.message_history.append(partial_response)
                 else:
                     try:
                         model_response = await wrap_task
@@ -1552,6 +1540,30 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # The event iterator is memoized on the stream, so a consumer that broke out early
                 # leaves the capability chain suspended. Close it now that the node is done with it.
                 await agent_stream_holder[0].aclose_events()
+
+    @staticmethod
+    async def _commit_interrupted_response(
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+        model: models.Model,
+        stream_error: BaseException,
+        partial: _messages.ModelResponse,
+    ) -> None:
+        """Record the response an interrupted stream produced so far, without checking usage limits."""
+        recorded_state = await _resolve_interrupted_stream_state(model, stream_error, partial)
+        partial_response = replace(
+            partial,
+            state=recorded_state,
+            run_id=ctx.state.run_id,
+            conversation_id=ctx.state.conversation_id,
+        )
+        fill_response_cost(partial_response)
+        partial_response.workspace_ref = ctx.deps.workspace_ref
+        _usage_attribution.record_usage(ctx.state.usage, partial_response.usage)
+        if partial_response.parts:
+            # The agent acted on what was streamed before the interruption, so the step counts;
+            # a stream that failed before producing anything doesn't.
+            _usage_attribution.record_request(ctx.state.usage)
+        ctx.state.message_history.append(partial_response)
 
     @staticmethod
     def _build_agent_stream(
