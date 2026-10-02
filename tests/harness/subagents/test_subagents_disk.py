@@ -151,18 +151,9 @@ class TestDiskLoading:
         _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
         cap: SubAgents[object] = SubAgents()
         assert cap.agent_folders is None
-        with pytest.warns(HarnessDeprecationWarning, match='now defaults to `agent_folders=None`') as record:
-            assert await _listing(cap, LocalWorkspaceBackend(tmp_path)) is None
-            assert await _listing(cap, LocalWorkspaceBackend(tmp_path)) is None
-        assert len(record) == 1
-        assert str(tmp_path / '.agents' / 'agents') in str(record[0].message)
-        assert "Pass `agent_folders='agents'` to restore" in str(record[0].message)
-
-    async def test_default_is_silent_without_definitions(self, tmp_path: Path) -> None:
-        _write_agent(tmp_path / '.agents' / 'agents', 'notes.txt', 'Not an agent.')
         with warnings.catch_warnings():
             warnings.simplefilter('error')
-            assert await _listing(SubAgents(), LocalWorkspaceBackend(tmp_path)) is None
+            assert await _listing(cap, LocalWorkspaceBackend(tmp_path)) is None
 
     async def test_loads_the_conventional_folder_when_requested(self, tmp_path: Path) -> None:
         _write_agent(tmp_path / '.agents' / 'agents', 'planner.md', 'Plan.')
@@ -362,7 +353,7 @@ class TestCodexDiskLoading:
         assert len(record) == 1 and 'agent_overrides' in str(record[0].message)
         assert listing is not None and '- worker' in listing
         assert _built(cap)['worker'].model is None
-        assert _built(cap)['worker'].model_settings == {'thinking': MINIMUM_EFFORT_FLOOR}
+        assert _built(cap)['worker'].model_settings is None
 
     @pytest.mark.parametrize('toml_first', [False, True])
     async def test_mixed_formats_are_sorted_and_first_definition_wins(self, tmp_path: Path, toml_first: bool) -> None:
