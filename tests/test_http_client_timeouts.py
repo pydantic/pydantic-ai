@@ -99,6 +99,11 @@ _DEFAULT = object()
             snapshot({'connect': 2.0, 'read': 30.0, 'write': 30.0, 'pool': 30.0}),
             id='shorter-connect-kept',
         ),
+        pytest.param(
+            (60.0, 30.0),
+            snapshot({'connect': 30.0, 'read': 60.0, 'write': 60.0, 'pool': 60.0}),
+            id='explicit-longer-connect-kept',
+        ),
     ],
 )
 async def test_created_client_never_lengthens_connect_or_pool(

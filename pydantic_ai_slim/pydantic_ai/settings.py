@@ -219,9 +219,10 @@ class ModelSettings(TypedDict, total=False):
     `httpx2.Timeout` on the paths whose SDK expects one. `httpx2.Timeout` is deliberately not part of
     this contract, because some SDKs behind these settings still reject it.
 
-    On an HTTP client Pydantic AI created, the timeout can shorten but never lengthen the client's
-    connect timeout (5 seconds) and pool timeout, so a long request timeout doesn't also allow a long
-    wait to connect. A client you pass in yourself is used as configured.
+    On an HTTP client Pydantic AI created, a number of seconds can shorten but never lengthen the
+    client's connect timeout (5 seconds) and pool timeout, so a long request timeout doesn't also allow
+    a long wait to connect. An `httpx.Timeout` that sets the phases separately, and any timeout on a
+    client you pass in yourself, is used as given.
 
     Supported by:
 

@@ -1850,8 +1850,8 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
 
     The default timeouts match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
-    A timeout passed with an individual request can shorten the client's `connect` timeout and its
-    pool timeout (`timeout`), but never lengthen them.
+    A number of seconds passed as an individual request's timeout can shorten the client's `connect`
+    timeout and its pool timeout (`timeout`), but never lengthen them.
 
     Raises:
         ImportError: If legacy `httpx` is not installed.

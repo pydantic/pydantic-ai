@@ -66,8 +66,8 @@ def create_async_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: 
     Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
     the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
-    A timeout passed with an individual request can shorten the client's `connect` timeout and its
-    pool timeout (`timeout`), but never lengthen them; see `ConnectPoolTimeoutCap`.
+    A number of seconds passed as an individual request's timeout can shorten the client's `connect`
+    timeout and its pool timeout (`timeout`), but never lengthen them; see `ConnectPoolTimeoutCap`.
     """
     from .models import get_user_agent
 
@@ -86,7 +86,8 @@ class ConnectPoolTimeoutCap:
     scalar the provider pins on `HttpOptions`. A scalar sets every phase, so a 600-second read
     timeout would also allow 600 seconds to connect or to wait for a pooled connection. Installed on
     the clients Pydantic AI creates, this hook takes the shorter of the requested and the client's own
-    connect and pool timeouts; it never lengthens one.
+    connect and pool timeouts when all four phases of the requested timeout are equal, as a scalar or
+    `None` makes them. A timeout whose phases differ was set phase by phase and is left as it is.
 
     It is a request event hook rather than a custom transport because passing `transport=` to an HTTPX
     client turns off the proxies it would otherwise pick up from the environment. Event hooks run for
@@ -101,6 +102,9 @@ class ConnectPoolTimeoutCap:
         requested: dict[str, Any] | None = request.extensions.get('timeout')
         if requested is None:
             # `AsyncClient.send` sets one before hooks run; only a request handed to the hook directly lacks it.
+            return
+        if len({requested['connect'], requested['read'], requested['write'], requested['pool']}) > 1:
+            # Phases set separately, e.g. `httpx.Timeout(60, connect=30)`, are what the caller asked for.
             return
         request.extensions = {
             **request.extensions,
