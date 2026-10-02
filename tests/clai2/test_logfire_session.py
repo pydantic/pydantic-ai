@@ -21,6 +21,7 @@ from pydantic_ai_harness.step_persistence.conversations import SqliteConversatio
 from pydantic_clai2 import DEFAULT_PLUGINS, chat
 from pydantic_clai2._app import create_shell
 from pydantic_clai2.builtin_plugins import logfire_session
+from pydantic_clai2.cli import headless
 from pydantic_clai2.config import Settings
 from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
@@ -173,9 +174,9 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
     assert all(exporter.closed for exporter in recorder.exporters)
 
 
-@pytest.mark.parametrize('browser', [False, True])
+@pytest.mark.parametrize('mode', ['id', 'browser', 'headless'])
 async def test_startup_resume_opens_only_the_saved_conversation_root(
-    recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, browser: bool
+    recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
     monkeypatch.chdir(tmp_path)
     agent = Agent(TestModel(call_tools=[], custom_output_text='answer'))
@@ -188,20 +189,36 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         return saved.summary.id
 
     monkeypatch.setattr(SessionBrowser, 'run', select)
-    with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-        pipe.send_text('resumed\n/exit\n')
-        await chat(
-            agent,
-            deps=None,
-            console=Console(file=io.StringIO()),
-            store=SettingsStore(tmp_path / 'config.db'),
-            builtin_plugins=tuple(
-                plugin.model_copy(update={'settings': {'ui_events': True}})
-                for plugin in DEFAULT_PLUGINS
-                if plugin.id == 'observability'
-            ),
-            resume='' if browser else saved.summary.id,
+    store = SettingsStore(tmp_path / 'config.db')
+    plugins = tuple(
+        plugin.model_copy(update={'settings': {'ui_events': True}})
+        for plugin in DEFAULT_PLUGINS
+        if plugin.id == 'observability'
+    )
+    if mode == 'headless':
+        monkeypatch.setattr(headless, 'create_agent', lambda: agent)
+        monkeypatch.setattr(headless, 'STOCK_PLUGINS', plugins)
+        assert (
+            await headless.run_headless(
+                text='resumed',
+                settings=Settings(model=None),
+                store=store,
+                project=ProjectSettings(),
+                resume=saved.summary.id,
+            )
+            == 0
         )
+    else:
+        with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
+            pipe.send_text('resumed\n/exit\n')
+            await chat(
+                agent,
+                deps=None,
+                console=Console(file=io.StringIO()),
+                store=store,
+                builtin_plugins=plugins,
+                resume='' if mode == 'browser' else saved.summary.id,
+            )
     roots = [span for span in recorder.spans() if span.name == 'CLAI session']
     assert [(span.attributes or {})['agent_session_id'] for span in roots] == [saved.summary.id]
     startup = next(span for span in recorder.spans() if span.name == 'session started')
