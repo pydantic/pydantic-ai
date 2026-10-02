@@ -2949,3 +2949,23 @@ async def test_the_idle_pump_carries_on_to_the_replacement_socket() -> None:
         'type': 'session.input_audio.append',
         'audio': base64.b64encode(bytes(4800)).decode(),
     }
+
+
+async def test_audio_booked_on_a_lost_session_doesnt_hold_back_the_replacements_silence() -> None:
+    """A redial drops the application audio still due to play on the old session, so idle frames start at once."""
+    replacement = _FakeWebSocket([])
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        return replacement, 's2'
+
+    dropping: Any = _DroppingWebSocket([])
+    connection = OpenAILiveConnection(
+        dropping, dial=dial, reconnect={'base_delay': 0.0}, session_id='s1', idle_audio=True
+    )
+    # A minute of audio sent just before the drop, which will now never play.
+    connection._input_audio_end = live_module._pump_clock() + 60  # pyright: ignore[reportPrivateUsage]
+    assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=False)]
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        while not replacement.sent:
+            await anyio.sleep(0.05)
+    await connection.aclose()

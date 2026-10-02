@@ -733,7 +733,8 @@ class OpenAILiveConnection(RealtimeConnection):
         for `_IDLE_AUDIO_GAP`: application audio arriving meanwhile pushes the next frame back.
         """
         while (delay := self._idle_frame_due() - _pump_clock()) > 0:
-            await asyncio.sleep(delay)
+            # In short steps, so a schedule a redial cuts short (see `_forget_session_state`) takes effect.
+            await asyncio.sleep(min(delay, _IDLE_AUDIO_FRAME))
         # Booked from now rather than from when it was due, so a stalled loop doesn't catch up with a
         # burst of frames that would run Live's timeline ahead of the clock.
         self._next_idle_frame = max(self._idle_frame_due(), _pump_clock()) + _IDLE_AUDIO_FRAME
@@ -817,6 +818,8 @@ class OpenAILiveConnection(RealtimeConnection):
         while True:
             # Never cancel the pending `recv()`: a cancelled read can drop the frame it already holds,
             # so the turn clock is a timeout on the wait rather than on the read.
+            # A pump that failed before this wait would be left out of it.
+            self._raise_if_idle_audio_failed()
             waiting: set[asyncio.Task[Any]] = {pending}
             if (pump := self._idle_audio_task) is not None and not pump.done():
                 # A pump that fails wakes this wait, so its failure surfaces now rather than at the next frame.
@@ -938,6 +941,9 @@ class OpenAILiveConnection(RealtimeConnection):
         self._call_delegations.clear()
         self._continuations_due.clear()
         self._reported_seconds = 0.0
+        # Audio still booked to play on the lost session never will, so idle frames may start right away.
+        self._input_audio_end = min(self._input_audio_end, _pump_clock())
+        self._next_idle_frame = 0.0
 
     def _start_read(self) -> asyncio.Task[str | bytes]:
         """Begin the next read, remembering it so it can be cancelled on the way out."""
