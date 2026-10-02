@@ -1107,6 +1107,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
+                                # The tool calls above (and any agents they delegated to) added usage to the run
+                                # after the stream snapshotted it. The final response itself is only recorded once
+                                # this node finishes, so the stream still adds it on top of the refreshed snapshot.
+                                stream._refresh_initial_run_ctx_usage()  # pyright: ignore[reportPrivateUsage]
+
                             yield StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,
@@ -1127,10 +1132,16 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                         async for _ in stream:
                             pass
 
-                # Advance graph with remaining hooks (before_node_run already fired above).
+                # Advance through the documented streaming exception: `before_node_run` already
+                # fired above, so `wrap_node_run` encloses graph advancement only, followed by the
+                # error and after hooks.
                 # Rebuild run_ctx after streaming so hooks see post-streaming state (e.g. run_step).
                 run_ctx = _agent_graph.build_run_context(graph_ctx)
-                next_node = await agent_run._wrap_and_advance(run_ctx, node, agent_run._advance_graph)  # pyright: ignore[reportPrivateUsage]
+                next_node = await agent_run._wrap_and_advance_streaming(  # pyright: ignore[reportPrivateUsage]
+                    run_ctx,
+                    node,
+                    agent_run._advance_graph,  # pyright: ignore[reportPrivateUsage]
+                )
                 if isinstance(next_node, End) and agent_run.result is not None:
                     # A final output could have been produced by the CallToolsNode rather than the ModelRequestNode,
                     # if a tool function raised CallDeferred or ApprovalRequired.

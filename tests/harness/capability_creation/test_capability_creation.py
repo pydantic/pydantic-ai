@@ -390,9 +390,11 @@ class TestCapabilityCreationToolset:
     async def test_author_success_message(self, tmp_path: Path) -> None:
         toolset = CapabilityCreationToolset(CapabilityStore(tmp_path))
         result = await toolset.author_capability('marker', VALID_CODE)
-        assert 'authored and validated' in result
+        assert 'authored, validated and saved' in result
         assert 'MarkerCapability' in result
-        assert 'next agent run' in result
+        assert 'does not take effect in this run' in result
+        assert 'depends on how this agent is set up' in result
+        assert 'load_active' not in result  # host wiring is for the docs, not the model
 
     async def test_parallel_store_mutations_run_one_at_a_time(self, tmp_path: Path) -> None:
         # Parallel tool calls share one manifest: overlapping read-modify-write cycles would lose updates.
@@ -477,6 +479,8 @@ class TestCapabilityCreationCapability:
         instructions = CapabilityCreation[object](directory=tmp_path).get_instructions()
         assert isinstance(instructions, str)
         assert 'author_capability' in instructions
+        assert 'do not take effect in this run' in instructions
+        assert 'load_active' not in instructions
 
     def test_get_instructions_custom(self, tmp_path: Path) -> None:
         assert CapabilityCreation[object](directory=tmp_path, guidance='X').get_instructions() == 'X'

@@ -245,7 +245,9 @@ async def _run_lifecycle_hooks(  # noqa: C901
     _run_ready = anyio.Event()
     _run_done = anyio.Event()
     _run_error: BaseException | None = None
+    _handler_errors: list[BaseException] = []
     _wrap_context: list[tuple[ContextVar[Any], Any]] | None = None
+    _body_context: contextvars.Context | None = None
 
     async def _do_run() -> AgentRunResult[Any]:
         nonlocal _wrap_context
@@ -261,15 +263,40 @@ async def _run_lifecycle_hooks(  # noqa: C901
         ]
         _run_ready.set()
         await _run_done.wait()
+        # The run body executes in the caller's task. Bring its latest ContextVar values back
+        # into this wrapper task before running the post-body lifecycle, so error/after hooks and
+        # the post-handler half of `wrap_run` observe state produced while the run was active.
+        body_context = _body_context
+        if body_context is not None:
+            for var in body_context:
+                var.set(body_context[var])
         if _run_error is not None:
-            raise extract_error(_run_error) if extract_error is not None else _run_error
-        if result_ready is not None and not result_ready():  # pragma: no cover
+            error = extract_error(_run_error) if extract_error is not None else _run_error
+            if isinstance(error, (GeneratorExit, KeyboardInterrupt)):
+                raise error
+            try:
+                result = await run_capability.on_run_error(run_ctx, error=error)
+            except BaseException as exc:
+                _handler_errors.append(exc)
+                raise
+            if isinstance(error, asyncio.CancelledError):
+                # Cancellation can't be recovered, so `on_run_error` only observes it. Re-raise it
+                # here rather than return the attempted recovery, so `wrap_run` still sees the
+                # cancellation and its `except asyncio.CancelledError` cleanup runs.
+                raise error
+        elif result_ready is not None and not result_ready():  # pragma: no cover
             # The caller finished without a result (e.g. `break` out of iteration): there is
             # nothing to return, so park until the wrap task is cancelled below. Normally the
             # cancellation is delivered at this task's resume point before this line runs, so
             # it's only reached if a `wrap_run` implementation absorbed the cancellation.
-            await asyncio.Future[AgentRunResult[Any]]()
-        return build_result()
+            result = await asyncio.Future[AgentRunResult[Any]]()
+        else:
+            result = build_result()
+        try:
+            return await run_capability.after_run(run_ctx, result=result)
+        except BaseException as exc:
+            _handler_errors.append(exc)
+            raise
 
     # Before `wrap_run`, not inside the handler it wraps: a `wrap_run` implementation may call a
     # durable operation before it awaits the handler, and one that short-circuits never awaits it at
@@ -325,7 +352,6 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     async def _finalize_result(result: AgentRunResult[Any]) -> None:
         nonlocal _run_error
-        result = await run_capability.after_run(run_ctx, result=result)
         # Every completion path funnels through here — including `wrap_run`/`on_run_error`
         # recovering from the very `CancelledError` an external cancel delivered. If that
         # cancellation is still pending on this task, re-assert it rather than let the run
@@ -351,6 +377,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
             # the error from handler() and returns a recovery result, it is suppressed.
         finally:
             if not short_circuited:
+                _body_context = contextvars.copy_context()
                 _run_done.set()
                 if _run_error is None and (result_ready is None or result_ready()):
                     await _finalize_result(await _wrap_task)
@@ -360,11 +387,13 @@ async def _run_lifecycle_hooks(  # noqa: C901
                     try:
                         await _finalize_result(await _wrap_task)
                     except BaseException as wrap_exc:
+                        if _handler_errors and wrap_exc is _handler_errors[-1]:
+                            _run_error = wrap_exc
                         # Attach wrap_run's own errors as context so they're visible in tracebacks
                         # (but don't mask the original). Skip CancelledError: it's expected
                         # cancellation propagation, and setting __context__ on it causes hangs on
                         # Python 3.10.
-                        if not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
+                        elif not isinstance(wrap_exc, asyncio.CancelledError) and wrap_exc is not _run_error:
                             # Only fires for bugs in `wrap_run` implementations.
                             _run_error.__context__ = wrap_exc  # pragma: lax no cover
                 # `_run_done.set()` can't complete `_wrap_task` synchronously, so the task is
@@ -376,17 +405,8 @@ async def _run_lifecycle_hooks(  # noqa: C901
                     except (asyncio.CancelledError, BaseException):
                         pass
 
-        # If wrap_run didn't recover, give on_run_error a chance.
-        if _run_error is not None:
-            try:
-                result = await run_capability.on_run_error(run_ctx, error=_run_error)
-            except BaseException as on_error_exc:
-                _run_error = on_error_exc
-            else:
-                await _finalize_result(result)
-
-        # If on_run_error didn't recover either, re-raise. In an @asynccontextmanager,
-        # not re-raising suppresses the exception.
+        # If neither on_run_error nor wrap_run recovered, re-raise. In an
+        # @asynccontextmanager, not re-raising suppresses the exception.
         if _run_error is not None:
             raise _run_error
     finally:
@@ -835,6 +855,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # its contributed toolsets extracted into `self._cap_toolsets` (and thereby
         # `self.toolsets`). The flip side is that `innermost` capabilities can't
         # contribute toolsets of their own.
+        _reject_second_of_a_kind([self._root_capability])
         self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=False)
         cap_toolset = self._root_capability.get_toolset()
         if cap_toolset is not None:
@@ -2181,6 +2202,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             override_caps = list(resolved.capability.capabilities)
             _inject_auto_capabilities(override_caps)
+            _reject_second_of_a_kind(override_caps)
             override_capability: CombinedCapability[AgentDepsT] | None = CombinedCapability(override_caps).for_agent(
                 self
             )
@@ -3082,6 +3104,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         skipping it uses a capability that overrides `for_agent` (e.g. the durability capabilities)
         unbound, a silent divergence. KEEP the two call sites in sync.
         """
+        _reject_second_of_a_kind([self._effective_root_capability(), *extra_capabilities])
         return [capability.for_agent(self) for capability in extra_capabilities]
 
     async def _resolve_model_selection(
@@ -3229,6 +3252,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The extras are the tail of `run_layers` (instrumentation, if added, is at the front). Slicing
         # from the front avoids the `[-0:]` full-list pitfall when there are no extras.
         resolved_extras = resolved_layers[len(resolved_layers) - len(extra_capabilities) :]
+        # Checked again now that `for_run` has resolved them: a `DynamicCapability` only becomes
+        # the capability its factory returns here, so a second engine returned from one was not
+        # there to count before binding. It was never bound either, since `for_run` is all it gets.
+        _reject_second_of_a_kind(resolved_layers)
         base_capability._validate_runtime_capabilities(  # pyright: ignore[reportPrivateUsage]
             ctx,
             [capability for extra in resolved_extras for capability in leaf_capabilities(extra)],
@@ -4360,6 +4387,13 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # last and wins, giving its awaiter the outer run's history.
                 _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
                 raise
+            except BaseException as exc:
+                # A durable execution engine can cancel the run from outside with its own exception rather
+                # than a `CancelledError` (DBOS raises `DBOSWorkflowCancelledError`). It's an external
+                # cancellation all the same: it keeps propagating, with the run state attached the same way.
+                if isinstance(exc, _cancellation_error_types(self.run_capability)):
+                    _run_cancelled('The agent run was cancelled by its durable execution engine.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+                raise
             finally:
                 # On every exit path — translation above, a clean exit after user code swallowed a
                 # requested cancellation, a superseded driving task, or a non-cancellation error
@@ -4466,6 +4500,13 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 finally:
                     if agent_run.result is not None:
                         self.resolve_metadata(agent_run.ctx)
+
+
+def _cancellation_error_types(capability: AbstractCapability[Any]) -> tuple[type[BaseException], ...]:
+    """The exception types the run's capabilities declare their environment cancels a run with."""
+    error_types: list[type[BaseException]] = []
+    capability.apply(lambda leaf: error_types.extend(leaf._cancellation_error_types))  # pyright: ignore[reportPrivateUsage]
+    return tuple(error_types)
 
 
 def _merge_retries_with_spec(
@@ -4616,6 +4657,33 @@ def _inject_auto_capabilities(capabilities: list[AbstractCapability[Any]]) -> No
     for cap_type in _AUTO_INJECT_CAPABILITY_TYPES:
         if not has_capability_type(capabilities, cap_type):
             capabilities.append(cap_type())
+
+
+def _reject_second_of_a_kind(capabilities: Sequence[AbstractCapability[Any]]) -> None:
+    """Refuse two capabilities of a kind an agent can hold only one of (see `_one_per_agent`).
+
+    Called before `for_agent`, on every capability the agent will end up holding, because binding is
+    where a durability capability registers its durable operations: a pair that is going to be
+    refused must be refused before either registers. Occurrences are counted rather than distinct
+    instances, so one engine listed twice is refused too.
+
+    Walks the tree the way `BaseDurabilityCapability.from_agent` does: `apply` stops at a wrapper
+    around a single capability, so an engine behind `prefix_tools()` would otherwise go uncounted.
+    """
+    by_kind: dict[str, list[AbstractCapability[Any]]] = {}
+    for root in capabilities:
+        for capability in leaf_capabilities(root):
+            while isinstance(capability, WrapperCapability):
+                capability = capability.wrapped
+            if (kind := capability._one_per_agent) is not None:  # pyright: ignore[reportPrivateUsage]
+                by_kind.setdefault(kind, []).append(capability)
+    for kind, found in by_kind.items():
+        if len(found) > 1:
+            names = ', '.join(f'`{type(capability).__name__}`' for capability in found)
+            raise exceptions.UserError(
+                f'An agent can have only one {kind}, but this one would have {len(found)}: {names}. '
+                "That counts the agent's own capabilities together with any passed for a run. Keep one."
+            )
 
 
 def _validate_capability_ids(capabilities: Sequence[AbstractCapability[Any]]) -> set[str]:
