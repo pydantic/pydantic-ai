@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterator
 from datetime import date, datetime
 from pathlib import Path
 
@@ -20,9 +19,7 @@ from .support import DIM, create_table, get_table, insert_rows, tiny_embed, tiny
 
 
 @pytest.fixture
-def catalog() -> Iterator[str]:
-    root = f'harness_pxt_tools_{uuid.uuid4().hex[:8]}'
-    pxt.create_dir(root)
+def catalog(root: str) -> str:
     chunks = create_table(
         f'{root}.chunks',
         {'text': pxt.String, 'pos': pxt.Int, 'status': pxt.String, 'vec': pxt.Array[(8,), pxt.Float]},
@@ -39,8 +36,7 @@ def catalog() -> Iterator[str]:
         ],
     )
     insert_rows(other, [{'text': 'secret handbook'}])
-    yield root
-    pxt.drop_dir(root, force=True)
+    return root
 
 
 def _tools(tables: list[str], *, max_rows: int = 20, max_chars: int = 8000) -> PixeltableToolset[None]:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Literal, NoReturn
 
@@ -42,14 +42,6 @@ MEMORY_COLUMNS: dict[str, object] = {
 
 Around = Callable[[Callable[[], pxt.UpdateStatus]], pxt.UpdateStatus]
 """Runs around one intercepted table call; receives the real call as a thunk."""
-
-
-@pytest.fixture
-def root() -> Iterator[str]:
-    name = f'harness_pxt_mem_{uuid.uuid4().hex[:8]}'
-    pxt.create_dir(name)
-    yield name
-    pxt.drop_dir(name, force=True)
 
 
 @pytest.fixture
@@ -353,30 +345,24 @@ class TestPixeltableMemoryStoreSearch:
 class TestPixeltableMemoryStoreRecovery:
     """Prepared receipts left by a writer that stopped between journaling and completing."""
 
-    async def test_prepared_create_rolls_forward(self, store: PixeltableMemoryStore) -> None:
-        operation = MemoryOperation(id='run-1:call-9', fingerprint='write:notes/a.md:hello')
+    @pytest.mark.parametrize('existing', [False, True], ids=['create', 'update'])
+    async def test_prepared_write_rolls_forward(self, store: PixeltableMemoryStore, existing: bool) -> None:
+        base = await store.write('a.md', 'base', expected_version=None) if existing else None
+        expected = base.version if base else None
+        operation = MemoryOperation(id='run-1:call-9', fingerprint='write:a.md:hello')
         _insert_prepared_receipt(
-            store, operation, file='notes/a.md', op='write', expected=None, new='hello', version='v1', existed=False
+            store, operation, file='a.md', op='write', expected=expected, new='hello', version='v1', existed=existing
         )
-        replay = await store.get_operation(operation)
-        assert replay == MemoryMutation(version='v1', replayed=True, existed=False)
-        file = await store.read('notes/a.md', max_chars=100)
+        replay = (
+            await store.write('a.md', 'hello', expected_version=expected, operation=operation)
+            if existing
+            else await store.get_operation(operation)
+        )
+        assert replay == MemoryMutation(version='v1', replayed=True, existed=existing)
+        file = await store.read('a.md', max_chars=100)
         assert file is not None
         assert (file.content, file.version, file.operation_id) == ('hello', 'v1', operation.id)
-        # The receipt is now complete; a second lookup is a plain replay.
         assert await store.get_operation(operation) == replay
-
-    async def test_prepared_update_rolls_forward(self, store: PixeltableMemoryStore) -> None:
-        base = await store.write('u.md', 'base', expected_version=None)
-        operation = MemoryOperation(id='run-1:call-10', fingerprint='write:u.md:next')
-        _insert_prepared_receipt(
-            store, operation, file='u.md', op='write', expected=base.version, new='next', version='v2', existed=True
-        )
-        replay = await store.write('u.md', 'next', expected_version=base.version, operation=operation)
-        assert replay == MemoryMutation(version='v2', replayed=True, existed=True)
-        file = await store.read('u.md', max_chars=100)
-        assert file is not None
-        assert (file.content, file.version) == ('next', 'v2')
 
     async def test_prepared_delete_rolls_forward(self, store: PixeltableMemoryStore) -> None:
         created = await store.write('d.md', 'x', expected_version=None)
@@ -556,57 +542,50 @@ class TestPixeltableMemoryStoreRaces:
                 tg.start_soon(attempt, paths[i % 4], i)
         assert sorted(winners) == paths
 
-    async def test_create_race_without_operation_is_conflict(
-        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize(
+        ('mutation', 'error'),
+        [
+            ('create', 'Duplicate primary key'),
+            ('write', 'changed before it could be written'),
+            ('delete', 'changed before it could be deleted'),
+        ],
+    )
+    async def test_mutation_race_without_operation_is_conflict(
+        self,
+        store: PixeltableMemoryStore,
+        table_name: str,
+        monkeypatch: pytest.MonkeyPatch,
+        mutation: Literal['create', 'write', 'delete'],
+        error: str,
     ) -> None:
+        base = await store.write('race.md', 'base', expected_version=None) if mutation != 'create' else None
+        expected = base.version if base else None
         other = PixeltableMemoryStore(table_name=table_name)
 
-        def other_creates_first(call: Callable[[], pxt.UpdateStatus]) -> pxt.UpdateStatus:
-            anyio.from_thread.run(partial(other.write, 'race.md', 'B', expected_version=None))
+        def other_updates_first(call: Callable[[], pxt.UpdateStatus]) -> pxt.UpdateStatus:
+            anyio.from_thread.run(partial(other.write, 'race.md', 'B', expected_version=expected))
             return call()
 
-        _intercept_insert(monkeypatch, store.table, receipt=False, around=other_creates_first)
-        with pytest.raises(MemoryConflictError, match='Duplicate primary key'):
-            await store.write('race.md', 'A', expected_version=None)
+        if mutation == 'create':
+            _intercept_insert(monkeypatch, store.table, receipt=False, around=other_updates_first)
+        elif mutation == 'write':
+            _intercept_update(
+                monkeypatch,
+                store.table,
+                columns={'content', 'version', 'last_operation_id'},
+                around=other_updates_first,
+            )
+        else:
+            _intercept_delete(monkeypatch, store.table, around=other_updates_first)
+        with pytest.raises(MemoryConflictError, match=error):
+            if mutation == 'delete':
+                await store.delete('race.md', expected_version=expected)
+            else:
+                await store.write('race.md', 'A', expected_version=expected)
         file = await store.read('race.md', max_chars=10)
         assert file is not None
         assert file.content == 'B'
-
-    async def test_update_race_without_operation_is_conflict(
-        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        base = await store.write('u.md', 'base', expected_version=None)
-        other = PixeltableMemoryStore(table_name=table_name)
-
-        def other_updates_first(call: Callable[[], pxt.UpdateStatus]) -> pxt.UpdateStatus:
-            anyio.from_thread.run(partial(other.write, 'u.md', 'B', expected_version=base.version))
-            return call()
-
-        columns = {'content', 'version', 'last_operation_id'}
-        _intercept_update(monkeypatch, store.table, columns=columns, around=other_updates_first)
-        with pytest.raises(MemoryConflictError, match='changed before it could be written'):
-            await store.write('u.md', 'A', expected_version=base.version)
-        file = await store.read('u.md', max_chars=10)
-        assert file is not None
-        assert file.content == 'B'
-
-    async def test_delete_race_without_operation_is_conflict(
-        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        base = await store.write('d.md', 'base', expected_version=None)
-        other = PixeltableMemoryStore(table_name=table_name)
-
-        def other_updates_first(call: Callable[[], pxt.UpdateStatus]) -> pxt.UpdateStatus:
-            anyio.from_thread.run(partial(other.write, 'd.md', 'B', expected_version=base.version))
-            return call()
-
-        _intercept_delete(monkeypatch, store.table, around=other_updates_first)
-        with pytest.raises(MemoryConflictError, match='changed before it could be deleted'):
-            await store.delete('d.md', expected_version=base.version)
-        current = await store.read('d.md', max_chars=10)
-        assert current is not None
-        assert current.content == 'B'
-        assert (await store.delete('d.md', expected_version=current.version)).existed
+        assert (await store.delete('race.md', expected_version=file.version)).existed
 
     async def test_insert_errors_other_than_duplicates_propagate(
         self, store: PixeltableMemoryStore, monkeypatch: pytest.MonkeyPatch
@@ -670,48 +649,44 @@ class TestPixeltableMemoryStoreRaces:
         with pytest.raises(MemoryConflictError, match='receipt vanished mid-flight'):
             await store.write('v.md', 'x', expected_version=None, operation=operation)
 
-    async def test_conflicted_create_adopts_peer_receipt(
-        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.parametrize('mutation', ['create', 'write', 'delete'])
+    async def test_conflicted_mutation_adopts_peer_receipt(
+        self,
+        store: PixeltableMemoryStore,
+        table_name: str,
+        monkeypatch: pytest.MonkeyPatch,
+        mutation: Literal['create', 'write', 'delete'],
     ) -> None:
-        # We journal the intent, a peer sharing the operation id applies and completes it, then
-        # our own insert conflicts. We adopt the peer's receipt rather than retry into a double apply.
-        operation = MemoryOperation(id='run-1:call-20', fingerprint='write:p.md:c2')
+        # A peer applies our prepared intent before our mutation, so we replay its receipt.
+        base = await store.write('p.md', 'base', expected_version=None) if mutation != 'create' else None
+        expected = base.version if base else None
+        operation = MemoryOperation(id='run-1:call-20', fingerprint=f'{mutation}:p.md')
         peer = PixeltableMemoryStore(table_name=table_name)
+
+        def mutate(target: PixeltableMemoryStore) -> Callable[[], Awaitable[MemoryMutation]]:
+            if mutation == 'delete':
+                return partial(target.delete, 'p.md', expected_version=expected, operation=operation)
+            return partial(target.write, 'p.md', 'c2', expected_version=expected, operation=operation)
+
+        async def peer_mutation() -> MemoryMutation:
+            return await mutate(peer)()
 
         def peer_applies_our_intent(call: Callable[[], pxt.UpdateStatus]) -> pxt.UpdateStatus:
             status = call()
-            replay = anyio.from_thread.run(
-                partial(peer.write, 'p.md', 'c2', expected_version=None, operation=operation)
-            )
-            assert replay.replayed
+            assert anyio.from_thread.run(peer_mutation).replayed
             return status
 
         _intercept_insert(monkeypatch, store.table, receipt=True, around=peer_applies_our_intent)
-        outcome = await store.write('p.md', 'c2', expected_version=None, operation=operation)
+        outcome = await mutate(store)()
         assert outcome.replayed
+        assert outcome.existed == (mutation != 'create')
         file = await store.read('p.md', max_chars=100)
-        assert file is not None
-        assert file.content == 'c2'
-
-    async def test_conflicted_delete_adopts_peer_receipt(
-        self, store: PixeltableMemoryStore, table_name: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        base = await store.write('p.md', 'base', expected_version=None)
-        operation = MemoryOperation(id='run-1:call-22', fingerprint='delete:p.md')
-        peer = PixeltableMemoryStore(table_name=table_name)
-
-        def peer_applies_our_intent(call: Callable[[], pxt.UpdateStatus]) -> pxt.UpdateStatus:
-            status = call()
-            replay = anyio.from_thread.run(
-                partial(peer.delete, 'p.md', expected_version=base.version, operation=operation)
-            )
-            assert replay.replayed
-            return status
-
-        _intercept_insert(monkeypatch, store.table, receipt=True, around=peer_applies_our_intent)
-        outcome = await store.delete('p.md', expected_version=base.version, operation=operation)
-        assert outcome == MemoryMutation(version=None, replayed=True, existed=True)
-        assert await store.read('p.md', max_chars=100) is None
+        if mutation == 'delete':
+            assert outcome.version is None
+            assert file is None
+        else:
+            assert file is not None
+            assert (file.content, file.version, file.operation_id) == ('c2', outcome.version, operation.id)
 
     @pytest.mark.parametrize('mutation', ['write', 'delete'])
     async def test_conflicted_mutation_withdraws_prepared_receipt(

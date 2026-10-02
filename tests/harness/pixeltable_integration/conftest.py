@@ -9,6 +9,8 @@ from __future__ import annotations
 import importlib.util
 import os
 import tempfile
+import uuid
+from collections.abc import Iterator
 
 import pytest
 
@@ -26,6 +28,16 @@ collect_ignore = (
     if importlib.util.find_spec('pixeltable') is None
     else []
 )
+
+
+@pytest.fixture
+def root() -> Iterator[str]:
+    import pixeltable as pxt
+
+    name = f'harness_pxt_{uuid.uuid4().hex[:8]}'
+    pxt.create_dir(name)
+    yield name
+    pxt.drop_dir(name, force=True)
 
 
 @pytest.fixture

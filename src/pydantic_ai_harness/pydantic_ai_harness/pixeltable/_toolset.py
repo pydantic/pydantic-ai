@@ -1,12 +1,8 @@
 """Read-only Pixeltable catalog tools for a Pydantic AI agent.
 
-External assumptions (source checked at Pixeltable 0.7.9; integration tested at 0.7.12):
-
-- An unstored computed column reruns its function on every read, so projections and filters naming
-  one are rejected. (A `where` comparing one to a literal also raises a bare `AssertionError` in
-  `pixeltable/exprs/comparison.py`.)
-- A version handle (`'dir.tbl:3'`) opens a snapshot that still holds rows deleted and columns dropped
-  since, so paths containing `:` are refused.
+Unstored computed columns rerun their functions on every read, so projections and
+filters naming them are rejected. Version handles (`'dir.tbl:3'`) expose old rows
+and columns, so paths containing `:` are refused.
 """
 
 from __future__ import annotations
@@ -212,11 +208,7 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         self.add_function(self.similarity_search, name='similarity_search')
 
     def list_tables(self) -> TableNames:
-        """List Pixeltable tables this agent may use.
-
-        Returns:
-            The allowed table paths.
-        """
+        """List the allowed Pixeltable table and view paths."""
         try:
             tables = pxt.list_tables()
         except pxt.Error as exc:

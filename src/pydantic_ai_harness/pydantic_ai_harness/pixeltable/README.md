@@ -10,11 +10,8 @@ and [memory store source](https://github.com/pydantic/pydantic-ai/blob/main/src/
 
 ## The problem
 
-Pixeltable keeps tables, views, document chunks, and media together with the embedding indexes and
-computed columns derived from them. An agent that should answer from that data needs tools that list
-and describe tables, filter rows, and run similarity search, with limits on what it can reach and on
-how much text comes back. Writing those tools per project repeats the same allowlist, bounding, and
-error handling.
+An agent answering from Pixeltable data needs catalog discovery, filtering, and embedding search.
+This capability supplies those tools with shared access checks, result limits, and error handling.
 
 ## Usage
 
@@ -75,18 +72,17 @@ print(result.output)
 | `query_table` | Rows matching equality filters (`{"status": "open"}`); timestamp, date, and UUID values are ISO strings. |
 | `similarity_search` | Nearest rows by `column.similarity(string=query)`, with a similarity score in the result. |
 
-- `tables` is a required allowlist of table paths or directory prefixes; `['*']` allows the whole
-  catalog, including any memory table. A view inside an allowed directory exposes its base table's
-  columns. Version handles (`'dir.tbl:3'`) are refused, since an old version keeps rows deleted and
-  columns dropped since.
-- Default columns skip media, array, and binary columns, including when searching an indexed media
-  column. Computed columns that are not stored rerun their function (possibly a model call) on every
-  read, so the tools skip them by default and reject them in `columns` and `where`. Explicit media
-  columns are rejected because their local file paths are not usable by a remote model.
-- `max_rows` (default 20) and `max_chars` (default 8000) bound the results of `query_table` and
-  `similarity_search`. An oversized string is cut to end in `...`, any other oversized value becomes
-  `null`, and `truncated` is set. Both return the `{"table", "rows", "truncated"}` envelope.
-  `list_tables` and `describe_table` return their own shapes, sized by the allowlist and the schema.
+- `tables` requires table paths or directory prefixes; `['*']` allows the whole catalog, including
+  memory tables. Allowed views expose their base table's columns. Version handles (`'dir.tbl:3'`)
+  are refused because they expose deleted rows and dropped columns.
+- Default projections skip media, array, binary, and unstored computed columns, including indexed
+  media in similarity search. Unstored computed columns rerun their functions (possibly model calls)
+  on read, so explicit projections and filters reject them. Explicit media projections are rejected
+  because they expose local file paths.
+- `query_table` and `similarity_search` return `{"table", "rows", "truncated"}`, bounded by `max_rows`
+  (default 20) and `max_chars` (default 8000). Oversized strings end in `...`; other oversized values
+  become `null`, and `truncated` reports applied bounds. `list_tables` and `describe_table` are sized
+  by the allowlist and schema.
 - Invalid requests, missing tables, and transient provider errors become
   [`ModelRetry`](https://ai.pydantic.dev/tools-toolsets/tools-advanced/#tool-retries); infrastructure
   and authorization failures propagate to the application.

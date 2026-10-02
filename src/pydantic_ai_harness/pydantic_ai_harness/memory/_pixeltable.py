@@ -122,10 +122,6 @@ _NULLABLE_COLUMNS = frozenset({'content', 'version', 'last_operation_id', 'finge
 _PATH_INDEX = 'path_lookup_idx'
 
 
-def _op_intent(file: str, op: str, expected: str | None, new: str | None) -> str:
-    return json.dumps(_Intent(file=file, op=op, expected=expected, new=new))
-
-
 class PixeltableMemoryStore:
     """Pydantic AI Harness `MemoryStore` persisted in a Pixeltable table.
 
@@ -166,7 +162,7 @@ class PixeltableMemoryStore:
         operation: MemoryOperation | None = None,
     ) -> MemoryMutation:
         return await anyio.to_thread.run_sync(
-            self._locked, functools.partial(self._write_sync, path, content, expected_version, operation)
+            self._locked, functools.partial(self._mutate_sync, path, content, expected_version, operation)
         )
 
     async def delete(
@@ -177,7 +173,7 @@ class PixeltableMemoryStore:
         operation: MemoryOperation | None = None,
     ) -> MemoryMutation:
         return await anyio.to_thread.run_sync(
-            self._locked, functools.partial(self._delete_sync, path, expected_version, operation)
+            self._locked, functools.partial(self._mutate_sync, path, None, expected_version, operation)
         )
 
     async def list_paths(self, prefix: str = '', *, limit: int) -> list[str]:
@@ -355,10 +351,12 @@ class PixeltableMemoryStore:
         return True
 
     def _apply_intent(
-        self, t: pxt.Table, operation: MemoryOperation, recorded: _Intent, receipt: MemoryMutation
+        self, t: pxt.Table, operation: MemoryOperation | None, recorded: _Intent, mutation: MemoryMutation
     ) -> None:
         path = recorded['file']
         if recorded['op'] == 'delete':
+            if not mutation.existed:
+                return
             status = t.delete(where=(t.path == path) & (t.kind == _KIND_FILE) & (t.version == recorded['expected']))
             if status.row_count_stats.del_rows != 1:
                 raise MemoryConflictError(f'memory path {path!r} changed before it could be deleted')
@@ -370,8 +368,8 @@ class PixeltableMemoryStore:
                         'path': path,
                         'kind': _KIND_FILE,
                         'content': recorded['new'],
-                        'version': receipt.version,
-                        'last_operation_id': operation.id,
+                        'version': mutation.version,
+                        'last_operation_id': operation.id if operation else None,
                         'fingerprint': None,
                         'existed': None,
                     }
@@ -379,7 +377,11 @@ class PixeltableMemoryStore:
             )
         else:
             status = t.update(
-                {'content': recorded['new'], 'version': receipt.version, 'last_operation_id': operation.id},
+                {
+                    'content': recorded['new'],
+                    'version': mutation.version,
+                    'last_operation_id': operation.id if operation else None,
+                },
                 where=(t.path == path) & (t.kind == _KIND_FILE) & (t.version == recorded['expected']),
             )
             if status.row_count_stats.upd_rows != 1:
@@ -390,8 +392,7 @@ class PixeltableMemoryStore:
         t: pxt.Table,
         operation: MemoryOperation,
         intent: str,
-        version: str | None,
-        existed: bool,
+        mutation: MemoryMutation,
     ) -> MemoryMutation | None:
         try:
             _insert_rows(
@@ -401,10 +402,10 @@ class PixeltableMemoryStore:
                         'path': _receipt_path(operation),
                         'kind': _KIND_OP,
                         'content': intent,
-                        'version': version,
+                        'version': mutation.version,
                         'last_operation_id': None,
                         'fingerprint': operation.fingerprint,
-                        'existed': existed,
+                        'existed': mutation.existed,
                     }
                 ],
             )
@@ -450,13 +451,14 @@ class PixeltableMemoryStore:
     def _get_operation_sync(self, operation: MemoryOperation) -> MemoryMutation | None:
         return self._lookup_operation(self._ensure_table(), operation)
 
-    def _write_sync(
+    def _mutate_sync(
         self,
         path: str,
-        content: str,
+        content: str | None,
         expected_version: str | None,
         operation: MemoryOperation | None,
     ) -> MemoryMutation:
+        """Apply a write or delete (`content=None`) with optional operation replay."""
         _check_store_path(path)
         t = self._ensure_table()
         if operation is not None:
@@ -466,37 +468,21 @@ class PixeltableMemoryStore:
         row = self._file_row(t, path)
         current = None if row is None else str(row['version'])
         if current != expected_version:
-            raise MemoryConflictError(f'memory path {path!r} changed before it could be written')
-        version = uuid.uuid4().hex
-        existed = row is not None
-        intent = _op_intent(path, 'write', expected_version, content)
+            action = 'deleted' if content is None else 'written'
+            raise MemoryConflictError(f'memory path {path!r} changed before it could be {action}')
+        mutation = MemoryMutation(
+            version=None if content is None else uuid.uuid4().hex, replayed=False, existed=row is not None
+        )
+        recorded = _Intent(
+            file=path, op='delete' if content is None else 'write', expected=expected_version, new=content
+        )
+        intent = json.dumps(recorded)
         if operation is not None:
-            receipt = self._prepare_operation(t, operation, intent, version, existed)
+            receipt = self._prepare_operation(t, operation, intent, mutation)
             if receipt is not None:
                 return receipt
         try:
-            if row is None:
-                _insert_rows(
-                    t,
-                    [
-                        {
-                            'path': path,
-                            'kind': _KIND_FILE,
-                            'content': content,
-                            'version': version,
-                            'last_operation_id': operation.id if operation else None,
-                            'fingerprint': None,
-                            'existed': None,
-                        }
-                    ],
-                )
-            else:
-                status = t.update(
-                    {'content': content, 'version': version, 'last_operation_id': operation.id if operation else None},
-                    where=(t.path == path) & (t.kind == _KIND_FILE) & (t.version == current),
-                )
-                if status.row_count_stats.upd_rows != 1:
-                    raise MemoryConflictError(f'memory path {path!r} changed before it could be written')
+            self._apply_intent(t, operation, recorded, mutation)
         except MemoryConflictError:
             if operation is not None:
                 # A peer sharing the operation id may have applied our intent; adopt it rather
@@ -507,52 +493,10 @@ class PixeltableMemoryStore:
             raise
         if operation is not None:
             self._complete_operation(t, operation, intent)
-        return MemoryMutation(version=version, replayed=False, existed=existed)
-
-    def _delete_sync(
-        self,
-        path: str,
-        expected_version: str | None,
-        operation: MemoryOperation | None,
-    ) -> MemoryMutation:
-        _check_store_path(path)
-        t = self._ensure_table()
-        if operation is not None:
-            receipt = self._lookup_operation(t, operation)
-            if receipt is not None:
-                return receipt
-        row = self._file_row(t, path)
-        current = None if row is None else str(row['version'])
-        if current != expected_version:
-            raise MemoryConflictError(f'memory path {path!r} changed before it could be deleted')
-        existed = row is not None
-        intent = _op_intent(path, 'delete', expected_version, None)
-        if operation is not None:
-            receipt = self._prepare_operation(t, operation, intent, None, existed)
-            if receipt is not None:
-                return receipt
-        try:
-            if row is not None:
-                status = t.delete(where=(t.path == path) & (t.kind == _KIND_FILE) & (t.version == current))
-                if status.row_count_stats.del_rows != 1:
-                    raise MemoryConflictError(f'memory path {path!r} changed before it could be deleted')
-        except MemoryConflictError:
-            if operation is not None:
-                # Same as in _write_sync: adopt a peer's receipt or withdraw ours.
-                receipt = self._lookup_operation(t, operation, withdraw_unapplied=True)
-                if receipt is not None:
-                    return receipt
-            raise
-        if operation is not None:
-            self._complete_operation(t, operation, intent)
-        return MemoryMutation(version=None, replayed=False, existed=existed)
+        return mutation
 
     def _file_rows(self, t: pxt.Table, prefix: str, limit: int, content_chars: int = 0) -> list[dict[str, Any]]:
-        """The first `limit` live file rows under `prefix` in code point path order.
-
-        `content` is cut to `content_chars` in SQL when set. The prefix match is a substring equality
-        and the ordering pins the "C" collation, so neither depends on the database collation.
-        """
+        """Return bounded file rows under `prefix` in code point order, slicing content in SQL."""
         pred = t.kind == _KIND_FILE
         if prefix:
             pred = pred & (t.path.slice(0, len(prefix)) == prefix)

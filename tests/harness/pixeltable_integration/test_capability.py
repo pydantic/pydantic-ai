@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
-from collections.abc import Iterator
-
 import pixeltable as pxt
 import pytest
 
@@ -158,14 +155,11 @@ class TestPixeltableCombine:
 
 
 @pytest.fixture
-def root() -> Iterator[str]:
-    name = f'harness_pxt_cap_{uuid.uuid4().hex[:8]}'
-    pxt.create_dir(name)
-    chunks = create_table(f'{name}.chunks', {'text': pxt.String, 'status': pxt.String})
+def catalog(root: str) -> str:
+    chunks = create_table(f'{root}.chunks', {'text': pxt.String, 'status': pxt.String})
     insert_rows(chunks, [{'text': 'cats sit on mats', 'status': 'open'}, {'text': 'dogs run', 'status': 'closed'}])
-    create_table(f'{name}.secret', {'text': pxt.String})
-    yield name
-    pxt.drop_dir(name, force=True)
+    create_table(f'{root}.secret', {'text': pxt.String})
+    return root
 
 
 def _tool_returns(messages: list[ModelMessage]) -> list[ToolReturnPart | RetryPromptPart]:
@@ -179,11 +173,11 @@ def _tool_returns(messages: list[ModelMessage]) -> list[ToolReturnPart | RetryPr
 
 
 class TestPixeltableAgent:
-    async def test_agent_lists_queries_and_retries_outside_the_allowlist(self, root: str) -> None:
-        chunks = f'{root}.chunks'
+    async def test_agent_lists_queries_and_retries_outside_the_allowlist(self, catalog: str) -> None:
+        chunks = f'{catalog}.chunks'
         calls = [
             ToolCallPart('list_tables', {}, tool_call_id='c1'),
-            ToolCallPart('query_table', {'table': f'{root}.secret'}, tool_call_id='c2'),
+            ToolCallPart('query_table', {'table': f'{catalog}.secret'}, tool_call_id='c2'),
             ToolCallPart('query_table', {'table': chunks, 'where': {'status': 'open'}}, tool_call_id='c3'),
         ]
         seen_instructions: list[str | None] = []
