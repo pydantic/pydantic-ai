@@ -71,7 +71,7 @@ def test_startup_without_dotenv_values(tmp_path: Path, monkeypatch: pytest.Monke
     assert observed == [None]
 
 
-def test_dotenv_loaded_before_agent_import(tmp_path: Path) -> None:
+def test_dotenv_loaded_before_startup_imports(tmp_path: Path) -> None:
     (tmp_path / '.env').write_text('CLAI_DOTENV_TEST=loaded before import\n')
     (tmp_path / 'dotenv_agent.py').write_text(
         'import os\n'
@@ -79,10 +79,16 @@ def test_dotenv_loaded_before_agent_import(tmp_path: Path) -> None:
         'from pydantic_ai.models.test import TestModel\n'
         "agent = Agent(TestModel(custom_output_text=os.environ['CLAI_DOTENV_TEST']))\n"
     )
+    script = """
+import sys
+from pydantic_clai2.__main__ import main
+assert 'pydantic_clai2.config' not in sys.modules
+main()
+"""
     result = subprocess.run(
-        [sys.executable, '-m', 'pydantic_clai2', '--agent', 'dotenv_agent:agent', '-p', 'hello'],
+        [sys.executable, '-c', script, '--agent', 'dotenv_agent:agent', '-p', 'hello'],
         cwd=tmp_path,
-        env=os.environ,
+        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
         capture_output=True,
         text=True,
         check=False,

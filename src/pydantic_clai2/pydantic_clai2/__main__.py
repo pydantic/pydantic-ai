@@ -9,12 +9,13 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
-from pydantic_clai2.ui.rendering.splash import Splash
-
 
 def main() -> None:
     """Load the project environment, then cover heavyweight imports with the splash."""
     load_dotenv(find_dotenv(usecwd=True))
+
+    from pydantic_clai2.ui.rendering.splash import Splash
+
     os.environ['PYDANTIC_AI_NO_BANNER'] = '1'
     enabled = len(sys.argv) == 1 and not os.getenv('CLAI_NO_SPLASH')
     database = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2/config.db'
