@@ -14,6 +14,9 @@ CLAI groups its shell implementation into `cli/`, `config/`, `runtime/`,
 continue importing `PluginHost` from `pydantic_clai2.plugins` and `Command`
 from `pydantic_clai2.commands`.
 
+See [Managing plugins](#managing-plugins) for the searchable `/plugins` menu
+and typed commands.
+
 ## Startup
 
 `clai2 --help` parses arguments without loading the agent or plugins. Interactive
@@ -1433,15 +1436,16 @@ for `/agent` and `/mcp`:
 
 ```text
  Plugins
+ search: (type to filter)
 
  > ● coder    on      built-in   │ coder
    ● notify   on      drop-in    │ on · built-in
    ○ audit    off     installed  │
    ○ broken   failed  drop-in    │ source   pydantic_clai2.builtin_plugins.coder
    Save & close                  │ provides 1 capability
-                                 │ settings press c to configure
+                                 │ settings press Shift+C to configure
 
- ↑/↓ move · space on/off · c configure · r reload · d remove · enter/q close
+ type or / filter · Space toggle · ⇧C config · ⇧R reload · ⇧D remove · Esc close
 ```
 
 The left side lists every plugin with `●` for on and `○` for off, a coloured
@@ -1452,9 +1456,18 @@ one: a description, its source, what it registered, whether it has a settings
 menu, and the last error if loading failed. The description is the first
 paragraph of the plugin's docstring: the class's for `module:Class`, otherwise
 the module's. CLAI reads it from the source file without importing it, so a
-plugin that is off runs no code to describe itself. Every key
-acts immediately; there is no pending save step, so the **Save & close** row,
-Enter, Q, Esc, and Ctrl-C all just close.
+plugin that is off runs no code to describe itself.
+
+Type a plugin name to filter the list. Matching ignores case. Press `/` to clear
+the filter and start again, including when there are no matches. Backspace edits
+the filter; Up and Down move between matches. Space turns the highlighted plugin
+on or off. Use Shift+C to configure it, Shift+R to reload it, and Shift+D to remove
+it (`⇧` in the footer means Shift). Uppercase `C`, `R`, `D`, and `Q` are reserved
+for actions; type their lowercase equivalents to search, including for mixed-case
+plugin names. Lowercase letters always filter, never run these actions. Changes
+apply immediately; there is no pending save step, so the **Save & close** row, Enter,
+Shift+Q, Esc, and Ctrl-C just close. With no matches, Enter does nothing; clear
+the filter or use Shift+Q, Esc, or Ctrl-C to leave.
 
 Turning a plugin on with Space opens its settings menu straight away when it
 offers one (see [`configure`](#offer-a-settings-menu-async-def-configureself)).
