@@ -237,7 +237,6 @@ class _UserTurn:
 class _Input:
     id: InputId
     request: ModelRequest
-    withdrawn: bool = False
 
 
 _Entry: TypeAlias = _Response | _UserTurn | _Input
@@ -688,8 +687,9 @@ class SessionCore:
 
     def _withdraw(self, input_ids: Sequence[InputId]) -> None:
         for input_id in input_ids:
-            if (input_ := self._inputs.get(input_id)) is not None:
-                input_.withdrawn = True
+            # Dropped altogether, so what it carried (an evicted image, say) isn't kept alive for nothing.
+            if (input_ := self._inputs.pop(input_id, None)) is not None and self._unplaced.pop(input_id, None) is None:
+                self._placed.remove(input_)
         self._settle(input_ids, 'void')
 
     def _settle(self, input_ids: Sequence[InputId], outcome: _Obligation) -> None:
@@ -738,7 +738,7 @@ class SessionCore:
             elif isinstance(entry, _UserTurn):
                 assert entry.message is not None
                 yield entry.message
-            elif not entry.withdrawn:
+            else:
                 yield entry.request
 
     def _held_from(self) -> int:
@@ -762,7 +762,7 @@ class SessionCore:
         later_final = any(
             (isinstance(entry, _Response) and entry.message is not None)
             or (isinstance(entry, _UserTurn) and entry.message is not None)
-            or (isinstance(entry, _Input) and not entry.withdrawn)
+            or isinstance(entry, _Input)
             for entry in self._placed[held_from + 1 :]
         )
         return turn.id if later_final else None

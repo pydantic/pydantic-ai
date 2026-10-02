@@ -552,3 +552,18 @@ def test_clearing_the_audio_drops_a_turn_that_had_not_joined() -> None:
 def test_a_response_under_way_when_reading_ends_is_recorded_as_cut_off() -> None:
     session_core = feed(core(), started('r1'), said('r1', 'Partly'), ReceiveEnded())
     assert summary(session_core.all_messages()) == snapshot(['r1 [assistant:Partly] interrupted None'])
+
+
+def test_a_withdrawn_input_is_let_go() -> None:
+    """An evicted image, say: nothing keeps what it carried alive, placed or not."""
+    session_core = feed(
+        core(),
+        InputSent(input_id=0, request=text_request('Placed.')),
+        InputAdded(input_id=0),
+        InputSent(input_id=1, request=text_request('Not yet.')),
+        InputWithdrawn(input_ids=(0, 1, 2)),
+        InputAdded(input_id=1),
+    )
+    assert session_core.all_messages() == []
+    assert not session_core._inputs and not session_core._unplaced  # pyright: ignore[reportPrivateUsage]
+    assert session_core._placed == []  # pyright: ignore[reportPrivateUsage]
