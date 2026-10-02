@@ -14,7 +14,8 @@ import importlib
 import json
 import sys
 from collections.abc import AsyncIterator, Callable
-from dataclasses import FrozenInstanceError, dataclass
+from dataclasses import FrozenInstanceError, dataclass, fields
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -50,7 +51,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import CombinedToolset, FunctionToolset
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import FileSystem, Shell
 from pydantic_ai_harness.experimental import HarnessExperimentalWarning
@@ -67,6 +68,7 @@ from pydantic_ai_harness.experimental.acp import (
     run_acp_stdio_sync,
 )
 from pydantic_ai_harness.experimental.acp._adapter import (
+    _USAGE_LIMIT_STOP_REASONS,  # pyright: ignore[reportPrivateUsage]
     _finish_reason_to_stop_reason,  # pyright: ignore[reportPrivateUsage]
     _TurnState,  # pyright: ignore[reportPrivateUsage]
     _usage_limit_stop_reason,  # pyright: ignore[reportPrivateUsage]
@@ -697,17 +699,73 @@ class TestStopReason:
         assert _finish_reason_to_stop_reason(finish_reason) == expected
 
     @pytest.mark.parametrize(
-        ('message', 'expected'),
+        ('check', 'expected'),
         [
-            # The real wordings from pydantic-ai's UsageLimits checks.
-            ('The next request would exceed the request_limit of 50', 'max_turn_requests'),
-            ('The next tool call(s) would exceed the tool_calls_limit of 3 (tool_calls=4).', 'max_turn_requests'),
-            ('Exceeded the output_tokens_limit of 5 (output_tokens=10)', 'max_tokens'),
-            ('The next request would exceed the total_tokens_limit of 9 (total_tokens=10)', 'max_tokens'),
+            # Raised by pydantic-ai's own checks, so a change to their wording fails here, not silently.
+            pytest.param(
+                lambda: UsageLimits(request_limit=1).check_before_request(RunUsage(requests=1)),
+                'max_turn_requests',
+                id='request_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(tool_calls_limit=1).check_before_tool_call(RunUsage(tool_calls=2)),
+                'max_turn_requests',
+                id='tool_calls_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(cost_limit=Decimal(1)).check_cost(RunUsage(cost=Decimal(2))),
+                'max_turn_requests',
+                id='cost_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(cost_limit=Decimal(1)).check_before_request(RunUsage(cost=Decimal(2))),
+                'max_turn_requests',
+                id='cost_limit-before-request',
+            ),
+            pytest.param(
+                lambda: UsageLimits(input_tokens_limit=1).check_tokens(RunUsage(input_tokens=2)),
+                'max_tokens',
+                id='input_tokens_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(input_tokens_limit=1).check_before_request(RunUsage(input_tokens=2)),
+                'max_tokens',
+                id='input_tokens_limit-before-request',
+            ),
+            pytest.param(
+                lambda: UsageLimits(output_tokens_limit=1).check_tokens(RunUsage(output_tokens=2)),
+                'max_tokens',
+                id='output_tokens_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(total_tokens_limit=1).check_tokens(RunUsage(input_tokens=2)),
+                'max_tokens',
+                id='total_tokens_limit',
+            ),
+            pytest.param(
+                lambda: UsageLimits(total_tokens_limit=1).check_before_request(RunUsage(input_tokens=2)),
+                'max_tokens',
+                id='total_tokens_limit-before-request',
+            ),
+            pytest.param(
+                lambda: UsageLimits(per_request_input_tokens_limit=1).check_per_request_input_tokens(2),
+                'max_tokens',
+                id='per_request_input_tokens_limit',
+            ),
         ],
     )
-    def test_usage_limit_maps_to_stop_reason(self, message: str, expected: schema.StopReason) -> None:
-        assert _usage_limit_stop_reason(UsageLimitExceeded(message)) == expected
+    def test_usage_limit_maps_to_stop_reason(self, check: Callable[[], None], expected: schema.StopReason) -> None:
+        with pytest.raises(UsageLimitExceeded) as exc_info:
+            check()
+        assert _usage_limit_stop_reason(exc_info.value) == expected
+
+    def test_every_usage_limit_has_a_stop_reason(self) -> None:
+        """A new `UsageLimits` field must get a deliberate mapping instead of the silent fallback."""
+        limit_fields = {f.name for f in fields(UsageLimits) if f.name.endswith('_limit')}
+        assert limit_fields == set(_USAGE_LIMIT_STOP_REASONS)
+
+    def test_unrecognized_usage_limit_falls_back_to_max_turn_requests(self) -> None:
+        assert _usage_limit_stop_reason(UsageLimitExceeded('Budget exhausted')) == 'max_turn_requests'
 
     async def test_default_usage_limits_do_not_limit_requests(self) -> None:
         request_count = 0
