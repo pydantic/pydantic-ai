@@ -35,15 +35,13 @@ class RewindPoint:
 
 def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
     """Offer run-start prompts, never a steering message amid unfinished tool calls."""
-    # Compaction inserts standalone context ahead of older preserved prompts. Their
-    # original boundary is gone: cutting at those prompts would retain later facts.
+    # Compaction inserts newer context ahead of older preserved prompts; core may
+    # merge them into one request. Those prompts no longer have their original boundary.
     context_time = max(
         (
             part.timestamp
             for message in messages
-            if isinstance(message, ModelRequest)
-            and message.run_id is None
-            and all(isinstance(part, SystemPromptPart) for part in message.parts)
+            if isinstance(message, ModelRequest) and message.run_id is None
             for part in message.parts
             if isinstance(part, SystemPromptPart)
         ),

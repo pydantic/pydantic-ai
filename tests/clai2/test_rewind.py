@@ -103,7 +103,7 @@ async def test_compacted_prompts_are_disabled_but_new_turns_can_rewind(monkeypat
     monkeypatch.setattr('pydantic_clai2.ui.menus.rewind.menu_key', lambda: next(keys))
     result = build_rewind_menu(session.messages).run()
     assert result.item is not None
-    assert result.item.value == RewindPoint(message_index=3, text='after compaction', images=())
+    assert result.item.value == RewindPoint(message_index=2, text='after compaction', images=())
 
 
 async def test_replacement_images_do_not_count_discarded_draft_against_limit() -> None:
