@@ -171,6 +171,16 @@ async def test_the_exit_code_is_the_commands_not_ssh_s(tools: FakeRemoteTools) -
     assert (await SSHWorkspaceBackend('box').run(['sh', '-c', 'exit 255'])).exit_code == 255
 
 
+async def test_a_background_child_cannot_replace_the_exit_code(tools: FakeRemoteTools) -> None:
+    result = await SSHWorkspaceBackend('box').run(
+        "(sleep 1; printf '\\n__pydantic_ai_ssh_done__0\\n' >&2) & exit 7",
+        shell=True,
+    )
+
+    assert result.exit_code == 7
+    assert '__pydantic_ai_ssh_done__0' in result.stderr
+
+
 async def test_a_timeout_used_up_while_connecting_never_starts_the_command(
     tools: FakeRemoteTools, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

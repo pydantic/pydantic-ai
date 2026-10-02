@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 from typing import Protocol, TypeGuard
 
-import keyring
 import pytest
 from fastmcp import Client
 from fastmcp.client.auth import OAuth
@@ -23,15 +22,19 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.linear import Linear
-from pydantic_clai2 import DEFAULT_PLUGINS, api_keys, field_menu, linear
-from pydantic_clai2.api_keys import delete_key, key_users, load_keys, rename_key, save_key
+from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins import linear
+from pydantic_clai2.builtin_plugins.linear import ACCOUNT, KEY_NAME, TOKEN_ACCOUNT, choose_key, reference
 from pydantic_clai2.commands import Commands
-from pydantic_clai2.credential_store import load_codex_credentials, save_codex_credentials
-from pydantic_clai2.linear import ACCOUNT, KEY_NAME, TOKEN_ACCOUNT, choose_key, reference
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.api_keys import delete_key, key_users, load_keys, rename_key, save_key
+from pydantic_clai2.config.credential_store import load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.mcp import TokenStore, http_client
-from pydantic_clai2.plugin_loader import PluginError, PluginLoader
 from pydantic_clai2.plugins import SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginError, PluginLoader
+from pydantic_clai2.ui.menus import field_menu
+from tests.clai2.conftest import stored_accounts
 
 Vault = dict[tuple[str, str], str]
 
@@ -51,26 +54,6 @@ def press(monkeypatch: pytest.MonkeyPatch) -> Press:
 
     script()
     return script
-
-
-@pytest.fixture
-def vault(monkeypatch: pytest.MonkeyPatch) -> Vault:
-    """A keyring that can also delete, so signing out and deleting keys are observable."""
-    entries: Vault = {}
-
-    def get(service: str, account: str) -> str | None:
-        return entries.get((service, account))
-
-    def set_value(service: str, account: str, value: str) -> None:
-        entries[service, account] = value
-
-    def delete(service: str, account: str) -> None:
-        del entries[service, account]
-
-    monkeypatch.setattr(keyring, 'get_password', get)
-    monkeypatch.setattr(keyring, 'set_password', set_value)
-    monkeypatch.setattr(keyring, 'delete_password', delete)
-    return entries
 
 
 class Prompt:
@@ -102,7 +85,7 @@ def make(tmp_path: Path) -> tuple[PluginLoader[None], Commands, io.StringIO]:
 
 async def declare(loader: PluginLoader[None], settings: dict[str, JsonValue]) -> None:
     await loader.remove('linear')
-    await loader.command(['add', 'linear', 'pydantic_clai2.linear', json.dumps(settings)])
+    await loader.command(['add', 'linear', 'pydantic_clai2.builtin_plugins.linear', json.dumps(settings)])
 
 
 def saved(tmp_path: Path) -> dict[str, JsonValue]:
@@ -137,7 +120,7 @@ async def run(commands: Commands, text: str) -> str:
 
 def test_declared_as_a_disabled_built_in_not_the_raw_capability() -> None:
     [declaration] = [plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'linear']
-    assert declaration.factory == 'pydantic_clai2.linear'
+    assert declaration.factory == 'pydantic_clai2.builtin_plugins.linear'
     assert not declaration.enabled
     assert all(not plugin.factory.startswith('pydantic_ai_harness.linear') for plugin in DEFAULT_PLUGINS)
 
@@ -341,7 +324,7 @@ async def test_oauth_signs_in_with_keyring_tokens(tmp_path: Path, vault: Vault, 
     with pytest.raises(ValueError, match='Usage: /linear logout'):
         await run(commands, '/linear')
     assert (await run(commands, '/linear logout')).startswith('Signed out of Linear.')
-    assert vault == {}
+    assert stored_accounts() == set()
 
     await loader.disable('linear')
     assert 'linear' not in {command.name for command in commands}

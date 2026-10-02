@@ -7,8 +7,9 @@ from termflow.tui import MenuItem
 from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
-from pydantic_clai2 import field_menu
-from pydantic_clai2.field_menu import (
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.ui.menus import field_menu
+from pydantic_clai2.ui.menus.field_menu import (
     SAVE_AND_CLOSE,
     FieldMenu,
     is_save_and_close,
@@ -16,8 +17,7 @@ from pydantic_clai2.field_menu import (
     run_flow_async,
     save_and_close_item,
 )
-from pydantic_clai2.project_settings import ProjectSettings
-from pydantic_clai2.set_menu import SettingsSource, open_settings_menu
+from pydantic_clai2.ui.menus.set_menu import SettingsSource, open_settings_menu
 from tests.clai2.menu_script import Script, make_context, pick, typed
 
 

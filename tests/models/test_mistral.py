@@ -25,6 +25,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RetryPromptPart,
+    StructuredDict,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -1397,6 +1398,27 @@ async def test_stream_result_type_primitif_array(allow_model_requests: None):
 
         # double check usage matches stream count
         assert result.usage.output_tokens == len(stream)
+
+
+async def test_stream_structured_dict_list_form_items(allow_model_requests: None):
+    """Streamed text output whose schema spells a tuple as a draft-7 `items` list is checked as a plain array.
+
+    `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 schemas, emits this shape. The check runs
+    on text the model streams instead of calling the output tool, which a recording can't reliably trigger.
+    """
+    schema = {
+        'type': 'object',
+        'properties': {
+            'pair': {'type': 'array', 'minItems': 2, 'maxItems': 2, 'items': [{'type': 'string'}, {'type': 'integer'}]}
+        },
+        'required': ['pair'],
+    }
+    mock_client = MockMistralAI.create_stream_mock([text_chunk('{"pair": ["a", 1]}'), chunk([])])
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+    agent = Agent(model, output_type=StructuredDict(schema, name='Pair'))
+
+    async with agent.run_stream('User prompt value') as result:
+        assert await result.get_output() == snapshot({'pair': ['a', 1]})
 
 
 async def test_stream_result_type_basemodel_with_default_params(allow_model_requests: None):

@@ -1107,6 +1107,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
+                                # The tool calls above (and any agents they delegated to) added usage to the run
+                                # after the stream snapshotted it. The final response itself is only recorded once
+                                # this node finishes, so the stream still adds it on top of the refreshed snapshot.
+                                stream._refresh_initial_run_ctx_usage()  # pyright: ignore[reportPrivateUsage]
+
                             yield StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,
@@ -1977,7 +1982,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
     def using_sleep(sleep_func: _agent_graph.AgentGraphSleepFunc) -> Generator[None]:
         """Use a custom async sleep function for agent-graph delays during the context.
 
-        By default the agent graph uses `asyncio.sleep` when it needs to wait during a run (e.g. between
+        By default the agent graph uses `anyio.sleep` when it needs to wait during a run (e.g. between
         polls of a suspended/background model response). Durable execution frameworks (Temporal, Prefect,
         DBOS, ...) register their own durable sleep here so delays survive workflow replays and don't
         waste activity time.

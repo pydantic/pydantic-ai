@@ -30,6 +30,7 @@ import httpx2
 import pytest
 import yaml
 from anthropic import AsyncAnthropic, RateLimitError
+from pydantic import TypeAdapter
 from pytest import LogCaptureFixture
 from tenacity import stop_after_attempt, wait_none
 
@@ -51,6 +52,7 @@ from pydantic_ai_gh_aw_shim import (
 )
 
 from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -871,13 +873,50 @@ def test_plan_mode_keeps_new_readonly_tools_drops_multiedit():
 @pytest.mark.parametrize(
     ('workflow', 'expected_limit'),
     [
-        ('Pydantic AI Attention Triage', 25),
-        ('Other Pydantic AI workflow', 200),
+        ('Pydantic AI Attention Triage', 50),
+        ('Other Pydantic AI workflow', 400),
     ],
 )
-def test_request_limit_is_bounded_by_workflow(workflow: str, expected_limit: int, monkeypatch: pytest.MonkeyPatch):
+def test_run_uses_workflow_request_limit(workflow: str, expected_limit: int, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('GITHUB_WORKFLOW', workflow)
     assert shim.run_request_limit() == expected_limit
+    passed_limits: list[int | None] = []
+
+    class _Agent:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def output_validator(self, _validator: object) -> None:
+            pass
+
+        async def __aenter__(self) -> object:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            pass
+
+        async def run(self, _prompt: str, *, usage_limits: UsageLimits, usage: RunUsage) -> None:
+            passed_limits.append(usage_limits.request_limit)
+            raise RuntimeError('stop after capturing the run limit')
+
+    monkeypatch.setattr(shim, 'Agent', _Agent)
+
+    def _ignore_emit(_obj: dict[str, object]) -> None:
+        pass
+
+    monkeypatch.setattr(shim, 'emit', _ignore_emit)
+    rc = asyncio.run(
+        shim.run(
+            prompt='test',
+            model=TestModel(),
+            label='test-model',
+            claude_code_toolset=shim.select_claude_code_toolset(None, None, task=None),
+            mcp_servers=[],
+            session_id='request-limit',
+        )
+    )
+    assert rc == 1
+    assert passed_limits == [expected_limit]
 
 
 def test_instructions_encourage_parallel_tool_calls():
@@ -1128,8 +1167,28 @@ def test_task_registered_via_build_claude_code_toolset():
     assert 'Task' not in sub_names
 
 
-def test_subagent_request_limit_is_a_constant():
-    assert shim.SUBAGENT_REQUEST_LIMIT == 75
+def test_subagent_without_parent_budget_is_limited_to_configured_default(monkeypatch: pytest.MonkeyPatch):
+    """A delegate without inherited headroom gets the configured 150-request cap, merged once."""
+    calls = 0
+
+    async def _stream(_messages: list[ModelMessage], _info: AgentInfo):
+        nonlocal calls
+        calls += 1
+        yield {0: DeltaToolCall(name='Glob', json_args='{"pattern": "*"}')}
+
+    monkeypatch.setenv('GITHUB_WORKSPACE', '.')
+    parent_usage = RunUsage()
+
+    ctx = RunContext[object](
+        deps=object(),
+        model=FunctionModel(stream_function=_stream),
+        usage=parent_usage,
+        usage_limits=None,
+    )
+    out = asyncio.run(shim.task(ctx, 'exhaust budget', 'keep searching'))
+    assert out.startswith('error: sub-agent failed:')
+    assert calls == 150
+    assert parent_usage.requests == 150
 
 
 @pytest.mark.parametrize('disable_task', [False, True])
@@ -1897,12 +1956,16 @@ def test_rate_limit_retry_transport_hands_the_last_429_to_the_sdk():
 
 
 def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.MonkeyPatch):
-    async def _hang(*_a: object, **_kw: object) -> int:
+    async def _hang(*_a: object, **kw: object) -> int:
+        usage = kw['usage']
+        assert isinstance(usage, RunUsage)
+        usage.incr(RunUsage(requests=2, input_tokens=11, output_tokens=4, cache_read_tokens=3))
         await asyncio.sleep(9999)
         return 0
 
     monkeypatch.setattr(shim, 'run', _hang)
     monkeypatch.setattr(shim, '_run_timeout_secs', lambda: 0.01)
+    monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
     buf = io.StringIO()
     with redirect_stdout(buf):
         rc = asyncio.run(
@@ -1914,6 +1977,25 @@ def test_run_with_timeout_emits_error_on_global_timeout(monkeypatch: pytest.Monk
     obj = json.loads(buf.getvalue().strip())
     assert obj['type'] == 'result' and obj['is_error'] is True
     assert 'timed out' in obj['result']
+    assert obj['usage']['input_tokens'] == 11
+    assert obj['usage']['output_tokens'] == 4
+    assert obj['usage']['cache_read_input_tokens'] == 3
+    assert obj['num_turns'] == 2
+    assert obj['provider_health']['failure']['kind'] == 'timeout'
+    assert obj['provider_health']['run_attempt'] is None
+
+
+@pytest.mark.parametrize('attempt', [None, '', 'not-an-int', '0', '-2'])
+def test_emit_result_uses_null_for_invalid_run_attempt(attempt: str | None, monkeypatch: pytest.MonkeyPatch):
+    if attempt is None:
+        monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
+    else:
+        monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', attempt)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        shim.emit_result('failed', usage=None, session_id='invalid-attempt', is_error=True)
+    result = json.loads(buf.getvalue().strip())
+    assert result['provider_health']['run_attempt'] is None
 
 
 # Both names the budget can come from. `PYDANTIC_AI_JOB_TIMEOUT_MINUTES` is the one that
@@ -2101,7 +2183,8 @@ def test_mcp_allow_predicate_server_wildcard_vs_specific():
 # --------------------------------------------------------------------------- #
 # stream-json schema & structured-error guarantee
 # --------------------------------------------------------------------------- #
-def test_emit_result_matches_claude_stream_json_schema():
+def test_emit_result_matches_claude_stream_json_schema(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '3')
     buf = io.StringIO()
     with redirect_stdout(buf):
         shim.emit_result('answer', usage=None, session_id='run-1')
@@ -2110,6 +2193,8 @@ def test_emit_result_matches_claude_stream_json_schema():
     assert obj['subtype'] == 'success'
     assert obj['is_error'] is False
     assert obj['result'] == 'answer'
+    assert obj['provider_health']['run_attempt'] == 3
+    assert 'failure' not in obj['provider_health']
     for k in ('input_tokens', 'output_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'):
         assert k in obj['usage']
 
@@ -2128,6 +2213,91 @@ def test_emit_result_error_subtype():
         shim.emit_result('boom', usage=None, session_id='run-1', is_error=True)
     obj = json.loads(buf.getvalue().strip())
     assert obj['subtype'] == 'error' and obj['is_error'] is True
+
+
+@pytest.mark.parametrize(
+    ('error', 'expected_kind', 'expected_status'),
+    [
+        (
+            ModelHTTPError(
+                402,
+                'MiniMax-M3',
+                {'type': 'error', 'error': {'type': 'insufficient_balance_error', 'message': 'balance low'}},
+            ),
+            'balance',
+            402,
+        ),
+        (ModelHTTPError(401, 'MiniMax-M3', {'error': {'type': 'authentication_error'}}), 'authentication', 401),
+        (ModelHTTPError(403, 'MiniMax-M3', {'error': {'type': 'permission_error'}}), 'authentication', 403),
+        (ModelHTTPError(429, 'MiniMax-M3', {'error': {'type': 'rate_limit_error'}}), 'rate_limit', 429),
+        (UsageLimitExceeded('request limit'), 'request_limit', None),
+        (RuntimeError('provider returned a 402'), 'other', None),
+    ],
+)
+def test_failure_metadata_classifies_typed_errors(
+    error: BaseException, expected_kind: str, expected_status: int | None
+):
+    details = shim._failure_details(error)  # pyright: ignore[reportPrivateUsage]
+    assert details['kind'] == expected_kind
+    assert details.get('http_status') == expected_status
+
+
+def test_run_preserves_partial_usage_on_failure_after_model_activity(monkeypatch: pytest.MonkeyPatch):
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(shim, 'emit', lambda obj: emitted.append(dict(obj)))  # pyright: ignore[reportUnknownArgumentType, reportUnknownLambdaType]
+    monkeypatch.setenv('GH_AW_SAFE_OUTPUTS', '/path/that/does/not/exist')
+    monkeypatch.setenv('GITHUB_WORKFLOW', 'Pydantic AI CI Review')
+    monkeypatch.setenv('PYDANTIC_AI_TASK_KEY', 'pr-123')
+    monkeypatch.setenv('PYDANTIC_AI_TRIGGER_EVENT', 'pull_request')
+    monkeypatch.setenv('PYDANTIC_AI_RUN_ATTEMPT', '2')
+    calls = 0
+
+    def _respond(_messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[TextPart('still working')])
+        raise ModelHTTPError(429, 'MiniMax-M3', {'error': {'type': 'rate_limit_error', 'message': 'private detail'}})
+
+    async def _stream(messages: list[ModelMessage], info: AgentInfo):
+        response = _respond(messages, info)
+        for index, part in enumerate(response.parts):
+            if isinstance(part, TextPart):
+                yield part.content
+            else:
+                assert isinstance(part, ToolCallPart)
+                yield {index: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+
+    rc = asyncio.run(
+        shim.run(
+            prompt='review',
+            model=FunctionModel(_respond, stream_function=_stream),
+            label='test-model',
+            claude_code_toolset=shim.select_claude_code_toolset(None, None, task=None),
+            mcp_servers=[],
+            session_id='usage-failure',
+            usage=RunUsage(cache_read_tokens=4, cache_write_tokens=2),
+        )
+    )
+    result = next(event for event in emitted if event.get('type') == 'result')
+    assert rc == 1
+    assert result['is_error'] is True
+    typed_token_usage = TypeAdapter(dict[str, int]).validate_python(result['usage'])
+    input_tokens = typed_token_usage['input_tokens']
+    output_tokens = typed_token_usage['output_tokens']
+    assert input_tokens > 0
+    assert output_tokens > 0
+    assert typed_token_usage.get('cache_creation_input_tokens') == 2
+    assert typed_token_usage.get('cache_read_input_tokens') == 4
+    assert TypeAdapter(int).validate_python(result['num_turns']) > 0
+    assert result['provider_health'] == {
+        'workflow': 'Pydantic AI CI Review',
+        'task_key': 'pr-123',
+        'trigger_event': 'pull_request',
+        'run_attempt': 2,
+        'failure': {'kind': 'rate_limit', 'http_status': 429},
+    }
+    assert 'private detail' not in json.dumps(result['provider_health'])
 
 
 def test_emit_result_reads_usage_attributes():
@@ -2165,6 +2335,7 @@ def test_main_emits_structured_error_on_startup_failure(monkeypatch: pytest.Monk
         raise RuntimeError('kaboom')
 
     monkeypatch.setattr(shim, 'build_model', boom)
+    monkeypatch.delenv('PYDANTIC_AI_RUN_ATTEMPT', raising=False)
     monkeypatch.setattr(sys, 'argv', ['pydantic-ai-runner', '--print', 'hello'])
     buf = io.StringIO()
     with redirect_stdout(buf):
@@ -2174,6 +2345,9 @@ def test_main_emits_structured_error_on_startup_failure(monkeypatch: pytest.Monk
     assert obj['is_error'] is True
     assert 'shim startup failed' in obj['result']
     assert 'kaboom' in obj['result']
+    assert obj['usage']['input_tokens'] == 0
+    assert obj['provider_health']['failure']['kind'] == 'other'
+    assert obj['provider_health']['run_attempt'] is None
 
 
 def test_main_emits_structured_error_on_argparse_rejection(monkeypatch: pytest.MonkeyPatch):

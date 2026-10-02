@@ -159,7 +159,7 @@ By default `continue_run` returns the messages of the latest `complete` snapshot
 - at `after_run`, when the run ended past that boundary (a run that reached no boundary at all, or an `Agent.run_stream` whose closing response lands after the last one), and
 - when a run *fails*: the live history at failure time is saved, whatever its shape -- a model request that raises after a clean tool cycle produces a `complete` snapshot; a crash mid-tool-cycle produces an `interrupted` one carrying every completed cycle.
 
-An `interrupted` snapshot is sendable on resume -- pydantic-ai (>= 2.10) repairs broken tool-call/result pairing before every model request -- but not necessarily *safe*: a pending tool call may be re-executed (resuming without a new prompt) or closed out with a synthesized `interrupted` return, and neither says whether the original side effect happened. That is the tool-effect ledger's job. So the default read path skips `interrupted` snapshots; pass `include_interrupted=True` to `continue_run` / `fork_run` / `latest_snapshot` after checking `list_unresolved_tool_effects`. If no matching snapshot exists, `continue_run` raises `LookupError`.
+An `interrupted` snapshot is sendable, but not necessarily *safe*: a pending tool call may be re-executed or closed out with a synthesized `interrupted` return, and neither says whether the original side effect happened. That is the tool-effect ledger's job. Which one happens depends on how you continue. Resuming without a new prompt executes the pending calls. With a new prompt, calls are closed out if some of their batch already returned; if none did, the run raises `UserError` rather than abandon calls that could still be answered, so call [`repair_messages`][pydantic_ai.messages.repair_messages] on the history first to close them out yourself. So the default read path skips `interrupted` snapshots; pass `include_interrupted=True` to `continue_run` / `fork_run` / `latest_snapshot` after checking `list_unresolved_tool_effects`. If no matching snapshot exists, `continue_run` raises `LookupError`.
 
 ## Run lineage: `parent_run_id`
 
@@ -524,7 +524,14 @@ between hosts. PID reuse is conservatively treated as busy.
 The database is created owner-only where supported. Contents are not encrypted.
 There is no automatic conversation TTL or media garbage collection.
 
-`pydantic_ai_harness.step_persistence.naming` provides a tool-free naming agent
+`pydantic_ai_harness.step_persistence.naming` is deprecated and emits a
+`HarnessDeprecationWarning` on import. Its naming prompt, queue bounds, and
+failure policy are CLAI's resume-browser policy rather than a Harness primitive,
+so CLAI now owns its own copy. Copy the helpers you use into your application;
+the module will be removed in a future release. The conversation store above is
+unaffected.
+
+Until then, the module provides a tool-free naming agent
 and `SessionNamer`, a worker owned by the application's task group. `submit(id)`
 coalesces jobs in a queue bounded to ten sessions. `run()` processes one job at a
 time until its owner cancels it. `backfill(entries)` considers up to ten newest
@@ -572,8 +579,8 @@ in-memory checkpoint through shared references.
 
 `SnapshotSaved` is a typed capability event emitted after a checkpoint write
 completes. It carries `persistence_run_id`, `conversation_id`, `step_index`, and
-`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)` or CLAI's
-`host.on(SnapshotSaved)`. Store writes are the source of truth; notifications may
+`state`. Subscribe using core's `hooks.on.event(SnapshotSaved)`, which a CLAI plugin
+returns from `get_capabilities`. Store writes are the source of truth; notifications may
 repeat during durable replay and observer failures cannot undo committed writes.
 
 ### Core boundary for stronger interrupted-step recovery

@@ -8,9 +8,9 @@ from pydantic import SecretStr
 from termflow.tui.menu import MenuResult
 from termflow.tui.textinput import TextInputResult
 
-from pydantic_clai2 import api_keys
-from pydantic_clai2.api_keys import KeyReference
-from pydantic_clai2.plugin_keys import choose_key, on_loop
+from pydantic_clai2.config import api_keys
+from pydantic_clai2.config.api_keys import KeyReference
+from pydantic_clai2.plugins.keys import choose_key, on_loop
 from tests.clai2.menu_script import Script, pick, typed
 
 CLOSE = MenuResult(cancelled=True)
@@ -26,7 +26,7 @@ def answer(monkeypatch: pytest.MonkeyPatch, choice: str | KeyReference | None) -
     async def prompt_api_key(*, prompt: object, label: str, optional: bool = False) -> str | KeyReference | None:
         return choice
 
-    monkeypatch.setattr('pydantic_clai2.plugin_keys.prompt_api_key', prompt_api_key)
+    monkeypatch.setattr('pydantic_clai2.plugins.keys.prompt_api_key', prompt_api_key)
 
 
 async def test_a_masked_new_value_is_saved_under_the_plugins_name() -> None:
@@ -54,7 +54,7 @@ async def test_a_key_saved_by_another_session_meanwhile_is_only_replaced_after_a
         api_keys.save_key(name='DEMO_TOKEN', value='theirs')
         return keys
 
-    monkeypatch.setattr('pydantic_clai2.plugin_keys.load_keys', load_keys_then_another_session_saves)
+    monkeypatch.setattr('pydantic_clai2.plugins.keys.load_keys', load_keys_then_another_session_saves)
     result = await choose(Script(lists=[], choices=[confirm], texts=[]))
     assert result == (KeyReference(name='DEMO_TOKEN') if kept == 'mine' else None)
     assert api_keys.load_keys()['DEMO_TOKEN'].get_secret_value() == kept

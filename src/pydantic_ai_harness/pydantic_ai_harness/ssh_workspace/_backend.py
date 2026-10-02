@@ -30,8 +30,6 @@ __all__ = ('SSHWorkspaceBackend',)
 # The remote wrapper script reports on stderr that it reached the working directory, and then whether
 # the directory outlived the command. Without them, ssh's own failures (exit 255) look like results.
 _READY = '__pydantic_ai_ssh_ready__\n'
-_DONE = re.compile(r'\n__pydantic_ai_ssh_done__(\d+)\n')
-"""Carries the command's exit status: `ssh` itself exits 255 when the connection fails, which a command can too."""
 _GONE = '\n__pydantic_ai_ssh_gone__\n'
 
 _JOB_TAG = '__pydantic_ai_ssh_job_'
@@ -155,7 +153,7 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         if isinstance(command, str):
             if not shell:
                 raise TypeError('a string command requires shell=True; pass an argv sequence otherwise')
-            line = f'sh -c {shlex.quote(command)}'
+            line = f'/bin/sh -c {shlex.quote(command)}'
         elif shell:
             raise TypeError('an argv sequence cannot be combined with shell=True; pass a single command string')
         elif not command:
@@ -181,6 +179,9 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
     ) -> CommandResult:
         exports = ''.join(f'export {name}={shlex.quote(value)}\n' for name, value in env.items())
         tag = f'{_JOB_TAG}{secrets.token_hex(8)}'
+        # A fresh nonce per command: the marker text is otherwise a constant a child of the command can print.
+        nonce = secrets.token_hex(16)
+        marker = f'__pydantic_ai_ssh_done_{nonce}__'
         script = (
             f': {tag}\n'
             f'cd {shlex.quote(directory)} || exit 1\n'
@@ -189,12 +190,13 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
             f'{exports}__pydantic_ai_dir=$PWD\n'
             f'{line}\n'
             '__pydantic_ai_status=$?\n'
-            'if [ -d "$__pydantic_ai_dir" ]; then printf \'\\n__pydantic_ai_ssh_done__%d\\n\' "$__pydantic_ai_status" >&2; '
+            f'if [ -d "$__pydantic_ai_dir" ]; then printf \'\\n{marker}%d\\n\' "$__pydantic_ai_status" >&2; '
             f"else printf '%s' {shlex.quote(_GONE)} >&2; fi\n"
             'exit "$__pydantic_ai_status"'
         )
-        # `ssh` hands the command to the remote login shell, so run `sh` there for POSIX semantics.
-        argv = [*self._ssh, f'sh -c {shlex.quote(script)}']
+        # `ssh` hands the command to the remote login shell. `/bin/sh` is absolute so a writable `PATH` entry
+        # cannot supply the shell that interprets this script.
+        argv = [*self._ssh, f'/bin/sh -c {shlex.quote(script)}']
         try:
             result = await self._runner.run(argv, timeout=timeout)
         except anyio.get_cancelled_exc_class():
@@ -218,17 +220,19 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         if not ready:
             reason = before.strip() or f'`ssh` exited with code {result.exit_code}'
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id} is unavailable: {reason}')
-        # A background child that kept stderr open can write after the marker, so take the last one, not the end.
-        markers = list(_DONE.finditer(stderr))
+        # The marker carries the status because `ssh` uses exit 255 for a lost connection, and a command can too.
+        # Any other process exit is the command's: a child can print a marker after the wrapper has written its own.
+        pattern = re.compile(rf'\n{re.escape(marker)}(\d+)\n')
+        markers = list(pattern.finditer(stderr))
         if not markers:
             if _GONE in stderr:
                 raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id}: the working directory was removed')
             raise WorkspaceUnavailableError(f'SSH workspace {self._ref.id}: the connection was lost during the command')
-        done = markers[-1]
+        status = result.exit_code if result.exit_code != 255 else int(markers[0][1])
         return CommandResult(
-            exit_code=int(done[1]),
+            exit_code=status,
             stdout=_after_ready(result.stdout),
-            stderr=stderr[: done.start()] + stderr[done.end() :],
+            stderr=pattern.sub('', stderr),
         )
 
     async def _stop(self, tag: str) -> None:
@@ -236,6 +240,8 @@ class SSHWorkspaceBackend(WorkspaceBackend, SupportsCommands):
         # Best effort: a host that stalls or can't be reached now has nothing to report.
         with anyio.CancelScope(shield=True):
             try:
-                await self._runner.run([*self._ssh, f'sh -c {shlex.quote(_STOP)} sh {tag}'], timeout=_STOP_TIMEOUT)
+                await self._runner.run(
+                    [*self._ssh, f'/bin/sh -c {shlex.quote(_STOP)} /bin/sh {tag}'], timeout=_STOP_TIMEOUT
+                )
             except WorkspaceError:
                 pass
