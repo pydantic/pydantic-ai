@@ -912,7 +912,9 @@ async def test_openai_responses_prompt_cache_diagnostics_not_requested_before_gp
     assert 'prompt_cache_diagnostics' not in second_response.provider_details
 
 
-def _history(provider_name: str, provider_response_id: str) -> list[ModelRequest | ModelResponse]:
+def _history(
+    provider_name: str, provider_response_id: str, provider_details: dict[str, Any] | None = None
+) -> list[ModelRequest | ModelResponse]:
     return [
         ModelRequest.user_text_prompt('Say hi.'),
         ModelResponse(
@@ -920,6 +922,7 @@ def _history(provider_name: str, provider_response_id: str) -> list[ModelRequest
             model_name='gpt-5.6-sol',
             provider_name=provider_name,
             provider_response_id=provider_response_id,
+            provider_details=provider_details,
         ),
     ]
 
@@ -946,6 +949,10 @@ def _history(provider_name: str, provider_response_id: str) -> list[ModelRequest
         # OpenAI rejects an ID that doesn't start with `resp` with a 400.
         pytest.param('openai', _history('openai', 'chatcmpl-1'), {}, None, id='previous-non-response-id'),
         pytest.param('openai', [ModelRequest.user_text_prompt('Say hi.')], {}, None, id='no-previous-response'),
+        # A `/compact` response's ID can't be used as `previous_response_id`, and the request after it starts a new prefix.
+        pytest.param(
+            'openai', _history('openai', 'resp_1', {'compaction': True}), {}, None, id='previous-compaction-response'
+        ),
         # OpenRouter's Responses API rejects the field with a 400.
         pytest.param('openrouter', _history('openrouter', 'resp_1'), {}, None, id='openrouter'),
     ],

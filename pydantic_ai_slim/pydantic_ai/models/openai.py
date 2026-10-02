@@ -3319,7 +3319,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """The response to compare this request against for prompt cache diagnostics, if they should be requested.
 
         That is the most recent response from this provider. OpenAI rejects an ID that doesn't start with `resp` with
-        a 400, so a response from an endpoint that issues other IDs is skipped.
+        a 400, so a response from an endpoint that issues other IDs is skipped. So is one from the `/compact`
+        endpoint: like `previous_response_id`, it's a boundary, and a request after it starts a new prefix anyway.
         """
         if not model_settings.get('openai_prompt_cache_diagnostics', True) or not self.profile.get(
             'openai_responses_supports_prompt_cache_diagnostics', False
@@ -3327,6 +3328,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             return None
         for message in reversed(messages):
             if isinstance(message, ModelResponse) and message.provider_name == self.system:
+                if message.provider_details and message.provider_details.get('compaction'):
+                    return None
                 response_id = message.provider_response_id
                 return response_id if response_id and response_id.startswith('resp_') else None
         return None
