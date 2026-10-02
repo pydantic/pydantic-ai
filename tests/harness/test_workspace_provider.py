@@ -88,7 +88,7 @@ async def test_native_repeated_cancel_cannot_abandon_stop(anyio_backend: str) ->
     if anyio_backend != 'asyncio':  # pragma: no cover
         pytest.skip('Native task.cancel() is asyncio-specific')
 
-    async def exercise(timeout: float | None, cancellations: int) -> None:
+    async def exercise(timeout: float | None, cancellations: int, expected: type[BaseException]) -> None:
         entered = asyncio.Event()
         release = asyncio.Event()
         finished = asyncio.Event()
@@ -114,16 +114,17 @@ async def test_native_repeated_cancel_cannot_abandon_stop(anyio_backend: str) ->
             task.cancel()
             await asyncio.sleep(0)
         release.set()
-        try:
+        with pytest.raises(expected):
             await asyncio.wait_for(task, 5)
-        except (asyncio.CancelledError, WorkspaceTimeoutError):
-            pass
         await asyncio.wait_for(finished.wait(), 5)
         assert calls == 1
 
-    await exercise(0.01, 0)
-    await exercise(None, 1)
-    await exercise(None, 2)
+    await exercise(0.01, 0, WorkspaceTimeoutError)
+    # A cancel that lands while the timeout's stop runs is the caller's, not the timeout's.
+    await exercise(0.01, 1, asyncio.CancelledError)
+    await exercise(0.01, 2, asyncio.CancelledError)
+    await exercise(None, 1, asyncio.CancelledError)
+    await exercise(None, 2, asyncio.CancelledError)
 
 
 async def test_stop_cleanup_finishes_before_stop_shielded_returns() -> None:
