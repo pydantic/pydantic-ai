@@ -6,7 +6,8 @@ import asyncio
 import gc
 import io
 import wave
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Sequence
+from collections import OrderedDict
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from threading import Event as ThreadEvent
@@ -84,6 +85,7 @@ from pydantic_ai.realtime import (
     RealtimeTurnCompleteEvent,
     TranscriptUpdate,
 )
+from pydantic_ai.realtime._retained_audio import RetainedAudioBudget
 from pydantic_ai.realtime._session import (
     _AUDIO_TAP_MAX_CHUNKS,  # pyright: ignore[reportPrivateUsage]
     _AUDIO_TAP_SECONDS,  # pyright: ignore[reportPrivateUsage]
@@ -5481,6 +5483,110 @@ async def test_audio_retention_budget_turn_longer_than_the_budget_keeps_only_its
     ]
 
 
+class _CountingSegments(OrderedDict[str, bytes]):
+    """Counts every walk over the waiting segments, which checking the budget on each chunk must not need."""
+
+    walks = 0
+
+    def __iter__(self) -> Iterator[str]:
+        type(self).walks += 1
+        return super().__iter__()
+
+    def values(self) -> Any:
+        type(self).walks += 1
+        return super().values()
+
+    def items(self) -> Any:
+        type(self).walks += 1
+        return super().items()
+
+
+async def test_audio_retention_budget_check_does_not_walk_waiting_segments() -> None:
+    """Each chunk checks the budget without walking the segments waiting for a transcript, and evicted ones are let go.
+
+    A unit test of the bookkeeping: a slower check returns the same history, so only counting can catch it.
+    """
+
+    async def count_walks(session: _RealtimeSession) -> None:
+        segments = session._input_segments  # pyright: ignore[reportPrivateUsage]
+        segments._segments = _CountingSegments()  # pyright: ignore[reportPrivateUsage]
+
+    async def stream_chunks(session: _RealtimeSession) -> None:
+        for index in range(10):
+            await session.send_audio(bytes([index]) * 480)
+        # The oldest waiting segment made room for those 0.1 s, and is let go rather than kept empty.
+        assert len(session._input_segments._segments) == 9  # pyright: ignore[reportPrivateUsage]
+
+    turns = range(20)
+    conn = _ContinuousMicrophoneConnection(
+        [
+            _UserAction(count_walks),
+            *(
+                event
+                for turn in turns
+                for event in (_speak(_tenths_of_a_second(turn)), RealtimeInputSpeechEndEvent(item_id=f'user-{turn}'))
+            ),
+            _UserAction(stream_chunks),
+            *(InputTranscript(text=f'Question {turn}.', is_final=True, item_id=f'user-{turn}') for turn in turns),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='input_audio', retain_audio_max_seconds=1)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    assert _CountingSegments.walks == 0
+    counting = session._input_segments._segments  # pyright: ignore[reportPrivateUsage]
+    _ = (list(counting), list(counting.values()), list(counting.items()))
+    assert _CountingSegments.walks == 3, 'the counter sees a walk'
+    # A second holds the last nine waiting segments beside the 0.1 s streamed after them.
+    assert [
+        (part.transcript, part.audio is not None)
+        for message in session.all_messages()
+        for part in message.parts
+        if isinstance(part, SpeechPart)
+    ] == [(f'Question {turn}.', turn >= 11) for turn in turns]
+
+
+async def test_audio_retention_budget_skips_history_while_nothing_there_can_be_evicted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """While the audio over budget is all in a response still in flight, history isn't searched again on every chunk."""
+    strips = 0
+    strip = RetainedAudioBudget.strip
+
+    def counting_strip(self: RetainedAudioBudget, message: ModelMessage, excess: int) -> tuple[ModelMessage, int]:
+        nonlocal strips
+        strips += 1
+        return strip(self, message, excess)
+
+    async def count_strips(session: _RealtimeSession) -> None:
+        monkeypatch.setattr(RetainedAudioBudget, 'strip', counting_strip)
+
+    async def stream_chunks(session: _RealtimeSession) -> None:
+        for _ in range(30):
+            await session.send_audio(bytes(480))
+
+    conn = _ContinuousMicrophoneConnection(
+        [
+            *(event for turn in range(3) for event in _answered_turn(turn, item_id=f'user-{turn}')),
+            _UserAction(count_strips),
+            AudioDelta(data=_tenths_of_a_second(103) * 2, item_id='answer-3a'),
+            AudioDelta(data=b'\x01\x00', item_id='answer-3b'),
+            _UserAction(stream_chunks),
+            ResponseDone(),
+        ]
+    )
+    session = RealtimeSession(conn, audio_retention='all', retain_audio_max_seconds=0.2)
+    conn.session = session
+    async with session:
+        await drain_events(session)
+
+    # The answer's first part evicts what history holds; one more search finds nothing left, and the
+    # chunks after it skip history.
+    assert strips == snapshot(12)
+
+
 async def test_audio_retention_budget_counts_segments_waiting_for_their_transcript() -> None:
     """A segment cut at a speech end counts until its transcript records it, and is evicted oldest first."""
     conn = _ContinuousMicrophoneConnection(
@@ -5488,6 +5594,12 @@ async def test_audio_retention_budget_counts_segments_waiting_for_their_transcri
             _speak(_tenths_of_a_second(0)),
             RealtimeInputSpeechEndEvent(item_id='user-0'),
             _speak(_tenths_of_a_second(1)),
+            RealtimeInputSpeechEndEvent(item_id='user-1'),
+            # A repeated boundary (a `committed` after the speech end, say) cuts nothing new: not over the
+            # first turn's evicted segment, nor over the second turn's.
+            _speak(bytes(960)),
+            RealtimeInputSpeechEndEvent(item_id='user-0'),
+            _speak(bytes(960)),
             RealtimeInputSpeechEndEvent(item_id='user-1'),
             InputTranscript(text='First.', is_final=True, item_id='user-0'),
             InputTranscript(text='Second.', is_final=True, item_id='user-1'),

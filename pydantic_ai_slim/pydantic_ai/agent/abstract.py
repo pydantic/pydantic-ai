@@ -2333,7 +2333,7 @@ class AgentRealtime(Generic[AgentDepsT]):
                 in memory, across both speakers and including the turns still being spoken; once exceeded,
                 the oldest retained audio is evicted, keeping its transcript. Defaults to `1800`
                 (30 minutes) so a long-running session can't grow memory without limit; `0` retains no
-                audio, `None` removes the bound.
+                audio, `None` removes the bound. Audio in a seeded `message_history` is kept as given.
             provider_session: A [`RealtimeProviderSession`][pydantic_ai.realtime.RealtimeProviderSession] to attach a **sideband**
                 control session to, from
                 [`answer_webrtc_offer`][pydantic_ai.realtime.RealtimeModel.answer_webrtc_offer]. When set,

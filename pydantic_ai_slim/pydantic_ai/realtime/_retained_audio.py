@@ -39,9 +39,9 @@ class RetainedAudioBudget:
         self._tracked_weight = 0
 
     @property
-    def has_tracked_audio(self) -> bool:
-        """Whether any tracked audio is still retained, so `strip` has something to free."""
-        return bool(self._tracked)
+    def tracked_parts(self) -> int:
+        """How many tracked pieces of audio are still retained: `strip` has something to free while there are any."""
+        return len(self._tracked)
 
     def weight(self, byte_count: int, *, output: bool) -> int:
         """The weight of `byte_count` bytes of PCM16 input or output audio."""
