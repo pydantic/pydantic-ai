@@ -211,6 +211,16 @@ class TestInstructions:
         assert 'be nice' in instructions
         assert 'inventory_agent_context' in instructions
 
+    async def test_directory_named_like_an_instruction_file_is_skipped(
+        self, tmp_path: Path, workspace: Workspace
+    ) -> None:
+        (tmp_path / 'CLAUDE.md').mkdir()
+        _write(tmp_path / 'AGENTS.md', 'be nice')
+        cap = RepoContext[object](expose_inventory_tool=False)
+        ctx = _run_context(workspace=workspace)
+        await cap.before_run(ctx)
+        assert _render_capability_instructions(cap, ctx) == '<context-file path="AGENTS.md">\nbe nice\n</context-file>'
+
     def test_none_when_all_disabled(self, tmp_path: Path) -> None:
         cap = RepoContext[object](autoload_instructions=False, expose_inventory_tool=False)
         assert cap.get_instructions() is None

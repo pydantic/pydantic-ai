@@ -63,10 +63,16 @@ async def test_create_logs_the_new_sandbox_id(fake_modal: FakeModal, caplog: pyt
     assert [record.getMessage() for record in caplog.records] == [f'Created Modal sandbox {owner.ref.id}']
 
 
-async def test_auth_failure_classifies_reason_without_echoing_secret(fake_modal: FakeModal) -> None:
+@pytest.mark.parametrize(
+    ('message', 'reason'),
+    [('token {} expired', 'Credential expired'), ('token {} is not configured', 'Credential missing')],
+)
+async def test_auth_failure_classifies_reason_without_echoing_secret(
+    fake_modal: FakeModal, message: str, reason: str
+) -> None:
     secret = 'modal-secret-value-123'
-    fake_modal.create_error = fake_modal.exception('AuthError')(f'token {secret} expired')
-    with pytest.raises(WorkspaceUnavailableError, match='Credential expired') as exc:
+    fake_modal.create_error = fake_modal.exception('AuthError')(message.format(secret))
+    with pytest.raises(WorkspaceUnavailableError, match=reason) as exc:
         await ModalSandboxBackend().get_sandbox()
     assert secret not in str(exc.value)
     assert 'MODAL_TOKEN_ID' in str(exc.value)
