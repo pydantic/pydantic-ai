@@ -16,7 +16,9 @@ from rich.console import Console
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import chat
 from pydantic_clai2.cli.shell_passthrough import (
     _taskkill_path,  # pyright: ignore[reportPrivateUsage]
@@ -47,16 +49,22 @@ def test_shell_command_detection(text: str, command: str | None) -> None:
 
 
 async def shell_session(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, values: list[str | BaseException], *, agent_turns: int = 0
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    values: list[str | BaseException],
+    *,
+    agent_turns: int = 0,
+    requests: list[ModelRequestContext] | None = None,
+    resume: str | None = None,
 ) -> str:
     """Run the interactive loop, checking how many inputs reached the model."""
-    requests: list[ModelRequestContext] = []
+    captured = requests if requests is not None else []
 
     class CountRequests(AbstractCapability[None]):
         async def before_model_request(
             self, ctx: RunContext[None], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            requests.append(request_context)
+            captured.append(request_context)
             return request_context
 
     monkeypatch.chdir(tmp_path)
@@ -67,8 +75,9 @@ async def shell_session(
         deps=None,
         console=Console(file=output, force_terminal=False, width=120),
         store=SettingsStore(tmp_path / 'config.db'),
+        resume=resume,
     )
-    assert len(requests) == agent_turns
+    assert len(captured) == agent_turns
     return output.getvalue()
 
 
@@ -85,7 +94,7 @@ class TestShellPassthrough:
         text = await shell_session(tmp_path, monkeypatch, ['  !printf hi > marker.txt  ', '/exit'])
         assert (tmp_path / 'marker.txt').read_text() == 'hi'
         assert '$ printf hi > marker.txt' in text
-        assert 'Shell passthrough, not sent to the agent' in text
+        assert 'Shell command and output saved for the next prompt' in text
         assert 'Done (' in text
         assert 'agent reply' not in text
 
@@ -100,14 +109,21 @@ class TestShellPassthrough:
         cleanup_calls: list[str] = []
 
         class Process:
+            def __init__(self) -> None:
+                self.stdout = asyncio.StreamReader()
+                self.stderr = asyncio.StreamReader()
+                self.stdout.feed_eof()
+                self.stderr.feed_eof()
+
             async def wait(self) -> int:
                 nonlocal wait_calls
                 wait_calls += 1
                 return 0
 
-        async def delayed_spawn(command: str, *, start_new_session: bool) -> Process:
+        async def delayed_spawn(command: str, *, start_new_session: bool, stdout: int, stderr: int) -> Process:
             assert command == 'sleep forever'
             assert start_new_session is True
+            assert stdout == stderr == asyncio.subprocess.PIPE
             spawn_started.set()
             await release_spawn.wait()
             return Process()
@@ -132,7 +148,7 @@ class TestShellPassthrough:
         asyncio.get_running_loop().call_soon(release_spawn.set)
         await command
 
-        assert wait_calls == 2
+        assert wait_calls == 3
         assert cleanup_calls == ['interrupt', 'kill']
         assert 'Interrupted (' in output.getvalue()
 
@@ -151,9 +167,11 @@ class TestShellPassthrough:
         """A command in its own session still gets Ctrl-C, so it can clean up before the grace kill."""
         spawn = asyncio.create_subprocess_shell
 
-        async def spawn_then_ctrl_c(command: str, *, start_new_session: bool) -> asyncio.subprocess.Process:
+        async def spawn_then_ctrl_c(
+            command: str, *, start_new_session: bool, stdout: int, stderr: int
+        ) -> asyncio.subprocess.Process:
             # Press Ctrl-C only once the spawn has returned and the shell has installed its trap.
-            process = await spawn(command, start_new_session=start_new_session)
+            process = await spawn(command, start_new_session=start_new_session, stdout=stdout, stderr=stderr)
             with anyio.fail_after(5):
                 while not (tmp_path / 'ready').exists():
                     await anyio.sleep(0.01)  # pragma: lax no cover -- the shell may already be ready.
@@ -215,3 +233,180 @@ class TestShellPassthrough:
     async def test_help_mentions_passthrough(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         text = await shell_session(tmp_path, monkeypatch, ['/help', '/exit'])
         assert '!COMMAND: Run COMMAND with the system shell' in text
+        assert 'save command and output for the next prompt' in ' '.join(text.split())
+
+
+@pytest.mark.parametrize(
+    ('command', 'status', 'stdout', 'stderr'),
+    [
+        ('true', 'Exit code 0', '', ''),
+        ("printf '[bold]out[/bold]\\n'; printf 'err\\n' >&2", 'Exit code 0', '[bold]out[/bold]\n', 'err\n'),
+        ("printf 'failed' >&2; exit 7", 'Exit code 7', '', 'failed'),
+        ("printf 'café \\nnext line'", 'Exit code 0', 'café \nnext line', ''),
+        ('echo a\x00b', 'Shell error: embedded null byte', '', ''),
+    ],
+)
+async def test_shell_context_reaches_next_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str, status: str, stdout: str, stderr: str
+) -> None:
+    requests: list[ModelRequestContext] = []
+    text = await shell_session(
+        tmp_path, monkeypatch, ['before', f'!{command}', 'after', '/exit'], agent_turns=2, requests=requests
+    )
+    prompts = [
+        part.content
+        for message in requests[-1].messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ]
+    assert prompts == [
+        'before',
+        f'The user ran a local shell command (not an agent tool call):\n'
+        f'$ {command}\n{status}\n\nstdout:\n{stdout}\n\nstderr:\n{stderr}',
+        'after',
+    ]
+    assert stdout in text
+    assert stderr in text
+    if stdout and not stderr and not stdout.endswith('\n'):
+        assert f'{stdout}\nDone (' in text
+
+
+async def test_shell_context_survives_exit_and_resume(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    await shell_session(
+        tmp_path,
+        monkeypatch,
+        ['!printf once >> marker; printf output', '!printf error >&2; exit 2', '/exit'],
+    )
+    conversations = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    [summary] = await conversations.listing()
+    saved = await conversations.get(conversation_id=summary.id)
+    assert len(saved.messages) == 2
+    assert all(isinstance(message, ModelRequest) for message in saved.messages)
+    requests: list[ModelRequestContext] = []
+    await shell_session(
+        tmp_path, monkeypatch, ['explain', '/exit'], agent_turns=1, requests=requests, resume=summary.id
+    )
+    assert [
+        part.content
+        for message in requests[0].messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ] == [
+        part.content
+        for message in saved.messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ] + ['explain']
+    assert (tmp_path / 'marker').read_text() == 'once'
+
+
+async def test_new_session_drops_shell_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[ModelRequestContext] = []
+    await shell_session(
+        tmp_path, monkeypatch, ['!printf old', '/new', 'fresh', '/exit'], agent_turns=1, requests=requests
+    )
+    assert [
+        part.content
+        for message in requests[0].messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, UserPromptPart)
+    ] == ['fresh']
+
+
+async def test_interrupted_shell_output_reaches_next_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[ModelRequestContext] = []
+    await shell_session(
+        tmp_path,
+        monkeypatch,
+        ['!printf partial; printf problem >&2; kill -INT $PPID; exec sleep 30', 'explain', '/exit'],
+        agent_turns=1,
+        requests=requests,
+    )
+    message = requests[0].messages[0]
+    assert isinstance(message, ModelRequest)
+    part = message.parts[0]
+    assert isinstance(part, UserPromptPart)
+    assert isinstance(part.content, str)
+    assert '\nInterrupted\n\nstdout:\npartial\n\nstderr:\nproblem' in part.content
+
+
+async def test_large_stdout_and_stderr_are_drained_concurrently() -> None:
+    output = io.StringIO()
+    command = "i=0; while [ $i -lt 5000 ]; do printf 'stdout\\n'; printf 'stderr\\n' >&2; i=$((i + 1)); done"
+    with anyio.fail_after(10):
+        context = await run_shell_command(command, console=Console(file=output), interrupts=Interrupts())
+    stdout = 'stdout\n' * 5000
+    stderr = 'stderr\n' * 5000
+    assert f'\nstdout:\n{stdout}\n\nstderr:\n{stderr}' in context
+    assert output.getvalue().count('stdout\n') == 5000
+    assert output.getvalue().count('stderr\n') == 5000
+
+
+@pytest.mark.parametrize('external_cancel', [False, True])
+async def test_output_streams_before_exit_and_readers_are_drained(external_cancel: bool) -> None:
+    printed = asyncio.Event()
+
+    class Output(io.StringIO):
+        def write(self, text: str) -> int:
+            if text == 'ready':
+                printed.set()
+            return super().write(text)
+
+    output = Output()
+    interrupts = Interrupts()
+    tasks_before = asyncio.all_tasks()
+    task = asyncio.create_task(
+        run_shell_command('printf ready; exec sleep 30', console=Console(file=output), interrupts=interrupts)
+    )
+    with anyio.fail_after(10):
+        await printed.wait()
+        assert not task.done()
+        if external_cancel:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            assert interrupts.cancel()
+            context = await task
+            assert '\nInterrupted\n\nstdout:\nready\n\nstderr:\n' in context
+    assert asyncio.all_tasks() == tasks_before
+
+
+async def test_decodes_split_and_invalid_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+    streams = [asyncio.StreamReader(), asyncio.StreamReader()]
+    first_read = asyncio.Event()
+    printed = asyncio.Event()
+
+    class Output(io.StringIO):
+        def write(self, text: str) -> int:
+            if text == 'start':
+                first_read.set()
+            if '€' in text:
+                printed.set()
+            return super().write(text)
+
+    class Process:
+        stdout, stderr = streams
+
+        async def wait(self) -> int:
+            return 0
+
+    async def spawn(command: str, **kwargs: object) -> Process:
+        return Process()
+
+    monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.asyncio.create_subprocess_shell', spawn)
+    task = asyncio.create_task(run_shell_command('test', console=Console(file=Output()), interrupts=Interrupts()))
+    with anyio.fail_after(10):
+        streams[0].feed_data(b'start\xe2\x82')
+        await first_read.wait()
+        streams[0].feed_data(b'\xac')
+        await printed.wait()
+        streams[0].feed_eof()
+        streams[1].feed_data(b'\xff\xe2')
+        streams[1].feed_eof()
+        context = await task
+    assert '\nstdout:\nstart€\n\nstderr:\n��' in context

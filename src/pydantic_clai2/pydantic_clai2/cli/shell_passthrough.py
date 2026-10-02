@@ -1,7 +1,9 @@
 """Run `!command` input in the system shell instead of starting an agent turn."""
 
 import asyncio
+import codecs
 import contextlib
+import io
 import ntpath
 import os
 import signal
@@ -12,10 +14,11 @@ import time
 from rich.console import Console
 from rich.text import Text
 
+from pydantic_ai._utils import gather
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.rendering import theme
 
-HELP = '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Windows); it is not sent to the agent'
+HELP = '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Windows); save command and output for the next prompt'
 
 # Matches `subprocess.run`: a Ctrl-C'd child gets this long to exit on its own SIGINT before it is killed.
 _INTERRUPT_GRACE = 0.25
@@ -76,25 +79,51 @@ def shell_command(text: str) -> str | None:
     return stripped[1:].strip() or None
 
 
-async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts) -> None:
-    """Run with inherited stdio so interactive programs own the terminal until they exit.
+async def run_shell_command(command: str, *, console: Console, interrupts: Interrupts) -> str:
+    """Run locally, streaming output and returning context for the next model request.
 
     Ctrl-C cancels only this command, not CLAI; cancellation terminates the shell's process tree.
     """
     console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
-    console.print('Shell passthrough, not sent to the agent', style=theme.color(theme.MUTED))
-    exit_code = 0
+    console.print('Shell command and output saved for the next prompt', style=theme.color(theme.MUTED))
+    stdout, stderr = io.StringIO(), io.StringIO()
+    exit_code: int | None = None
+    needs_newline = False
+
+    async def read_output(stream: asyncio.StreamReader, output: io.StringIO) -> None:
+        nonlocal needs_newline
+        decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
+        while True:
+            chunk = await stream.read(8192)
+            text = decoder.decode(chunk, final=not chunk)
+            output.write(text)
+            if text:
+                console.print(text, end='', markup=False, highlight=False, soft_wrap=True)
+                needs_newline = not text.endswith('\n')
+            if not chunk:
+                break
 
     async def execute() -> None:
-        nonlocal exit_code
         # A new POSIX session gives the command a process group to kill; `start_new_session` is
         # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl-C
         # still reaches the command.
         # A child can signal us before asyncio returns its process handle. Keep spawning shielded so we can reap it.
-        spawn_task = asyncio.create_task(asyncio.create_subprocess_shell(command, start_new_session=True))
-        try:
-            process = await asyncio.shield(spawn_task)
+        spawn_task = asyncio.create_task(
+            asyncio.create_subprocess_shell(
+                command, start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+        )
+
+        async def capture_output() -> None:
+            nonlocal exit_code
+            process = await spawn_task
+            assert process.stdout is not None and process.stderr is not None
+            await gather(read_output(process.stdout, stdout), read_output(process.stderr, stderr))
             exit_code = await process.wait()
+
+        output_task = asyncio.create_task(capture_output())
+        try:
+            await asyncio.shield(output_task)
         except asyncio.CancelledError:
             process = await spawn_task
             _interrupt(process)
@@ -103,19 +132,33 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
             await _kill_process_tree(process)
             await process.wait()
             raise
+        finally:
+            await output_task
 
     started = time.monotonic()
+    error: str | None = None
+    completed = True
     try:
         completed = await interrupts.run(execute())
     except (OSError, ValueError) as exc:  # `ValueError`: the command text contains a NUL byte.
-        console.print(f'Shell error: {exc}', style=theme.color(theme.ERROR), markup=False)
-        console.print()
-        return
+        error = str(exc)
     elapsed = f' ({time.monotonic() - started:.1f}s)'
-    if not completed:
+    if needs_newline:
+        console.print()
+    if error is not None:
+        status = f'Shell error: {error}'
+        console.print(status, style=theme.color(theme.ERROR), markup=False)
+    elif not completed:
+        status = 'Interrupted'
         console.print(f'Interrupted{elapsed}', style=theme.color(theme.WARNING), highlight=False)
     elif exit_code:
-        console.print(f'Exit code {exit_code}{elapsed}', style=theme.color(theme.ERROR), highlight=False)
+        status = f'Exit code {exit_code}'
+        console.print(f'{status}{elapsed}', style=theme.color(theme.ERROR), highlight=False)
     else:
+        status = 'Exit code 0'
         console.print(f'Done{elapsed}', style=theme.color(theme.SUCCESS), highlight=False)
     console.print()
+    return (
+        f'The user ran a local shell command (not an agent tool call):\n'
+        f'$ {command}\n{status}\n\nstdout:\n{stdout.getvalue()}\n\nstderr:\n{stderr.getvalue()}'
+    )
