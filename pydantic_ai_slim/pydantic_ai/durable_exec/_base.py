@@ -289,6 +289,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     engine_spec: ClassVar[DurabilityEngineSpec]
     """Declarative configuration for this durable execution engine."""
 
+    # Each engine wraps every model request and tool call as its own durable unit, so a second one
+    # would not add durability, it would take over dispatch from the first without either saying so.
+    _one_per_agent: ClassVar[str | None] = 'durable execution engine'
+
     @property
     def engine_name(self) -> str:
         """Human-readable engine name used in error messages."""
@@ -308,6 +312,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def durable_container_noun(self) -> str:
         """Name for the durable container."""
         return self.engine_spec.durable_container_noun
+
+    @property
+    def _cancellation_error_types(self) -> tuple[type[BaseException], ...]:
+        return self.engine_spec.cancellation_error_types
 
     @property
     def agent(self) -> AbstractAgent[AgentDepsT, Any] | None:

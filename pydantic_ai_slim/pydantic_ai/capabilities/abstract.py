@@ -200,6 +200,14 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     sensible defaults and typically don't need to be overridden.
     """
 
+    _one_per_agent: ClassVar[str | None] = None
+    """A kind of capability an agent can hold only one of, counting a run's capabilities with its own.
+
+    Internal, in-tree only. The durability capabilities set it, since an agent runs under one durable
+    engine. The agent checks it before binding anything, so a configuration it refuses has not yet
+    registered durable operations.
+    """
+
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 
@@ -212,6 +220,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     hooks (so third-party capabilities don't need to set a flag manually) is tracked
     in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
     """
+
+    @property
+    def _cancellation_error_types(self) -> tuple[type[BaseException], ...]:
+        """Exceptions the environment this capability integrates with cancels a run with from outside.
+
+        Internal, in-tree only: durability capabilities report their
+        [`DurabilityEngineSpec.cancellation_error_types`][pydantic_ai.durable_exec.DurabilityEngineSpec.cancellation_error_types]
+        here, so the run can attach its state to them as it does to an external `CancelledError`.
+        """
+        return ()
 
     @property
     def _emits_app_events(self) -> bool:
