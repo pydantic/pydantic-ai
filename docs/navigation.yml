@@ -668,6 +668,9 @@ navigation:
         slug: "integrations/cli"
         aliases:
           - "cli"
+      - page: "GitHub Actions"
+        path: "github-actions.md"
+        slug: "integrations/github-actions"
       - page: "GitHub Agentic Workflows"
         path: "harness/gh-aw.md"
         slug: "harness/gh-aw"
