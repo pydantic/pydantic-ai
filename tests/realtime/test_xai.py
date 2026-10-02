@@ -10,6 +10,7 @@ from __future__ import annotations as _annotations
 import asyncio
 import base64
 import json
+from collections import deque
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Literal, cast
@@ -2126,3 +2127,19 @@ async def test_turns_of_a_commit_held_behind_a_reply_keep_their_order(monkeypatc
         'user speech: Two.',
         'assistant speech: Answer.',
     ]
+
+
+async def test_a_request_that_fails_to_commit_the_buffer_places_nothing_ahead_of_the_next_commit() -> None:
+    """The request that would have committed the buffered speech never went out, so neither did the commit."""
+
+    class _FailingRequest(FakeWebSocket):
+        async def send(self, data: str) -> None:
+            if '"response.create"' in data:
+                raise OSError('gone')
+            await super().send(data)
+
+    conn = _manual(_FailingRequest([]))
+    await conn.send(_AUDIO)
+    with pytest.raises(OSError):
+        await conn.send(CreateResponse())
+    assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]

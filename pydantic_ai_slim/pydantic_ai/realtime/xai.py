@@ -446,13 +446,19 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
             await super()._send_event({'type': INPUT_AUDIO_BUFFER_CLEAR_EVENT})
             self._audio_is_latest_input = False
         # Audio still in the buffer is committed by the request, and answered by its response.
-        if self._audio_uncommitted:
+        commits = self._audio_uncommitted
+        if commits:
             self._announce_commit()
             # Whatever went out before the request joins the conversation ahead of the turn it commits.
             self._lifecycle.audio_commit_sent()
         self._audio_uncommitted = self._speech_detected = False
         self._sent_audio.clear()
-        await super()._create_response(input_indexes, answers)
+        try:
+            await super()._create_response(input_indexes, answers)
+        except BaseException:
+            if commits:
+                self._lifecycle.audio_commit_failed()
+            raise
 
     async def _attempt_reconnect(self) -> bool:
         # The new socket's buffer is empty. A held commit still covers the audio that was in it, so that

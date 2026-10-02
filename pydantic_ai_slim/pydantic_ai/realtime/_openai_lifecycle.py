@@ -409,6 +409,8 @@ class OpenAILifecycle:
         self._carried_over.update(placed)
         self._messages.clear()
         self._tool_outputs.clear()
+        # A commit the old socket never acknowledged won't be on the new one.
+        self._sent_before_commits.clear()
 
     def reconnected(
         self, *, restores_in_flight: bool, lost_inputs: Sequence[InputId], asked_again: Sequence[InputId]
