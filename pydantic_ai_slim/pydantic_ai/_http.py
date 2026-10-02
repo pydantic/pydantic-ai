@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, TypeAlias, TypeVar
 
 # Import httpcore2 eagerly: httpx2 defers it to first client construction, which performs blocking
 # I/O if that happens inside the event loop.
@@ -99,7 +99,7 @@ class ConnectPoolTimeoutCap:
         self._pool = pool
 
     async def __call__(self, request: httpx2.Request | httpx.Request) -> None:
-        requested: dict[str, Any] | None = request.extensions.get('timeout')
+        requested: dict[str, float | None] | None = request.extensions.get('timeout')
         if requested is None:
             # `AsyncClient.send` sets one before hooks run; only a request handed to the hook directly lacks it.
             return
