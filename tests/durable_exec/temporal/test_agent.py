@@ -107,10 +107,10 @@ from ...workspace_fakes import (
 try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
-    from temporalio.client import Client, WorkflowFailureError
+    from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
-    from temporalio.exceptions import CancelledError as TemporalCancelledError
+    from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
@@ -118,6 +118,7 @@ try:
     from pydantic_ai.durable_exec._utils import StreamedActivityResult
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPlugin,
         PydanticAIWorkflow,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
@@ -540,12 +541,14 @@ class SignalCancellationWorkflow:
         self._cancellation = DurableRunCancellation[None]()
 
     @workflow.run
-    async def run(self, prompt: str) -> str:
+    async def run(self, prompt: str, catch: bool) -> str:
         try:
             return (await _signal_cancellation_agent.run(prompt, capabilities=[self._cancellation])).output
         except RunCancelled:
+            if not catch:
+                raise
             # Catching `RunCancelled` lets the workflow complete normally on a first-party cancel
-            # rather than ending *Cancelled*, and keeps the run replay-deterministic.
+            # rather than ending *Cancelled*.
             return 'run cancelled'
 
     @workflow.signal
@@ -558,6 +561,17 @@ async def test_temporal_run_cancelled_by_workflow_signal(client: Client) -> None
     in-flight durable run first-party: the run raises `RunCancelled`, which the workflow catches to
     complete normally rather than ending as a *Cancelled* workflow. The recorded history replays
     deterministically."""
+    await _replay_signal_cancellation(await _run_signal_cancellation_workflow(client, catch=True))
+
+
+async def test_temporal_uncaught_run_cancelled_fails_workflow_and_replays(client: Client) -> None:
+    """Left uncaught, the `RunCancelled` fails the workflow as a typed application error, and that
+    history replays too, given the same `PydanticAIPlugin` the worker runs with: it registers
+    `AgentRunError` (and so `RunCancelled`) as a workflow-failure exception type."""
+    await _replay_signal_cancellation(await _run_signal_cancellation_workflow(client, catch=False))
+
+
+async def _run_signal_cancellation_workflow(client: Client, *, catch: bool) -> WorkflowHistory:
     global _signal_cancellation_activity_started
 
     _signal_cancellation_activity_started = asyncio.Event()
@@ -570,22 +584,30 @@ async def test_temporal_run_cancelled_by_workflow_signal(client: Client) -> None
         workflow_runner=UnsandboxedWorkflowRunner(),
     ):
         handle = await client.start_workflow(
-            SignalCancellationWorkflow.run,
-            args=['cancel me'],
-            id=workflow_id,
-            task_queue=TASK_QUEUE,
+            SignalCancellationWorkflow.run, args=['cancel me', catch], id=workflow_id, task_queue=TASK_QUEUE
         )
         await _signal_cancellation_activity_started.wait()
         await handle.signal(SignalCancellationWorkflow.cancel)
 
-        assert await handle.result() == 'run cancelled'
+        if catch:
+            assert await handle.result() == 'run cancelled'
+        else:
+            with pytest.raises(WorkflowFailureError) as exc_info:
+                await handle.result()
+            cause = exc_info.value.__cause__
+            assert isinstance(cause, ApplicationError)
+            assert cause.type == 'RunCancelled'
 
-        history = await handle.fetch_history()
+        return await handle.fetch_history()
 
+
+async def _replay_signal_cancellation(history: WorkflowHistory) -> None:
+    # Replay with the plugin the worker ran with: it registers `AgentRunError` (and so `RunCancelled`)
+    # as a workflow-failure exception type, which the recorded failure needs to match on replay.
     await Replayer(
         workflows=[SignalCancellationWorkflow],
         workflow_runner=UnsandboxedWorkflowRunner(),
-        data_converter=pydantic_data_converter,
+        plugins=[PydanticAIPlugin()],
     ).replay_workflow(history)
 
 

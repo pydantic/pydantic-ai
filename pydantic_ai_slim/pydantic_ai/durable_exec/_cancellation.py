@@ -64,8 +64,8 @@ class DurableRunCancellation(AbstractCapability[AgentDepsT]):
                 result = await my_temporal_agent.run(prompt, capabilities=[self.cancellation])
                 return result.output
             except RunCancelled:
-                # Catch `RunCancelled` and complete normally: letting it escape the workflow
-                # uncaught is not replay-safe and can wedge the workflow.
+                # Catch `RunCancelled` to complete normally; uncaught, it fails the workflow
+                # as a typed application error, and its run state doesn't cross that boundary.
                 return 'The run was cancelled.'
 
         @workflow.signal
