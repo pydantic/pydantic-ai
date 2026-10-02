@@ -405,7 +405,7 @@ async def test_cannot_delete_saved_default_model(
     output = capsys.readouterr().out
     assert 'saved:default (saved default)' in output
     assert 'This is your saved default model.' in output
-    assert '/set model first.' in output
+    assert '/set model' in output
     assert 'Delete saved:default?' not in output
     assert 'saved:default' in store.models()
     assert store.model_settings('saved:default') == {'max_tokens': 5}

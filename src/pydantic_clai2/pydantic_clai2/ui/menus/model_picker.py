@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from textwrap import fill
 
 from termflow.tui import MenuBuilder, MenuItem
 from termflow.tui.menu import Menu, MenuResult
@@ -30,14 +31,25 @@ def model_completions(context: CommandContext, args: list[str]) -> list[str]:
     return context.store.models() if len(args) <= 1 else []
 
 
+def _protected_models(context: CommandContext) -> dict[str, str]:
+    """Explain why the current model and saved default cannot be deleted."""
+    protected: dict[str, str] = {}
+    saved_default = context.store.overrides().get('model')
+    if isinstance(saved_default, str):
+        protected[saved_default] = 'This is your saved default model. Choose another with /set model first.'
+    if context.settings.model is not None:
+        protected[context.settings.model] = 'Select another model before deleting the current model.'
+    return protected
+
+
 def build_model_picker(context: CommandContext, *, message: str = '') -> Menu:
     """List saved models with routes to add, select, and delete models."""
     names = context.store.models()
     current = context.settings.model
-    saved_default = context.store.overrides().get('model')
+    protected = _protected_models(context)
     items: list[MenuItem] = []
     for name in names:
-        status = ' (current)' if name == current else ' (saved default)' if name == saved_default else ''
+        status = ' (current)' if name == current else ' (saved default)' if name in protected else ''
         items.append(MenuItem(f'{name}{status}', value=name))
     items.append(MenuItem('Add a model...', value=ModelPickerAction.ADD))
     if message:
@@ -51,15 +63,12 @@ def build_model_picker(context: CommandContext, *, message: str = '') -> Menu:
     def preview(item: MenuItem) -> str:
         if item.disabled:
             return item.label
-        if item.value is ModelPickerAction.ADD:
-            return 'Browse providers to add\nand select a model.'
-        if item.value == current:
-            deletion = 'Select another model before\ndeleting the current model.'
-        elif item.value == saved_default:
-            deletion = 'This is your saved default model.\nChoose another with /set model first.'
-        else:
-            deletion = 'Ctrl+D or Delete removes this model\nand its settings after confirmation.'
-        return f'{item.value}\n\nEnter selects this model\nfor the next prompt.\n\n{deletion}'
+        if isinstance(item.value, str):
+            deletion = (
+                protected.get(item.value) or 'Ctrl+D or Delete removes this model and its settings after confirmation.'
+            )
+            return f'{item.value}\n\nEnter selects this model\nfor the next prompt.\n\n{fill(deletion, width=35)}'
+        return 'Browse providers to add\nand select a model.'
 
     return (
         MenuBuilder('Select model')
@@ -84,11 +93,8 @@ def _run_model_picker(context: CommandContext, *, runners: Runners) -> tuple[Men
         if result.cancelled or result.item is None or not isinstance(result.item.value, DeleteModel):
             return result, messages
         name = result.item.value.name
-        if name == context.settings.model:
-            message = 'Select another model before deleting the current model.'
-            continue
-        if name == context.store.overrides().get('model'):
-            message = 'This is your saved default model. Choose another with /set model first.'
+        if reason := _protected_models(context).get(name):
+            message = reason
             continue
         confirmation = runners.run_choice(
             MenuBuilder(f'Delete {name}?')
