@@ -2012,6 +2012,69 @@ async def test_openai_include_raw_annotations_streaming_model_annotation(allow_m
     )
 
 
+async def test_openai_responses_stream_unparseable_annotation(allow_model_requests: None):
+    """A streamed annotation that isn't a known annotation type gives no citations and is kept raw."""
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5.6-terra',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    text = 'Mount Columbia is the tallest.'
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta=text,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=1,
+            logprobs=[],
+        ),
+        resp.ResponseOutputTextAnnotationAddedEvent.model_construct(
+            annotation=None,
+            annotation_index=0,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.annotation.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text=text,
+            type='response.output_text.done',
+            sequence_number=3,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=4,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.6-terra', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+
+    async with agent.run_stream('What is the tallest mountain in Alberta?', model_settings=settings) as result:
+        await result.get_output()
+    response = result.all_messages()[-1]
+
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [
+        TextPart(text, id='msg_001', provider_name='openai', provider_details={'annotations': [None]})
+    ]
+
+
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
     """Set temperature to -1 to trigger an error, given only values between 0 and 1 are allowed."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
