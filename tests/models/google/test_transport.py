@@ -264,6 +264,7 @@ class FlashImageThinkingCase:
     make_provider: Callable[[], Provider[Client]]
     expected: tuple[GoogleThinkingLevel, GoogleThinkingLevel]
     profile: GoogleModelProfile | None = None
+    model_name: str = 'gemini-3.1-flash-image'
 
 
 FLASH_IMAGE_THINKING_CASES = [
@@ -275,6 +276,15 @@ FLASH_IMAGE_THINKING_CASES = [
     FlashImageThinkingCase(
         id='google_cloud',
         make_provider=lambda: GoogleCloudProvider(api_key='mock-api-key'),
+        expected=('LOW', 'MEDIUM'),
+    ),
+    FlashImageThinkingCase(
+        # Vertex keeps its full scale for a resource name too; this row holds with or without resource-name
+        # normalization. The Gemini API snap-down for a resource name is pinned on the wire in
+        # `tests/test_thinking_wire_contract.py`.
+        id='google_cloud_resource_name',
+        make_provider=lambda: GoogleCloudProvider(api_key='mock-api-key'),
+        model_name='publishers/google/models/gemini-3.1-flash-image',
         expected=('LOW', 'MEDIUM'),
     ),
     FlashImageThinkingCase(
@@ -308,7 +318,7 @@ def test_flash_image_thinking_levels_follow_the_client_transport(case: FlashImag
     body-matched cassettes in `tests/test_thinking_wire_contract.py` pin the Gemini API side; Vertex
     accepting `LOW` and `MEDIUM` was verified live but is not recorded.
     """
-    m = GoogleModel('gemini-3.1-flash-image', provider=case.make_provider(), profile=case.profile)
+    m = GoogleModel(case.model_name, provider=case.make_provider(), profile=case.profile)
     sent = [
         m._translate_thinking(GoogleModelSettings(), ModelRequestParameters(thinking=thinking))  # pyright: ignore[reportPrivateUsage]
         for thinking in ('low', 'medium')

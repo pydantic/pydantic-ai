@@ -9,6 +9,7 @@ import httpx2
 import pytest
 
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.profiles.google import google_model_profile
 
 from ..conftest import TestEnv, try_import
 
@@ -354,3 +355,42 @@ def test_google_cloud_model_string_uses_adc_from_env(env: TestEnv):
     api_client = model.client._api_client  # pyright: ignore[reportPrivateUsage]
     assert api_client.api_key is None
     assert api_client._credentials is credentials  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'models/gemini-3.7-flash',
+        'google/gemini-3.7-flash',
+        'publishers/google/models/gemini-3.7-flash',
+        # `image` in the project id must not make this an image model.
+        'projects/image-gen-prod/locations/us-central1/publishers/google/models/gemini-3.7-flash',
+    ],
+)
+def test_google_provider_model_profile_matches_resource_name_by_model_id(model_name: str):
+    """A resource name gets the profile of the model id it names.
+
+    A unit test because the profile is resolved from the name before any request is built, and the
+    `image-gen-prod` case names a project no cassette can be recorded under; the `models/` form is pinned on
+    the wire in `tests/test_thinking_wire_contract.py`.
+    """
+    profile = BaseGoogleProvider.model_profile(model_name)
+    assert profile == google_model_profile('gemini-3.7-flash')
+    assert profile is not None
+    assert profile.get('google_thinking_levels') == frozenset(('LOW', 'MEDIUM', 'HIGH'))
+
+
+@pytest.mark.parametrize(
+    'model_name',
+    [
+        'projects/p/locations/us-central1/endpoints/1234567890',
+        'projects/p/locations/us-central1/models/1234567890',
+        'tunedModels/gemini-3-pro-preview-tune',
+    ],
+)
+def test_google_provider_model_profile_leaves_opaque_ids_unchanged(model_name: str):
+    """Endpoints, Model Registry models and tuned models have no model name to match a profile on.
+
+    A unit test because these ids name private deployments no cassette can be recorded against.
+    """
+    assert BaseGoogleProvider.model_profile(model_name) == google_model_profile(model_name)

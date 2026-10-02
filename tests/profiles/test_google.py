@@ -197,7 +197,7 @@ def test_model_profile_gemini_2():
 def test_model_profile_gemini_3():
     """Gemini 3.x models support tool combination AND server-side tool invocations.
 
-    The two flags happen to flip on together for Gemini 3+ but are separately named so future
+    The two flags flip on together for Gemini 3+ text models but are separately named so future
     models that gain one capability without the other don't force a model-name proxy flag.
     """
     profile = google_model_profile('gemini-3.0-pro')
@@ -250,6 +250,26 @@ def test_model_profile_gemini_2_disables_tool_combination_capabilities():
     assert profile is not None
     assert profile.get('google_supports_tool_combination', False) is False
     assert profile.get('google_supports_server_side_tool_invocations', False) is False
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'expected'),
+    [
+        ('gemini-3-flash-preview', True),
+        ('gemini-3-pro-image-preview', False),
+        ('gemini-3.1-flash-image', False),
+    ],
+)
+def test_model_profile_server_side_tool_invocations(model_name: str, expected: bool):
+    """Gemini 3 image models reject `include_server_side_tool_invocations`, unlike Gemini 3 text models.
+
+    Pins the profile flag on both sides. The request field it gates is asserted omitted on the wire by
+    `test_google_image_generation_with_web_search`, and asserted set on the `_get_tool_config` result by
+    `test_google_gemini_api_sets_include_server_side_tool_invocations`.
+    """
+    profile = google_model_profile(model_name)
+    assert profile is not None
+    assert profile.get('google_supports_server_side_tool_invocations', False) is expected
 
 
 def test_model_profile_image_model():

@@ -3785,12 +3785,20 @@ async def test_google_image_generation_with_tools(allow_model_requests: None, go
         await agent.run('Generate an image of an animal returned by the get_animal tool.')
 
 
-async def test_google_image_generation_with_web_search(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-3-pro-image-preview', provider=google_provider)
+async def test_google_image_generation_with_web_search(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """Gemini 3 image models 400 on `includeServerSideToolInvocations`, so the request leaves it out."""
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=180))
+    model = GoogleModel('gemini-3.1-flash-image', provider=provider)
     agent = Agent(model=model, output_type=BinaryImage, capabilities=[NativeTool(WebSearchTool())])
 
     result = await agent.run(
         'Visualize the current weather forecast for the next 5 days in Mexico City as a clean, modern weather chart. Add a visual on what I should wear each day'
+    )
+    body = request_capture.body(':generateContent')
+    assert {key: value for key, value in body.items() if key != 'contents'} == snapshot(
+        {'tools': [{'googleSearch': {}}], 'generationConfig': {'responseModalities': ['IMAGE']}}
     )
     assert result.output == snapshot(IsInstance(BinaryImage))
     assert result.all_messages() == snapshot(
@@ -3810,7 +3818,12 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                 parts=[
                     NativeToolCallPart(
                         tool_name='web_search',
-                        args={'queries': ['', 'current 5-day weather forecast for Mexico City and what to wear']},
+                        args={
+                            'queries': [
+                                'current weather forecast for the next 5 days in Mexico City',
+                                'typical clothing Mexico City weather October',
+                            ]
+                        },
                         tool_call_id=IsStr(),
                         provider_name='google',
                     ),
@@ -3819,18 +3832,18 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                         content=[
                             {
                                 'domain': None,
-                                'title': 'accuweather.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQElsvx97FT3Kr__tvs8zIgS3C1znKqEOvuHdjyLe2WZZsJpbDDqn9gdF6rKV8KMZytsiWXCDcNwD5m0WvZzGWY6eVbnz0lxftYNTSNdXTiv1AtLrmw-NUcnITjEScK_JHJgnr9xmFapH9DXMGWWYKRSfcT3iy96J1gZeWjCBph5Sci23DAhzA==',
+                                'title': 'wunderground.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGJcO7l1NN6Mtvl6r7MExXUyhENUa2q91PkfsSFXvJRB590su6quhkmh9XIi_79OmiDF_TCxkaR0rCdWjfcRcvT9-I-KBqZJKMu2J1ChRC6bZ6nXxu6M5RAgKssZjMZs5-qf4z8c_-GDe2B0vzxkBVv',
                             },
                             {
                                 'domain': None,
-                                'title': 'weather-and-climate.com',
-                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGlGJX9f12rrKOYrY71rszTFf5KghgToVKZckqRWzT-cjW-mYE_PV3xRbk0JxQxJS18rkCt-y8qwpB41BMYEuxLnkCSBapX5s-4-0pwPUimTjHK4W65OdkVtjTU5-wlHsAppBwdwXNDSmzXZNUYLE1N0R9SKhLeHVVj-2BYYeoO9GPH',
+                                'title': 'timeanddate.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQHQGdlYzS-Uru14N4h0SX842Gu-FgY0dd1Ns8YvAeqGHh60SJvQuM1nAFEtJuT9x0_xER2-BCDe769oUZUzzkA0RbSM0OW156tCn5SFoxiszZyxzfd3ENmzyd2_3OYpDwnLwwpW_H_vas1xUHE1sf8=',
                             },
                             {
                                 'domain': None,
-                                'title': '',
-                                'uri': 'https://www.google.com/search?q=time+in+Mexico+City,+MX',
+                                'title': 'weather5days.com',
+                                'uri': 'https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQFDifBRACRoL4dMlCJ1uNdc14i7Yyh9rvzFvIPo3fBdMdnqEOUwsxrs9_oqLlU_-cU9i3tFtN-WsYpyMvVwEF_wnvJRbDtgmxNG3wWpBkoNUz2wCP6RhhFbzP0DsZssrQDw_Z_L7EVfIZtbMPA=',
                             },
                         ],
                         tool_call_id=IsStr(),
@@ -3845,20 +3858,18 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
                 ],
                 usage=RequestUsage(
                     input_tokens=33,
-                    output_tokens=2309,
+                    output_tokens=1891,
                     input_text_tokens=33,
                     output_image_tokens=1120,
                     details={
-                        'thoughts_tokens': 529,
                         'text_prompt_tokens': 33,
                         'image_candidates_tokens': 1120,
-                        'web_search_requests': 1,
+                        'web_search_requests': 2,
                     },
-                    output_reasoning_tokens=529,
-                    web_searches=1,
-                    cost=Decimal('0.148734'),
+                    web_searches=2,
+                    cost=Decimal('0.0695295'),
                 ),
-                model_name='gemini-3-pro-image-preview',
+                model_name='gemini-3.1-flash-image',
                 timestamp=IsDatetime(),
                 provider_name='google',
                 provider_url='https://generativelanguage.googleapis.com/',

@@ -59,6 +59,7 @@ from ..profiles.google import (
     GOOGLE_THINKING_LEVELS,
     GoogleModelProfile,
     GoogleThinkingLevel,
+    _bare_model_name,  # pyright: ignore[reportPrivateUsage]
 )
 from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ServiceTier, ThinkingEffort, ToolChoiceScalar
@@ -409,12 +410,14 @@ def _map_api_error(e: errors.APIError, model_name: str, model_id_namespace: str 
         suggested_model_id = None
         if _utils.is_str_dict(details) and _utils.is_str_dict(error := details.get('error')):
             message = error.get('message')
+            # A resource name like `models/X` reaches the same endpoint as `X`, so the API reports `models/X`.
+            bare_model_name = _bare_model_name(model_name)
             if (
                 error.get('status') == 'NOT_FOUND'
                 and isinstance(message, str)
-                and message.startswith(f'models/{model_name} is not found ')
+                and message.startswith(f'models/{bare_model_name} is not found ')
             ):
-                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+                suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, bare_model_name)
         return ModelHTTPError(
             status_code=status_code,
             model_name=model_name,
@@ -610,7 +613,7 @@ class GoogleModel(Model[Client]):
         # https://ai.google.dev/gemini-api/docs/image-generation
         # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
         if (
-            self._model_name.startswith('gemini-3.1-flash-image')
+            _bare_model_name(self._model_name).startswith('gemini-3.1-flash-image')
             and 'google_thinking_levels' not in profile
             and not self._is_google_cloud
         ):
@@ -886,8 +889,9 @@ class GoogleModel(Model[Client]):
             tool_config['function_calling_config'] = function_calling_config
 
         # `include_server_side_tool_invocations` is required on Gemini 3+ when any built-in (server-side)
-        # tool is combined with function calling; pre-Gemini-3 models reject the field ('Tool call context
-        # circulation is not enabled'). ImageGenerationTool runs through `image_config` and is excluded.
+        # tool is combined with function calling; pre-Gemini-3 models and Gemini 3 image models reject the field
+        # ('Tool call context circulation is not enabled'). ImageGenerationTool runs through `image_config` and is
+        # excluded.
         # The field is a Gemini Developer API (ML Dev) only parameter: the google-genai SDK's Vertex
         # converter (`_ToolConfig_to_vertex`) raises `ValueError` when it is present, so skip it for
         # Google Cloud (Vertex) even on Gemini 3+ models.

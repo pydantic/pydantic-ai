@@ -1,0 +1,79 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-image:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "232"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: What is 2+2? Reply with just the number.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+          - IMAGE
+          thinkingConfig:
+            include_thoughts: true
+            thinking_level: HIGH
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=1148
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: |+
+                **Calculating the Simple Sum**
+
+                I've determined the answer to the mathematical query. It was a straightforward calculation. I had to focus on delivering just the numerical result as the user requested. Therefore, the answer is 4.
+
+
+              thought: true
+            - text: "4"
+              thoughtSignature: >-
+                EsYCCsMCAWkUfROeqUSUqISykNIHDuyKJOnBkvEtGsjtepGjpVpEEH/BRYwZTSVCItOGedOhxIwspFtX0EKMpjz4sUYebKQ4ylR0ZZ/v3EQw0712p+R5zRb89hDnzIe+P9jtsdRtwnk2bHv3tx9wi3aoGZ2FmJL+QmoGjyeUpxCtTm0HQFqtlpV3kW5g3e2F+YXeVUDC8WmFV1BZv/oRNEiWUIdhbdYMkpXuCnQcml9WVnuxaifDQoqWnHmaGfMSg1YXw6/4JH4kBruS3L7MINHvT4O8AVIGrzuTmusojnbkAAujPsIGpa6r+nzuCswmbhoLkMdcJf8J6HJE2WgmfGiX9nXznhsBLApPGXNa5sBjyPlR4CzMH1HEmE4dIOLqtL5GxPsykaeH7DGo8SOwFYW4FUKih9a9KONCrs2vIbQUV6xZKEON7RY=
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 14
+          candidatesTokenCount: 1
+          totalTokenCount: 84
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 14
+          thoughtsTokenCount: 69
+          serviceTier: standard
+        modelVersion: gemini-3.1-flash-lite-image
+        responseId: Gqy-aq-3O6Cfz7IPzrnl6AM
+  recorded_at: 2026-10-01T18:53:16.071984+00:00

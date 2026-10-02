@@ -1,0 +1,55 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flahs:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "116"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: hello
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 404
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=101
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        error:
+          code: 404
+          message: >-
+            models/gemini-3.6-flahs is not found for API version v1beta, or is not
+            supported for generateContent. Call ModelService.ListModels to see the list of available
+            models and their supported methods.
+          status: NOT_FOUND
+  recorded_at: 2026-10-01T19:56:03.720863+00:00
