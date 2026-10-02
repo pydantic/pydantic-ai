@@ -140,6 +140,16 @@ to [`session()`][pydantic_ai.agent.AgentRealtime.session] to retain finalized WA
 Retention affects history only. Live input and output remain raw PCM16; finalized retained audio is
 wrapped in a WAV container.
 
+Retained audio is bounded the same way as [retained images](#retaining-images). Pass
+`retain_audio_max_seconds=` to [`session()`][pydantic_ai.agent.AgentRealtime.session] to set how many
+seconds of audio the session keeps, counting both speakers and the turns still being spoken. It
+defaults to `1800` (30 minutes, about 86 MB at 24 kHz) and evicts the oldest retained audio when the
+budget is reached: that turn's `SpeechPart` keeps its transcript and its `audio` becomes `None`, so the
+history stays valid to [hand off](#handing-off-to-a-text-agent) or seed a session with. A single turn
+longer than the budget keeps only its most recent audio. Set it to `0` to retain none or `None` to
+remove the bound. Like the image settings, this bounds local history, not provider context: the
+provider still receives all of the audio.
+
 Input retention follows provider-reported boundaries rather than locally trimming speech. OpenAI,
 Azure OpenAI, and xAI normally retain microphone input between reported speech-end boundaries.
 Gemini does not report those boundaries, so it retains input between response completions. Either

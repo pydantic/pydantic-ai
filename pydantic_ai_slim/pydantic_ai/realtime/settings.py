@@ -28,6 +28,10 @@ does not report speech-end boundaries, so its user part contains everything sent
 response completed through the current response completion, including silence sent while the model
 is responding. Retention records the microphone stream only; it does not mix the model's output audio
 into the user's part unless that output is present in the microphone input itself.
+
+How much retained audio a session keeps is bounded by `retain_audio_max_seconds` on
+[`AgentRealtime.session`][pydantic_ai.agent.AgentRealtime.session]; the oldest is evicted first, keeping
+its transcript.
 """
 
 
