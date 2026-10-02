@@ -253,6 +253,24 @@ async def test_workspace_calls_from_workflow_code_are_activities_and_replay_disp
     assert provider.log == log
 
 
+async def test_workspace_runs_draw_their_run_id_in_histories_without_the_stable_id_patch(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Workspace agents drew a default `run_id` before every durable run did, so they keep drawing without the patch."""
+    provider.reset()
+
+    def unpatched(patch_id: str) -> bool:
+        return False
+
+    monkeypatch.setattr(workflow, 'patched', unpatched)
+    (generated, _, engine_id), history = await _execute(client, 'run_id')
+    assert generated.startswith(f'{engine_id.split(":")[1]}:')
+    monkeypatch.undo()
+
+    replay = await Replayer(workflows=[ScenarioWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    assert replay.replay_failure is None
+
+
 # --- The activity side on its own ---------------------------------------------------------------
 
 

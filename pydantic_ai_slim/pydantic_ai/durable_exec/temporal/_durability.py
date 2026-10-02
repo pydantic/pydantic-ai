@@ -497,11 +497,16 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         if not self.in_durable_context:
             return None
         # `workflow.uuid4()` draws from the workflow's random sequence. Histories recorded before every
-        # durable run got a stable default only drew here when the agent supplied workspaces, so those
-        # replay without the draw and keep the sequence (and the random run ID) they were recorded with.
-        # This matches the old condition when this capability sits directly in the agent's capabilities.
-        supplies_workspaces = self._agent is not None and self._agent.root_capability._has_get_workspace  # pyright: ignore[reportPrivateUsage]
-        if not supplies_workspaces and not workflow.patched(_STABLE_DEFAULT_RUN_ID_PATCH):
+        # durable run got a stable default only drew here when the root capability supplied workspaces
+        # and reached this capability directly (not through a wrapper), so the rest replay without the
+        # draw and keep the sequence (and the random run ID) they were recorded with.
+        root = self._agent.root_capability if self._agent is not None else None
+        drew_before = (
+            root is not None
+            and root._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+            and any(capability is self for capability in root.capabilities)
+        )
+        if not drew_before and not workflow.patched(_STABLE_DEFAULT_RUN_ID_PATCH):
             return None
         return f'{workflow.info().run_id}:{workflow.uuid4()}'
 
