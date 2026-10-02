@@ -27,11 +27,14 @@ the vocabulary it always has. They become public only once they are documented a
 from __future__ import annotations as _annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias
 
 from typing_extensions import TypeAliasType
 
 from ..messages import FinishReason
+
+if TYPE_CHECKING:
+    from .codec import RealtimeCodecEvent
 
 InputId = int
 """An input's position among every `send()` call made on a connection, as in `InputRejected.input_index`."""
@@ -92,7 +95,10 @@ class UserTurnEnded:
 
 @dataclass(frozen=True, kw_only=True)
 class UserTurnDiscarded:
-    """A spoken turn that started never joined the conversation: its audio was cleared or its connection lost."""
+    """A spoken turn gets no more audio: it was cleared, or its connection lost.
+
+    One that hadn't joined the conversation (`UserTurnEnded`) never will; one that had stays, as it was.
+    """
 
     turn_id: str
 
@@ -146,3 +152,6 @@ LIFECYCLE_EVENT_TYPES = (
     ResponseRequestRefused,
 )
 """The `LifecycleEvent` variants, for `isinstance` checks."""
+
+TaggedEvent: TypeAlias = 'tuple[RealtimeCodecEvent | LifecycleEvent, bool]'
+"""An event of a connection's `_tagged_frames()`, with whether it is stale."""
