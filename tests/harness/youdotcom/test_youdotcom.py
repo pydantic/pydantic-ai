@@ -154,7 +154,7 @@ def _finance(
 
 
 async def _tools_sent(
-    capability: AbstractCapability[None], *, native_web_search: bool
+    capability: AbstractCapability[object], *, native_web_search: bool
 ) -> tuple[list[str], list[AbstractNativeTool]]:
     """The function and native tools one request carries, on a model with or without native web search."""
     sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
@@ -811,11 +811,11 @@ class TestAgentSpec:
 
     async def test_web_search_tool_is_a_core_web_search_fallback(self) -> None:
         client = _FakeYouClient(search_response=_search(_web('https://a.dev', title='A', highlights=['alpha'])))
-        you = YouSearch[None](num_results=3, client=client)
+        you = YouSearch[object](num_results=3, client=client)
 
-        tools, _ = await _tools_sent(WebSearch[None](local=you.web_search_tool()), native_web_search=True)
+        tools, _ = await _tools_sent(WebSearch[object](local=you.web_search_tool()), native_web_search=True)
         assert tools == []
-        tools, _ = await _tools_sent(WebSearch[None](local=you.web_search_tool()), native_web_search=False)
+        tools, _ = await _tools_sent(WebSearch[object](local=you.web_search_tool()), native_web_search=False)
         assert tools == ['web_search']
 
         def search_once(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -824,7 +824,7 @@ class TestAgentSpec:
             return ModelResponse(parts=[TextPart('done')])
 
         model = FunctionModel(search_once, profile=ModelProfile(supported_native_tools=frozenset()))
-        result = await Agent(model, capabilities=[WebSearch[None](local=you.web_search_tool())]).run('Search.')
+        result = await Agent(model, capabilities=[WebSearch[object](local=you.web_search_tool())]).run('Search.')
         returns = [
             part
             for message in result.all_messages()
