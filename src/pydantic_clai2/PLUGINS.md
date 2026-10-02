@@ -381,8 +381,16 @@ accepts), lists the projects you can write to, and saves a new write token for
 the one you pick in `/keys`. The sign-in token is used only during setup. The flow
 lives in `pydantic_clai2.builtin_plugins.logfire_setup`.
 
+Agent runs and UI records nest under a `CLAI session` root whose
+`agent_session_id` is the saved conversation ID. `/clear` selects a new root;
+`/resume` reuses that conversation's root if this plugin instance already opened
+it. All roots end before the plugin flushes and shuts down. The email from
+`git config user.email`, when available, is a tag on each session root only.
+It is never inherited by child spans or logs, and is independent of the content
+capture settings.
+
 `ui_events` (default `false`) also records CLAI's UI interactions on the same
-instance, as spans and logs tagged `clai2-ui`: menus opened and how they closed,
+instance, as spans and logs in the `clai2 ui` scope, not a tag: menus opened and how they closed,
 slash commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
 submissions, steering, interrupts, completions, and session start, clear, and
 resume. Attributes carry names and listed choices, never prompt text, typed
@@ -2117,7 +2125,11 @@ again. Services with Dynamic Client Registration need none of this: add them as
 
 `host.conversation` is the retained history: `messages` is a snapshot,
 `await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
-model the next prompt will use. `host.status` is the footer's state:
+model the next prompt will use. `host.session_id` is the current saved conversation
+ID, following `/clear` and `/resume`. During a run it identifies that run's
+conversation, including a background fork. It is `None` for a host without session
+persistence; custom hosts can supply a `session_id` callback to read their current
+ID. `host.status` is the footer's state:
 `context_tokens` and `context_window` render as compact used/max, such as
 `128k/1m`; `None` renders as `?`. Only set `context_window` for a known capacity,
 not an assumed fallback. Set `context_alert` to paint the figure in the warning

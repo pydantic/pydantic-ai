@@ -5,6 +5,7 @@ import os
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from contextlib import nullcontext
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -42,6 +43,12 @@ from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
+_CURRENT_SESSION_ID: ContextVar[str | None] = ContextVar('clai2_session_id', default=None)
+
+
+def current_session_id() -> str | None:
+    """The saved conversation running in this task, including a background fork."""
+    return _CURRENT_SESSION_ID.get()
 
 
 def _supports_local_workspace() -> bool:
@@ -327,6 +334,7 @@ class Session(Generic[DepsT, OutputT]):
         submitted = [ModelRequest(parts=[UserPromptPart(content)])] if content is not None else []
         self._running = True
         self._accepting_steering = True
+        session_token = _CURRENT_SESSION_ID.set(self.summary.id)
         try:
             previous = self._messages
             run_id = str(uuid4())
@@ -416,6 +424,7 @@ class Session(Generic[DepsT, OutputT]):
                         await self._save_turn(outcome='failed')
                     raise
         finally:
+            _CURRENT_SESSION_ID.reset(session_token)
             self._accepting_steering = False
             self._run_context = None
             self._pending_steering.clear()

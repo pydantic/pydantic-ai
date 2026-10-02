@@ -443,12 +443,12 @@ async def test_ui_events_are_off_by_default(recorder: Recorder) -> None:
     assert messages(recorder) == []
 
 
-async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Recorder) -> None:
+@pytest.mark.parametrize('model', [Settings().model, None])
+async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Recorder, model: str | None) -> None:
     plugin = load_logfire(make_host(ui_events=True))
     try:
         for event in (
-            SessionStart(agent=Agent(TestModel()), settings=Settings()),
-            SessionStart(agent=Agent(TestModel()), settings=Settings(model=None)),
+            SessionStart(agent=Agent(TestModel()), settings=Settings(model=model)),
             TurnEnd(text='a private prompt', outcome='cancelled'),
         ):
             await plugin.dispatch(event)
@@ -459,16 +459,15 @@ async def test_ui_events_follow_the_plugin_and_keep_setting_names(recorder: Reco
     telemetry.record('after the plugin unloaded')
     assert messages(recorder) == [
         'session started',
-        'session started',
         'turn cancelled',
         'setting sessions.naming changed',
         'not a UI event',
+        'CLAI session',
     ]
-    started, default, _, changed, other = recorder.spans()
+    started, _, changed, other, _ = recorder.spans()
     # The exemption covers only UI records: another span's `setting` is scrubbed as usual.
     assert (other.attributes or {})['setting'] == "[Scrubbed due to 'password']"
-    assert (started.attributes or {})['model'] == Settings().model
-    assert (default.attributes or {})['model'] == 'agent default'
+    assert (started.attributes or {})['model'] == (model or 'agent default')
     # Names are exempt from scrubbing; any other attribute that looks like a secret is still scrubbed.
     assert (changed.attributes or {})['value'] == "[Scrubbed due to 'password']"
     assert 'a private prompt' not in json.dumps([dict(span.attributes or {}) for span in recorder.spans()])

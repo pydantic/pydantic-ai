@@ -1671,6 +1671,16 @@ terminal console output is disabled so it does not interfere with the editor.
 Standard SDK configuration, including explicitly configured OTLP exporters, still
 applies; disable the plugin to stop its instrumentation altogether.
 
+Agent runs and recorded UI interactions nest under a `CLAI session` root span.
+Its `agent_session_id` attribute is the saved conversation ID shown by `/session`.
+`/clear` selects a new root; `/resume` returns to that conversation's root if it
+was already opened by this plugin instance. Unloading the plugin ends its roots;
+reloading starts new traces with the same saved conversation IDs.
+
+The root span's only identity tag is the email from `git config user.email`.
+It is not copied onto child spans or logs. If Git or the email is unavailable,
+the tag is omitted. UI records use the `clai2 ui` instrumentation scope, not a tag.
+
 Prompts, responses, tool arguments/results, and binary image attachments are
 included by default, including retained history used by later turns. This can
 send source code, file contents, and screenshots to the configured telemetry
@@ -1700,8 +1710,8 @@ scrubbing remains enabled.
 Two more options choose where telemetry goes and what it covers. `token` names a
 `/keys` entry holding a Logfire write token, which then takes the place of
 `LOGFIRE_TOKEN` and the credential file; a missing key stops export with a warning
-rather than falling back. `ui_events` (default `false`) adds spans and logs, tagged
-`clai2-ui`, for UI interactions: menus, slash commands, `/set`, plugin actions,
+rather than falling back. `ui_events` (default `false`) adds spans and logs in the
+`clai2 ui` scope for UI interactions: menus, slash commands, `/set`, plugin actions,
 `/keys`, prompt submissions, steering, interrupts, completions, and session start,
 clear, and resume. They record names and listed choices, never prompt text, typed
 values, or secrets.

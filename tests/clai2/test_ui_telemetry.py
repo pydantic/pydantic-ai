@@ -148,7 +148,11 @@ async def test_a_command_its_menu_and_the_fields_it_changes_nest(exporter: InMem
     assert all(span.parent is not None for span in (color, note, opened))
     assert color.parent == note.parent == opened.context
     assert opened.parent == command.context
-    assert attributes(command)['logfire.tags'] == (telemetry.TAG,)
+    assert all(
+        span.instrumentation_scope and span.instrumentation_scope.name == 'clai2 ui'
+        for span in exporter.get_finished_spans()
+    )
+    assert all('logfire.tags' not in attributes(span) for span in exporter.get_finished_spans())
     assert 'my private note' not in json.dumps([_own(span) for span in exporter.get_finished_spans()])
 
 

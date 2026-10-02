@@ -56,7 +56,7 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.runtime._session import Session, StockAgent
+from pydantic_clai2.runtime._session import Session, StockAgent, current_session_id
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.reloading import reload_clai
@@ -527,6 +527,7 @@ def create_shell(
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,
+        session_id=lambda: current_session_id() or session.summary.id,
         status=status,
         enabled=load_plugins,
     )
