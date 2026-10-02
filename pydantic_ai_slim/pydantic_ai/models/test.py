@@ -543,10 +543,7 @@ class _JsonSchemaTestData:
             add_prop_key = 'additionalProperty'
             while add_prop_key in data:
                 add_prop_key += '_'
-            if addition_props is True:
-                data[add_prop_key] = self._char()
-            else:
-                data[add_prop_key] = self._gen_any(addition_props)
+            data[add_prop_key] = self._gen_any(addition_props)
 
         return data
 

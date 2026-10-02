@@ -722,7 +722,7 @@ def test_prefix_items_max_items_tool_args() -> None:
 
 
 def test_boolean_schema_tool_args() -> None:
-    """A boolean subschema, which constrains nothing, is generated like a schema without a `type`."""
+    """A `true` subschema, which constrains nothing, is generated like a schema without a `type`."""
     calls: list[dict[str, Any]] = []
 
     def any_tool(**kwargs: Any) -> str:
