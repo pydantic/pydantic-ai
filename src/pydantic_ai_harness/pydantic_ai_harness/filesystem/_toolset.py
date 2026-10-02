@@ -389,9 +389,18 @@ def _sniff_media_type(data: bytes) -> str | None:
     return None
 
 
-def _hex_preview(data: bytes) -> str:
-    """The first `_HEX_PREVIEW_BYTES` of `data` as offset-prefixed hex rows of 16 bytes."""
-    head = data[:_HEX_PREVIEW_BYTES]
+_HEX_ROW_CHARS = 58
+"""Characters in one full hex row: an 8-digit offset, two spaces, 16 bytes, and the newline."""
+
+
+def _hex_preview(data: bytes, max_chars: int | None = None) -> str:
+    """Up to the first `_HEX_PREVIEW_BYTES` of `data` as offset-prefixed hex rows of 16 bytes.
+
+    With `max_chars`, only as many rows as fit are shown; the notice for the rest is not counted,
+    and callers reserve `_NOTICE_CHARS` for it.
+    """
+    limit = _HEX_PREVIEW_BYTES if max_chars is None else min(_HEX_PREVIEW_BYTES, max_chars // _HEX_ROW_CHARS * 16)
+    head = data[:limit]
     rows = [f'{start:08x}  {head[start : start + 16].hex(" ")}\n' for start in range(0, len(head), 16)]
     more = f'... ({len(data) - len(head)} more bytes)\n' if len(data) > len(head) else ''
     return ''.join(rows) + more
@@ -962,15 +971,14 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str | list[str | BinaryContent]:
         """An image or PDF as file content when it fits `_MAX_MEDIA_BYTES`, anything else described in text."""
         hash_suffix = f' | hash:{content_hash}' if self._content_hashes else ''
-        if media_type is not None and len(raw) <= _MAX_MEDIA_BYTES:
-            header = f'[{self._path_label(path)} | {media_type} | {len(raw)} bytes{hash_suffix}]\n'
-            return [header, BinaryContent(data=raw, media_type=media_type)]
+        shown_type = media_type or mimetypes.guess_type(path)[0] or 'application/octet-stream'
+        header = f'[{self._path_label(path)} | {shown_type} | {len(raw)} bytes{hash_suffix}]\n'
         if media_type is None:
-            media_type = mimetypes.guess_type(path)[0] or 'application/octet-stream'
-            note = 'Binary file; the first bytes in hex:\n' + _hex_preview(raw)
-        else:
-            note = f'Too large to view: the limit is {_MAX_MEDIA_BYTES} bytes.\n'
-        return f'[{self._path_label(path)} | {media_type} | {len(raw)} bytes{hash_suffix}]\n{note}'
+            intro = 'Binary file; the first bytes in hex:\n'
+            return header + intro + _hex_preview(raw, self._body_budget(header + intro))
+        if len(raw) <= _MAX_MEDIA_BYTES:
+            return [header, BinaryContent(data=raw, media_type=media_type)]
+        return f'{header}Too large to view: the limit is {_MAX_MEDIA_BYTES} bytes.\n'
 
     def _path_label(self, path: str) -> str:
         if self._max_read_chars is not None and len(path) > self._max_read_chars // 4:

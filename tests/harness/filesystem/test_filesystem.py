@@ -751,6 +751,28 @@ class TestReadFile:
             '... (36 more bytes)\n'
         )
 
+    async def test_read_binary_file_preview_fits_max_read_chars(self, tmp_path: Path) -> None:
+        (tmp_path / 'data.zip').write_bytes(bytes(range(100)))
+        toolset = FileSystemToolset[None](
+            allowed_patterns=[],
+            denied_patterns=[],
+            max_read_lines=2000,
+            max_read_chars=400,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+            content_hashes=False,
+        )
+        result = await toolset.read_file('data.zip', workspace=LocalWorkspaceBackend(tmp_path))
+        # 400 characters, less the header, the intro and the reserved notice, leave room for two rows.
+        assert result == (
+            '[data.zip | application/zip | 100 bytes]\n'
+            'Binary file; the first bytes in hex:\n'
+            '00000000  00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f\n'
+            '00000010  10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f\n'
+            '... (68 more bytes)\n'
+        )
+
     @pytest.mark.parametrize(
         ('data', 'media_type'),
         [
