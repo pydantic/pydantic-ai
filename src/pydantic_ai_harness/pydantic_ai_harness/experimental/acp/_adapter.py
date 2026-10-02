@@ -637,14 +637,14 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
         turn's total token usage (summed across every run pass, one per approval pause). A turn
         ended by a usage limit answers with the limit's `max_tokens`/`max_turn_requests` stop
         reason and commits the messages exchanged before the limit, so the next turn knows which
-        tools already ran; its response omits usage, which the interrupted pass did not report.
+        tools already ran. Its usage covers the completed passes and every response the interrupted
+        pass committed, so it matches the work the history now records.
         """
         conn = self._conn
         assert conn is not None
         history = state.history
         config = state.config
         usage = RunUsage()
-        limited = False
         stop_reason: schema.StopReason = 'end_turn'
         deferred_results: DeferredToolResults | None = None
         run_input: list[UserContent] | None = user_content
@@ -719,12 +719,15 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
             # ACP models a turn ending at a limit as a normal stop reason, not a request error.
             # Unlike a cancellation, the turn is committed up to the limit: its tools may already
             # have edited files, and rolling the history back would leave the next turn unaware
-            # of those changes. The interrupted pass reported no usage, so none is claimed.
+            # of those changes. The interrupted pass has no run result, so its usage is summed from
+            # the responses it got before the limit.
             await self._fail_outstanding_tool_calls(turn, record=True)
             if captured:
+                for message in captured[len(history) :]:
+                    if isinstance(message, ModelResponse):
+                        usage.incr(message.usage)
                 history = _committable_history(captured, turn.started)
             stop_reason = _usage_limit_stop_reason(exc)
-            limited = True
         except Exception:
             # The turn is failing with the error the client receives as the prompt's response;
             # close out its announced tool calls so they are not left rendering as running.
@@ -748,7 +751,7 @@ class PydanticAIACPAgent(acp.Agent, Generic[AgentDepsT, OutputDataT]):
                     'persisting ACP session %s was cancelled; durable state is now behind', state.session_id
                 )
                 stop_reason = 'cancelled'
-        return schema.PromptResponse(stop_reason=stop_reason, usage=None if limited else _to_acp_usage(usage))
+        return schema.PromptResponse(stop_reason=stop_reason, usage=_to_acp_usage(usage))
 
     async def _fail_outstanding_tool_calls(self, turn: _TurnState, *, record: bool = False) -> None:
         """Drive every announced-but-unfinished tool call to a terminal `failed` status.

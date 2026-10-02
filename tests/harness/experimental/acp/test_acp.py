@@ -779,7 +779,9 @@ class TestStopReason:
         response = await adapter.prompt(prompt=[acp.text_block('go')], session_id=session_id, message_id='m1')
 
         assert response.stop_reason == 'max_turn_requests'
-        assert response.usage is None
+        # Both requests the turn made, and committed, are counted.
+        assert response.usage is not None
+        assert response.usage.input_tokens > 0
         assert request_count == 2
         # The tools that ran before the limit stay in the history, so the next turn knows about them.
         history = adapter._sessions[session_id].history  # pyright: ignore[reportPrivateUsage]
