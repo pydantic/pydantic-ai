@@ -18,16 +18,12 @@ import anyio
 from anyio.to_thread import run_sync
 from opentelemetry import context as otel_context
 
+from pydantic_ai._utils import running_on_asyncio
+
 from ._otel_emit import build_parent_context, emit_otel_events
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
-
-# Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
-try:
-    import sniffio as _sniffio
-except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
-    _sniffio = None
 
 if TYPE_CHECKING:
     # Imported only for type annotations; `online` imports from this module at runtime.
@@ -139,26 +135,6 @@ _background_threads: set[threading.Thread] = set()
 def _remove_background_task(task: asyncio.Task[Any]) -> None:
     with _background_lock:
         _background_tasks.discard(task)
-
-
-def running_on_asyncio() -> bool:
-    """Whether the caller runs on asyncio rather than Trio.
-
-    Inspired by AnyIO's private `current_async_library`. With `sniffio` installed, ask it: Trio records itself
-    there, so the answer holds even for Trio guest mode on an asyncio loop. Without it, Trio cannot be running,
-    because Trio depends on `sniffio`, so a running asyncio loop means asyncio. If Trio ever drops `sniffio`,
-    only guest mode would be misread, as AnyIO would misread it too.
-    """
-    if _sniffio is None:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return False
-        return True
-    try:
-        return _sniffio.current_async_library() == 'asyncio'
-    except _sniffio.AsyncLibraryNotFoundError:
-        return False
 
 
 def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:

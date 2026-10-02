@@ -73,6 +73,7 @@ import anyio.to_thread
 import httpx
 from websockets.exceptions import InvalidHandshake, InvalidMessage
 
+from pydantic_ai._utils import running_on_asyncio
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -88,13 +89,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness._workspace_provider import (
-    absolute_path,
-    command_argv,
-    running_on_asyncio,
-    safe_credential_reason,
-    stop_shielded,
-)
+from pydantic_ai_harness._workspace_provider import absolute_path, command_argv, safe_credential_reason, stop_shielded
 
 try:
     from sprites import AsyncCmd, AsyncSprite, AsyncSpritesClient

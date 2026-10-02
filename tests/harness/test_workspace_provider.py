@@ -1,12 +1,11 @@
 import asyncio
+import importlib.util
+import os
 import subprocess
 import sys
 
 import anyio
-import anyio.from_thread
-import anyio.to_thread
 import pytest
-import trio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
@@ -17,7 +16,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WrapperWorkspace,
 )
-from pydantic_ai_harness import HarnessDeprecationWarning, _workspace_provider
+from pydantic_ai_harness import HarnessDeprecationWarning
 from pydantic_ai_harness._warn import warn_argument_renamed
 from pydantic_ai_harness._workspace import innermost_backend
 from pydantic_ai_harness._workspace_provider import (
@@ -26,7 +25,6 @@ from pydantic_ai_harness._workspace_provider import (
     check_working_dir,
     command_argv,
     command_deadline,
-    running_on_asyncio,
     safe_credential_reason,
     stop_shielded,
 )
@@ -139,45 +137,15 @@ async def test_stop_cleanup_finishes_before_stop_shielded_returns() -> None:
     assert events == ['stop cleanup', 'returned']
 
 
-def test_trio_guest_mode_is_not_asyncio() -> None:
-    # Trio guest mode runs Trio tasks on a thread whose asyncio loop is running.
-    results: list[bool] = []
-
-    async def guest() -> None:
-        results.append(running_on_asyncio())
-
-    async def host() -> None:
-        done = asyncio.Event()
-        trio.lowlevel.start_guest_run(
-            guest,
-            run_sync_soon_threadsafe=asyncio.get_running_loop().call_soon_threadsafe,
-            done_callback=lambda _: done.set(),
-        )
-        await done.wait()
-
-    asyncio.run(host())
-    assert results == [False]
-
-
-async def test_loop_callback_from_a_thread_is_asyncio() -> None:
-    # `anyio.from_thread.run_sync` runs on the loop but outside any asyncio task.
-    assert await anyio.to_thread.run_sync(anyio.from_thread.run_sync, running_on_asyncio)
-
-
-async def test_without_sniffio_a_running_asyncio_loop_decides(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_workspace_provider, '_sniffio', None)
-    assert running_on_asyncio()
-    assert not await anyio.to_thread.run_sync(running_on_asyncio)
-
-
 def test_imports_without_sniffio() -> None:
     # Nothing the harness declares installs `sniffio`, so a clean install has none.
-    code = (
-        "import sys; sys.modules['sniffio'] = None\n"
-        'import pydantic_ai_harness.bubblewrap_sandbox, pydantic_ai_harness.ssh_workspace\n'
-        'import pydantic_ai_harness.e2b_sandbox, pydantic_ai_harness.modal_sandbox, pydantic_ai_harness.sprites_sandbox\n'
-    )
-    subprocess.run([sys.executable, '-c', code], check=True)
+    modules = ['pydantic_ai_harness.bubblewrap_sandbox', 'pydantic_ai_harness.ssh_workspace']
+    modules += [
+        f'pydantic_ai_harness.{sdk}_sandbox' for sdk in ('e2b', 'modal', 'sprites') if importlib.util.find_spec(sdk)
+    ]
+    code = f"import sys; sys.modules['sniffio'] = None\nimport {', '.join(modules)}\n"
+    env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
+    subprocess.run([sys.executable, '-c', code], check=True, env=env)
 
 
 def test_absolute_path_passes_none_and_absolute_paths_through() -> None:

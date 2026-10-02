@@ -16,7 +16,10 @@ from types import ModuleType
 from typing import Any
 
 import anyio
+import anyio.from_thread
+import anyio.to_thread
 import pytest
+import trio
 
 import pydantic_ai._utils as utils_module
 from pydantic_ai import Agent, UserError
@@ -33,6 +36,7 @@ from pydantic_ai._utils import (
     merge_json_schema_defs,
     replace_no_init,
     run_in_executor,
+    running_on_asyncio,
     strip_markdown_fences,
     using_thread_executor,
 )
@@ -1213,3 +1217,34 @@ def test_replace_no_init() -> None:
     with pytest.raises(TypeError, match='its `__copy__` does not return a new instance'):
         replace_no_init(self_copying, name='b')
     assert self_copying.name == 'a', 'the original must not be mutated in place'
+
+
+def test_trio_guest_mode_is_not_asyncio() -> None:
+    # Trio guest mode runs Trio tasks on a thread whose asyncio loop is running.
+    results: list[bool] = []
+
+    async def guest() -> None:
+        results.append(running_on_asyncio())
+
+    async def host() -> None:
+        done = asyncio.Event()
+        trio.lowlevel.start_guest_run(
+            guest,
+            run_sync_soon_threadsafe=asyncio.get_running_loop().call_soon_threadsafe,
+            done_callback=lambda _: done.set(),
+        )
+        await done.wait()
+
+    asyncio.run(host())
+    assert results == [False]
+
+
+async def test_loop_callback_from_a_thread_is_asyncio():
+    # `anyio.from_thread.run_sync` runs on the loop but outside any asyncio task.
+    assert await anyio.to_thread.run_sync(anyio.from_thread.run_sync, running_on_asyncio)
+
+
+async def test_without_sniffio_a_running_asyncio_loop_decides(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(utils_module, '_sniffio', None)
+    assert running_on_asyncio()
+    assert not await anyio.to_thread.run_sync(running_on_asyncio)

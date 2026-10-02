@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 import anyio
 import anyio.lowlevel
 
+from pydantic_ai._utils import running_on_asyncio
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import (
     CommandResult,
@@ -48,13 +49,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
-from pydantic_ai_harness._workspace_provider import (
-    absolute_path,
-    command_argv,
-    running_on_asyncio,
-    safe_credential_reason,
-    stop_shielded,
-)
+from pydantic_ai_harness._workspace_provider import absolute_path, command_argv, safe_credential_reason, stop_shielded
 
 if TYPE_CHECKING:
     from pydantic_ai.workspaces import WorkspaceCommand
