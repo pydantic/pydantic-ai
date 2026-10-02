@@ -21,6 +21,23 @@ async def test_newline_does_not_submit_until_plain_enter(newline: str, enter: st
         assert live.buffer.text == ''
 
 
+@pytest.mark.parametrize('modifier', [65, 129])
+async def test_kitty_navigation_with_lock_keys(modifier: int) -> None:
+    async with editor() as (live, pipe, _):
+        pipe.send_text(f'ab\x1b[1;{modifier}DX')
+        live.keys.read()
+        assert live.buffer.text == 'aXb'
+
+
+async def test_kitty_control_shortcuts_on_non_latin_layouts() -> None:
+    async with editor() as (live, pipe, _):
+        pipe.send_text('discard\x1b[1089::99;5u')
+        live.keys.read()
+        assert live.buffer.text == ''
+        with pytest.raises(KeyboardInterrupt):
+            await live.read()
+
+
 async def test_kitty_shortcuts_remain_usable() -> None:
     async with editor() as (live, pipe, _):
         pipe.send_text('discard\x1b[99;5u')
@@ -40,7 +57,7 @@ async def test_kitty_shortcuts_remain_usable() -> None:
 
 @pytest.mark.parametrize('fail', [False, True])
 async def test_keyboard_protocols_are_released_for_menus_and_on_exit(fail: bool) -> None:
-    enable = '\x1b[>4;1m\x1b[>1u'
+    enable = '\x1b[>4;1m\x1b[>5u'
     disable = '\x1b[<u\x1b[>4;0m'
     output = io.StringIO()
     with pytest.RaisesGroup(RuntimeError):

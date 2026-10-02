@@ -123,6 +123,8 @@ def test_modified_alt_backspace_tokens_and_literal_paste(sequence: str) -> None:
         (13, 1, 'enter'),
         (13, 2, 'shift-enter'),
         (13, 3, 'alt-enter'),
+        (13, 5, 'enter'),
+        (13, 6, 'enter'),
         (13, 66, 'shift-enter'),
         (13, 130, 'shift-enter'),
         (9, 1, 'tab'),
@@ -130,7 +132,9 @@ def test_modified_alt_backspace_tokens_and_literal_paste(sequence: str) -> None:
         (27, 1, 'escape'),
         (127, 1, 'backspace'),
         (127, 2, 'backspace'),
+        (127, 5, 'backspace'),
         (32, 2, ' '),
+        (91, 5, 'escape'),
         (99, 5, 'ctrl-c'),
         (99, 6, 'ctrl-shift-c'),
         (100, 5, 'ctrl-d'),
@@ -177,7 +181,70 @@ async def test_modified_reporting_preserves_editor_keys(
             keys.stop()
 
 
-@pytest.mark.parametrize('sequence', ['\x1b[13;0u', '\x1b[99;9u', '\x1b[999u', '\x1b[97u', '\x1b[99;5:3u'])
+@pytest.mark.parametrize('split', [False, True])
+@pytest.mark.parametrize('lock', [64, 128])
+@pytest.mark.parametrize(
+    ('code', 'modifier', 'suffix', 'expected'),
+    [
+        (1, 1, 'A', 'up'),
+        (1, 1, 'B', 'down'),
+        (1, 1, 'C', 'right'),
+        (1, 1, 'D', 'left'),
+        (1, 1, 'H', 'home'),
+        (1, 1, 'F', 'end'),
+        (2, 1, '~', 'insert'),
+        (3, 1, '~', 'delete'),
+        (5, 1, '~', 'pageup'),
+        (6, 1, '~', 'pagedown'),
+        (1, 5, 'D', 'ctrl-left'),
+        (1, 3, 'C', 'alt-right'),
+    ],
+)
+async def test_navigation_reports_with_lock_modifiers(
+    code: int, modifier: int, suffix: str, expected: str, lock: int, split: bool
+) -> None:
+    events: list[str] = []
+    sequence = f'\x1b[{code};{modifier + lock}{suffix}'
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: events.append(key), eof=lambda: None)
+        try:
+            for chunk in sequence if split else [sequence]:
+                pipe.send_text(chunk)
+                keys.read()
+            assert events == [expected]
+        finally:
+            keys.stop()
+
+
+@pytest.mark.parametrize('split', [False, True])
+@pytest.mark.parametrize(
+    ('sequence', 'expected'),
+    [
+        ('\x1b[1089::99;5u', 'ctrl-c'),
+        ('\x1b[1089:1057:99;69u', 'ctrl-c'),
+        ('\x1b[1089:1057:99;6u', 'ctrl-shift-c'),
+        ('\x1b[1074::100;5u', 'ctrl-d'),
+        ('\x1b[106::106;5u', 'ctrl-j'),
+        ('\x1b[99:67;6u', 'ctrl-shift-c'),
+    ],
+)
+async def test_alternate_key_reports_preserve_control_shortcuts(sequence: str, expected: str, split: bool) -> None:
+    events: list[str] = []
+    with create_pipe_input() as pipe:
+        keys = PromptKeys(source=pipe, feed=lambda key, data: events.append(key), eof=lambda: None)
+        try:
+            for chunk in sequence if split else [sequence]:
+                pipe.send_text(chunk)
+                keys.read()
+            assert events == [expected]
+        finally:
+            keys.stop()
+
+
+@pytest.mark.parametrize(
+    'sequence',
+    ['\x1b[13;0u', '\x1b[99;9u', '\x1b[999u', '\x1b[97u', '\x1b[99;5:3u', '\x1b[1;73D', '\x1b[999;65Z'],
+)
 async def test_unrequested_or_invalid_reports_are_not_editor_keys(sequence: str) -> None:
     events: list[str] = []
     with create_pipe_input() as pipe:

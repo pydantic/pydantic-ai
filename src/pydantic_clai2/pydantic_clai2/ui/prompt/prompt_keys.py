@@ -6,10 +6,12 @@ from collections.abc import Callable
 from contextlib import ExitStack
 
 from prompt_toolkit.input import Input
+from prompt_toolkit.input.ansi_escape_sequences import ANSI_SEQUENCES
 from prompt_toolkit.key_binding import KeyPress
 from prompt_toolkit.keys import Keys
 
-_MODIFIED_KEY = re.compile(r'\x1b\[(?:(\d+)(?:;(\d+))?u|27;(\d+);(\d+)~)')
+_MODIFIED_KEY = re.compile(r'\x1b\[(?:(\d+)(?::\d*)?(?::(\d+))?(?:;(\d+))?u|27;(\d+);(\d+)~)')
+_CSI_KEY = re.compile(r'\x1b\[(\d+);(\d+)([A-Z~])')
 _NAMED_KEYS = {
     8: 'backspace',
     9: 'tab',
@@ -32,17 +34,44 @@ _NAMED_KEYS = {
 }
 
 
+def _key_name(key: Keys | str) -> str:
+    name = key.value if isinstance(key, Keys) else key
+    name = {
+        'c-m': 'enter',
+        'c-i': 'tab',
+        'c-h': 'backspace',
+        's-tab': 'backtab',
+        '<bracketed-paste>': 'paste',
+    }.get(name, name)
+    return 'ctrl-' + name[2:] if name.startswith('c-') else name
+
+
 def _modified_key(sequence: str) -> str | None:
     """Normalize the CSI-u and xterm reports requested by the editor."""
+    if match := _CSI_KEY.fullmatch(sequence):
+        code, modifier, suffix = match.groups()
+        modifiers = (int(modifier) - 1) & ~192
+        if modifiers & ~7:
+            return None
+        params = f'{code};{modifiers + 1}' if modifiers else code
+        if params == '1' and suffix != '~':
+            params = ''
+        key = ANSI_SEQUENCES.get(f'\x1b[{params}{suffix}')
+        if isinstance(key, tuple):
+            return 'alt-' + _key_name(key[-1])
+        return _key_name(key) if key is not None else None
     match = _MODIFIED_KEY.fullmatch(sequence)
     if match is None:
         return None
-    code, modifier, xterm_modifier, xterm_code = match.groups()
+    code, base_code, modifier, xterm_modifier, xterm_code = match.groups()
     codepoint = int(code or xterm_code)
     # Ignore Caps Lock and Num Lock, but never drop an unsupported modifier.
     modifiers = (int(modifier or xterm_modifier or '1') - 1) & ~192
     if modifiers & ~7:
         return None
+    if modifiers & 4 and codepoint > 127 and base_code:
+        # Kitty supplies the layout-independent identity for non-Latin Ctrl keys.
+        codepoint = int(base_code)
     name = _NAMED_KEYS.get(codepoint)
     if name is None:
         if not 32 <= codepoint <= 126 or not modifiers:
@@ -54,9 +83,13 @@ def _modified_key(sequence: str) -> str | None:
     return {
         'shift-tab': 'backtab',
         'shift-backspace': 'backspace',
+        'ctrl-backspace': 'backspace',
         'ctrl-h': 'backspace',
         'ctrl-i': 'tab',
         'ctrl-m': 'enter',
+        'ctrl-[': 'escape',
+        'ctrl-enter': 'enter',
+        'ctrl-shift-enter': 'enter',
     }.get(prefix + name, prefix + name)
 
 
@@ -154,16 +187,7 @@ class PromptKeys:
             self._escape = False
             self._csi = '\x1b['
             return
-        name = key.key.value if isinstance(key.key, Keys) else key.key
-        name = {
-            'c-m': 'enter',
-            'c-i': 'tab',
-            'c-h': 'backspace',
-            's-tab': 'backtab',
-            '<bracketed-paste>': 'paste',
-        }.get(name, name)
-        if name.startswith('c-'):
-            name = 'ctrl-' + name[2:]
+        name = _key_name(key.key)
         if self._escape:
             name = 'alt-' + name
             self._escape = False

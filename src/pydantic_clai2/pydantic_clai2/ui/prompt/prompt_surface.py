@@ -135,10 +135,11 @@ class PromptSurface(io.StringIO):
             # Jumping to the region bottom instead left a blank band under short
             # history, visible after startup and whenever a menu hands the screen back.
             up = f'\x1b[{len(rows)}A' if rows else ''
-            # Keep xterm's legacy Ctrl keys; Kitty needs its own disambiguation mode.
+            # Keep xterm's legacy Ctrl keys; Kitty needs disambiguation and alternate
+            # key identities to preserve Ctrl shortcuts on non-Latin layouts.
             parts.extend(
                 [
-                    '\x1b[?25l\x1b[?2004h\x1b[>4;1m\x1b[>1u',
+                    '\x1b[?25l\x1b[?2004h\x1b[>4;1m\x1b[>5u',
                     '\r\n' * len(rows),
                     up,
                     '\x1b7',

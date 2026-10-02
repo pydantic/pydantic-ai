@@ -35,7 +35,7 @@ class Screen:
 def test_modified_key_reporting_is_scoped_to_editor_ownership() -> None:
     output = io.StringIO()
     surface = PromptSurface(output=output, size=lambda: (80, 24))
-    enable = '\x1b[>4;1m\x1b[>1u'
+    enable = '\x1b[>4;1m\x1b[>5u'
     disable = '\x1b[<u\x1b[>4;0m'
     for activation in range(1, 3):
         surface.paint(ROWS)
