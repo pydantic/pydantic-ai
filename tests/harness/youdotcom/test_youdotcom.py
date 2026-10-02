@@ -19,7 +19,7 @@ from youdotcom.errors import YouError
 
 from pydantic_ai import Agent
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import WebSearch
+from pydantic_ai.capabilities import AbstractCapability, WebSearch
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -154,7 +154,7 @@ def _finance(
 
 
 async def _tools_sent(
-    capability: YouSearch[None] | WebSearch[None], *, native_web_search: bool
+    capability: AbstractCapability[None], *, native_web_search: bool
 ) -> tuple[list[str], list[AbstractNativeTool]]:
     """The function and native tools one request carries, on a model with or without native web search."""
     sent: list[tuple[list[str], list[AbstractNativeTool]]] = []
@@ -813,9 +813,9 @@ class TestAgentSpec:
         client = _FakeYouClient(search_response=_search(_web('https://a.dev', title='A', highlights=['alpha'])))
         you = YouSearch[None](num_results=3, client=client)
 
-        tools, _ = await _tools_sent(WebSearch(local=you.web_search_tool()), native_web_search=True)
+        tools, _ = await _tools_sent(WebSearch[None](local=you.web_search_tool()), native_web_search=True)
         assert tools == []
-        tools, _ = await _tools_sent(WebSearch(local=you.web_search_tool()), native_web_search=False)
+        tools, _ = await _tools_sent(WebSearch[None](local=you.web_search_tool()), native_web_search=False)
         assert tools == ['web_search']
 
         def search_once(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
@@ -824,15 +824,16 @@ class TestAgentSpec:
             return ModelResponse(parts=[TextPart('done')])
 
         model = FunctionModel(search_once, profile=ModelProfile(supported_native_tools=frozenset()))
-        result = await Agent(model, capabilities=[WebSearch(local=you.web_search_tool())]).run('Search.')
+        result = await Agent(model, capabilities=[WebSearch[None](local=you.web_search_tool())]).run('Search.')
         returns = [
-            part.content
+            part
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
             if isinstance(part, ToolReturnPart)
         ]
-        assert len(returns) == 1 and 'https://a.dev' in str(returns[0])
+        assert len(returns) == 1
+        assert returns[0].metadata['sources'] == [{'url': 'https://a.dev', 'title': 'A'}]
         assert client.search_calls[0]['count'] == 3
 
     def test_search_from_spec_builds_capability(self) -> None:
