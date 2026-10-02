@@ -1653,18 +1653,24 @@ class _PhasedWebSocket(FakeWebSocket):
         super().__init__(handshake)
         self._phases = [[self._normalize_frame(frame) for frame in phase] for phase in phases]
         self._gate = asyncio.Event()
+        self._handshake_sent = 0
+
+    async def recv(self) -> Any:
+        frame = await super().recv()
+        # What the session sent by the time it read the last handshake frame is the handshake's.
+        self._handshake_sent = len(self.sent)
+        return frame
 
     def advance(self) -> None:
         self._gate.set()
 
     async def __aiter__(self) -> AsyncIterator[Any]:
-        handshake_sent = len(self.sent)
         for index, phase in enumerate(self._phases):
             if index:
                 await self._gate.wait()
                 self._gate.clear()
             else:
-                while len(self.sent) == handshake_sent:
+                while len(self.sent) == self._handshake_sent:
                     await asyncio.sleep(0)
             for frame in phase:
                 yield frame

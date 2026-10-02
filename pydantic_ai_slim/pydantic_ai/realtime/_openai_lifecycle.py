@@ -121,10 +121,10 @@ class OpenAILifecycle:
         self._untranscribed: set[str] = set()
         """Spoken turns that joined the conversation and are waiting for their transcript."""
         self._committed: set[str] = set()
-        """Spoken turns already committed, so a repeated commit doesn't make a second turn of one."""
-        self._sent_before_commit: list[InputId] = []
-        """The inputs we sent ahead of the audio commit we sent last, not acknowledged yet then: the provider
-        handles frames in order, so they join the conversation before the turn the commit makes."""
+        """Spoken turns already committed, so a repeated commit doesn't make a second turn of one, or cleared."""
+        self._sent_before_commits: deque[list[InputId]] = deque()
+        """For each audio commit of ours not acknowledged yet, the inputs we sent ahead of it that weren't either:
+        the provider handles frames in order, so they join the conversation before the turn the commit makes."""
 
     # --- what the connection sends ----------------------------------------------------------------
 
@@ -137,11 +137,14 @@ class OpenAILifecycle:
         self._messages.extend([None] * count)
 
     def audio_commit_sent(self) -> None:
-        """An `input_audio_buffer.commit` of ours went out, after everything sent before it."""
-        self._sent_before_commit = [
-            *(input_id for input_id in self._messages if input_id is not None),
-            *self._tool_outputs.values(),
-        ]
+        """An audio commit of ours is going out, after everything sent before it."""
+        self._sent_before_commits.append(
+            [*(input_id for input_id in self._messages if input_id is not None), *self._tool_outputs.values()]
+        )
+
+    def audio_commit_failed(self) -> None:
+        """The audio commit just reported going out never did."""
+        self._sent_before_commits.pop()
 
     def tool_output_sent(self, call_id: str, input_id: InputId) -> None:
         self._tool_outputs[call_id] = input_id
@@ -293,7 +296,7 @@ class OpenAILifecycle:
 
     def _place_sent_before_commit(self) -> list[LifecycleEvent]:
         """Place what we sent ahead of our commit and the provider hasn't acknowledged yet: it came first."""
-        sent, self._sent_before_commit = self._sent_before_commit, []
+        sent = self._sent_before_commits.popleft() if self._sent_before_commits else []
         events: list[LifecycleEvent] = []
         for input_id in sent:
             if input_id in self._messages:
@@ -321,6 +324,7 @@ class OpenAILifecycle:
             return []
         self._committed.add(item_id)
         if item_id in self._idle_items:
+            self._idle_items.discard(item_id)
             # An idle timeout's empty audio item: the server nudges the model to speak, nobody said anything.
             self._unclaimed_turn = None
             return []
@@ -339,6 +343,8 @@ class OpenAILifecycle:
         it stays, with nothing more to come for it.
         """
         events: list[LifecycleEvent] = [UserTurnDiscarded(turn_id=turn_id) for turn_id in self._speaking]
+        # One that hadn't joined never will, whatever the provider still reports about it.
+        self._committed.update(self._speaking)
         self._speaking.clear()
         return events
 

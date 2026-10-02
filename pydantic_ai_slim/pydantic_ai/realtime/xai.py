@@ -405,8 +405,6 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
 
     def _announce_commit(self) -> None:
         """Tell the listener audio is being committed, before anything goes out that xAI could answer first."""
-        # Whatever went out before this joins the conversation ahead of the turn, also where a request commits.
-        self._lifecycle.audio_commit_sent()
         if self._audio_commit_listener is not None:
             self._audio_commit_listener()
 
@@ -450,6 +448,8 @@ class XaiRealtimeConnection(OpenAIRealtimeConnection):
         # Audio still in the buffer is committed by the request, and answered by its response.
         if self._audio_uncommitted:
             self._announce_commit()
+            # Whatever went out before the request joins the conversation ahead of the turn it commits.
+            self._lifecycle.audio_commit_sent()
         self._audio_uncommitted = self._speech_detected = False
         self._sent_audio.clear()
         await super()._create_response(input_indexes, answers)

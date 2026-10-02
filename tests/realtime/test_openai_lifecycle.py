@@ -849,3 +849,69 @@ async def test_what_we_sent_ahead_of_our_commit_joins_the_conversation_before_it
             InputLost(input_ids=(1, 2, 0)),
         ]
     )
+
+
+async def test_each_of_our_commits_places_what_was_sent_ahead_of_it() -> None:
+    """Two commits sent before the first is acknowledged: each turn follows only what went out before its commit."""
+
+    def committed(item_id: str) -> dict[str, Any]:
+        return {'type': 'input_audio_buffer.committed', 'item_id': item_id, 'previous_item_id': None}
+
+    stream = Stream(committed('item_u1'), committed('item_u2'))
+    audio = BinaryAudio(data=b'\x00\x00', media_type='audio/pcm')
+    await stream.connection.send('First.')
+    await stream.connection.send(audio)
+    await stream.connection.send(CommitAudio())
+    await stream.connection.send('Second.')
+    await stream.connection.send(audio)
+    await stream.connection.send(CommitAudio())
+    events = [event for event in await stream.rest() if isinstance(event, (InputAdded, UserTurnEnded))]
+    assert events == snapshot(
+        [
+            InputAdded(input_id=0),
+            UserTurnEnded(turn_id='item_u1'),
+            InputAdded(input_id=3),
+            UserTurnEnded(turn_id='item_u2'),
+        ]
+    )
+
+
+async def test_a_commit_that_fails_to_go_out_places_nothing() -> None:
+    class _FailingCommit(FakeWebSocket):
+        async def send(self, data: str) -> None:
+            if 'input_audio_buffer.commit' in data:
+                raise OSError('gone')
+            await super().send(data)
+
+    ws = _FailingCommit(
+        frames({'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None})
+    )
+    connection = OpenAIRealtimeConnection(ws)  # pyright: ignore[reportArgumentType]
+    await connection.send('First.')
+    with pytest.raises(OSError):
+        await connection.send(CommitAudio())
+    events = [
+        event
+        async for event in connection._lifecycle_events()  # pyright: ignore[reportPrivateUsage]
+        if isinstance(event, (InputAdded, UserTurnEnded))
+    ]
+    assert events == snapshot([UserTurnEnded(turn_id='item_u1')])
+
+
+async def test_a_turn_cleared_before_it_joined_never_does() -> None:
+    """A late `speech_stopped` for audio already cleared makes no turn of it, and an idle item is forgotten once used."""
+    stream = Stream(
+        {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
+        {'type': 'input_audio_buffer.cleared'},
+        {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
+        {
+            'type': 'input_audio_buffer.timeout_triggered',
+            'item_id': 'item_idle',
+            'audio_start_ms': 0,
+            'audio_end_ms': 0,
+        },
+        {'type': 'input_audio_buffer.committed', 'item_id': 'item_idle', 'previous_item_id': None},
+    )
+    events = [event for event in await stream.rest() if not isinstance(event, str)]
+    assert events == snapshot([UserTurnStarted(turn_id='item_u1'), UserTurnDiscarded(turn_id='item_u1')])
+    assert stream.connection._lifecycle._idle_items == set()  # pyright: ignore[reportPrivateUsage]

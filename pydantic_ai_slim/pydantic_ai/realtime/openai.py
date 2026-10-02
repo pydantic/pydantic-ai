@@ -778,9 +778,16 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         return inputs, answers
 
     async def _send_event(self, event: dict[str, Any]) -> None:
-        await self._ws.send(to_json(event).decode())
-        if event['type'] == INPUT_AUDIO_BUFFER_COMMIT_EVENT:
-            self._lifecycle.audio_commit_sent()
+        if event['type'] != INPUT_AUDIO_BUFFER_COMMIT_EVENT:
+            await self._ws.send(to_json(event).decode())
+            return
+        # Noted before it goes out, so nothing sent while it does is taken for ahead of it.
+        self._lifecycle.audio_commit_sent()
+        try:
+            await self._ws.send(to_json(event).decode())
+        except BaseException:
+            self._lifecycle.audio_commit_failed()
+            raise
 
     def _map_event(self, data: dict[str, Any]) -> RealtimeCodecEvent | None:
         """Map a raw provider frame to a codec event.
