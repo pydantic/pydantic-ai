@@ -428,7 +428,10 @@ async def test_anthropic_keeps_the_cached_tools_section(
     """On Anthropic the newcomer is a deferred declaration plus a reveal.
 
     Deferred declarations are outside Anthropic's cache key, so the cached section is the non-deferred
-    entries, which stay byte-identical; the newcomer's declaration is appended after them. Models with
+    entries, which stay byte-identical; the newcomer's declaration is appended after them. Measured live,
+    one caveat this can't see: on some models (`claude-opus-4-8`) the first deferred declaration in a run
+    adds a one-time preamble, so a run with no deferred tool before the newcomer still moves its prefix
+    once. `main` moves it on that request too, by appending the tool to `tools`. Models with
     mid-conversation tool changes reveal it with a `tool_addition` block, the rest with the
     `tool_reference` result of a synthesized search exchange, as for any other revealed deferred tool.
     """

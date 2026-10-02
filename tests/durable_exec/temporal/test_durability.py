@@ -56,6 +56,7 @@ from pydantic_ai.capabilities import (
     ImageGeneration,
     Instrumentation,
     NativeTool,
+    PrepareTools,
     ProcessEventStream,
     ResolveModelId,
     Toolset,
@@ -4940,3 +4941,81 @@ async def test_durability_decide_span_in_activity(
     # Without content an answer keeps its numbers, which a yes/no's answer is all of.
     assert attributes['pydantic_ai.decision.answers'] == '{"ship":{"type":"noul","noul":0.9}}'
     assert ('instructions' in attributes['pydantic_ai.decision.questions']) is include_content
+
+
+# --- Mid-run tool population changes (https://github.com/pydantic/pydantic-ai/issues/7251) ---
+
+
+def _population_change_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Call `unlock`, then `later` once it is advertised, then finish."""
+    returned = {part.tool_name for message in messages for part in message.parts if isinstance(part, ToolReturnPart)}
+    if 'unlock' not in returned:
+        return ModelResponse(parts=[ToolCallPart('unlock', {}, tool_call_id='c1')])
+    if 'later' not in returned and any(tool.name == 'later' for tool in info.function_tools):
+        return ModelResponse(parts=[ToolCallPart('later', {}, tool_call_id='c2')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+async def _admit_later_from_step_two(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+    # Workflow-side and derived from the run step, so replay resolves the same population.
+    return [tool_def for tool_def in tool_defs if tool_def.name != 'later' or ctx.run_step > 1]
+
+
+def _unlock() -> str:
+    return 'unlocked'
+
+
+def _later() -> str:
+    return 'later ran'
+
+
+population_change_agent = Agent(
+    FunctionModel(_population_change_model_fn),
+    name='durability_population_change',
+    toolsets=[
+        FunctionToolset(tools=[Tool(_unlock, name='unlock'), Tool(_later, name='later')], id='population_change')
+    ],
+    capabilities=[
+        PrepareTools(_admit_later_from_step_two),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class PopulationChangeWorkflow:
+    @workflow.run
+    async def run(self) -> list[list[str]]:
+        result = await population_change_agent.run('go')
+        return [
+            part.tools_added
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+        ]
+
+
+async def test_population_change_delta_is_recorded_once_and_replays(client: Client):
+    """A mid-run newcomer is recorded once in the workflow, and replaying the workflow history reproduces it exactly.
+
+    The diff runs in workflow code, so a replay re-derives the same baseline from the same steps and
+    writes the same delta: any divergence would surface as a non-determinism `replay_failure`.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PopulationChangeWorkflow],
+        plugins=[AgentPlugin(population_change_agent)],
+    ):
+        handle = await client.start_workflow(
+            PopulationChangeWorkflow.run,
+            id=f'{PopulationChangeWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        deltas = await handle.result()
+        history = await handle.fetch_history()
+
+    assert deltas == [['later']]
+    replay = await Replayer(workflows=[PopulationChangeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
+    assert replay.replay_failure is None

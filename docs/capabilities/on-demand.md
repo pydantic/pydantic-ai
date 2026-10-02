@@ -160,6 +160,7 @@ Calling the `load_capability` tool reveals capability behavior between requests.
 | Function tools with provider-native reveal-item support (`tool_addition_mode='by_reference'` or `'with_definitions'`) | **Stable on Anthropic and OpenAI Responses** — deferred Anthropic entries are outside its cache key, and OpenAI Responses appends `additional_tools` without changing `tools[]`. |
 | Function tools without provider-native reveal-item support (`tool_addition_mode=None`) | **May break between turns** — function-tool visibility can change as capabilities load. |
 | Native tools | **Always breaks the prefix on load** — native tool definitions are part of the request prefix on every provider. |
+| Function tools that appear without a load (a capability's dynamic toolset or MCP server adding a tool mid-run) | **Same as a loaded function tool** — the change is recorded as an availability delta. Some Anthropic models add a one-time preamble the first time a run declares a deferred tool, which moves the prefix on that request; see [Tools that appear mid-run](../tools-advanced.md#mid-run-tool-additions). |
 
 When preserving the cache prefix matters, prefer instruction-only or function-tool-only on-demand capabilities on a model that can express an availability change natively. The provider-specific mechanics that keep the prefix stable live in [Tool search and prompt caching](../tools-advanced.md#tool-search-caching).
 
