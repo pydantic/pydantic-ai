@@ -14,6 +14,8 @@ from ._warnings import PydanticAIDeprecationWarning
 
 __all__ = (
     'DEFAULT_HTTP_TIMEOUT',
+    'DEFAULT_MAX_CONNECTIONS',
+    'DEFAULT_MAX_KEEPALIVE_CONNECTIONS',
     'AsyncHTTPClient',
     'HTTPAuth',
     'HTTPTimeout',
@@ -59,20 +61,17 @@ else:
 _NotGivenT = TypeVar('_NotGivenT')
 
 
-_DEFAULT_HTTPX2_TIMEOUT = httpx2.Timeout(DEFAULT_HTTP_TIMEOUT, connect=5)
-
-_DEFAULT_HTTPX2_LIMITS = httpx2.Limits(max_connections=1000, max_keepalive_connections=100)
-"""Connection pool limits for the HTTP clients Pydantic AI creates.
-
-These match the defaults of the OpenAI and Anthropic SDKs' own clients, rather than HTTPX's
-`max_connections=100, max_keepalive_connections=20`.
-"""
+# The OpenAI and Anthropic SDKs' own connection pool limits, rather than HTTPX's 100 and 20.
+DEFAULT_MAX_CONNECTIONS = 1000
+DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 100
 
 
 def create_async_httpx2_client(
     *,
-    timeout: float | httpx2.Timeout = _DEFAULT_HTTPX2_TIMEOUT,
-    limits: httpx2.Limits = _DEFAULT_HTTPX2_LIMITS,
+    timeout: float | httpx2.Timeout = httpx2.Timeout(DEFAULT_HTTP_TIMEOUT, connect=5),
+    limits: httpx2.Limits = httpx2.Limits(
+        max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+    ),
 ) -> httpx2.AsyncClient:
     """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts, connection limits and user agent.
 

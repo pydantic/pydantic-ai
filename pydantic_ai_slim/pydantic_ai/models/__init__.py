@@ -29,6 +29,8 @@ from .. import _utils
 from .._genai_prices import lookup_context_window, preload_pricing_data
 from .._http import (
     DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_MAX_CONNECTIONS,
+    DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
     create_async_httpx2_client as create_async_httpx2_client,
     legacy_httpx,
 )
@@ -1869,8 +1871,9 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
 
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
-        # The same limits as `create_async_httpx2_client`.
-        limits=httpx.Limits(max_connections=1000, max_keepalive_connections=100),
+        limits=httpx.Limits(
+            max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+        ),
         headers={'User-Agent': get_user_agent()},
     )
 

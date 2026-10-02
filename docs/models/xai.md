@@ -110,14 +110,17 @@ from pydantic_ai import Agent
 from pydantic_ai.models.xai import XaiModel
 from pydantic_ai.providers.xai import XaiProvider
 
-xai_client = AsyncClient(api_key='your-api-key')
-provider = XaiProvider(xai_client=xai_client)
-model = XaiModel('grok-4.3', provider=provider)
-agent = Agent(model)
-...
+
+async def main():
+    async with AsyncClient(api_key='your-api-key') as xai_client:
+        model = XaiModel('grok-4.3', provider=XaiProvider(xai_client=xai_client))
+        agent = Agent(model)
+        result = await agent.run('What is the capital of France?')
+        print(result.output)
+        #> The capital of France is Paris.
 ```
 
-A client you pass as `xai_client` is yours to close, for example with `async with`; Pydantic AI never closes it. Its gRPC channel binds to the event loop it was created in, so create the client inside the event loop that uses it, as below.
+A client you pass as `xai_client` is yours to close, for example with `async with`; Pydantic AI never closes it. Its gRPC channel binds to the event loop it was created in, so create the client inside the event loop that uses it, as above.
 
 ## SDK retries {#sdk-retries}
 

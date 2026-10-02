@@ -162,6 +162,8 @@ async def main():
 
 Because you created the client, you close it, here by leaving the `async with` block. Passing the same client to several providers makes them share its connection pool.
 
+The Groq, Cohere and GitHub providers still take a legacy `httpx.AsyncClient` instead, which you build yourself with the same arguments, for example `httpx.AsyncClient(timeout=httpx.Timeout(120, connect=5), limits=httpx.Limits(max_connections=200, max_keepalive_connections=50))`.
+
 ## Custom Models
 
 !!! note
