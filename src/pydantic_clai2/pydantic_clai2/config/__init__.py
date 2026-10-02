@@ -47,7 +47,7 @@ class Settings(BaseModel):
     thinking: bool = Field(default=True, description="Show the model's thinking as it streams.")
     splash: bool = Field(default=True, description='Animate the startup splash. Takes effect next start.')
     tool_output: bool = Field(
-        default=False, description='Show tool output previews and file diffs below tool summaries.'
+        default=False, description='Show shell and grep output below tool summaries. File diffs are always shown.'
     )
     shell_lines: int = Field(
         default=20, ge=0, le=1000, description='Shell preview lines when display.tool_output is enabled.'

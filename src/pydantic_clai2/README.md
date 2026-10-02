@@ -50,11 +50,12 @@ launch directory, set **Unrestricted filesystem** to `false` in
 `/plugins configure coder`. Shell commands are not restricted either way.
 
 Tool calls show a single-line summary followed by a blank line by default.
-Tool and argument names are pink; argument values and bullet markers are muted grey. Shell output, exit details and
-log paths, grep results, and file diffs stay out of the terminal; the model still
-receives full tool results. Long summaries are clipped to the terminal width.
-Use `/set display.tool_output true` to show detailed output again, or
-`/set display.tool_output false` to return to summaries. In detailed mode,
+Tool and argument names are pink; argument values and bullet markers are muted grey.
+Successful file writes and edits also show their diffs, including in compact mode.
+Shell output, exit details and log paths, and grep results stay out of the terminal;
+the model still receives full tool results. Long summaries are clipped to the terminal width.
+Use `/set display.tool_output true` to show shell and grep details, or
+`/set display.tool_output false` to hide those details without hiding file diffs. In detailed mode,
 `display.shell_lines` and `display.grep_lines` limit previews to 20 lines by
 default. Plugin-provided rendering, including interactive questions, is unchanged.
 
@@ -1409,8 +1410,9 @@ repeated completion heading before the diff or output.
 
 ## Tool details
 
-Native capability events drive specialized output: `FileEditedEvent` renders its
-bounded unified diff using Termflow `DiffRenderer`, the same renderer Code Puppy
+File diffs are shown regardless of `display.tool_output`. Native capability events
+drive specialized output: `FileEditedEvent` renders its bounded unified diff using
+Termflow `DiffRenderer`, the same renderer Code Puppy
 uses. The default appearance keeps CLAI's existing addition and deletion
 backgrounds; bundled palettes use Termflow's defaults. Both use brighter markers.
 Code uses the terminal foreground and ANSI syntax colours on the terminal
