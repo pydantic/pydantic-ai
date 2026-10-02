@@ -21,9 +21,13 @@ from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.ui.menus.field_menu import Runners, save_and_close_item
 from tests.clai2.menu_script import Script, pick, typed
 
+# One fixed terminal for the widgets and the notice wrapping, independent of the host's terminal.
+TERMINAL = (80, 30)
+
 
 @pytest.fixture
 def folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FolderMenu[object]:
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: TERMINAL)
     monkeypatch.chdir(tmp_path)
     home = tmp_path / 'home'
     home.mkdir()
@@ -37,7 +41,7 @@ def folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FolderMenu[objec
 class Keyboard:
     """Exercise widget validation, key bindings and rendering without a terminal owner."""
 
-    def __init__(self, keys: list[str], *, width: int = 80) -> None:
+    def __init__(self, keys: list[str], *, width: int = TERMINAL[0]) -> None:
         self.keys = iter(keys)
         self.width = width
         self.output = io.StringIO()
@@ -46,7 +50,7 @@ class Keyboard:
         widget._use_alt_screen = False  # pyright: ignore[reportPrivateUsage]
         widget._read_key = lambda: next(self.keys)  # pyright: ignore[reportPrivateUsage]
         widget._output = self.output  # pyright: ignore[reportPrivateUsage]
-        widget._size = lambda: (self.width, 30)  # pyright: ignore[reportPrivateUsage]
+        widget._size = lambda: (self.width, TERMINAL[1])  # pyright: ignore[reportPrivateUsage]
 
     def menu(self, menu: Menu) -> MenuResult:
         self.prepare(menu)
@@ -96,7 +100,10 @@ def test_configure_flow_preserves_order_preferences_and_updates_summary(folders:
 
 
 @pytest.mark.parametrize('width', [50, 80, 140])
-def test_keyboard_add_edit_remove_and_empty_state(folders: FolderMenu[object], width: int) -> None:
+def test_keyboard_add_edit_remove_and_empty_state(
+    folders: FolderMenu[object], width: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (width, TERMINAL[1]))
     (folders.project / 'agents').mkdir()
     (folders.project / 'other agents').mkdir()
     keyboard = Keyboard(
