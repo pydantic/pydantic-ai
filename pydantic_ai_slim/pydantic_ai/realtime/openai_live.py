@@ -39,6 +39,7 @@ from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, ClassVar, Literal, cast
 from urllib.parse import quote
 
+import anyio
 from pydantic import TypeAdapter, ValidationError
 from pydantic_core import to_json
 from typing_extensions import TypedDict
@@ -648,16 +649,17 @@ class OpenAILiveConnection(RealtimeConnection):
     async def __aiter__(self) -> AsyncIterator[RealtimeCodecEvent]:
         # One read is always in flight: the next one starts before this frame is handled, so nothing
         # arrives while the consumer is busy and no frame is dropped between iterations.
-        pending = self._start_read()
+        pending, ready = self._start_read()
         while True:
             # Never cancel the pending `recv()`: a cancelled read can drop the frame it already holds,
             # so the turn clock is a timeout on the wait rather than on the read.
-            done, _ = await asyncio.wait({pending}, timeout=self._silence_timeout())
+            with anyio.move_on_after(self._silence_timeout()):
+                await ready.wait()
             if self._closed:
                 # `aclose()` cancelled the read while we were waiting on it.
                 return
-            if done:
-                finished, pending = pending, self._start_read()
+            if pending.done():
+                finished, (pending, ready) = pending, self._start_read()
                 try:
                     raw = finished.result()
                 # A cancelled read is not caught here: `aclose()` sets `_closed` before cancelling,
@@ -679,10 +681,12 @@ class OpenAILiveConnection(RealtimeConnection):
             for event in self._expire_quiet_turn():
                 yield event
 
-    def _start_read(self) -> asyncio.Task[str | bytes]:
+    def _start_read(self) -> tuple[asyncio.Task[str | bytes], anyio.Event]:
         """Begin the next read, remembering it so it can be cancelled on the way out."""
+        ready = anyio.Event()
         self._recv_task = asyncio.create_task(_recv(self._ws))
-        return self._recv_task
+        self._recv_task.add_done_callback(lambda _: ready.set())
+        return self._recv_task, ready
 
     def _cancel_read(self) -> None:
         """Cancel the read in flight, if any, so it never completes unobserved."""

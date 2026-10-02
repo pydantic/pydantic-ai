@@ -65,6 +65,7 @@ from pydantic_ai.realtime.codec import (
     CreateResponse,
     InputTranscript,
     OutputTranscript,
+    RealtimeCodecEvent,
     ResponseDone,
     SessionUsage,
     TextContext,
@@ -1508,6 +1509,40 @@ async def test_a_new_turn_starts_after_the_previous_one_ended() -> None:
         OutputTranscript('second'),
         ResponseDone(),
     ]
+
+
+async def test_silence_timeout_keeps_the_next_read_in_flight() -> None:
+    class GatedWebSocket(_FakeWebSocket):
+        def __init__(self) -> None:
+            super().__init__([_transcript_frame('first')])
+            self.release = anyio.Event()
+            self.second_sent = False
+
+        async def recv(self) -> str:
+            if self._frames:
+                return await super().recv()
+            if not self.second_sent:
+                await self.release.wait()
+                self.second_sent = True
+                return _transcript_frame('second')
+            await anyio.sleep_forever()
+            raise AssertionError('unreachable')  # pragma: no cover
+
+    ws = GatedWebSocket()
+    connection = OpenAILiveConnection(ws, turn_silence_ms=10)  # pyright: ignore[reportArgumentType]
+    events: list[RealtimeCodecEvent] = []
+    try:
+        with anyio.fail_after(5):
+            async for event in connection:  # pragma: no branch
+                events.append(event)
+                if events == [OutputTranscript('first'), ResponseDone()]:
+                    ws.release.set()
+                if len(events) == 4:
+                    break
+    finally:
+        await connection.aclose()
+
+    assert events == [OutputTranscript('first'), ResponseDone(), OutputTranscript('second'), ResponseDone()]
 
 
 async def test_a_user_turn_alone_is_finalized_when_the_model_stays_silent() -> None:
