@@ -1443,9 +1443,9 @@ for `/agent` and `/mcp`:
    ○ audit    off     installed  │
    ○ broken   failed  drop-in    │ source   pydantic_clai2.builtin_plugins.coder
    Save & close                  │ provides 1 capability
-                                 │ settings press C to configure
+                                 │ settings press Shift+C to configure
 
- type or / filter · Space toggle · C config · R reload · D remove · Enter/Esc close
+ type or / filter · Space toggle · ⇧C config · ⇧R reload · ⇧D remove · Esc close
 ```
 
 The left side lists every plugin with `●` for on and `○` for off, a coloured
@@ -1462,8 +1462,10 @@ Type a plugin name to filter the list. Matching ignores case. Press `/` to clear
 the filter and start again, including when there are no matches. Backspace edits
 the filter; Up and Down move between matches. Space turns the highlighted plugin
 on or off. Use Shift+C to configure it, Shift+R to reload it, and Shift+D to remove
-it. Lowercase letters always filter, never run these actions. Changes apply
-immediately; there is no pending save step, so the **Save & close** row, Enter,
+it (`⇧` in the footer means Shift). Uppercase `C`, `R`, `D`, and `Q` are reserved
+for actions; type their lowercase equivalents to search, including for mixed-case
+plugin names. Lowercase letters always filter, never run these actions. Changes
+apply immediately; there is no pending save step, so the **Save & close** row, Enter,
 Shift+Q, Esc, and Ctrl-C just close. With no matches, Enter does nothing; clear
 the filter or use Shift+Q, Esc, or Ctrl-C to leave.
 

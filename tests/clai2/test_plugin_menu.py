@@ -204,10 +204,10 @@ def run_keys(
 @pytest.mark.parametrize(
     ('keys', 'query', 'name'),
     [
-        (list('coder'), 'coder', 'coder'),
+        (list('coder'), 'coder', 'coDer'),
         (list('/quiet'), 'quiet', 'quiet'),
         (list('BETa'), 'BETa', 'beta'),
-        ([*'codex', Key.BACKSPACE, 'r'], 'coder', 'coder'),
+        ([*'codex', Key.BACKSPACE, 'r'], 'coder', 'coDer'),
         ([*'missing', Key.ENTER, '/', *'beta'], 'beta', 'beta'),
         ([*'coder', '/', *'quiet'], 'quiet', 'quiet'),
         (['z', Key.BACKSPACE, Key.END], '(type to filter)', None),
@@ -223,7 +223,7 @@ def test_search_and_navigation(
     query: str,
     name: str | None,
 ) -> None:
-    loader = make_loader(tmp_path, 'alpha', 'beta', 'coder', 'quiet')
+    loader = make_loader(tmp_path, 'alpha', 'beta', 'coDer', 'quiet')
     result, frames = run_keys(
         PluginMenu(loader, apply=run_now), [*keys, Key.ENTER], monkeypatch=monkeypatch, capsys=capsys
     )
@@ -233,6 +233,7 @@ def test_search_and_navigation(
     else:
         assert result.item.value == name
     assert f'search: {query}' in frames[-1]
+    assert '⇧C config · ⇧R reload · ⇧D remove' in frames[-1]
     if query != '(type to filter)':
         assert '○ alpha' not in frames[-1]
     assert all(entry.loaded is None for entry in loader.entries()), 'typing must never run a plugin action'
@@ -401,7 +402,7 @@ def test_configure_key(tmp_path: Path) -> None:
     assert menu.configure(fake, plain) is None
     assert menu.notice == 'plain has no settings menu.'
     menu.toggle(fake, tuned)
-    assert 'settings press C to configure' in unstyled(menu.details(tuned))
+    assert 'settings press Shift+C to configure' in unstyled(menu.details(tuned))
     result = menu.configure(fake, tuned)
     assert result is not None and result.item is not None and result.item.value == Configure('tuned')
 

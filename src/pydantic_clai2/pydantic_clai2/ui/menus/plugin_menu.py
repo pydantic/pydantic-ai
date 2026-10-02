@@ -20,7 +20,7 @@ from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering._rendering import markdown_style
 
 Apply = Callable[[Coroutine[object, object, object]], None]
-_HINT = 'type or / filter · Space toggle · C config · R reload · D remove · Enter/Esc close'
+_HINT = 'type or / filter · Space toggle · ⇧C config · ⇧R reload · ⇧D remove · Esc close'
 _RESET = '\x1b[0m'
 _UNDIM = '\x1b[22m'
 """Termflow dims row descriptions; the status word cancels that so its colour reads clearly."""
@@ -214,7 +214,7 @@ class PluginMenu(Generic[DepsT]):
 
     def _settings_hint(self, entry: PluginEntry[DepsT]) -> str:
         if self._loader.configurable(entry.name):
-            return 'press C to configure'
+            return 'press Shift+C to configure'
         return 'none' if entry.loaded else 'turn on to see'
 
     @staticmethod
