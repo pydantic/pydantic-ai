@@ -117,7 +117,6 @@ orchestrator = Agent(
                 SubAgent(researcher, usage_limits=UsageLimits(request_limit=20)),
                 SubAgent(writer, timeout_seconds=300, max_calls=2),
             ],
-            agent_folders=None,
         )
     ],
 )
@@ -128,13 +127,17 @@ max_calls=None, on_failure=None, contain_errors=None)` sets per-delegate control
 
 `SubAgents` parameters that change behaviour:
 
-- `agent_folders='agents'` (default): also loads every `*.md` under `.agents/agents/` (fallback
-  `.claude/agents/`) from the run's workspace; a run without a workspace skips it. A sequence of paths
-  reads exactly those (and fails at run start without a workspace). `None` disables disk loading.
+- `agent_folders=None` (default): no disk loading. Pass `'agents'` to load every Claude-style `*.md`
+  and Codex-style `*.toml` under `.agents/agents/`, `.claude/agents/`, and `.codex/agents/` (in that
+  order) from the run's workspace. TOML needs `name`, `description`, and `developer_instructions`;
+  unknown keys, including sandbox or permission settings, skip the file with a warning. A run without
+  a workspace skips it. A sequence of paths reads exactly those (and fails at run start without a workspace).
   Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere.
 - `forward_usage=True`: children share the parent's usage, so a parent `usage_limits` bounds the tree.
   A `SubAgent.usage_limits` gives that child isolated accounting (its tokens stop aggregating).
-- `inherit_tools=False`: `True` adds the parent's own tools (not capability tools) to each child.
+- `inherit_tools=False`: `True` is deprecated. Bind tools directly to explicit child agents, use
+  `include_self=True` for a fresh run of the agent with all capabilities and tools bound to it, or
+  use `tool_resolver` to give disk agents tools.
 - `shared_capabilities=()`: capabilities applied to every child run.
 - `models={}`: menu of `key -> model | ModelOption(model, description=, settings=)`. When set,
   `delegate_task` gains a `model` enum argument; `SubAgent(models=['fast'])` restricts a delegate.
@@ -158,6 +161,23 @@ Gotchas:
 - `include_self=True` passed in `agent.run(capabilities=...)` raises `UserError`; bind it on the `Agent`.
 - Not agent-spec serializable (holds live agents). Events: `DelegationStartEvent`,
   `DelegationEndEvent` (`outcome` is `ok`/`timeout`/`budget`/`failed`/`contained`).
+
+## DelegationReports
+
+Delivers finished background-task reports from a `DelegationTasks` owner into a parent run, as
+automated, untrusted task data rather than user messages.
+
+```python
+from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+
+tasks = DelegationTasks()
+reports = DelegationReports(tasks, conversation_id='conversation-1')
+```
+
+- `priority='when_idle'` (default) lets an active parent finish its current work first.
+- For a host-started, report-only continuation, use `priority='asap'` with `agent.run(None, ...)`, so
+  the reports reach the first model request with no synthetic user prompt.
+- Reports are marked delivered once consumed and are not replayed. The host owns idle wake-up.
 
 ## DynamicWorkflow
 
