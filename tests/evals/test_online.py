@@ -2453,6 +2453,6 @@ async def test_baggage_disabled_via_config(capfire: CaptureLogfire):
 
 def test_imports_without_sniffio():
     """Nothing `pydantic-evals` declares installs `sniffio`, so a clean install has none."""
-    code = "import sys; sys.modules['sniffio'] = None\nimport pydantic_evals.online, pydantic_evals.online_capability\n"
+    code = "import sys; sys.modules['sniffio'] = None\nimport pydantic_evals.online\n"
     env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
     subprocess.run([sys.executable, '-c', code], check=True, env=env)

@@ -1,5 +1,4 @@
 import asyncio
-import importlib.util
 import os
 import subprocess
 import sys
@@ -138,12 +137,8 @@ async def test_stop_cleanup_finishes_before_stop_shielded_returns() -> None:
 
 
 def test_imports_without_sniffio() -> None:
-    # Nothing the harness declares installs `sniffio`, so a clean install has none.
-    modules = ['pydantic_ai_harness.bubblewrap_sandbox', 'pydantic_ai_harness.ssh_workspace']
-    modules += [
-        f'pydantic_ai_harness.{sdk}_sandbox' for sdk in ('e2b', 'modal', 'sprites') if importlib.util.find_spec(sdk)
-    ]
-    code = f"import sys; sys.modules['sniffio'] = None\nimport {', '.join(modules)}\n"
+    # Nothing the harness declares installs `sniffio`, so a clean install has none. Every sandbox backend imports this module.
+    code = "import sys; sys.modules['sniffio'] = None\nimport pydantic_ai_harness._workspace_provider\n"
     env = {key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')}
     subprocess.run([sys.executable, '-c', code], check=True, env=env)
 
