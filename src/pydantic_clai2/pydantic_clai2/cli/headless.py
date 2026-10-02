@@ -79,7 +79,7 @@ async def run_headless(
                     assert ended.result is not None
                     answer = str(ended.result.output)
                     reason = 'exit'
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 -- CLI boundary, stdout must remain answer-only.
                     Console(stderr=True).print(error_message(exc), markup=False, highlight=False)
                     return 1
                 finally:

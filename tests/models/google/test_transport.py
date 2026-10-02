@@ -21,7 +21,16 @@ from pytest_mock import MockerFixture
 
 from pydantic_ai import UploadedFile
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelRequest, UploadedFileProviderName, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    TextPart,
+    UploadedFileProviderName,
+    UserPromptPart,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.profiles.google import GoogleModelProfile, GoogleThinkingLevel
@@ -106,6 +115,41 @@ def test_gemini_api_sets_include_server_side_tool_invocations_on_a_google_cloud_
     _tools, tool_config, _image_config = model._get_tool_config(params, GoogleModelSettings())  # pyright: ignore[reportPrivateUsage]
     assert tool_config is not None
     assert tool_config.get('include_server_side_tool_invocations') is True
+
+
+async def test_google_cloud_transport_drops_gemini_api_native_tool_parts(
+    vertex_client_google_provider: GoogleProvider,
+) -> None:
+    """Gemini API history's `tool_call`/`tool_response` parts are dropped on a Google Cloud transport.
+
+    Google Cloud has no such parts: the SDK's Vertex converter raises `ValueError` on them, even on the Gemini 3
+    models that support tool combination. A Google Cloud client in `GoogleProvider` accepts `'google'` history.
+    """
+    m = GoogleModel('gemini-3-pro-preview', provider=vertex_client_google_provider)
+    assert m.profile.get('google_supports_tool_combination')
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Search the web')]),
+        ModelResponse(
+            parts=[
+                NativeToolCallPart(
+                    tool_name=WebSearchTool.kind, args={'queries': ['q']}, tool_call_id='abc', provider_name='google'
+                ),
+                NativeToolReturnPart(
+                    tool_name=WebSearchTool.kind,
+                    content={'search_suggestions': '<div></div>'},
+                    tool_call_id='abc',
+                    provider_name='google',
+                ),
+                TextPart(content='Found it.'),
+            ],
+            provider_name='google',
+        ),
+        ModelRequest(parts=[UserPromptPart(content='Thanks')]),
+    ]
+
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents[1] == {'role': 'model', 'parts': [{'text': 'Found it.'}]}
 
 
 async def test_count_tokens_forwards_tools_on_a_google_cloud_transport(

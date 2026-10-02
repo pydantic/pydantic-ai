@@ -1107,6 +1107,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
 
                                 await agent_run.next(_agent_graph.SetFinalResult(final_result))
 
+                                # The tool calls above (and any agents they delegated to) added usage to the run
+                                # after the stream snapshotted it. The final response itself is only recorded once
+                                # this node finishes, so the stream still adds it on top of the refreshed snapshot.
+                                stream._refresh_initial_run_ctx_usage()  # pyright: ignore[reportPrivateUsage]
+
                             yield StreamedRunResult(
                                 messages,
                                 graph_ctx.deps.new_message_index,
