@@ -480,7 +480,7 @@ class ModelSettings(TypedDict, total=False):
 
     Supported by:
 
-    * Anthropic (inline documents and Web Fetch)
+    * Anthropic (documents and Web Fetch)
 
     Providers that return citations without an explicit request setting ignore this field; their citations are
     still normalized when present.
