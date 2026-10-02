@@ -252,7 +252,7 @@ def model_response_payload_errors(model_name: str) -> Generator[None]:
         yield
 
 
-_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid'))(
+_ValidatedActivityConfig = with_config(ConfigDict(extra='forbid', arbitrary_types_allowed=True))(
     TypedDict(
         '_ValidatedActivityConfig',
         # The functional syntax is intentionally dynamic so new Temporal keys are included.
