@@ -17,6 +17,7 @@ on:
       - Pydantic AI Round-Trip Sweep
       - Pydantic AI Stale Issues Finder
       - Pydantic AI Streaming Resilience Sweep
+      - Test Quality Review
       - Pydantic AI UI Security Review
     types: [completed]
   schedule:
