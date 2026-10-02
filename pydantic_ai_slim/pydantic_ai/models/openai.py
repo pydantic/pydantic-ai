@@ -638,6 +638,13 @@ _LEADING_CACHE_POINT_ERROR = (
 )
 
 
+_CHAT_BREAKPOINT_PART_TYPES = frozenset({'text', 'image_url', 'input_audio', 'file'})
+"""Chat Completions content part types that accept a `prompt_cache_breakpoint`."""
+
+_RESPONSES_BREAKPOINT_PART_TYPES = frozenset({'input_text', 'input_image', 'input_file'})
+"""Responses input content types that accept a `prompt_cache_breakpoint`."""
+
+
 def _add_openai_prompt_cache_breakpoint(
     content: Sequence[ChatCompletionContentPartParam | responses.ResponseInputContentParam],
 ) -> None:
@@ -670,10 +677,11 @@ def _move_leading_cache_breakpoints(
 ) -> None:
     """Move the breakpoint a leading `CachePoint` left on an empty placeholder onto the previous item.
 
-    The breakpoint goes on the last content part of the closest earlier item that has content to
-    carry it: a tool result, a user or assistant message, or a function call output. A
-    string body becomes a single text part so it can carry the marker; the text is unchanged.
-    Raises `UserError` when there's no earlier content at all, as Anthropic does.
+    The breakpoint goes on the last content part of the closest earlier item that can carry it: a
+    tool result, a system, user or (on Chat Completions) assistant message, or a function call
+    output. A string body becomes a single text part so it can carry the marker; the text is
+    unchanged. Responses assistant output (`output_text`, `refusal`) can't carry a breakpoint, so
+    those items are skipped. Raises `UserError` when there's no earlier content at all, as Anthropic does.
     """
     index = 0
     while index < len(items):
@@ -697,16 +705,17 @@ def _attach_cache_breakpoint_before(
     *,
     text_type: Literal['text', 'input_text'],
 ) -> bool:
+    breakpoint_part_types = _CHAT_BREAKPOINT_PART_TYPES if text_type == 'text' else _RESPONSES_BREAKPOINT_PART_TYPES
     for previous in reversed(items[:index]):
         item = cast('dict[str, Any]', previous)
         key = 'output' if item.get('type') == 'function_call_output' else 'content'
         body = item.get(key)
-        if isinstance(body, str) and body:
+        # A Responses assistant message's text is output (`output_text`), which can't carry a breakpoint.
+        if isinstance(body, str) and body and not (text_type == 'input_text' and item.get('role') == 'assistant'):
             item[key] = [{'type': text_type, 'text': body, 'prompt_cache_breakpoint': breakpoint_value}]
             return True
-        if isinstance(body, list) and body:
-            last = cast('dict[str, Any]', body[-1])
-            last['prompt_cache_breakpoint'] = breakpoint_value
+        if isinstance(body, list) and body and cast('dict[str, Any]', body[-1]).get('type') in breakpoint_part_types:
+            cast('dict[str, Any]', body[-1])['prompt_cache_breakpoint'] = breakpoint_value
             return True
     return False
 
@@ -1779,7 +1788,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     openai_messages.append(mapped)
             else:
                 assert_never(message)
-        _move_leading_cache_breakpoints(openai_messages, text_type='text')
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
         if instruction_parts := self._get_instruction_parts(messages, model_request_parameters):
             system_prompt_count = next(
@@ -1802,6 +1810,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             openai_messages[system_prompt_count:system_prompt_count] = instruction_messages
         if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
             openai_messages = _merge_leading_system_messages(openai_messages, system_prompt_role)
+        # After instructions are inserted and system messages merged: the breakpoint may land on a system
+        # message, whose string content it turns into a list, and the merge only joins strings.
+        _move_leading_cache_breakpoints(openai_messages, text_type='text')
         return openai_messages
 
     @staticmethod

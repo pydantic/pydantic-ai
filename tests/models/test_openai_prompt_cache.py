@@ -28,6 +28,8 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    SystemPromptPart,
+    TextPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -64,6 +66,7 @@ with try_import() as imports_successful:
         OpenAIResponsesModelSettings,
     )
     from pydantic_ai.models.openrouter import OpenRouterModel
+    from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
 
@@ -326,6 +329,51 @@ async def test_openai_chat_leading_cache_point_skips_messages_without_content(al
     )
 
 
+async def test_openai_chat_leading_cache_point_with_merged_system_messages(allow_model_requests: None):
+    """A leading `CachePoint` after system prompts marks the merged system message, which must still be joined as text."""
+    mock_client = MockOpenAI.create_mock(chat_completion())
+    model = OpenAIChatModel(
+        'gpt-5.6-sol',
+        provider=OpenAIProvider(openai_client=mock_client),
+        profile=OpenAIModelProfile(
+            openai_supports_prompt_cache_breakpoints=True, openai_chat_supports_multiple_system_messages=False
+        ),
+    )
+
+    await model.request(
+        [
+            ModelRequest(
+                parts=[SystemPromptPart('First.'), SystemPromptPart('Second.'), UserPromptPart([CachePoint(), 'Hi.'])],
+                instructions='Be brief.',
+            )
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['messages'] == snapshot(
+        [
+            {
+                'role': 'system',
+                'content': [
+                    {
+                        'type': 'text',
+                        'text': """\
+First.
+
+Second.
+
+Be brief.\
+""",
+                        'prompt_cache_breakpoint': {'mode': 'explicit'},
+                    }
+                ],
+            },
+            {'role': 'user', 'content': [{'text': 'Hi.', 'type': 'text'}]},
+        ]
+    )
+
+
 async def test_openai_chat_cache_point_filtered_without_support(allow_model_requests: None):
     """Models without OpenAI explicit-breakpoint support continue to filter out `CachePoint`."""
     mock_client = MockOpenAI.create_mock(chat_completion())
@@ -585,6 +633,43 @@ async def test_openai_responses_leading_cache_point_attaches_to_previous_item(al
                 'call_id': 'call_2',
                 'output': [{'type': 'input_text', 'text': 'result 2', 'prompt_cache_breakpoint': {'mode': 'explicit'}}],
             },
+        ]
+    )
+
+
+async def test_openai_responses_leading_cache_point_skips_assistant_output(allow_model_requests: None):
+    """Assistant output (`output_text`) can't carry a breakpoint, so a leading `CachePoint` after it marks the user input before."""
+    mock_client = MockOpenAIResponses.create_mock(responses_completion())
+    model = OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(openai_client=mock_client))
+
+    await model.request(
+        [
+            ModelRequest(parts=[UserPromptPart('Question.')]),
+            ModelResponse(parts=[TextPart('Sent as output.', id='msg_1')], provider_name='openai'),
+            ModelResponse(parts=[TextPart('Sent as a string.')]),
+            ModelRequest(parts=[UserPromptPart([CachePoint(), 'Follow-up.'])]),
+        ],
+        None,
+        ModelRequestParameters(),
+    )
+
+    assert get_mock_responses_kwargs(mock_client)[0]['input'] == snapshot(
+        [
+            {
+                'role': 'user',
+                'content': [
+                    {'type': 'input_text', 'text': 'Question.', 'prompt_cache_breakpoint': {'mode': 'explicit'}}
+                ],
+            },
+            {
+                'role': 'assistant',
+                'id': 'msg_1',
+                'content': [{'text': 'Sent as output.', 'type': 'output_text', 'annotations': []}],
+                'type': 'message',
+                'status': 'completed',
+            },
+            {'role': 'assistant', 'content': 'Sent as a string.'},
+            {'role': 'user', 'content': [{'text': 'Follow-up.', 'type': 'input_text'}]},
         ]
     )
 
