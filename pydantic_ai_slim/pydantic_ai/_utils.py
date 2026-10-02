@@ -56,12 +56,6 @@ from pydantic_graph.util import get_callable_name
 
 from .exceptions import UserError
 
-# Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
-try:
-    import sniffio as _sniffio
-except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
-    _sniffio = None
-
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup as BaseExceptionGroup  # pragma: lax no cover
 else:
@@ -1106,26 +1100,6 @@ def get_event_loop() -> asyncio.AbstractEventLoop:
         event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(event_loop)
     return event_loop
-
-
-def running_on_asyncio() -> bool:
-    """Whether the caller runs on asyncio rather than Trio.
-
-    Inspired by AnyIO's private `current_async_library`. With `sniffio` installed, ask it: Trio records itself
-    there, so the answer holds even for Trio guest mode on an asyncio loop. Without it, Trio cannot be running,
-    because Trio depends on `sniffio`, so a running asyncio loop means asyncio. If Trio ever drops `sniffio`,
-    only guest mode would be misread, as AnyIO would misread it too.
-    """
-    if _sniffio is None:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return False
-        return True
-    try:
-        return _sniffio.current_async_library() == 'asyncio'
-    except _sniffio.AsyncLibraryNotFoundError:
-        return False
 
 
 def is_str_dict(obj: Any) -> TypeGuard[dict[str, Any]]:

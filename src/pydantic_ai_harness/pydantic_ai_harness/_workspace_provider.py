@@ -10,9 +10,14 @@ from contextlib import asynccontextmanager
 
 import anyio
 
-from pydantic_ai._utils import running_on_asyncio
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
+
+# Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
+try:
+    import sniffio as _sniffio
+except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
+    _sniffio = None
 
 
 def safe_credential_reason(error: Exception) -> str:
@@ -26,6 +31,26 @@ def safe_credential_reason(error: Exception) -> str:
     if 'missing' in message or 'not configured' in message:
         return 'Credential missing'
     return 'Credentials rejected'
+
+
+def running_on_asyncio() -> bool:
+    """Whether the caller runs on asyncio rather than Trio.
+
+    Inspired by AnyIO's private `current_async_library`. With `sniffio` installed, ask it: Trio records itself
+    there, so the answer holds even for Trio guest mode on an asyncio loop. Without it, Trio cannot be running,
+    because Trio depends on `sniffio`, so a running asyncio loop means asyncio. If Trio ever drops `sniffio`,
+    only guest mode would be misread, as AnyIO would misread it too.
+    """
+    if _sniffio is None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
+    try:
+        return _sniffio.current_async_library() == 'asyncio'
+    except _sniffio.AsyncLibraryNotFoundError:
+        return False
 
 
 # asyncio holds only weak references to tasks, so a detached stop needs a strong one until it ends.

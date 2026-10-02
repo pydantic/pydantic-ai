@@ -18,9 +18,8 @@ import anyio
 from anyio.to_thread import run_sync
 from opentelemetry import context as otel_context
 
-from pydantic_ai._utils import running_on_asyncio
-
 from ._otel_emit import build_parent_context, emit_otel_events
+from ._utils import running_on_asyncio
 from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
