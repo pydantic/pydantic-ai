@@ -246,7 +246,7 @@ Vercel AI's request `messages` array is fully client-controlled, and the protoco
 [Citations](../citations.md) on a text part reach the frontend in two forms:
 
 - Each cited web page is sent once per message as a [`source-url`](https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol#source-url-part) part, so `useChat` can list the sources. Document sources aren't listed.
-- The full citations are stored in the text part's `providerMetadata`, which the AI SDK sends back unchanged. When the frontend sends the messages back, the citations are restored, so they survive the round trip and are [sent back to the provider that produced them](../citations.md#citations-in-message-history). Citations that are invalid or don't fit the text are dropped, and the text is kept.
+- The full citations, including excerpts and provider details, are stored in the text part's `providerMetadata`, which the AI SDK sends back unchanged. When the frontend sends the messages back, the citations are restored, so they survive the round trip and are [sent back to the provider that produced them](../citations.md#citations-in-message-history). Citations that are invalid or don't fit the text are dropped, and the text is kept.
 
 Consecutive text parts in a response are shown as one text part. When they have citations, the metadata also records where each part starts, so the original parts come back with their citations on them.
 

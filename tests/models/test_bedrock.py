@@ -1832,6 +1832,7 @@ def _bedrock_history_with_citations(
     location: dict[str, Any] = {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
     anchor: ContentCitationAnchor | None = ContentCitationAnchor(start=0, end=len('Thirty days.')),
     text: str = 'Thirty days.',
+    citation_count: int = 1,
 ) -> list[ModelMessage]:
     """Message history as it comes back from JSON storage, with a text document and a cited answer."""
     return ModelMessagesTypeAdapter.validate_json(
@@ -1864,7 +1865,8 @@ def _bedrock_history_with_citations(
                                     ],
                                     anchor=anchor,
                                 )
-                            ],
+                            ]
+                            * citation_count,
                         ),
                         TextPart('Uncited note.'),
                     ],
@@ -1965,6 +1967,7 @@ async def test_bedrock_replays_own_citations(
             _bedrock_history_with_citations('bedrock', anchor=ContentCitationAnchor(start=0, end=6)),
             id='citation-covers-part-of-text',
         ),
+        pytest.param(_bedrock_history_with_citations('bedrock', citation_count=2), id='two-citations'),
     ],
 )
 async def test_bedrock_sends_unverifiable_citations_as_text(

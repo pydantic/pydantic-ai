@@ -69,7 +69,7 @@ from pydantic_ai import (
     WebCitationSource,
 )
 
-# Google: both sources support the selected text.
+# Google: the provider lists both sources for the selected text.
 TextPart(
     'Pydantic validates data.',
     citations=[
@@ -140,8 +140,8 @@ The [Vercel AI adapter](ui/vercel-ai.md#citations) keeps citations when the fron
 
 | Provider/API | Citations returned | How to enable | Provider support notes |
 | --- | --- | --- | --- |
-| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search and document citations | `include_citations=True` enables citations for documents and requests them for Web Fetch; Web Search returns citations without it | Anthropic [rejects](https://platform.claude.com/docs/en/build-with-claude/citations#feature-compatibility) document citations combined with [`NativeOutput`][pydantic_ai.output.NativeOutput]. Citations of client-provided search results are not included |
-| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Document citations | `include_citations=True` enables citations for text and PDF documents | The anchor covers the whole cited block of text; the location in the document is in the source's `provider_details` |
+| [Anthropic](https://platform.claude.com/docs/en/build-with-claude/citations) | Web search and document citations | `include_citations=True` enables citations for documents in user prompts and requests them for Web Fetch; Web Search returns citations without it | Anthropic [rejects](https://platform.claude.com/docs/en/build-with-claude/citations#feature-compatibility) document citations combined with [`NativeOutput`][pydantic_ai.output.NativeOutput]. Citations of client-provided search results are not included |
+| [Amazon Bedrock](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_CitationsContentBlock.html) | Document citations | `include_citations=True` enables citations for text and PDF documents in user prompts | The anchor covers the whole cited block of text; the location in the document is in the source's `provider_details` |
 | [Google Gemini API](https://ai.google.dev/gemini-api/docs/google-search) | Search, file search and Web Fetch grounding | Enable the grounding tool | |
 | [Google Cloud Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/reference/rest/v1/GenerateContentResponse#GroundingMetadata) | Search and Vertex retrieval grounding | Enable the grounding tool | A retrieved document's resource name is its `document_id` |
 | [OpenAI Chat and Responses](https://platform.openai.com/docs/guides/tools-web-search) | URL citations, and Responses file citations | Enable Web Search for URL citations, or File Search for file citations | Other annotation types, such as `container_file_citation` and `file_path`, are only available as raw annotations |
