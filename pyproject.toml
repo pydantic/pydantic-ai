@@ -542,6 +542,8 @@ include = [
     "pydantic_ai_slim/**/*.py",
     "pydantic_evals/**/*.py",
     "pydantic_graph/**/*.py",
+    "src/pydantic_ai_harness/pydantic_ai_harness/**/*.py",
+    "src/pydantic_clai2/pydantic_clai2/**/*.py",
     "tests/**/*.py",
 ]
 omit = [

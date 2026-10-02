@@ -1051,6 +1051,9 @@ jobs:
       CI: true
       # Not yet for the harness suites: https://github.com/pydantic/pydantic-ai/issues/8821
       BLOCKBUSTER_ENABLED: "false"
+      # No other job installs `browser-use`, so the `coverage` job sees `BrowserUse` only from here.
+      COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
+      COVERAGE_FILE: ${{ github.workspace }}/.coverage/.coverage.harness-browser-use
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -1062,13 +1065,26 @@ jobs:
           enable-cache: true
           cache-suffix: harness-browser-use
 
+      - run: mkdir .coverage
+
       - run: uv sync --all-packages --all-extras --no-extra mcp-tasks --group lint
       # `--no-config`: the project's `exclude-dependencies` would otherwise drop the package too.
       - run: uv pip install --no-config "browser-use>=0.13.6,<0.14"
-      - run: uv run --no-sync pytest tests/harness/browser_use
+      - run: uv run --no-sync coverage run -m pytest tests/harness/browser_use
       - run: uv run --no-sync pyright -p tests/harness/browser_use
         env:
           PYRIGHT_PYTHON_IGNORE_WARNINGS: 1
+
+      # See the matching step in the `test` job.
+      - name: combine coverage files
+        run: uv run --no-sync coverage combine
+
+      - name: store coverage files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-harness-browser-use
+          path: .coverage
+          include-hidden-files: true
 
   test-fastmcp-4:
     name: test FastMCP 4 compatibility
@@ -1294,7 +1310,7 @@ jobs:
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4]
+    needs: [classify, test, test-all-extras, test-durable-exec, test-lowest-versions, test-fastmcp-4, test-harness-browser-use]
     # A `pydantic-clai2`-only change skips every test job but `test`, and a skipped need would
     # otherwise skip this job too.
     if: ${{ !failure() && !cancelled() && needs.classify.outputs.content_only != 'true' }}
@@ -1318,13 +1334,13 @@ jobs:
       - run: uv sync --group dev --group coverage
       - run: uv run --no-sync coverage combine
       # Only the `pydantic-clai2` cells ran for a change confined to it, so they can only vouch
-      # for its own tests: the rest of the workspace is covered on the full path.
+      # for its own source and tests: the rest of the workspace is covered on the full path.
       - name: coverage report
         env:
           CLAI2_ONLY: ${{ needs.classify.outputs.clai2_only }}
         run: |
           if [ "$CLAI2_ONLY" = true ]; then
-            uv run --no-sync coverage report --include='tests/clai2/*'
+            uv run --no-sync coverage report --include='src/pydantic_clai2/*,tests/clai2/*'
           else
             uv run --no-sync coverage report
           fi
