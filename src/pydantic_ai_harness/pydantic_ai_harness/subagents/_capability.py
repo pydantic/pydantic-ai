@@ -457,7 +457,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             return
         folders = self.agent_folders
         if folders is None:
-            if self._agent_folders_was_unset:
+            # `for_run` makes a per-run copy with no folders only when they were left unset; `combine` keeps the flag.
+            if self._agent_folders_was_unset:  # pragma: no branch
                 await self._warn_agent_folders_default_changed(ctx)
             return
         workspace = self._workspace
