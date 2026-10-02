@@ -20,9 +20,10 @@ Every capability package must, or CI fails:
 2. Be linked from the `src/pydantic_ai_harness/README.md` capability tables.
 3. Have a `docs/harness/<slug>.md` page registered in `_CAPABILITY_PAGE_META` (source module + exact H1).
 
-Also add the page to `docs/navigation.yml`: its category subsection under "Capabilities", or the
-"Durable Execution" or "Interfaces" section for a durable-execution backend or an interface (as
-`harness/aws-lambda.md` and `harness/acp.md` are). No test checks that entry.
+Also add the page to `docs/navigation.yml`, in its category subsection under "Capabilities". A
+durable-execution backend goes in the "Durable Execution" section instead (like
+`harness/aws-lambda.md`), and an interface in "Interfaces" (like `harness/acp.md`). No test checks
+that entry.
 
 ## Sidebar Source Of Truth
 
@@ -30,8 +31,8 @@ The harness sidebar renders from **`docs/navigation.yml`**: mostly the category
 subsections under "Capabilities", shared with core capability pages, plus a few
 pages under "Durable Execution" and "Interfaces". Harness entries carry
 `path: "harness/<page>.md"`. Adding, renaming, removing, or regrouping a harness
-docs page updates `docs/navigation.yml` in the same PR. Keep slugs
-`harness/<page>` and preserve existing `aliases:` when renaming.
+docs page updates `docs/navigation.yml` in the same PR. Keep every slug as
+`harness/<page>`. When renaming a page, preserve its existing `aliases:`.
 
 ## Page Conventions
 
@@ -84,10 +85,10 @@ workspace the agent acts in) · **Tools & native abilities** · **Web & research
 window — Code Mode lives here, not under execution: it changes *how* the agent executes, not
 *where*) · **Knowledge & memory** · **Control & safety** · **Self-extension** ·
 **Execution runtime** (durable execution, persistence, observability plumbing). The same scheme
-orders the subsections under "Capabilities" in `docs/navigation.yml`, which add a core-only
-"Loop Customization" subsection. A new capability goes in the category matching its user-facing
-benefit; if none fits, raise it in the PR rather than inventing an eleventh silently. Keep every
-table's "Package" column and one-line description style intact.
+orders the subsections under "Capabilities" in `docs/navigation.yml`. That file adds a core-only
+"Loop Customization" subsection after them. A new capability goes in the category matching its
+user-facing benefit; if none fits, raise it in the PR rather than silently inventing a new
+category. Keep every table's "Package" column and one-line description style intact.
 
 ## Harness Pages Specifically
 
