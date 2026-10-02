@@ -2,7 +2,8 @@
 
 import io
 import sqlite3
-from collections.abc import Iterator
+from collections import deque
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -21,13 +22,71 @@ from pydantic_clai2.plugins import PluginHost
 from pydantic_clai2.ui.menus.field_menu import Runners, save_and_close_item
 from tests.clai2.menu_script import Script, pick, typed
 
-# One fixed terminal for the widgets and the notice wrapping, independent of the host's terminal.
+# One fixed terminal for every test, independent of the host's (CI sets a wide `COLUMNS`).
 TERMINAL = (80, 30)
 
 
+class Keyboard:
+    """Drive real widgets through the public key, terminal-size and stdout seams."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        self.monkeypatch = monkeypatch
+        self.capsys = capsys
+        # A `(columns, rows)` entry resizes the terminal, then reports a key-less poll so the widget repaints.
+        self.keys: deque[str | tuple[int, int]] = deque()
+        monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.menu_key', self.read)
+        self.resize(*TERMINAL)
+
+    def read(self) -> str:
+        key = self.keys.popleft()
+        if isinstance(key, str):
+            return key
+        self.resize(*key)
+        return ''
+
+    def resize(self, columns: int, rows: int = TERMINAL[1]) -> None:
+        self.monkeypatch.setenv('COLUMNS', str(columns))
+        self.monkeypatch.setenv('LINES', str(rows))
+
+    def press(self, keys: Sequence[str | tuple[int, int]]) -> None:
+        """Queue keys for the next widgets and start a fresh transcript."""
+        self.keys.extend(keys)
+        self.capsys.readouterr()
+
+    def menu(self, menu: Menu) -> MenuResult:
+        return menu.run()
+
+    def text(self, widget: TextInput) -> TextInputResult:
+        return widget.run()
+
+    @property
+    def runners(self) -> Runners:
+        return Runners(run_list=self.menu, run_choice=self.menu, run_text=self.text)
+
+    @property
+    def transcript(self) -> str:
+        """Raw terminal output since the last `press`."""
+        return self.capsys.readouterr().out
+
+    def frame(self, menu: Menu) -> list[str]:
+        """The physical rows of the menu's only frame."""
+        self.press(['escape'])
+        assert menu.run().cancelled
+        return last_frame(self.transcript)
+
+
+def last_frame(transcript: str) -> list[str]:
+    """The physical rows of the final repaint; each full repaint starts by homing the cursor."""
+    return Text.from_ansi(transcript.split('\x1b[H')[-1]).plain.rstrip('\n').splitlines()
+
+
 @pytest.fixture
-def folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FolderMenu[object]:
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: TERMINAL)
+def keyboard(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> Keyboard:
+    return Keyboard(monkeypatch, capsys)
+
+
+@pytest.fixture
+def folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, keyboard: Keyboard) -> FolderMenu[object]:
     monkeypatch.chdir(tmp_path)
     home = tmp_path / 'home'
     home.mkdir()
@@ -36,42 +95,6 @@ def folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FolderMenu[objec
         name='coder', console=Console(file=io.StringIO()), settings={'instructions': 'Keep this.', 'sub_agents': True}
     )
     return FolderMenu(CoderSource(host), project=tmp_path)
-
-
-class Keyboard:
-    """Exercise widget validation, key bindings and rendering without a terminal owner."""
-
-    def __init__(self, keys: list[str], *, width: int = TERMINAL[0]) -> None:
-        self.keys = iter(keys)
-        self.width = width
-        self.output = io.StringIO()
-
-    def prepare(self, widget: Menu | TextInput) -> None:
-        widget._use_alt_screen = False  # pyright: ignore[reportPrivateUsage]
-        widget._read_key = lambda: next(self.keys)  # pyright: ignore[reportPrivateUsage]
-        widget._output = self.output  # pyright: ignore[reportPrivateUsage]
-        widget._size = lambda: (self.width, TERMINAL[1])  # pyright: ignore[reportPrivateUsage]
-
-    def menu(self, menu: Menu) -> MenuResult:
-        self.prepare(menu)
-        return menu.run()
-
-    def text(self, widget: TextInput) -> TextInputResult:
-        self.prepare(widget)
-        return widget.run()
-
-    @property
-    def runners(self) -> Runners:
-        return Runners(run_list=self.menu, run_choice=self.menu, run_text=self.text)
-
-
-def render_frame(menu: Menu) -> list[str]:
-    output = io.StringIO()
-    menu._use_alt_screen = False  # pyright: ignore[reportPrivateUsage]
-    menu._read_key = lambda: 'escape'  # pyright: ignore[reportPrivateUsage]
-    menu._output = output  # pyright: ignore[reportPrivateUsage]
-    assert menu.run().cancelled
-    return Text.from_ansi(output.getvalue()).plain.splitlines()
 
 
 def test_configure_flow_preserves_order_preferences_and_updates_summary(folders: FolderMenu[object]) -> None:
@@ -101,12 +124,12 @@ def test_configure_flow_preserves_order_preferences_and_updates_summary(folders:
 
 @pytest.mark.parametrize('width', [50, 80, 140])
 def test_keyboard_add_edit_remove_and_empty_state(
-    folders: FolderMenu[object], width: int, monkeypatch: pytest.MonkeyPatch
+    folders: FolderMenu[object], width: int, monkeypatch: pytest.MonkeyPatch, keyboard: Keyboard
 ) -> None:
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (width, TERMINAL[1]))
+    keyboard.resize(width)
     (folders.project / 'agents').mkdir()
     (folders.project / 'other agents').mkdir()
-    keyboard = Keyboard(
+    keyboard.press(
         [
             'a',
             *'agents',
@@ -120,8 +143,7 @@ def test_keyboard_add_edit_remove_and_empty_state(
             'down',
             'enter',
             'escape',
-        ],
-        width=width,
+        ]
     )
     assert folders.run(runners=keyboard.runners) == [
         'Agent folder saved.',
@@ -131,7 +153,7 @@ def test_keyboard_add_edit_remove_and_empty_state(
     assert folders.folders() == []
     assert (folders.project / 'agents').is_dir()
     assert (folders.project / 'other agents').is_dir()
-    rendered = Text.from_ansi(keyboard.output.getvalue()).plain
+    rendered = Text.from_ansi(keyboard.transcript).plain
     assert 'No folders selected.' in rendered
     assert 'Remove from search (keep files)' in rendered
 
@@ -150,16 +172,16 @@ def test_keyboard_add_edit_remove_and_empty_state(
     ],
 )
 def test_rejected_input_does_not_mutate_settings(
-    folders: FolderMenu[object], text: str, named: bool, error: str
+    folders: FolderMenu[object], text: str, named: bool, error: str, keyboard: Keyboard
 ) -> None:
     folders.source.apply(folders.source.rows()[1], '["agents"]')
     (folders.project / 'file.txt').write_text('not a directory')
     assert error in (folders.problem(text, named=named, index=None) or '')
-    keyboard = Keyboard(['enter', 'escape'])
+    keyboard.press(['enter', 'escape'])
     editor = folders.editor(named=named, index=None)
     editor.set_text(text)
     assert keyboard.text(editor).cancelled
-    assert error in Text.from_ansi(keyboard.output.getvalue()).plain
+    assert error in Text.from_ansi(keyboard.transcript).plain
     assert folders.folders() == ['agents']
 
 
@@ -181,7 +203,7 @@ def test_duplicate_aliases_and_editing_current_entry(folders: FolderMenu[object]
     assert folders.value('~/shared', named=False) == '~/shared'
 
 
-def test_cancellation_at_each_level_keeps_saved_values(folders: FolderMenu[object]) -> None:
+def test_cancellation_at_each_level_keeps_saved_values(folders: FolderMenu[object], keyboard: Keyboard) -> None:
     folders.source.apply(folders.source.rows()[1], '["agents"]')
     script = Script(
         lists=[
@@ -197,23 +219,23 @@ def test_cancellation_at_each_level_keeps_saved_values(folders: FolderMenu[objec
     assert folders.run(runners=script.runners) == []
     assert folders.folders() == ['agents']
     assert folders.action(save_and_close_item(), kind='remove') is None
-    keyboard = Keyboard(['d', 'escape'])
+    keyboard.press(['d', 'escape'])
     assert keyboard.menu(folders.build(initial=4)).cancelled
 
 
-def test_browser_navigation_hidden_folders_and_empty_selection(folders: FolderMenu[object]) -> None:
+def test_browser_navigation_hidden_folders_and_empty_selection(folders: FolderMenu[object], keyboard: Keyboard) -> None:
     hidden = folders.project / '.agents'
     hidden.mkdir()
     (hidden / 'ignored.txt').write_text('not a folder')
     picker = DirectoryPicker(start=folders.project, project=folders.project)
     script = Script(lists=[], choices=[pick(hidden), pick(hidden.parent), pick(hidden), pick(True)], texts=[])
     assert picker.run(runners=script.runners) == hidden
-    keyboard = Keyboard(['escape'])
+    keyboard.press(['escape'])
     keyboard.menu(picker.build())
-    rendered = Text.from_ansi(keyboard.output.getvalue()).plain
+    rendered = Text.from_ansi(keyboard.transcript).plain
     assert 'No subdirectories.' in rendered
     assert 'ignored.txt' not in rendered
-    keyboard = Keyboard([*'.agents', 'enter', 'enter'])
+    keyboard.press([*'.agents', 'enter', 'enter'])
     assert DirectoryPicker(start=folders.project, project=folders.project).run(runners=keyboard.runners) == hidden
 
 
@@ -249,34 +271,36 @@ def test_browse_add_replace_and_duplicate(folders: FolderMenu[object]) -> None:
     assert folders.folders() == [str(folders.project)]
 
 
-def test_missing_saved_directory_can_be_browsed_away_or_removed(folders: FolderMenu[object]) -> None:
+def test_missing_saved_directory_can_be_browsed_away_or_removed(
+    folders: FolderMenu[object], keyboard: Keyboard
+) -> None:
     folders.source.apply(folders.source.rows()[1], '["./missing"]')
     assert 'does not exist' in folders.details(MenuItem('', value=0))
-    keyboard = Keyboard(['enter', 'down', 'enter', 'enter', 'enter', 'd', 'escape'])
+    keyboard.press(['enter', 'down', 'enter', 'enter', 'enter', 'd', 'escape'])
     assert folders.run(runners=keyboard.runners) == ['Agent folder saved.', 'Folder removed. Files were not changed.']
     assert folders.folders() == []
 
 
 def test_browser_unreadable_directory_is_recoverable(
-    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch
+    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch, keyboard: Keyboard
 ) -> None:
     def denied(self: Path) -> object:
         raise PermissionError(13, 'Permission denied', str(self))
 
     monkeypatch.setattr(Path, 'iterdir', denied)
     picker = DirectoryPicker(start=folders.project, project=folders.project)
-    keyboard = Keyboard(['escape'])
+    keyboard.press(['escape'])
     assert picker.run(runners=keyboard.runners) is None
-    rendered = Text.from_ansi(keyboard.output.getvalue()).plain
+    rendered = Text.from_ansi(keyboard.transcript).plain
     assert 'Cannot read directory:' in rendered
     assert 'denied' in rendered
     assert 'Cannot read directory' in (folders.problem('./', named=False, index=None) or '')
 
 
 def test_previews_wrap_long_paths_and_escape_controls(
-    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch
+    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch, keyboard: Keyboard
 ) -> None:
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (80, 40))
+    keyboard.resize(80, 40)
     long_path = './' + '/'.join(['long-directory-name'] * 6)
     folders.source.host.save_settings(CoderSettings(agent_folders=[long_path, 'agents', 'bad\x1b[31m']))
     details = folders.details(MenuItem('', value=0))
@@ -304,7 +328,7 @@ def test_save_failure_stays_in_menu_and_preserves_settings(folders: FolderMenu[o
     assert folders.folders() == []
 
 
-def test_symlink_loop_does_not_block_other_edits(folders: FolderMenu[object]) -> None:
+def test_symlink_loop_does_not_block_other_edits(folders: FolderMenu[object], keyboard: Keyboard) -> None:
     loop = folders.project / 'loop'
     loop.symlink_to(loop, target_is_directory=True)
     folders.source.host.save_settings(CoderSettings(agent_folders=['./loop'], sub_agents=False))
@@ -319,13 +343,13 @@ def test_symlink_loop_does_not_block_other_edits(folders: FolderMenu[object]) ->
     )
     assert folders.run(runners=script.runners) == ['Agent folder saved.']
     assert folders.folders() == [str(folders.project)]
-    keyboard = Keyboard(['escape'])
+    keyboard.press(['escape'])
     keyboard.menu(folders.build())
-    assert 'Sub-agents are disabled' in Text.from_ansi(keyboard.output.getvalue()).plain
+    assert 'Sub-agents are disabled' in Text.from_ansi(keyboard.transcript).plain
 
 
 def test_directory_disappears_between_validation_and_listing(
-    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch
+    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch, keyboard: Keyboard
 ) -> None:
     real_iterdir = Path.iterdir
     calls = 0
@@ -339,26 +363,26 @@ def test_directory_disappears_between_validation_and_listing(
 
     monkeypatch.setattr(Path, 'iterdir', vanished)
     picker = DirectoryPicker(start=folders.project, project=folders.project)
-    keyboard = Keyboard(['escape'])
+    keyboard.press(['escape'])
     keyboard.menu(picker.build())
-    assert 'Cannot list directory' in Text.from_ansi(keyboard.output.getvalue()).plain
+    assert 'Cannot list directory' in Text.from_ansi(keyboard.transcript).plain
 
 
-def test_browser_rechecks_selection_and_shortcuts(folders: FolderMenu[object]) -> None:
+def test_browser_rechecks_selection_and_shortcuts(folders: FolderMenu[object], keyboard: Keyboard) -> None:
     picker = DirectoryPicker(start=folders.project / 'missing', project=folders.project)
     script = Script(lists=[], choices=[pick(True), pick(None), pick(folders.project), pick(True)], texts=[])
     assert picker.run(runners=script.runners) == folders.project
-    keyboard = Keyboard(['ctrl-l', 'ctrl-u', *'home', 'enter', 'left', 'enter'])
+    keyboard.press(['ctrl-l', 'ctrl-u', *'home', 'enter', 'left', 'enter'])
     assert picker.run(runners=keyboard.runners) == folders.project
 
 
 def test_full_browser_page_keeps_title_and_footer_on_screen(
-    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch
+    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch, keyboard: Keyboard
 ) -> None:
     for index in range(30):
         (folders.project / f'directory-{index}').mkdir()
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (50, 24))
-    frame = render_frame(DirectoryPicker(start=folders.project, project=folders.project).build())
+    keyboard.resize(50, 24)
+    frame = keyboard.frame(DirectoryPicker(start=folders.project, project=folders.project).build())
     assert frame[0] == 'Browse local directories'
     assert 'Esc back' in frame[-1]
     assert len(frame) < 24
@@ -366,36 +390,25 @@ def test_full_browser_page_keeps_title_and_footer_on_screen(
 
 
 def test_entry_actions_keep_title_on_screen_with_long_path(
-    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch
+    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch, keyboard: Keyboard
 ) -> None:
     long_path = folders.project.joinpath(*[f'segment-{index:02d}' for index in range(40)])
     folders.source.host.save_settings(CoderSettings(agent_folders=[str(long_path)]))
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (80, 24))
-    frame = render_frame(folders.actions(0))
+    keyboard.resize(80, 24)
+    frame = keyboard.frame(folders.actions(0))
     assert frame[0] == 'Manage agent folder'
     assert 'Esc back' in frame[-1]
     assert len(frame) < 24
 
 
-def test_notices_rewrap_when_terminal_shrinks(folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch) -> None:
-    size = (140, 24)
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: size)
+def test_notices_fit_after_terminal_shrinks(folders: FolderMenu[object], keyboard: Keyboard) -> None:
+    keyboard.resize(140, 24)
     folders.source.host.save_settings(CoderSettings(agent_folders=[f'group{index}' for index in range(20)]))
     folders.notice = 'Could not save: attempt to write a readonly database'
     menu = folders.build(initial=1)
-    output = io.StringIO()
-    keys = iter(['', 'escape'])
-
-    def shrink_then_read() -> str:
-        nonlocal size
-        size = (50, 24)
-        return next(keys)
-
-    menu._use_alt_screen = False  # pyright: ignore[reportPrivateUsage]
-    menu._read_key = shrink_then_read  # pyright: ignore[reportPrivateUsage]
-    menu._output = output  # pyright: ignore[reportPrivateUsage]
+    keyboard.press([(50, 24), 'escape'])
     assert menu.run().cancelled
-    last = Text.from_ansi(output.getvalue().split('\x1b[H')[-1]).plain.splitlines()
+    last = last_frame(keyboard.transcript)
     assert last[0] == 'Agent folders'
     assert len(last) < 24
     assert all(len(line) < 50 for line in last)
@@ -404,35 +417,37 @@ def test_notices_rewrap_when_terminal_shrinks(folders: FolderMenu[object], monke
 
 
 @pytest.mark.parametrize('navigation', ['ctrl-l', 'left'])
-def test_browser_shortcuts_recover_when_search_has_no_matches(folders: FolderMenu[object], navigation: str) -> None:
+def test_browser_shortcuts_recover_when_search_has_no_matches(
+    folders: FolderMenu[object], navigation: str, keyboard: Keyboard
+) -> None:
     picker = DirectoryPicker(start=Path.home(), project=folders.project)
     keys = [*'no-matching-directory', navigation]
     if navigation == 'ctrl-l':
         keys += ['ctrl-u', *str(folders.project), 'enter']
     keys += ['enter']
-    keyboard = Keyboard(keys)
+    keyboard.press(keys)
     assert picker.run(runners=keyboard.runners) == folders.project
 
 
-def test_existing_control_characters_never_reach_text_input(folders: FolderMenu[object]) -> None:
+def test_existing_control_characters_never_reach_text_input(folders: FolderMenu[object], keyboard: Keyboard) -> None:
     unsafe = './agent\x1b[2Jfolder'
     directory = folders.project / unsafe
     directory.mkdir()
     folders.source.host.save_settings(CoderSettings(agent_folders=[unsafe]))
     editor = folders.editor(named=False, index=0)
     assert editor.text == ''
-    keyboard = Keyboard(['escape'])
+    keyboard.press(['escape'])
     assert keyboard.text(editor).cancelled
-    assert '\x1b[2J' not in keyboard.output.getvalue()
+    assert '\x1b[2Jfolder' not in keyboard.transcript
     picker = DirectoryPicker(start=directory, project=folders.project)
-    keyboard = Keyboard(['ctrl-l', 'escape', 'escape'])
+    keyboard.press(['ctrl-l', 'escape', 'escape'])
     assert picker.run(runners=keyboard.runners) is None
-    assert '\x1b[2J' not in keyboard.output.getvalue()
+    assert '\x1b[2Jfolder' not in keyboard.transcript
     assert folders.folders() == [unsafe]
 
 
 def test_sqlite_save_failure_keeps_menu_and_previous_settings(
-    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch
+    folders: FolderMenu[object], monkeypatch: pytest.MonkeyPatch, keyboard: Keyboard
 ) -> None:
     store = SettingsStore(folders.project / 'settings.db')
     saved_folders = [f'group{index}' for index in range(20)]
@@ -459,14 +474,14 @@ def test_sqlite_save_failure_keeps_menu_and_previous_settings(
         return connection
 
     monkeypatch.setattr(sqlite3, 'connect', readonly)
-    monkeypatch.setattr('pydantic_clai2.builtin_plugins.coder_folders.terminal_size', lambda: (50, 24))
+    keyboard.resize(50, 24)
     script = Script(
         lists=[pick(FolderAction(kind='name')), MenuResult(cancelled=True)], choices=[], texts=[typed('agents')]
     )
     frames: list[list[str]] = []
 
     def run_list(menu: Menu) -> MenuResult:
-        frames.append(render_frame(menu))
+        frames.append(keyboard.frame(menu))
         return script.run_list(menu)
 
     assert folders.run(runners=Runners(run_list=run_list, run_text=script.run_text)) == []

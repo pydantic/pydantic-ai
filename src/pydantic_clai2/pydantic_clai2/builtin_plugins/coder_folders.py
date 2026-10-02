@@ -8,7 +8,7 @@ from typing import Generic, Literal
 from rich.console import Console
 from rich.text import Text
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
-from termflow.tui.layout import collapsed
+from termflow.tui.layout import COLLAPSE_BELOW
 from termflow.tui.menu import Menu, MenuResult
 from termflow.tui.terminal import terminal_size
 from termflow.tui.textinput import TextInput
@@ -49,42 +49,28 @@ def _wrap(text: str, *, width: int) -> list[str]:
     return [line.plain for line in Text(safe).wrap(Console(), width, overflow='fold')]
 
 
-def _responsive_menu(builder: MenuBuilder, items: list[MenuItem], *, initial: int = 0) -> Menu:
-    columns = terminal_size()[0]
+# Termflow paints disabled rows unclipped, and its narrowest list column is half the collapse width.
+# Wrapping notices to fit that column keeps them inside every layout, so a resize never reflows rows.
+_NOTICE_WIDTH = COLLAPSE_BELOW // 2 - 2
 
-    def wrapped_items() -> list[MenuItem]:
-        available = max(10, columns - 1)
-        width = available if collapsed(available) else max(20, available // 2)
-        return [
-            row
-            for item in items
-            for row in (
-                [MenuItem(line, disabled=True) for line in _wrap(item.label, width=width - 3)]
-                if item.disabled
-                else [item]
-            )
-        ]
 
-    def size() -> tuple[int, int]:
-        nonlocal columns
-        width, height = terminal_size()
-        if width != columns:
-            selected = menu.highlighted
-            columns = width
-            menu.replace_items(wrapped_items())
-            # Termflow has no public selection setter; retain the highlighted entry as notices reflow.
-            rows = menu._filtered()  # pyright: ignore[reportPrivateUsage]
-            menu._cursor = next(  # pyright: ignore[reportPrivateUsage]
-                (index for index, (_, item) in enumerate(rows) if item is selected), 0
-            )
-        # Reserve Termflow's final newline so full pages do not scroll off their title.
-        return width, max(1, height - 1)
+def _menu_size() -> tuple[int, int]:
+    # Reserve Termflow's final newline so full pages do not scroll off their title.
+    columns, rows = terminal_size()
+    return columns, max(1, rows - 1)
 
-    rendered = wrapped_items()
-    selected = items[min(initial, len(items) - 1)]
-    cursor = next((index for index, item in enumerate(rendered) if item is selected), 0)
-    menu = builder.items(rendered).initial_index(cursor).size(size).build()
-    return menu
+
+def _build(builder: MenuBuilder, items: list[MenuItem], *, initial: int = 0) -> Menu:
+    rows: list[MenuItem] = []
+    cursor = 0
+    for index, item in enumerate(items):
+        if index == initial:
+            cursor = len(rows)
+        if item.disabled:
+            rows += [MenuItem(line, disabled=True) for line in _wrap(item.label, width=_NOTICE_WIDTH)]
+        else:
+            rows.append(item)
+    return builder.items(rows).initial_index(cursor).size(_menu_size).build()
 
 
 def _directory_problem(path: Path) -> str | None:
@@ -139,7 +125,7 @@ class DirectoryPicker:
                 )
             )
 
-        return _responsive_menu(
+        return _build(
             MenuBuilder('Browse local directories')
             .style(markdown_style())
             .searchable(True)
@@ -266,7 +252,7 @@ class FolderMenu(Generic[DepsT]):
             save_and_close_item(),
         ]
         notices = [MenuItem(_display(self.notice), disabled=True)] if self.notice else []
-        return _responsive_menu(
+        return _build(
             MenuBuilder('Agent folders')
             .style(markdown_style())
             .preview(self.details)
@@ -286,7 +272,7 @@ class FolderMenu(Generic[DepsT]):
         return MenuResult(item=MenuItem('', value=FolderAction(kind=kind, index=item.value)))
 
     def actions(self, index: int) -> Menu:
-        return _responsive_menu(
+        return _build(
             MenuBuilder('Manage agent folder')
             .style(markdown_style())
             .preview(lambda _: self.details(MenuItem('', value=index)))
