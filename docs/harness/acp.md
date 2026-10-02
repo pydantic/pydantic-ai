@@ -202,7 +202,7 @@ Pass `models` to advertise a stable ACP session config option named `model` (usi
 run_acp_stdio_sync(agent, models=['anthropic:claude-sonnet-5', 'anthropic:claude-opus-4-8', 'openai:gpt-4o'])
 ```
 
-A model id is any string a Pydantic AI model accepts, so newer models not yet in `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows. To advertise ids `infer_model` does not understand (OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`.
+A model id is any string a Pydantic AI model accepts, so newer models missing from `KnownModelName` work too. Pass `models='all'` to offer every model Pydantic AI knows. To advertise ids `infer_model` does not understand (OAuth or subscription models), pass `model_resolver` to map the selected id to a prebuilt `Model`.
 
 ## Cancellation and limitations
 
@@ -212,7 +212,7 @@ A model id is any string a Pydantic AI model accepts, so newer models not yet in
 - **Overwrite diffs.** `write_file` renders an overwrite as if creating a new file, so the diff understates what it replaced.
 - **Live terminal panes.** `acp_terminal` returns a command's captured output; it does not embed a live terminal pane in the tool call.
 - **Images.** Prompt image blocks are off by default and must be enabled via `prompt_capabilities` with a model that accepts them.
-- **Slash commands.** The adapter does not yet advertise any commands, so no slash commands appear in the client. Planned.
+- **Slash commands.** The adapter advertises no commands, so no slash commands appear in the client.
 
 ## API
 

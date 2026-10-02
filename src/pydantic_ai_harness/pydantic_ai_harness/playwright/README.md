@@ -365,13 +365,12 @@ redacted whichever tool returned them.
   closed, which is recorded in the event log.
 - Uploads and downloads are not exposed: the context refuses downloads, and there
   is no tool to put a file into a page. Both need an artifact contract between the
-  page and the host filesystem, tracked in
-  [#590](https://github.com/pydantic/pydantic-ai-harness/issues/590).
+  page and the host filesystem, which the capability does not arrange.
 - CSS selectors cannot reach content inside iframes; reading and acting there
   goes through `snapshot` refs (see
   [Embedded content](#embedded-content-iframes)).
-- Durable execution (e.g. `TemporalDurability`) is rejected at agent
-  construction: a live Chromium page cannot survive activity replay or worker
+- Durable execution (`TemporalDurability`, `DBOSDurability`, `PrefectDurability`) is
+  rejected at agent construction: a live Chromium page cannot survive replay or worker
   restart.
 - The model targets elements by `aria-ref=` handle (from `snapshot`), CSS
   selector, or pixel coordinates.
@@ -481,9 +480,8 @@ disclaims its origin filter the same way. A page can still signal outward throug
 the request kinds the allowlist leaves alone -- an image or script URL carries
 whatever the page puts in it -- and a hostname is classified on the answer this
 process gets, while Chromium resolves it again before connecting, so a record
-that changes in between (DNS rebinding) still wins. That, and the proxy-based
-enforcement mode which is what closes it, are tracked in
-[#415](https://github.com/pydantic/pydantic-ai-harness/issues/415).
+that changes in between (DNS rebinding) still wins. Closing that needs
+proxy-based enforcement, which this capability does not implement.
 
 For untrusted-input scenarios, run the browser in a container or VM with an
 egress firewall, or front it with a proxy, and pair it with the harness's

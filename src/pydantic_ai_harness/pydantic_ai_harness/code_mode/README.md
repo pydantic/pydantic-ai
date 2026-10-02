@@ -239,7 +239,8 @@ suspension budget in place; suspensions cannot be unlimited.
 When `CodeMode` runs inside a Temporal workflow, it disables `max_duration_secs`, including an
 explicit override. `run_code` is replayed in workflow code, so measuring elapsed time there could
 make replay choose a different path from the recorded workflow. The memory and suspension caps still apply. Put
-time-bounded work behind a Temporal activity instead.
+time-bounded work behind a Temporal activity instead. The disabling detects the Temporal integration
+only: under `DBOSDurability` or `PrefectDurability` the time limit still applies.
 
 ## REPL state
 
@@ -501,7 +502,7 @@ counted from each point the snippet starts or resumes after a tool call.
 With no duration limit (`resource_limits='unlimited'`, or inside a Temporal workflow), a server
 that stops responding is waited on indefinitely.
 
-## Temporal durability
+## Durable execution
 
 Install both integrations:
 
@@ -556,6 +557,12 @@ workflow task that does not yield within 2 seconds, so move heavier computation 
 Clock, environment, and randomness calls reach `os_access` on the workflow's own thread, so a
 handler can answer `datetime.now()` with `workflow.now()` and stay replay-safe. File calls are
 answered by Monty from the mounts first and reach the handler on another thread.
+
+Core also ships `DBOSDurability` and `PrefectDurability` (`pydantic_ai.durable_exec.dbos`,
+`pydantic_ai.durable_exec.prefect`). The determinism boundary above, side effects behind tools
+and REPL state reconstructed by replay, holds for every engine that re-executes orchestration
+code on recovery. The `PydanticAIPlugin` sandbox passthrough, the activity timeouts, and the
+`max_duration_secs` disabling are Temporal-specific.
 
 ## Observability
 

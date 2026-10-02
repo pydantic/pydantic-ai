@@ -486,20 +486,19 @@ reach runtime validation; they are still rejected before a sub-agent runs.
 
 Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each
 sub-agent whose model requests should run as activities, then register every agent with its own
-`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](../code_mode/README.md#temporal-durability),
+`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](../code_mode/README.md#durable-execution),
 and is re-executed during replay against the recorded sub-agent results.
 Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.
 
 ## What is coming
 
-A suspended Monty program is a small serializable value you can dump, reload, and fork. That points
-at two patterns that do not ship yet. The first is forking one expensive shared prefix into N
-best-of-N branches. The second is durable workflows that resume from a persisted snapshot after a
-crash or a redeploy. Two smaller extensions are also planned: structured sub-agent inputs (a
-`parameters` schema per `WorkflowAgent`, instead of only `task: str`) and first-class progress
-streaming. Until then, set `event_stream_handler` on each sub-agent `Agent`, or use Logfire, to
-watch sub-agent runs inside the one tool call.
+A suspended Monty program is a small serializable value you can dump, reload, and fork. This
+capability does not build on that today: there is no forking of an expensive shared prefix into
+N best-of-N branches, no resume from a persisted snapshot after a crash or a redeploy, and
+`WorkflowAgent` takes only `task: str`, not a structured input schema. There is also no
+first-class progress streaming: set `event_stream_handler` on each sub-agent `Agent`, or use
+Logfire, to watch sub-agent runs inside the one tool call.
 
 ## API
 

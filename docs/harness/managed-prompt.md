@@ -19,12 +19,7 @@ Install the `logfire` extra:
 pip/uv-add "pydantic-ai-harness[logfire]"
 ```
 
-!!! note "A first-party `Managed` capability is in flight"
-    A broader, first-party `Managed` capability is being built in
-    [pydantic-ai#5107](https://github.com/pydantic/pydantic-ai/pull/5107) and will eventually be
-    importable as `pydantic_ai.managed.logfire.Managed` -- covering instructions, model settings,
-    and whole-spec variables. Until then, `ManagedPrompt` is the supported path for backing an
-    agent's instructions with a Logfire-managed prompt.
+`ManagedPrompt` backs an agent's instructions with a Logfire-managed prompt.
 
 > While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
 

@@ -222,7 +222,7 @@ Before a script runs it is statically type-checked against the sub-agent signatu
 
 Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each
 sub-agent whose model requests should run as activities, then register every agent with its own
-`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](code-mode.md#temporal-durability),
+`AgentPlugin`. The script runs in workflow code, like [Code Mode's `run_code`](code-mode.md#durable-execution),
 and is re-executed during replay against the recorded sub-agent results.
 Unlike Code Mode, a `max_duration_secs` you set still applies inside the workflow, so a script that
 runs close to it can stop at a different point on replay and cause a `NondeterminismError`.

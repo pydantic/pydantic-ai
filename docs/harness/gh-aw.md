@@ -216,8 +216,7 @@ Two things a spec cannot do today, both of which send you back to a module:
 - **Name a harness capability.** A spec resolves capability names through a closed registry
   that the harness capabilities are not part of, and the CLI passes no
   `custom_capability_types`, so a spec reaches the built-in capabilities and nothing else.
-  `Coder`, `Researcher` and the rest are module-only. See
-  [pydantic-ai#8334](https://github.com/pydantic/pydantic-ai/issues/8334).
+  `Coder`, `Researcher` and the rest are module-only.
 - **Define a function tool.** The `label_catalog` tool above is Python, and there is no
   spec form for it.
 
