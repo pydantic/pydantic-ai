@@ -1,9 +1,10 @@
-"""Select a previously added model without browsing providers or editing settings."""
+"""Select or delete previously added models without browsing providers."""
 
+from dataclasses import dataclass
 from enum import Enum
 
 from termflow.tui import MenuBuilder, MenuItem
-from termflow.tui.menu import Menu
+from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.ui.menus.field_menu import TERMINAL, Runners
@@ -17,52 +18,110 @@ class ModelPickerAction(Enum):
     ADD = 'add'
 
 
+@dataclass(frozen=True, kw_only=True)
+class DeleteModel:
+    """Request confirmation before deleting a saved model."""
+
+    name: str
+
+
 def model_completions(context: CommandContext, args: list[str]) -> list[str]:
-    """Read the saved list on each completion so additions appear immediately."""
+    """Read the saved list on each completion so changes appear immediately."""
     return context.store.models() if len(args) <= 1 else []
 
 
-def build_model_picker(context: CommandContext) -> Menu:
-    """List saved models with a route to add and select another model."""
+def build_model_picker(context: CommandContext, *, message: str = '') -> Menu:
+    """List saved models with routes to add, select, and delete models."""
     names = context.store.models()
     current = context.settings.model
     items = [MenuItem(f'{name}{" (current)" if name == current else ""}', value=name) for name in names]
+    items.append(MenuItem('Add a model...', value=ModelPickerAction.ADD))
+    if message:
+        items.append(MenuItem(message, disabled=True))
+
+    def delete(menu: Menu, item: MenuItem) -> MenuResult | None:
+        if not item.disabled and isinstance(item.value, str):
+            return MenuResult(item=MenuItem(item.label, value=DeleteModel(name=item.value)))
+        return None
+
+    def preview(item: MenuItem) -> str:
+        if item.disabled:
+            return item.label
+        if item.value is ModelPickerAction.ADD:
+            return 'Browse providers to add\nand select a model.'
+        deletion = (
+            'Select another model before\ndeleting the current model.'
+            if item.value == current
+            else 'Ctrl+D or Delete removes this model\nand its settings after confirmation.'
+        )
+        return f'{item.value}\n\nEnter selects this model\nfor the next prompt.\n\n{deletion}'
+
     return (
         MenuBuilder('Select model')
         .style(markdown_style())
-        .items([*items, MenuItem('Add a model...', value=ModelPickerAction.ADD)])
+        .items(items)
         .searchable()
         .initial_index(names.index(current) if current in names else 0)
-        .preview(
-            lambda item: (
-                'Browse providers to add and select a model.'
-                if item.value is ModelPickerAction.ADD
-                else f'{item.value}\n\nEnter selects this model for the next prompt.'
-            )
-        )
-        .footer_hint('type to filter - Enter select - Esc close')
+        .preview(preview)
+        .on_key('ctrl-d', delete)
+        .on_key('delete', delete)
+        .footer_hint('type to filter - Enter select - Ctrl+D/Del delete - Esc close')
         .key_source(menu_key)
         .build()
     )
+
+
+def _run_model_picker(context: CommandContext, *, runners: Runners) -> tuple[MenuResult, list[str]]:
+    messages: list[str] = []
+    message = ''
+    while True:
+        result = runners.run_list(build_model_picker(context, message=message))
+        if result.cancelled or result.item is None or not isinstance(result.item.value, DeleteModel):
+            return result, messages
+        name = result.item.value.name
+        if name == context.settings.model:
+            message = 'Select another model before deleting the current model.'
+            continue
+        confirmation = runners.run_choice(
+            MenuBuilder(f'Delete {name}?')
+            .style(markdown_style())
+            .items([MenuItem('Keep model', value=False), MenuItem('Delete model', value=True)])
+            .preview(
+                lambda item: (
+                    'Remove this saved model and its\nper-model settings, and clear any\n'
+                    'saved startup preference for it.\n\nProvider credentials are kept.\nThis cannot be undone.'
+                )
+            )
+            .footer_hint('Enter select - Esc keep model')
+            .key_source(menu_key)
+            .build()
+        )
+        if not confirmation.cancelled and confirmation.item is not None and confirmation.item.value is True:
+            context.store.remove_model(name=name)
+            message = f'Deleted {name}.'
+            messages.append(message)
 
 
 async def model_command(context: CommandContext, args: list[str], *, runners: Runners = TERMINAL) -> str:
     """Select an existing model by name or through the picker."""
     if len(args) > 1:
         raise ValueError('Usage: /model [NAME]')
+    messages: list[str] = []
     if args:
         name = args[0]
     else:
-        result = await run_worker(lambda: runners.run_list(build_model_picker(context)))
+        result, messages = await run_worker(lambda: _run_model_picker(context, runners=runners))
         if result.cancelled or result.item is None:
-            return 'No changes.'
+            return '\n'.join(messages) or 'No changes.'
         if result.item.value is ModelPickerAction.ADD:
             from pydantic_clai2.ui.menus.model_menu import open_add_model_menu
 
-            return await open_add_model_menu(context, runners=runners)
+            messages.append(await open_add_model_menu(context, runners=runners))
+            return '\n'.join(messages)
         if not isinstance(result.item.value, str):
-            return 'No changes.'
+            return '\n'.join(messages) or 'No changes.'
         name = result.item.value
     if name not in context.store.models():
         raise ValueError(f'Model not added: {name}. Use /add_model {name} first.')
-    return context.set_setting(['model', name])
+    messages.append(context.set_setting(['model', name]))
+    return '\n'.join(messages)
