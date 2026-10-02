@@ -141,7 +141,7 @@ def load_citations(data: object, text: str) -> list[Citation] | None:
     if not isinstance(data, list):
         return None
     citations: list[Citation] = []
-    for item in cast(list[Any], data):
+    for item in cast(list[object], data):
         try:
             citation = _citation_ta.validate_python(item)
         except ValidationError:
@@ -207,7 +207,7 @@ class _TextPartMetadata(TypedDict):
     id: NotRequired[str | None]
     provider_name: NotRequired[str | None]
     provider_details: NotRequired[dict[str, Any] | None]
-    citations: NotRequired[Any]
+    citations: NotRequired[object]
 
 
 _text_parts_metadata_ta: TypeAdapter[list[_TextPartMetadata]] = TypeAdapter(list[_TextPartMetadata])

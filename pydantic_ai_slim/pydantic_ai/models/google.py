@@ -2150,7 +2150,7 @@ def _map_grounding_citations(
         if segment is None or segment.end_index is None:
             continue
         part_index = _grounding_support_part_index(parts, segment)
-        if part_index is None or part_index >= len(parts) or (text := parts[part_index].text) is None:
+        if part_index is None or (text := parts[part_index].text) is None:
             continue
 
         chunk_indices = support.grounding_chunk_indices or []
