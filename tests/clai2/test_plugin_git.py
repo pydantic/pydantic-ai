@@ -2,6 +2,7 @@
 
 import os
 import shlex
+import shutil
 import signal
 import sqlite3
 import subprocess
@@ -20,7 +21,7 @@ from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.plugins._git import clone_repository, parse_repository
 from pydantic_clai2.plugins.loader import PluginError
 
-from .test_plugin_loader import Harness
+from .test_plugin_loader import SEGMENT, Harness
 
 READINESS_WAIT_TIMEOUT = 30
 
@@ -102,14 +103,67 @@ async def test_add_git_plugin_lifecycle(tmp_path: Path, repository: Path, entryp
     (checkout / entrypoint).write_text(PLUGIN.replace('MESSAGE)]', "'Reloaded')]"))
     assert await fresh.loader.command(['reload', 'demo_plugin']) == 'Reloaded demo_plugin.'
     assert await fresh.commands.execute_async('/git_hello') == 'Reloaded'
-    assert (await fresh.loader.command(['remove', 'demo_plugin'])).startswith('Disabled demo_plugin.')
-    assert fresh.store.plugins()[0].enabled is False
+    assert await fresh.loader.command(['remove', 'demo_plugin']) == (
+        f'Removed demo_plugin. Checkout kept at {checkout}. Delete that directory before reinstalling from Git.'
+    )
+    assert fresh.store.plugins() == []
+    assert fresh.loader.entries() == []
     assert (checkout / entrypoint).exists()
     assert 'git_hello' not in fresh.commands
     await fresh.loader.close('exit')
     restarted = Harness(tmp_path)
     await restarted.loader.load_all()
     assert 'git_hello' not in restarted.commands
+    with pytest.raises(ValueError, match='checkout already exists'):
+        await restarted.loader.command(['add', repository.as_uri()])
+    assert 'Reloaded' in (checkout / entrypoint).read_text()
+    # The user removes the retained checkout after reviewing their local changes.
+    shutil.rmtree(checkout)
+    await restarted.loader.command(['add', repository.as_uri()])
+    assert await restarted.commands.execute_async('/git_hello') == 'Hello from Git'
+    await restarted.loader.close('exit')
+
+
+async def test_remove_git_plugin_with_a_missing_entrypoint(tmp_path: Path, repository: Path) -> None:
+    harness = Harness(tmp_path)
+    await harness.loader.command(['add', repository.as_uri()])
+    checkout = harness.store.plugins_dir / '_git' / 'demo_plugin'
+    (checkout / '__init__.py').unlink()
+    message = await harness.loader.command(['remove', 'demo_plugin'])
+    assert message.startswith('Removed demo_plugin.')
+    assert str(checkout) in message
+    assert harness.store.plugins() == []
+    assert harness.loader.entries() == []
+    assert checkout.exists()
+
+
+async def test_remove_git_plugin_restores_a_shipped_declaration(tmp_path: Path, repository: Path) -> None:
+    harness = Harness(tmp_path)
+    await harness.loader.command(['add', repository.as_uri()])
+    await harness.loader.close('exit')
+    shipped = tmp_path / 'shipped.py'
+    shipped.write_text(SEGMENT.format(name='restored'))
+    upgraded = Harness(tmp_path, builtin=(PluginSettings(id='demo_plugin', factory='shipped', path=str(shipped)),))
+    await upgraded.loader.load_all()
+    message = await upgraded.loader.command(['remove', 'demo_plugin'])
+    assert message.startswith('demo_plugin is built in; restored its defaults.')
+    assert f'Checkout kept at {harness.store.plugins_dir / "_git" / "demo_plugin"}' in message
+    assert upgraded.store.plugins() == []
+    assert [segment() for segment in upgraded.loader.status_segments()] == ['in restored']
+    await upgraded.loader.close('exit')
+
+
+async def test_remove_does_not_claim_a_foreign_git_directory(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    declaration = PluginSettings(
+        id='demo_plugin',
+        factory='foreign',
+        path=str(tmp_path / 'foreign' / '_git' / 'demo_plugin' / 'plugin.py'),
+        enabled=False,
+    )
+    harness.store.save_plugin(declaration)
+    assert (await harness.loader.command(['remove', 'demo_plugin'])).startswith('Disabled demo_plugin.')
+    assert harness.store.plugins() == [declaration]
 
 
 @pytest.mark.parametrize(

@@ -565,17 +565,28 @@ class PluginLoader(Generic[DepsT]):
         _requested('remove', name)
         requires = self._requirements(entry)
         await self.unload(name)
+        checkout_notice = ''
         if entry.path is not None and not entry.shipped:
-            self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
-            return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
+            if (
+                entry.path.parent.parent.name == '_git'
+                and entry.path.parent == self.plugins_dir.resolve() / '_git' / name
+            ):
+                checkout_notice = (
+                    f' Checkout kept at {entry.path.parent}. Delete that directory before reinstalling from Git.'
+                )
+            else:
+                self._store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
+                return f'Disabled {name}. Delete {entry.path} to remove the plugin itself.'
         self._store.delete_plugin(name)
         shipped = self._project.get(name) or self._builtin.get(name)
         if shipped is None:
-            return f'Removed {name}.'
+            return f'Removed {name}.{checkout_notice}'
         if shipped.enabled:
             await self.load(name)
         origin = 'declared by the project' if name in self._project else 'built in'
-        return f'{name} is {origin}; restored its defaults. Use /plugins disable {name} to turn it off.'
+        return (
+            f'{name} is {origin}; restored its defaults. Use /plugins disable {name} to turn it off.{checkout_notice}'
+        )
 
     async def reload(self, name: str) -> None:
         """Unload, re-import the module, and load again."""

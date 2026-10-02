@@ -161,7 +161,9 @@ actions, `.footer_hint` for the key legend, `markdown_style()` for colours.
   already run with the editor suspended. Do not start a second input reader
   alongside the live editor.
 - Adding a plugin is not in the menu. It needs free text, so it stays
-  `/plugins add`.
+  `/plugins add ID MODULE[:ATTR] [JSON]` or `/plugins add GIT_URL`. Git installs
+  use the existing file loader, with HTTPS/SSH for network sources; see
+  `PLUGINS.md` for the repository layout, trust boundary, and checkout management.
 - Anything that is "edit named, validated fields" uses `field_menu.py`: a
   `FieldSource` supplies rows, current values, validation, apply, and reset;
   `FieldMenu` builds the widgets; `run_flow` is the loop. `/set` and per-model
@@ -241,6 +243,8 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
 | `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
+| `plugins/_git.py` | Git installation for `/plugins add GIT_URL`, with checkout rollback until its declaration is saved |
+| `runtime/_processes.py` | process-tree cleanup shared by shell passthrough and Git cloning |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |

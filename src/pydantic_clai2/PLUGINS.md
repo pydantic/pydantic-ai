@@ -682,8 +682,11 @@ Three ways to install one:
    Authentication uses your existing Git credentials without terminal prompts.
    A failed or cancelled clone is removed. If the plugin itself fails to load,
    its checkout and declaration remain so you can fix it and `/plugins enable my_plugin`.
-   `/plugins reload` reloads local code; it does not fetch updates from Git.
-   `/plugins remove` disables the plugin without deleting the checkout.
+   To update, run `!git -C <checkout-directory> pull --ff-only`, then
+   `/plugins reload my_plugin`. Reloading by itself does not fetch from Git.
+   `/plugins remove my_plugin` unloads it and forgets its declaration, but keeps
+   the checkout so local changes are not lost. To reinstall, delete the checkout
+   directory named in the response, then run `/plugins add GIT_URL` again.
 
 No restart needed when you do it from inside CLAI. A plugin you add or enable is
 active for the next prompt; one you disable or remove is gone for the next
