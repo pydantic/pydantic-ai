@@ -16,11 +16,12 @@ import json
 import wave
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import anyio
 import pytest
 from inline_snapshot import snapshot
+from pydantic import BaseModel, StringConstraints
 
 from pydantic_ai import Agent, RequestUsage, RunContext, ToolReturn
 from pydantic_ai.capabilities import WebSearch
@@ -529,6 +530,65 @@ async def test_tool_result_image(
         if isinstance(part, SpeechPart)
     )
     assert 'kiwi' in answer.lower()
+
+
+class _TreeNode(BaseModel):
+    name: str
+    children: dict[str, _TreeNode] = {}
+    children_by_slug: dict[Annotated[str, StringConstraints(pattern='^[a-z-]+$')], _TreeNode] = {}
+
+
+async def test_tool_with_recursive_map_values(gemini_ws_cassette: tuple[Provider[Any], RealtimeCassette]) -> None:
+    """A tool taking recursive `dict[str, Node]` fields is declared, and the model calls it.
+
+    A `dict`'s values sit under `additionalProperties`, or `patternProperties` when its keys carry a pattern.
+    Live declarations drop both, so the recursion lives only in subschemas that are dropped, and each field
+    goes out as a plain object like any other `dict` field.
+    """
+    provider, cassette = gemini_ws_cassette
+    model = GoogleRealtimeModel('gemini-3.1-flash-live-preview', provider=provider)
+    agent = Agent(instructions='Use save_tree when asked to save a tree, then confirm it in one short sentence.')
+
+    @agent.tool_plain
+    def save_tree(tree: _TreeNode) -> str:
+        """Save a tree of named nodes."""
+        return f'Saved {tree.name}.'
+
+    events: list[Any] = []
+    async with agent.realtime(model).session() as session:
+        await session.send('Save a tree whose root is named "oak" and has no children.')
+        with anyio.fail_after(30):
+            async for event in session:  # pragma: no branch
+                events.append(event)
+                if isinstance(event, RealtimeTurnCompleteEvent):
+                    break
+
+    [setup] = sent_frames_containing(cassette, 'Save a tree of named nodes.')
+    assert setup['setup']['tools'] == snapshot(
+        [
+            {
+                'functionDeclarations': [
+                    {
+                        'description': 'Save a tree of named nodes.',
+                        'name': 'save_tree',
+                        'parameters': {
+                            'properties': {
+                                'name': {'type': 'STRING'},
+                                'children': {'default': {}, 'type': 'OBJECT'},
+                                'children_by_slug': {'default': {}, 'type': 'OBJECT'},
+                            },
+                            'required': ['name'],
+                            'type': 'OBJECT',
+                        },
+                    }
+                ]
+            }
+        ]
+    )
+    assert [e.part.args_as_dict() for e in events if isinstance(e, FunctionToolCallEvent)] == snapshot(
+        [{'name': 'oak'}]
+    )
+    assert [e.part.content for e in events if isinstance(e, FunctionToolResultEvent)] == snapshot(['Saved oak.'])
 
 
 async def test_asap_enqueue_waits_for_response_boundary(

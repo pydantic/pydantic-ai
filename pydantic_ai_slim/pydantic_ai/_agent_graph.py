@@ -1834,7 +1834,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             outgoing_namespace_before: dict[str, Any] = (
                 dict(raw_outgoing_namespace_before) if is_str_dict(raw_outgoing_namespace_before) else {}
             )
-            counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
+            with set_current_run_context(run_context):
+                counted_usage = await model.count_tokens(messages, model_settings, model_request_parameters)
 
             # Counting models may persist framework-only state on the request they counted. When
             # normalization merged consecutive requests, that request is temporary, so copy only keys

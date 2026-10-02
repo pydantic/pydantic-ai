@@ -489,6 +489,34 @@ def test_inline_defs_repeated_ref_with_siblings():
     assert result['properties']['defaulted'] == {**pet, 'default': None}
 
 
+def test_inline_defs_skips_keywords_without_matching_type():
+    """Object and array keywords are deliberately left as written, `$ref`s included, without a matching `type`.
+
+    They're walked only when `type` is exactly `'object'` or `'array'` respectively. The dangling `$ref` is the
+    documented output, not a bug: see the `InlineDefsJsonSchemaTransformer` docstring, and the comment in
+    `JsonSchemaTransformer._handle` for why these keywords aren't walked. Setting `type` to `'object'` gets the
+    reference inlined. Unit test: the behavior is the walker's own, and a cassette would only pin one provider's
+    copy of the payload.
+    """
+    schema = {
+        '$defs': {'Payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}},
+        'properties': {'payload': {'$ref': '#/$defs/Payload'}},
+    }
+
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {'properties': {'payload': {'$ref': '#/$defs/Payload'}}}
+    )
+    assert InlineDefsJsonSchemaTransformer({**deepcopy(schema), 'type': ['object', 'null']}).walk() == snapshot(
+        {'properties': {'payload': {'$ref': '#/$defs/Payload'}}, 'type': ['object', 'null']}
+    )
+    assert InlineDefsJsonSchemaTransformer(
+        {'$defs': deepcopy(schema['$defs']), 'items': {'$ref': '#/$defs/Payload'}}
+    ).walk() == snapshot({'items': {'$ref': '#/$defs/Payload'}})
+    assert InlineDefsJsonSchemaTransformer({**deepcopy(schema), 'type': 'object'}).walk() == snapshot(
+        {'properties': {'payload': {'type': 'object', 'properties': {'value': {'type': 'string'}}}}, 'type': 'object'}
+    )
+
+
 def test_inline_defs_recursive_ref():
     """A recursive `$def` is emitted as `$defs` + `$ref`, walked and transformed like the rest.
 
