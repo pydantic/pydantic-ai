@@ -131,6 +131,17 @@ async def test_created_client_caps_scalar_connect_and_pool_timeouts(
     assert sent == [expected]
 
 
+async def test_client_phase_without_timeout_caps_nothing(
+    sent_timeouts: Callable[[dict[str, Any]], list[dict[str, float | None]]],
+):
+    """A client built without a connect timeout has nothing to cap it at, so the request's applies."""
+    sent = sent_timeouts({})
+    async with create_async_httpx2_client(timeout=httpx2.Timeout(30, connect=None)) as client:
+        await client.get('https://example.com', timeout=60)
+
+    assert sent == snapshot([{'connect': 60, 'read': 60, 'write': 60, 'pool': 30}])
+
+
 async def test_cap_ignores_request_without_timeout():
     """Only `AsyncClient.send` attaches a timeout, so a request handed to the hook directly has none to cap."""
     request = httpx2.Request('GET', 'https://example.com')

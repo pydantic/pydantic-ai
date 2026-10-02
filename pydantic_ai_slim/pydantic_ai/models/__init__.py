@@ -27,7 +27,14 @@ from typing_inspection.introspection import get_literal_values
 
 from .. import _utils
 from .._genai_prices import lookup_context_window, preload_pricing_data
-from .._http import DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT, ConnectPoolTimeoutCap, legacy_httpx
+from .._http import (
+    DEFAULT_HTTP_TIMEOUT as DEFAULT_HTTP_TIMEOUT,
+    DEFAULT_MAX_CONNECTIONS,
+    DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+    ConnectPoolTimeoutCap,
+    create_async_httpx2_client as create_async_httpx2_client,
+    legacy_httpx,
+)
 from .._json_schema import JsonSchemaTransformer
 from .._output import StructuredTextOutputSchema
 from .._parts_manager import ModelResponsePartsManager
@@ -1845,10 +1852,11 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
     This factory serves the providers whose SDKs still require a legacy `httpx.AsyncClient`;
     providers migrated to `httpx2` build their own `httpx2.AsyncClient` instead.
 
-    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
-    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
+    Each call creates a new client instance. A provider that calls this itself, because you didn't pass
+    an `http_client`, closes the client when the provider (or agent) exits. A client you create with it
+    and pass as `http_client` is yours to close.
 
-    The default timeouts match those of OpenAI,
+    The default timeouts and connection pool limits match those of OpenAI,
     see <https://github.com/openai/openai-python/blob/v1.54.4/src/openai/_constants.py#L9>.
     A number of seconds passed as an individual request's timeout can shorten the client's `connect`
     timeout and its pool timeout (`timeout`), but never lengthen them.
@@ -1867,6 +1875,9 @@ def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: in
 
     return httpx.AsyncClient(
         timeout=httpx.Timeout(timeout=timeout, connect=connect),
+        limits=httpx.Limits(
+            max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+        ),
         headers={'User-Agent': get_user_agent()},
         event_hooks={'request': [ConnectPoolTimeoutCap(connect=connect, pool=timeout)]},
     )
@@ -2449,6 +2460,10 @@ def _legacy_fabricated_tool_search_reveals(
 
     All three confidence signals are required: a framework-prefixed id, direct adjacency to a
     `load_capability` return, and discoveries confined to that capability's current tools.
+
+    This is the one place core identifies its own tools by name rather than by `tool_kind`: these
+    exchanges come from history written by earlier versions, whose parts may lack a `tool_kind`
+    or have it stripped on loading, so the name is the only signal left.
     """
     capability_by_load_call_id = _load_capability_ids_by_call(messages)
     tools_by_capability: dict[str, set[str]] = {}
@@ -2530,7 +2545,11 @@ def _search_return_discovered_names(part: ToolReturnPart) -> list[str] | None:
 def _replace_tool_search_exchanges_with_deltas(
     messages: list[ModelMessage], translated_call_ids: dict[str, list[str]]
 ) -> list[ModelMessage]:
-    """Replace selected search call/return pairs with wire-only availability deltas."""
+    """Replace selected search call/return pairs with wire-only availability deltas.
+
+    Part of the legacy-history path (see `_legacy_fabricated_tool_search_reveals`), so the pair is
+    matched by name: a call id alone could also belong to another tool.
+    """
     transformed: list[ModelMessage] = []
     for message in messages:
         if isinstance(message, ModelResponse):

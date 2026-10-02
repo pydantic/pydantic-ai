@@ -389,6 +389,23 @@ async def test_shell_realpath_leaves_a_symlink_loop_unresolved(tmp_path: Path) -
         assert await workspace.realpath('loop1/q') == str(tmp_path / 'loop1' / 'q')
 
 
+async def test_shell_realpath_raises_on_a_link_readlink_cannot_read(tmp_path: Path) -> None:
+    bin_dir = tmp_path / 'bin'
+    bin_dir.mkdir()
+    for tool in ('base64', 'wc'):
+        found = shutil.which(tool)
+        assert found is not None
+        (bin_dir / tool).symlink_to(found)
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'escape').symlink_to(tmp_path)
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root, env={'PATH': str(bin_dir)})))
+
+    assert await workspace.realpath('plain/file.txt') == str(root / 'plain' / 'file.txt')
+    with pytest.raises(WorkspaceError, match='readlink'):
+        await workspace.realpath('escape/secret.txt')
+
+
 async def test_realpath_only_normalizes_on_a_filesystem_only_backend() -> None:
     workspace = Workspace(FilesystemOnlyWorkspaceBackend(FakeWorkspace('files-only')))
 

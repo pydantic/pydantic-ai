@@ -14,6 +14,8 @@ from ._warnings import PydanticAIDeprecationWarning
 
 __all__ = (
     'DEFAULT_HTTP_TIMEOUT',
+    'DEFAULT_MAX_CONNECTIONS',
+    'DEFAULT_MAX_KEEPALIVE_CONNECTIONS',
     'AsyncHTTPClient',
     'ConnectPoolTimeoutCap',
     'HTTPAuth',
@@ -60,21 +62,41 @@ else:
 _NotGivenT = TypeVar('_NotGivenT')
 
 
-def create_async_httpx2_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> httpx2.AsyncClient:
-    """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts and user agent.
+# The OpenAI and Anthropic SDKs' own connection pool limits, rather than HTTPX's 100 and 20.
+DEFAULT_MAX_CONNECTIONS = 1000
+DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 100
 
-    Each call creates a new client instance. When used via a [`Provider`][pydantic_ai.providers.Provider],
-    the client's lifecycle is managed automatically — it will be closed when the provider (or agent) exits.
 
-    A number of seconds passed as an individual request's timeout can shorten the client's `connect`
-    timeout and its pool timeout (`timeout`), but never lengthen them; see `ConnectPoolTimeoutCap`.
+def create_async_httpx2_client(
+    *,
+    timeout: float | httpx2.Timeout = httpx2.Timeout(DEFAULT_HTTP_TIMEOUT, connect=5),
+    limits: httpx2.Limits = httpx2.Limits(
+        max_connections=DEFAULT_MAX_CONNECTIONS, max_keepalive_connections=DEFAULT_MAX_KEEPALIVE_CONNECTIONS
+    ),
+) -> httpx2.AsyncClient:
+    """Create an `httpx2.AsyncClient` with Pydantic AI's default timeouts, connection limits and user agent.
+
+    This is the client a provider creates when you don't pass your own `http_client`. Call it yourself
+    to adjust the timeouts or connection pool limits, and pass the result to the provider as
+    `http_client`. A client you create this way is yours to close.
+
+    Args:
+        timeout: The client's timeout, in seconds or as an `httpx2.Timeout` that sets each phase
+            separately. Defaults to 600 seconds, with a 5-second connect timeout.
+        limits: The connection pool limits. Defaults to 1000 connections, of which up to 100 are kept
+            alive while idle, matching the OpenAI and Anthropic SDKs' own clients.
+
+    A number of seconds passed as an individual request's timeout can shorten the client's connect and
+    pool timeouts, but never lengthen them; see `ConnectPoolTimeoutCap`.
     """
     from .models import get_user_agent
 
+    client_timeout = httpx2.Timeout(timeout)
     return httpx2.AsyncClient(
-        timeout=httpx2.Timeout(timeout=timeout, connect=connect),
+        timeout=client_timeout,
+        limits=limits,
         headers={'User-Agent': get_user_agent()},
-        event_hooks={'request': [ConnectPoolTimeoutCap(connect=connect, pool=timeout)]},
+        event_hooks={'request': [ConnectPoolTimeoutCap(connect=client_timeout.connect, pool=client_timeout.pool)]},
     )
 
 
@@ -87,14 +109,15 @@ class ConnectPoolTimeoutCap:
     timeout would also allow 600 seconds to connect or to wait for a pooled connection. Installed on
     the clients Pydantic AI creates, this hook takes the shorter of the requested and the client's own
     connect and pool timeouts when all four phases of the requested timeout are equal, as a scalar or
-    `None` makes them. A timeout whose phases differ was set phase by phase and is left as it is.
+    `None` makes them. A timeout whose phases differ was set phase by phase and is left as it is, and
+    a client phase without a timeout (`None`) caps nothing.
 
     It is a request event hook rather than a custom transport because passing `transport=` to an HTTPX
     client turns off the proxies it would otherwise pick up from the environment. Event hooks run for
     every redirect hop, after the client has applied its default timeout to the request.
     """
 
-    def __init__(self, *, connect: float, pool: float) -> None:
+    def __init__(self, *, connect: float | None, pool: float | None) -> None:
         self._connect = connect
         self._pool = pool
 
@@ -119,9 +142,13 @@ class ConnectPoolTimeoutCap:
         }
 
 
-def _shorter_timeout(requested: float | None, cap: float) -> float:
-    # `None` disables a timeout, so any cap is shorter.
-    return cap if requested is None else min(requested, cap)
+def _shorter_timeout(requested: float | None, cap: float | None) -> float | None:
+    # `None` disables a timeout, so any other value is shorter.
+    if requested is None:
+        return cap
+    if cap is None:
+        return requested
+    return min(requested, cap)
 
 
 def to_httpx2_timeout(timeout: float | LegacyTimeout | _NotGivenT) -> float | httpx2.Timeout | _NotGivenT:
