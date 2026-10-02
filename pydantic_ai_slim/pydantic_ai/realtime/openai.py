@@ -505,7 +505,8 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._output_speech_clear_sent = False
         # Input items server VAD committed because its `idle_timeout_ms` ran out with nobody speaking. The
         # server commits the silent buffer and starts a follow-up response to it, but no user turn happened,
-        # so the commit and its empty transcript are not surfaced as one. Kept until that transcript arrives.
+        # so the commit and its empty transcript are not surfaced as one. Kept until that transcript arrives, or
+        # only until the commit when transcription is off.
         self._idle_timeout_items: set[str] = set()
 
     @property
@@ -943,12 +944,14 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # A frame about a response that has already ended repeats or trails its terminal.
         stale = self._lifecycle.is_ended(frame_response_id(event_type, data))
         self._lifecycle.before_frame(event_type, data)
+        idle_timeout_commit = (
+            event_type == INPUT_AUDIO_BUFFER_COMMITTED_EVENT and data.get('item_id') in self._idle_timeout_items
+        )
+        if idle_timeout_commit and not self._input_transcription_enabled:
+            # No transcript will follow to retire the item.
+            self._idle_timeout_items.discard(data['item_id'])
         try:
-            after = (
-                []
-                if event_type == INPUT_AUDIO_BUFFER_COMMITTED_EVENT and data.get('item_id') in self._idle_timeout_items
-                else self._lifecycle.frame(event_type, data)
-            )
+            after = [] if idle_timeout_commit else self._lifecycle.frame(event_type, data)
         except ValueError:
             # Only the lifecycle reads these frames, and the codec events never depended on them.
             after = []

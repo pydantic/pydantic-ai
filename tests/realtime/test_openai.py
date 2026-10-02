@@ -2606,6 +2606,20 @@ async def test_transcription_completed_token_usage_emits_run_level_usage() -> No
     ]
 
 
+async def test_idle_timeout_commit_without_transcription_is_not_a_spoken_turn() -> None:
+    """With transcription off, no transcript retires the idle-timeout item, so its commit does."""
+    frames = [
+        {'type': 'input_audio_buffer.timeout_triggered', 'item_id': 'idle', 'audio_start_ms': 0, 'audio_end_ms': 5000},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'idle', 'previous_item_id': None},
+    ]
+    ws = FakeWebSocket([json.dumps(frame) for frame in frames])
+    conn = OpenAIRealtimeConnection(ws, input_transcription_enabled=False)  # type: ignore[arg-type]
+    events = [event async for event in conn._lifecycle_events()]  # pyright: ignore[reportPrivateUsage]
+
+    assert not any(isinstance(event, UserTurnStarted | UserTurnEnded) for event in events)
+    assert conn._idle_timeout_items == set()  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_idle_timeout_commit_is_not_a_spoken_turn() -> None:
     """The silent buffer server VAD commits when `idle_timeout_ms` runs out yields no user turn or transcript.
 
