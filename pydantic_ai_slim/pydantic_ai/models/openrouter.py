@@ -10,7 +10,6 @@ from typing_extensions import TypedDict, override
 
 from .. import _model_errors, usage
 from ..exceptions import (
-    ContextWindowExceeded,
     ModelAPIError,
     ModelHTTPError,
     UserError,
@@ -362,9 +361,7 @@ def _map_openrouter_error(error: _OpenRouterError, model_name: str, *, in_stream
     Its `code` is the HTTP status OpenRouter uses for the same error, so it's reported as the status code although
     the response's own status was 200.
     """
-    category = _model_errors.http_status_category(error.code)
-    if error.code == 400 and 'maximum context length' in error.message.lower():
-        category = ContextWindowExceeded
+    category = _model_errors.openai_compatible_category(error.code, None, None, error.message)
     return _model_errors.http_error_class(category)(
         status_code=error.code,
         model_name=model_name,

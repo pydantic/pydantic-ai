@@ -122,7 +122,8 @@ def _map_api_errors(model_name: str) -> Generator[None]:
             raise _model_errors.http_error_class(category)(
                 status_code=status_code, model_name=model_name, body=details, provider_error_code=grpc_status.name
             ) from e
-        raise (category or ModelAPIError)(
+        # Every status with a category also has an HTTP equivalent, so this one is unclassified.
+        raise ModelAPIError(
             model_name=model_name, message=details, body=details, provider_error_code=grpc_status.name
         ) from e
 

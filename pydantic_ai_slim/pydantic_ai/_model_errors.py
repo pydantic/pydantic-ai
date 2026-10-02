@@ -2,8 +2,6 @@
 
 from __future__ import annotations as _annotations
 
-from typing import Literal
-
 from ._utils import is_str_dict
 from .exceptions import (
     ContextWindowExceeded,
@@ -13,6 +11,7 @@ from .exceptions import (
     ModelOverloadedError,
     ModelRateLimitError,
     ModelTimeoutError,
+    TransportPhase,
 )
 
 
@@ -49,33 +48,60 @@ def http_status_category(status_code: int) -> type[ModelAPIError] | None:
     return None
 
 
-_STREAM_ERROR_STATUSES: dict[str, tuple[int, type[ModelAPIError] | None]] = {
-    'rate_limit_exceeded': (429, ModelRateLimitError),
-    'insufficient_quota': (429, None),
-    'context_length_exceeded': (400, ContextWindowExceeded),
-    'service_unavailable': (503, ModelOverloadedError),
-    'overloaded': (503, ModelOverloadedError),
-    'server_error': (500, None),
+_OPENAI_COMPATIBLE_STATUSES: dict[str, int] = {
+    'rate_limit_exceeded': 429,
+    'insufficient_quota': 429,
+    'context_length_exceeded': 400,
+    'service_unavailable': 503,
+    'overloaded': 503,
+    'server_error': 500,
 }
-"""The status and category OpenAI-compatible APIs use before a stream opens, by an in-stream error's `code` or `type`."""
+"""The HTTP status OpenAI-compatible APIs use for an error, by its `code` or `type`, for errors that come without one."""
+
+_CONTEXT_WINDOW_MESSAGES = ('maximum context length', 'reduce the length of the messages')
+"""How OpenAI-compatible APIs that send no `context_length_exceeded` code (OpenRouter, vLLM, Groq) word an overflow."""
+
+
+def openai_compatible_status(code: str | None, error_type: str | None) -> int | None:
+    """The HTTP status an OpenAI-compatible API uses for an error it reported without one, e.g. inside a stream."""
+    if (
+        status := _OPENAI_COMPATIBLE_STATUSES.get(code or '') or _OPENAI_COMPATIBLE_STATUSES.get(error_type or '')
+    ) is not None:
+        return status
+    if code is not None and code.isdigit() and 400 <= int(code) < 600:
+        # Gateways like OpenRouter send the HTTP status itself as the `code`.
+        return int(code)
+    return None
+
+
+def openai_compatible_category(
+    status_code: int | None, code: str | None, error_type: str | None, message: object
+) -> type[ModelAPIError] | None:
+    """The error category of an error from an OpenAI-compatible API (OpenAI, Groq, OpenRouter), wherever it was sent."""
+    if 'insufficient_quota' in (code, error_type):
+        # Exhausted quota is also a 429, but waiting won't help.
+        return None
+    if code == 'context_length_exceeded' or (
+        isinstance(message, str) and any(m in message.lower() for m in _CONTEXT_WINDOW_MESSAGES)
+    ):
+        return ContextWindowExceeded
+    return http_status_category(status_code) if status_code is not None else None
 
 
 def stream_error(model_name: str, message: str, body: object) -> ModelAPIError:
     """Map an error object sent inside a 200 stream by an OpenAI-compatible API, classified by its `code` or `type`.
 
-    It gets the status the same error has before a stream opens, so it's handled the same way whether or not the
-    request was streamed, with `in_stream` set. An unrecognised error has no clear status and stays a `ModelAPIError`.
+    It gets the status and category the same error has before a stream opens, so it's handled the same way whether
+    or not the request was streamed, with `in_stream` set. An error with no clear status isn't a `ModelHTTPError`.
     """
     code = body.get('code') if is_str_dict(body) else None
     error_type = body.get('type') if is_str_dict(body) else None
     code = str(code) if isinstance(code, str | int) else None
     error_type = error_type if isinstance(error_type, str) else None
-    status = _STREAM_ERROR_STATUSES.get(code or '') or _STREAM_ERROR_STATUSES.get(error_type or '')
-    if status is None and code is not None and code.isdigit() and 400 <= int(code) < 600:
-        # Gateways like OpenRouter send the HTTP status itself as the `code`.
-        status = int(code), http_status_category(int(code))
-    if status is None:
-        return ModelAPIError(
+    status_code = openai_compatible_status(code, error_type)
+    category = openai_compatible_category(status_code, code, error_type, message)
+    if status_code is None:
+        return (category or ModelAPIError)(
             model_name=model_name,
             message=message,
             body=body,
@@ -83,7 +109,6 @@ def stream_error(model_name: str, message: str, body: object) -> ModelAPIError:
             provider_error_type=error_type,
             in_stream=True,
         )
-    status_code, category = status
     return http_error_class(category)(
         status_code,
         model_name,
@@ -94,7 +119,7 @@ def stream_error(model_name: str, message: str, body: object) -> ModelAPIError:
     )
 
 
-_HTTPX_PHASES: dict[str, Literal['pool', 'connect', 'write', 'read']] = {
+_HTTPX_PHASES: dict[str, TransportPhase] = {
     'PoolTimeout': 'pool',
     'ConnectTimeout': 'connect',
     'ConnectError': 'connect',
@@ -105,7 +130,7 @@ _HTTPX_PHASES: dict[str, Literal['pool', 'connect', 'write', 'read']] = {
     'RemoteProtocolError': 'read',
 }
 
-_TRANSPORT_PHASES: dict[tuple[str, str], Literal['pool', 'connect', 'write', 'read']] = {
+_TRANSPORT_PHASES: dict[tuple[str, str], TransportPhase] = {
     # `httpx` and `httpx2` share their exception names.
     **{(package, name): phase for package in ('httpx', 'httpx2') for name, phase in _HTTPX_PHASES.items()},
     ('botocore', 'ConnectTimeoutError'): 'connect',
@@ -122,7 +147,7 @@ Matched by name so the HTTP libraries an adapter doesn't use needn't be importab
 """
 
 
-def transport_phase(error: BaseException) -> Literal['pool', 'connect', 'write', 'read'] | None:
+def transport_phase(error: BaseException) -> TransportPhase | None:
     """The stage of the request at which a transport error happened, from it or the exceptions it was raised from.
 
     SDKs like `openai` and `anthropic` wrap the HTTP library's exception, keeping it as `__cause__`.

@@ -47,6 +47,7 @@ __all__ = (
     'ModelRateLimitError',
     'ModelOverloadedError',
     'ModelConnectionError',
+    'TransportPhase',
     'ModelTimeoutError',
     'ContextWindowExceeded',
     'ContentFilterError',
@@ -628,6 +629,11 @@ class ModelOverloadedError(ModelAPIError):
     """
 
 
+TransportPhase = Literal['pool', 'connect', 'write', 'read']
+"""The stage of a request at which a transport failure happened; see
+[`ModelConnectionError.phase`][pydantic_ai.exceptions.ModelConnectionError.phase]."""
+
+
 class ModelConnectionError(ModelAPIError):
     """Raised when the request could not reach the provider or its response could not be read.
 
@@ -635,7 +641,7 @@ class ModelConnectionError(ModelAPIError):
     is available as `__cause__`.
     """
 
-    phase: Literal['pool', 'connect', 'write', 'read'] | None
+    phase: TransportPhase | None
     """The stage of the request at which the transport failed, if known.
 
     - `'pool'`: waiting for a free connection in the local connection pool. The request was not sent.
@@ -644,7 +650,7 @@ class ModelConnectionError(ModelAPIError):
     - `'read'`: receiving the response, including a stream that broke off. The request was sent, so the provider
       may have acted on it.
 
-    `None` when the transport doesn't say, as with gRPC.
+    `None` when the transport error doesn't say, e.g. a connection closed at an unknown point.
     """
 
     def __init__(
@@ -652,7 +658,7 @@ class ModelConnectionError(ModelAPIError):
         model_name: str,
         message: str,
         *,
-        phase: Literal['pool', 'connect', 'write', 'read'] | None = None,
+        phase: TransportPhase | None = None,
         body: object | None = None,
         provider_error_code: str | None = None,
         provider_error_type: str | None = None,

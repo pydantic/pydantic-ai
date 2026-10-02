@@ -41,7 +41,6 @@ from .._utils import (
 )
 from ..capabilities.abstract import AbstractCapability
 from ..exceptions import (
-    ContextWindowExceeded,
     ModelConnectionError,
     SuspendedResponseExpired,
     UserError,
@@ -261,15 +260,7 @@ def _map_status_error(e: APIStatusError, model_name: str, model_id_namespace: st
 
 
 def _error_category(e: APIStatusError) -> type[ModelAPIError] | None:
-    if e.code == 'context_length_exceeded':
-        return ContextWindowExceeded
-    if e.status_code == 400 and 'maximum context length' in e.message.lower():
-        # OpenAI-compatible APIs without the error code, like OpenRouter and vLLM, only say so in the message.
-        return ContextWindowExceeded
-    if e.code == 'insufficient_quota':
-        # Exhausted quota is also a 429, but waiting won't help.
-        return None
-    return _model_errors.http_status_category(e.status_code)
+    return _model_errors.openai_compatible_category(e.status_code, e.code, e.type, e.message)
 
 
 def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnectionError:
@@ -279,14 +270,18 @@ def _map_connection_error(e: APIConnectionError, model_name: str) -> ModelConnec
 def _response_error(model_name: str, code: str | None, message: str, *, in_stream: bool) -> ModelAPIError:
     """Build the error for a Responses API failure reported in a 200 body or stream.
 
-    In a stream, it gets the status the same error has before the stream opens where that's clear, like any other
-    in-stream error. A failed response body, e.g. a background response retrieved later, has no status to report.
+    It gets the same category either way. In a stream, it also gets the status the same error has before the stream
+    opens where that's clear, like any other in-stream error. A failed response body, e.g. a background response
+    retrieved later, has no status to report.
     """
     if in_stream:
         error = _model_errors.stream_error(model_name, message, {'code': code, 'message': message})
         if isinstance(error, ModelHTTPError):
             return error
-    return ModelAPIError(
+    category = _model_errors.openai_compatible_category(
+        _model_errors.openai_compatible_status(code, None), code, None, message
+    )
+    return (category or ModelAPIError)(
         model_name=model_name,
         message=f'{code}: {message}' if code else message,
         provider_error_code=code,

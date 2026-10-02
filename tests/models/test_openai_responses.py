@@ -58,8 +58,10 @@ from pydantic_ai.capabilities import NativeTool
 from pydantic_ai.direct import model_request as direct_model_request
 from pydantic_ai.exceptions import (
     ContentFilterError,
+    ContextWindowExceeded,
     ModelAPIError,
     ModelHTTPError,
+    ModelRateLimitError,
     ModelRetry,
     SuspendedResponseExpired,
 )
@@ -13897,6 +13899,35 @@ async def test_response_error_raises_model_api_error(
         assert exc_info.value.in_stream is stream
     # No output retry, re-poll, or cancellation of a background job the provider already marked as failed.
     assert requests_made == 1
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize(
+    ('code', 'category'),
+    [
+        pytest.param('rate_limit_exceeded', ModelRateLimitError, id='rate-limit'),
+        pytest.param('context_length_exceeded', ContextWindowExceeded, id='context-window'),
+    ],
+)
+async def test_failed_response_body_gets_category(allow_model_requests: None, code: str, category: type[ModelAPIError]):
+    """A failed response body gets the same category as the same error in a stream, though no status code."""
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        body = _failed_response_json({'code': code, 'message': 'Failed'})
+        return httpx2.Response(200, content=json.dumps(body).encode(), headers={'content-type': 'application/json'})
+
+    async with AsyncOpenAI(
+        api_key='test',
+        base_url='https://api.openai.com/v1',
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
+    ) as openai_client:
+        agent = Agent(OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client)))
+        with pytest.raises(category) as exc_info:
+            await agent.run('Hello')
+
+    assert not isinstance(exc_info.value, ModelHTTPError)
+    assert exc_info.value.provider_error_code == code
+    assert exc_info.value.in_stream is False
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])

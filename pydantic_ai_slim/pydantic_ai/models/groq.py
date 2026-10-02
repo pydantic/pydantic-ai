@@ -17,7 +17,6 @@ from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import generate_tool_call_id, guard_tool_call_id as _guard_tool_call_id, number_to_datetime
 from ..exceptions import (
-    ContextWindowExceeded,
     ModelAPIError,
     UserError,
 )
@@ -105,12 +104,12 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'groq') -> Genera
             suggested_model_id = None
             if code == 'model_not_found':
                 suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
-            category = _model_errors.http_status_category(status_code)
-            if code == 'context_length_exceeded' or (
-                # Groq doesn't always send the code for an overflow.
-                isinstance(message, str) and 'reduce the length of the messages' in message.lower()
-            ):
-                category = ContextWindowExceeded
+            category = _model_errors.openai_compatible_category(
+                status_code,
+                code if isinstance(code, str) else None,
+                error_type if isinstance(error_type, str) else None,
+                message,
+            )
             raise _model_errors.http_error_class(category)(
                 status_code=status_code,
                 model_name=model_name,
