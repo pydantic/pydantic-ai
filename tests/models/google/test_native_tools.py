@@ -286,14 +286,14 @@ def _stream_chunk(parts: list[dict[str, Any]], grounding: dict[str, Any] | None 
 
 
 async def _drive_stream(
-    chunks: list[GenerateContentResponse],
+    chunks: list[GenerateContentResponse], model_request_parameters: ModelRequestParameters | None = None
 ) -> tuple[list[ModelResponseStreamEvent], list[ModelResponsePart]]:
     async def stream() -> AsyncIterator[GenerateContentResponse]:
         for chunk in chunks:
             yield chunk
 
     streamed = GeminiStreamedResponse(
-        model_request_parameters=ModelRequestParameters(),
+        model_request_parameters=model_request_parameters or ModelRequestParameters(),
         _model_name='gemini-3.5-flash',
         _response=_utils.PeekableAsyncStream(stream()),
         _provider_name='google-gla',
@@ -411,6 +411,40 @@ def test_file_search_executable_code_without_retrieved_contexts_has_no_return():
     assert isinstance(call, NativeToolCallPart) and call.tool_name == 'file_search'
     assert call.args == {'query': 'capital'}
     assert isinstance(text, TextPart)
+
+
+async def test_file_search_executable_code_calls_all_get_returns():
+    """Each `file_search.query()` call gets the retrieved contexts, which the grounding metadata doesn't attribute."""
+    parts = [
+        {'executable_code': {'code': 'print(file_search.query(query="capital"))'}},
+        {'executable_code': {'code': 'print(file_search.query(query="landmarks"))'}},
+        {'text': 'Paris.'},
+    ]
+    _, streamed_parts = await _drive_stream(
+        [_stream_chunk(parts[:2]), _stream_chunk(parts[2:], grounding=_FILE_SEARCH_GROUNDING_METADATA)],
+        ModelRequestParameters(native_tools=[FileSearchTool(file_store_ids=['fileSearchStores/test-store'])]),
+    )
+    complete = _process_response_from_parts(
+        parts=[Part.model_validate(p) for p in parts],
+        grounding_metadata=GroundingMetadata.model_validate(_FILE_SEARCH_GROUNDING_METADATA),
+        model_name='gemini-2.5-pro',
+        provider_name='google-gla',
+        provider_url='https://generativelanguage.googleapis.com/',
+        usage=RequestUsage(),
+        provider_response_id='response-id',
+        file_search_enabled=True,
+    )
+
+    for response_parts in (streamed_parts, complete.parts):
+        first_call, second_call, text, first_return, second_return = response_parts
+        assert isinstance(first_call, NativeToolCallPart) and isinstance(second_call, NativeToolCallPart)
+        assert isinstance(text, TextPart)
+        assert isinstance(first_return, NativeToolReturnPart) and isinstance(second_return, NativeToolReturnPart)
+        assert [first_return.tool_call_id, second_return.tool_call_id] == [
+            first_call.tool_call_id,
+            second_call.tool_call_id,
+        ]
+        assert first_return.content == second_return.content
 
 
 # On Gemini 3, a web search `tool_response` only carries `search_suggestions`: the sources arrive in the response's

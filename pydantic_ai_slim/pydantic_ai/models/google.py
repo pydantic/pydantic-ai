@@ -1473,7 +1473,7 @@ class GeminiStreamedResponse(StreamedResponse):
     _provider_timestamp: datetime | None = None
     _web_search_billed_per_prompt: bool = False
     _timestamp: datetime = field(default_factory=_utils.now_utc)
-    _file_search_tool_call_id: str | None = field(default=None, init=False)
+    _file_search_tool_call_ids: list[str] = field(default_factory=list[str], init=False)
     _code_execution_tool_call_id: str | None = field(default=None, init=False)
     _has_content_filter: bool = field(default=False, init=False)
     _has_tool_invocations: bool = field(default=False, init=False)
@@ -1690,7 +1690,7 @@ class GeminiStreamedResponse(StreamedResponse):
                 yield self._parts_manager.handle_part(vendor_part_id=pending.tool_call_id, part=pending)
             if not self._has_tool_invocations:
                 for part in _map_grounding_metadata_after_text(
-                    grounding_metadata, self.provider_name, self._file_search_tool_call_id
+                    grounding_metadata, self.provider_name, self._file_search_tool_call_ids
                 ):
                     yield self._parts_manager.handle_part(vendor_part_id=uuid4(), part=part)
         except errors.APIError as e:
@@ -1716,7 +1716,7 @@ class GeminiStreamedResponse(StreamedResponse):
             file_search_enabled=_file_search_enabled(self.model_request_parameters),
         )
         if part.tool_name == FileSearchTool.kind:
-            self._file_search_tool_call_id = part.tool_call_id
+            self._file_search_tool_call_ids.append(part.tool_call_id)
         else:
             self._code_execution_tool_call_id = part.tool_call_id
         return part
@@ -1990,7 +1990,7 @@ def _process_response_from_parts(
             items.append(web_fetch_return)
 
     code_execution_tool_call_id: str | None = None
-    file_search_tool_call_id: str | None = None
+    file_search_tool_call_ids: list[str] = []
     last_web_search_return: NativeToolReturnPart | None = None
     for part in parts:
         item, code_execution_tool_call_id = _process_part(
@@ -2004,13 +2004,13 @@ def _process_response_from_parts(
             else:
                 _fill_empty_file_search_return_content(item, grounding_metadata)
         elif isinstance(item, NativeToolCallPart) and item.tool_name == FileSearchTool.kind:
-            file_search_tool_call_id = item.tool_call_id
+            file_search_tool_call_ids.append(item.tool_call_id)
         items.append(item)
 
     if last_web_search_return is not None:
         _fill_web_search_return_sources(last_web_search_return, grounding_metadata)
     if not has_native_tool_invocations:
-        items.extend(_map_grounding_metadata_after_text(grounding_metadata, provider_name, file_search_tool_call_id))
+        items.extend(_map_grounding_metadata_after_text(grounding_metadata, provider_name, file_search_tool_call_ids))
 
     return ModelResponse(
         parts=items,
@@ -2277,23 +2277,25 @@ def _map_tool_response(tool_response: ToolResponse, provider_name: str) -> Nativ
 
 
 def _map_grounding_metadata_after_text(
-    grounding_metadata: GroundingMetadata | None, provider_name: str, file_search_tool_call_id: str | None
+    grounding_metadata: GroundingMetadata | None, provider_name: str, file_search_tool_call_ids: list[str]
 ) -> list[ModelResponsePart]:
     """Build the file and web search parts from the grounding metadata, without server-side tool invocation parts.
 
     Gemini sends the grounding metadata once, on the final chunk, after the text it grounds, so these parts come
-    after the text in both streamed and complete responses. `file_search_tool_call_id` is the id of the call that
-    Gemini's `file_search.query()` executable code was mapped to, which only needs its return.
+    after the text in both streamed and complete responses. `file_search_tool_call_ids` are the ids of the calls that
+    Gemini's `file_search.query()` executable code was mapped to, which only need their returns. Like the empty
+    `tool_response`s on Gemini 3 (see `_fill_empty_file_search_return_content`), each gets all retrieved contexts.
     """
     parts: list[ModelResponsePart] = []
-    if file_search_tool_call_id is None:
+    if not file_search_tool_call_ids:
         file_search_call, file_search_return = _map_file_search_grounding_metadata(grounding_metadata, provider_name)
         if file_search_call and file_search_return:
             parts += [file_search_call, file_search_return]
-    elif file_search_return := _file_search_return_from_grounding_metadata(
-        grounding_metadata, provider_name, file_search_tool_call_id
-    ):
-        parts.append(file_search_return)
+    for tool_call_id in file_search_tool_call_ids:
+        if file_search_return := _file_search_return_from_grounding_metadata(
+            grounding_metadata, provider_name, tool_call_id
+        ):
+            parts.append(file_search_return)
     web_search_call, web_search_return = _map_grounding_metadata(grounding_metadata, provider_name)
     if web_search_call and web_search_return:
         parts += [web_search_call, web_search_return]
