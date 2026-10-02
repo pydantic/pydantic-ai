@@ -23,6 +23,9 @@ from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_ide
 from pydantic_clai2.ui.menus.menu_worker import menu_key
 from pydantic_clai2.ui.rendering import theme
 
+MISSING = '\0missing'
+"""The project key grouping deleted checkouts; a NUL byte cannot occur in a real path."""
+
 
 def plain(text: str, *, multiline: bool = False) -> str:
     """Saved and model-generated text is untrusted terminal content."""
@@ -83,6 +86,7 @@ class SessionBrowser:
         self._resolve_projects()
         current = self.identity(workspace).key
         self.project = current if current in self.projects else next(iter(self.projects), '')
+        self.checkout = ''
         self.mode = 'projects'
         self.query = ''
         self.buffer = ''
@@ -104,21 +108,46 @@ class SessionBrowser:
             if workspace not in self.identities:
                 self.identities[workspace] = project_identity(workspace)
 
+    def place(self, workspace: str) -> tuple[str, str]:
+        """The sidebar project and checkout a workspace belongs to; deleted checkouts share one group."""
+        identity = self.identity(workspace)
+        return (MISSING, identity.name) if identity.missing else (identity.key, identity.checkout)
+
     def project_label(self, project: str) -> str:
         """Disambiguate independent repositories with the same name without merging them."""
-        names = {self.identity(e.workspace).key: self.identity(e.workspace).name for e in self.entries}
+        if project == MISSING:
+            return 'missing folders'
+        identities = [self.identity(e.workspace) for e in self.entries]
+        names = {i.key: i.name for i in identities if not i.missing}
         name = names[project]
         return name if list(names.values()).count(name) == 1 else project
 
     @property
     def projects(self) -> list[str]:
-        """Projects in most-recent activity order, without basename identity collisions."""
-        return list(dict.fromkeys(self.identity(entry.workspace).key for entry in self.entries))
+        """Projects in most-recent activity order, without basename identity collisions; missing last."""
+        projects = dict.fromkeys(self.place(entry.workspace)[0] for entry in self.entries)
+        return sorted(projects, key=lambda project: project == MISSING)
+
+    @property
+    def rows(self) -> list[tuple[str, str]]:
+        """Sidebar rows: each project, then its checkouts when it has more than one."""
+        places = [self.place(entry.workspace) for entry in self.entries]
+        rows: list[tuple[str, str]] = []
+        for project in self.projects:
+            checkouts = list(dict.fromkeys(checkout for key, checkout in places if key == project))
+            rows.append((project, ''))
+            if len(checkouts) > 1:
+                rows.extend((project, checkout) for checkout in checkouts)
+        return rows
+
+    def _in_row(self, entry: ConversationSummary, project: str, checkout: str) -> bool:
+        key, location = self.place(entry.workspace)
+        return key == project and checkout in ('', location)
 
     @property
     def sessions(self) -> list[ConversationSummary]:
-        """Search results are global; otherwise show the selected project."""
-        entries = [e for e in self.entries if self.query or self.identity(e.workspace).key == self.project]
+        """Search results are global; otherwise show the selected project or checkout."""
+        entries = [e for e in self.entries if self.query or self._in_row(e, self.project, self.checkout)]
         if self.sort == 1:
             entries.sort(key=lambda e: e.message_count, reverse=True)
         elif self.sort == 2:
@@ -140,6 +169,8 @@ class SessionBrowser:
             self.selected_id = selected.id
         if self.project not in self.projects:
             self.project = next(iter(self.projects), '')
+        if (self.project, self.checkout) not in self.rows:
+            self.checkout = ''
 
     def frame(self, *, width: int, height: int) -> list[str]:
         """Produce a bounded responsive frame without reading storage or a terminal."""
@@ -171,16 +202,23 @@ class SessionBrowser:
         return [truncate(line, width) for line in [header, '', *body, self.notice, self.footer()]][:height]
 
     def _projects_frame(self, *, budget: int) -> list[str]:
-        projects = self.projects
-        cursor = projects.index(self.project) if self.project in projects else 0
+        rows = self.rows
+        chosen = (self.project, self.checkout)
+        cursor = rows.index(chosen) if chosen in rows else 0
         start = max(0, cursor - budget + 2)
         lines = [colored('SELECT PROJECT' if self.mode == 'projects' else 'PROJECTS', bold=self.mode == 'projects')]
-        for project in projects[start : start + budget - 1]:
-            label = self.project_label(project)
-            count = sum(self.identity(e.workspace).key == project for e in self.entries)
-            marker = '> ' if project == self.project else '  '
-            line = f'{marker}{label} ({count})'
-            lines.append(colored(line, bold=True) if project == self.project else plain(line))
+        for index, (project, checkout) in enumerate(rows[start : start + budget - 1], start):
+            count = sum(self._in_row(e, project, checkout) for e in self.entries)
+            marker = '> ' if (project, checkout) == chosen else '  '
+            if checkout:
+                last = index + 1 == len(rows) or not rows[index + 1][1]
+                line = f'{marker}{"└─" if last else "├─"} {checkout} ({count})'
+            else:
+                line = f'{marker}{self.project_label(project)} ({count})'
+            if (project, checkout) == chosen:
+                lines.append(colored(line, bold=True))
+            else:
+                lines.append(colored(line, role=theme.MUTED) if checkout else plain(line))
         return lines
 
     def _sessions_frame(self, *, budget: int, width: int) -> list[str]:
@@ -192,7 +230,7 @@ class SessionBrowser:
         start = max(0, cursor - capacity + 1)
         location = f'Search all projects: {self.query}' if self.query else ''
         if not self.query and self.project:
-            location = self.project_label(self.project)
+            location = self.project_label(self.project) + (f' / {self.checkout}' if self.checkout else '')
         lines = [
             colored(
                 f'{"SELECT SESSION" if self.mode == "sessions" else "SESSIONS"}: '
@@ -226,10 +264,9 @@ class SessionBrowser:
                 + ' '
                 + chips
             )
-            identity = self.identity(entry.workspace)
-            location = identity.checkout
+            project, location = self.place(entry.workspace)
             if self.query:
-                location = f'{self.project_label(identity.key)}: {location}' if location else entry.workspace
+                location = f'{self.project_label(project)}: {location}' if location else entry.workspace
             if location:
                 detail = f'  [{location}] ' + detail.lstrip()
             lines.append(colored(detail, role=theme.MUTED))
@@ -285,8 +322,9 @@ class SessionBrowser:
         if self.mode == 'preview':
             self.preview_offset = max(0, self.preview_offset + delta)
         elif self.mode == 'projects' and self.projects:
-            index = self.projects.index(self.project)
-            self.project = self.projects[max(0, min(len(self.projects) - 1, index + delta))]
+            rows = self.rows
+            index = rows.index((self.project, self.checkout))
+            self.project, self.checkout = rows[max(0, min(len(rows) - 1, index + delta))]
             self.selected_id = None
         elif self.selected is not None:
             entries = self.sessions

@@ -1,7 +1,7 @@
 """Read-only repository identities for the session browser, without changing saved workspaces."""
 
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -12,6 +12,8 @@ class ProjectIdentity:
     key: str
     name: str
     checkout: str = ''
+    missing: bool = False
+    """The directory is gone, as with a deleted worktree, so its repository is unknown."""
 
 
 def project_identity(workspace: str) -> ProjectIdentity:
@@ -22,6 +24,8 @@ def project_identity(workspace: str) -> ProjectIdentity:
     if not path.is_absolute():
         return fallback
     try:
+        if not path.exists():
+            return replace(fallback, missing=True)
         root = _git_path(workspace=workspace, option='--show-toplevel')
         common = _git_path(workspace=workspace, option='--git-common-dir')
         common_path = Path(common).resolve()
