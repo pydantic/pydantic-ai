@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.trace import NoOpTracer, Tracer, get_tracer
 
 import pydantic_ai_harness
@@ -1351,6 +1352,34 @@ class TestPreserveFirstUserMessage:
         ]
         assert find_first_user_message(msgs) is None
 
+    async def test_summarizing_keeps_every_part_of_the_first_request_across_compactions(self):
+        agent, sent = _recording_agent(_summarizing(), system_prompt='Be terse.')
+        first = ModelRequest(
+            parts=[
+                SystemPromptPart(content='Be terse.'),
+                UserPromptPart(content='attached doc'),
+                UserPromptPart(content='the actual question'),
+            ]
+        )
+        await _continue(agent, [f'turn {n}' for n in range(2, 8)], history=[first, _assistant('ok')])
+        assert _request_shapes(sent[-1]) == snapshot(
+            [
+                [
+                    'system-prompt: Be terse.',
+                    """\
+system-prompt: Summary of previous conversation:
+
+Summary 3.\
+""",
+                    'user-prompt: attached doc',
+                    'user-prompt: the actual question',
+                    'user-prompt: turn 3',
+                    'user-prompt: turn 5',
+                    'user-prompt: turn 7',
+                ]
+            ]
+        )
+
     async def test_sliding_window_preserves_first_user(self):
         sw = SlidingWindowCompaction(max_messages=3, keep_messages=2, preserve_first_user_message=True)
         messages: list[ModelMessage] = [
@@ -1491,6 +1520,87 @@ class TestIncrementalSummarization:
             _user('hello'),
         ]
         assert _extract_previous_summary(msgs) is None
+
+    async def test_recompaction_across_runs_updates_latest_summary(self):
+        prompts: list[str] = []
+        agent, sent = _recording_agent(_summarizing(prompts), system_prompt='Be terse.')
+        await _continue(agent, [f'turn {n}' for n in range(1, 8)])
+        assert len(prompts) == 3
+        assert 'Summary 1.' in prompts[1]
+        assert 'Summary 2.' in prompts[2]
+        assert 'Summary 1.' not in prompts[2]
+        assert _request_shapes(sent[-1]) == snapshot(
+            [
+                [
+                    'system-prompt: Be terse.',
+                    """\
+system-prompt: Summary of previous conversation:
+
+Summary 3.\
+""",
+                    'user-prompt: turn 1',
+                    'user-prompt: turn 3',
+                    'user-prompt: turn 5',
+                    'user-prompt: turn 7',
+                ]
+            ]
+        )
+
+    async def test_recompaction_of_stacked_history_updates_newest_summary(self):
+        # Each compaction used to keep the earlier summaries, merged in newest first.
+        stacked = ModelRequest(
+            parts=[
+                SystemPromptPart(content='Be terse.'),
+                SystemPromptPart(content=f'{_SUMMARY_PREFIX}Newest.'),
+                SystemPromptPart(content='Be terse.'),
+                SystemPromptPart(content=f'{_SUMMARY_PREFIX}Oldest.'),
+                SystemPromptPart(content='Be terse.'),
+                UserPromptPart(content='turn 1'),
+                UserPromptPart(content='turn 3'),
+            ]
+        )
+        prompts: list[str] = []
+        agent, sent = _recording_agent(_summarizing(prompts), system_prompt='Be terse.')
+        history = [stacked, _assistant('ok'), _user('turn 4'), _assistant('ok')]
+        await _continue(agent, ['turn 5'], history=history)
+        assert 'Newest.' in prompts[0]
+        assert 'Oldest.' not in prompts[0]
+        assert _request_shapes(sent[-1]) == snapshot(
+            [
+                [
+                    'system-prompt: Be terse.',
+                    """\
+system-prompt: Summary of previous conversation:
+
+Summary 1.\
+""",
+                    'user-prompt: turn 1',
+                    'user-prompt: turn 3',
+                    'user-prompt: turn 5',
+                ]
+            ]
+        )
+
+    async def test_recompaction_keeps_one_receipt(self):
+        agent, sent = _recording_agent(_summarizing(receipts=True), system_prompt='Be terse.')
+        await _continue(agent, [f'turn {n}' for n in range(1, 8)])
+        assert len(_receipt_parts(sent[-1])) == 1
+
+    async def test_recompaction_keeps_one_copy_of_a_dynamic_system_prompt(self):
+        agent, sent = _recording_agent(_summarizing())
+        calls = 0
+
+        @agent.system_prompt(dynamic=True)
+        def evaluated() -> str:
+            nonlocal calls
+            calls += 1
+            return f'Evaluation {calls}.'
+
+        await _continue(agent, [f'turn {n}' for n in range(1, 8)])
+        system = [
+            p for m in sent[-1] if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, SystemPromptPart)
+        ]
+        assert len([p for p in system if p.content.startswith('Evaluation')]) == 1
 
     async def test_incremental_includes_previous_summary(self):
         """When incremental=True and a prior summary exists, it should be included in the prompt."""
@@ -1655,6 +1765,58 @@ def _call_args(messages: list[ModelMessage]) -> list[object]:
                 if isinstance(p, ToolCallPart):
                     out.append(p.args)
     return out
+
+
+def _summarizing(prompts: list[str] | None = None, *, receipts: bool = False) -> SummarizingCompaction[None]:
+    """Compact every other run, numbering each summary and recording each summary request."""
+    recorded = [] if prompts is None else prompts
+
+    def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        request = messages[-1]
+        assert isinstance(request, ModelRequest)
+        prompt = request.parts[-1]
+        assert isinstance(prompt, UserPromptPart) and isinstance(prompt.content, str)
+        recorded.append(prompt.content)
+        return ModelResponse(parts=[TextPart(f'Summary {len(recorded)}.')])
+
+    return SummarizingCompaction(model=FunctionModel(summarize), max_messages=4, keep_messages=1, receipts=receipts)
+
+
+def _recording_agent(
+    compaction: SummarizingCompaction[None], *, system_prompt: str = ''
+) -> tuple[Agent[None, str], list[list[ModelMessage]]]:
+    """An agent that records the messages of every model request it sends."""
+    sent: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        sent.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    agent = Agent(FunctionModel(respond), deps_type=type(None), system_prompt=system_prompt, capabilities=[compaction])
+    return agent, sent
+
+
+async def _continue(
+    agent: Agent[None, str], prompts: list[str], *, history: list[ModelMessage] | None = None
+) -> list[ModelMessage]:
+    """Run one turn per prompt, each continuing the previous turn's history."""
+    messages = history or []
+    for prompt in prompts:
+        messages = (await agent.run(prompt, message_history=messages)).all_messages()
+    return messages
+
+
+def _request_shapes(messages: list[ModelMessage]) -> list[list[str]]:
+    """Each request's system and user prompt parts, as `kind: text`."""
+    return [
+        [
+            f'{part.part_kind}: {part.content if isinstance(part, SystemPromptPart) else _part_text(part)}'
+            for part in message.parts
+            if isinstance(part, SystemPromptPart | UserPromptPart)
+        ]
+        for message in messages
+        if isinstance(message, ModelRequest)
+    ]
 
 
 def _user_texts(messages: list[ModelMessage]) -> list[str]:
