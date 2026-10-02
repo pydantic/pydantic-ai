@@ -362,7 +362,7 @@ class TestCodexDiskLoading:
         assert len(record) == 1 and 'agent_overrides' in str(record[0].message)
         assert listing is not None and '- worker' in listing
         assert _built(cap)['worker'].model is None
-        assert _built(cap)['worker'].model_settings == {'thinking': MINIMUM_EFFORT_FLOOR}
+        assert _built(cap)['worker'].model_settings is None
 
     @pytest.mark.parametrize('toml_first', [False, True])
     async def test_mixed_formats_are_sorted_and_first_definition_wins(self, tmp_path: Path, toml_first: bool) -> None:
