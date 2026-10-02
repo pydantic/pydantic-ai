@@ -467,10 +467,7 @@ def _context_from_file(path: Path = _INVENTORY) -> ReviewContext:
 
 
 def _check_runs(github: GitHub, head_sha: str) -> list[Mapping[str, object]]:
-    response = _mapping(github.request(f'commits/{head_sha}/check-runs?per_page=100'))
-    values = _objects(response.get('check_runs')) if response is not None else None
-    if values is None:
-        raise ValueError('check-run response is incomplete')
+    values = github.paginated(f'commits/{head_sha}/check-runs', collection='check_runs')
     check_runs: list[Mapping[str, object]] = []
     for value in values:
         if (check_run := _mapping(value)) is not None:

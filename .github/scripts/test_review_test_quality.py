@@ -14,6 +14,7 @@ from review_test_quality import (
     GitHub,
     PinnedReview,
     ReviewContext,
+    _check_runs,
     _ci_jobs,
     _matches_pinned_pr,
     build_candidates,
@@ -367,6 +368,49 @@ def test_deduplication_only_accepts_completed_report_or_discovery_results(
         )
         is expected
     )
+
+
+def test_check_run_deduplication_paginates_past_first_hundred_checks() -> None:
+    base_sha, head_sha, workflow_version = 'base-sha', 'pinned-head-sha', 'workflow-sha'
+    marker = f'<!-- test-quality-review:v1 base={base_sha} head={head_sha} workflow={workflow_version} -->'
+
+    class FakeGitHub(GitHub):
+        def __init__(self) -> None:
+            super().__init__('unused', 'pydantic/pydantic-ai')
+            self.calls: list[str] = []
+
+        def request(self, path: str, **kwargs: object) -> object:
+            self.calls.append(path)
+            page = int(parse_qs(urlsplit(path).query)['page'][0])
+            check_runs: list[dict[str, object]] = [
+                {
+                    'name': f'other check {index}',
+                    'status': 'completed',
+                    'conclusion': 'success',
+                    'output': {},
+                }
+                for index in range((page - 1) * 100, 101 if page == 2 else 100)
+            ]
+            if page == 2:
+                check_runs = [
+                    {
+                        'name': 'Test Quality Review',
+                        'status': 'completed',
+                        'conclusion': 'neutral',
+                        'output': {'title': 'Protection accounted for', 'summary': marker},
+                    }
+                ]
+            return {'total_count': 101, 'check_runs': check_runs}
+
+    github = FakeGitHub()
+
+    check_runs = _check_runs(github, head_sha)
+
+    assert github.calls == [
+        f'commits/{head_sha}/check-runs?per_page=100&page=1',
+        f'commits/{head_sha}/check-runs?per_page=100&page=2',
+    ]
+    assert has_completed_report(check_runs, base_sha=base_sha, head_sha=head_sha, workflow_version=workflow_version)
 
 
 def test_check_summary_byte_boundary_and_overflow_are_explicitly_inconclusive() -> None:
