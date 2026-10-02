@@ -128,7 +128,7 @@ def _plugin_sources(tmp_path: Path) -> tuple[SettingsStore, ProjectSettings]:
     store = SettingsStore(tmp_path / 'config.db')
     store.save_plugin(PluginSettings(id='saved', factory='clai_agent_flag_missing_plugin'))
     store.plugins_dir.mkdir(parents=True, exist_ok=True)
-    (store.plugins_dir / 'dropin.py').write_text('def activate(host):\n    raise RuntimeError("loaded")\n')
+    (store.plugins_dir / 'dropin.py').write_text('raise RuntimeError("loaded")\n')
     project = ProjectSettings(plugins=(PluginSettings(id='project', factory='clai_agent_flag_missing_project'),))
     return store, project
 

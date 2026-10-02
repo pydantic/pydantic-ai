@@ -10,6 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import cast
 
+import anyio
 from rich.cells import set_cell_size
 from rich.console import Console
 from typing_extensions import Self
@@ -40,6 +41,8 @@ class Status:
     workspace: str = ''
     """The session's working directory; hidden while empty."""
     context_tokens: int | None = None
+    context_window: int | None = None
+    """Known context capacity for the latest request; `None` when unresolved."""
     context_alert: bool = False
     """Paint the context figure `WARNING`; set by whoever knows the window, such as the `compaction` plugin."""
     output_tokens: int | None = None
@@ -71,17 +74,19 @@ class Status:
         elif isinstance(event, FunctionToolResultEvent):
             self.activity = 'working'
 
-    def segments(self, frame: str = '') -> tuple[str, str, str, str]:
-        """The row as (head, context figure, tail, plugins), so the figure and fragments paint on their own."""
-        context = '?' if self.context_tokens is None else f'{self.context_tokens:,}'
-        output = f'~{math.ceil(self.streamed_chars / 4):,} streamed tokens'
+    def segments(self, frame: str = '') -> tuple[str, str, str, str, str, str, str]:
+        """Separate figures from labels so plain text and both painters share the same boundaries."""
+        context = f'{_compact_tokens(self.context_tokens)}/{_compact_tokens(self.context_window)}'
+        output = f'~{math.ceil(self.streamed_chars / 4):,}'
+        output_label = 'streamed tokens'
         if self.output_tokens is not None:
-            output = f'{self.output_tokens:,} output tokens'
+            output = f'{self.output_tokens:,}'
+            output_label = 'output tokens'
         cost = '' if self.cost is None else f' | {format_cost(self.cost)}'
         # A POSIX directory name may hold a newline or an escape sequence; keep it inert on every painter.
         workspace = f' | {_short_path(terminal_text(self.workspace, keep=""))}' if self.workspace else ''
         head = f'{frame} {self.model}{workspace} | context: '.lstrip()
-        return head, context, f' tokens | {output}{cost} | {self.activity}', self._plugin_text()
+        return head, context, ' tokens | ', output, f' {output_label}{cost} | ', self.activity, self._plugin_text()
 
     def _plugin_text(self) -> str:
         """Plugin fragments, separated and prefixed; a fragment that raises or returns a non-string is reported."""
@@ -96,18 +101,29 @@ class Status:
                 if text:
                     # Sanitized here rather than only in the row painter: the toolbar draws fragments too.
                     shown.append(_printable(text))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- a plugin fragment must not take down the footer.
                 shown.append(f'!{type(exc).__name__}')
         return '' if not shown else ' | ' + ' | '.join(shown)
 
     def text(self, frame: str = '') -> str:
-        """Use no percentage when the model's context capacity is unknown."""
+        """Show compact used/max context, with `?` for unknown counts."""
         return ''.join(self.segments(frame))
 
     def toolbar(self) -> list[tuple[str, str]]:
-        """prompt-toolkit fragments for the input prompt; the figure is `WARNING` while `context_alert` is set."""
-        head, figure, tail, plugins = self.segments()
-        painted = [('', head), (theme.WARNING if self.context_alert else '', figure), ('', tail)]
+        """Accent output counts and tool names, keeping chrome muted and context alerts visible."""
+        head, figure, prefix, count, details, activity, plugins = self.segments()
+        painted = [
+            (theme.MUTED, head),
+            (theme.WARNING if self.context_alert else theme.MUTED, figure),
+            (theme.MUTED, prefix),
+            (theme.LITHIUM, count),
+            (theme.MUTED, details),
+        ]
+        if activity.startswith(('tool: ', 'running: ')):
+            label, _, tool = activity.partition(': ')
+            painted.extend([(theme.MUTED, label + ': '), (theme.THINKING, tool)])
+        else:
+            painted.append((theme.MUTED, activity))
         return [*painted, (theme.MUTED, plugins)] if plugins else painted
 
 
@@ -154,7 +170,7 @@ class StatusLine:
     def _reserve(self) -> None:
         if self.enabled and self.console.is_terminal and not self.console.is_dumb_terminal:
             self.console.show_cursor(False)
-            self._draw(0)
+            self._draw()
             self._task = asyncio.create_task(self._animate())
 
     async def _release(self) -> None:
@@ -179,7 +195,7 @@ class StatusLine:
             self.console.file.write(f'\x1b7\x1b[r{cleared}\x1b8')
             self._height = self._rows = 0
 
-    def _draw(self, frame: int) -> None:
+    def _draw(self) -> None:
         width, height = self.console.size
         if height < 3:
             self._clear()
@@ -187,29 +203,19 @@ class StatusLine:
             return
         rows = 4 if height >= 6 and width >= 4 else 1
         # Leave one column unused so the footer cannot trigger autowrap.
-        head, figure, tail, plugins = (_printable(segment) for segment in self.status.segments())
-        text = head + figure + tail + plugins
-        # From the untruncated row, so a fragment wider than the terminal cannot mute the built-in part.
-        plugin_start = max(0, len(text) - len(plugins))
-        alerted = range(len(head), len(head) + len(figure)) if self.status.context_alert else range(0)
+        fragments = self.status.toolbar()
         prefix = '\x1b7'
         if (height, rows) != (self._height, self._rows):
             self._clear()
             # Move inside the new scroll region before excluding the footer rows.
             prefix = '\x1bD' * rows + f'\x1b[{rows}A\x1b7\x1b[1;{height - rows}r'
             self._height, self._rows = height, rows
-        text = text[: max(0, width - 1)]
-        highlight = frame % (len(text) + 12) - 6
-        shades = tuple(theme.sgr(color) for color in (theme.SUGAR, theme.LIGHT_PURPLE, theme.LITHIUM, theme.PURPLE))
-        warning = theme.sgr(theme.WARNING)
-        muted = theme.sgr(theme.MUTED)
-
-        def paint(index: int) -> str:
-            if index in alerted:
-                return warning
-            return muted if index >= plugin_start else shades[min(abs(index - highlight) // 2, 3)]
-
-        painted = ''.join(paint(index) + char for index, char in enumerate(text))
+        remaining = max(0, width - 1)
+        painted = ''
+        for role, fragment in fragments:
+            text = _printable(fragment)[:remaining]
+            painted += ''.join(theme.sgr(role) + char for char in text)
+            remaining -= len(text)
         if rows == 4:
             inner_width = width - 3
             glyph = self.spinner().frame(self.clock())
@@ -222,9 +228,20 @@ class StatusLine:
 
     async def _animate(self) -> None:
         while True:
-            # The shimmer keeps its ten steps a second whatever the spinner's speed.
-            self._draw(int(self.clock() * 10))
-            await asyncio.sleep(min(0.1, self.spinner().interval))
+            # Refresh live counts at least ten times a second, whatever the spinner's speed.
+            self._draw()
+            await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
+
+
+def _compact_tokens(count: int | None) -> str:
+    """Round to whole thousands or tenths of a million without trailing `.0`."""
+    if count is None:
+        return '?'
+    if count >= 999_500:
+        return f'{count / 1_000_000:.1f}'.removesuffix('.0') + 'm'
+    if count >= 1_000:
+        return f'{count / 1_000:.0f}k'
+    return str(count)
 
 
 def _short_path(path: str, limit: int = 40) -> str:

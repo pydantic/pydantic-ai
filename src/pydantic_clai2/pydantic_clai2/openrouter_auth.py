@@ -12,6 +12,7 @@ import webbrowser
 from collections.abc import Callable
 from urllib.parse import parse_qs, urlencode, urlparse
 
+import anyio
 import httpx
 from anyio import fail_after
 from pydantic import BaseModel, Field, SecretStr, ValidationError
@@ -99,7 +100,7 @@ class OpenRouterAuth:
                     )
                     self.console.print(url, markup=False, highlight=False)
                     try:
-                        opened = await asyncio.to_thread(self.open_browser, url)
+                        opened = await anyio.to_thread.run_sync(self.open_browser, url, abandon_on_cancel=True)
                     except webbrowser.Error:
                         opened = False
                     if not opened:

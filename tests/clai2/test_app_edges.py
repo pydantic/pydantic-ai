@@ -228,7 +228,7 @@ async def test_codex_login_and_turns_share_lazy_auth(tmp_path: Path, monkeypatch
     instances: list[CodexAuth] = []
 
     async def login(self: CodexAuth, args: list[str]) -> str:
-        assert args == ['openai-codex']
+        assert args == []  # /login resolved the name; Codex gets no arguments
         instances.append(self)
         return 'Signed in.'
 

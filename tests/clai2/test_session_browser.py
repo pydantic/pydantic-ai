@@ -1,9 +1,11 @@
 """Headless project/session navigation and safe, responsive frame rendering."""
 
+import subprocess
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from itertools import chain, repeat
+from pathlib import Path
 
 import pytest
 from termflow.ansi.utils import visible_length
@@ -11,7 +13,41 @@ from termflow.tui.keys import Key
 
 import pydantic_clai2.ui.menus.session_browser as module
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
-from pydantic_clai2.ui.menus.session_browser import SessionBrowser, date_label, plain
+from pydantic_clai2.runtime.project_identity import ProjectIdentity, project_identity
+from pydantic_clai2.ui.menus.session_browser import MISSING, SessionBrowser, date_label, plain
+
+
+@pytest.fixture(autouse=True)
+def fictional_checkouts_exist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The shared `/a` and `/b` workspaces stand for checkouts that still exist."""
+
+    def identify(workspace: str) -> ProjectIdentity:
+        identity = project_identity(workspace)
+        return replace(identity, missing=False) if workspace.startswith(('/a/', '/b/')) else identity
+
+    monkeypatch.setattr(module, 'project_identity', identify)
+
+
+def git(*args: str) -> None:
+    subprocess.run(['git', *args], check=True, capture_output=True)
+
+
+def repository(repo: Path, *, linked: Path, branch: str) -> None:
+    """A repository on `main` with a linked worktree checked out on `branch`."""
+    git('init', '-b', 'main', str(repo))
+    git(
+        '-C',
+        str(repo),
+        '-c',
+        'user.name=Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit',
+        '--allow-empty',
+        '-m',
+        'init',
+    )
+    git('-C', str(repo), 'worktree', 'add', '-b', branch, str(linked))
 
 
 def browser(*, keys: list[str] | None = None) -> tuple[SessionBrowser, list[ConversationSummary]]:
@@ -102,9 +138,7 @@ def test_project_selection_preview_and_back() -> None:
     widget.handle_key(Key.DOWN)
     widget.handle_key(Key.ENTER)
     assert widget.selected is not None and widget.selected.id == 'two'
-    assert widget.handle_key(Key.ENTER) is None
-    assert 'saved in /b/project' in widget.footer()
-    assert widget.handle_key('y') == 'two'
+    assert widget.handle_key(Key.ENTER) == 'two'
     assert widget.handle_key('ctrl-c') == ''
 
 
@@ -130,6 +164,7 @@ def test_search_sort_rename_delete_and_stable_refresh() -> None:
     widget.handle_key(Key.DOWN)
     widget.handle_key('d')
     assert widget.confirm is not None
+    assert widget.footer() == 'Delete saved session: Other? y confirm / any other key cancel'
     widget.handle_key('n')
     assert len(entries) == 3
     widget.handle_key('d')
@@ -160,6 +195,17 @@ def test_empty_search_and_scripted_loop() -> None:
     assert widget.handle_key(Key.ENTER) is None
     widget.handle_key(Key.ESCAPE)
     assert widget.handle_key(Key.ESCAPE) == ''
+
+
+@pytest.mark.parametrize('workspace', ['/a/project', '/b/project', '/missing/clai2/worktree'])
+def test_resume_without_directory_confirmation(workspace: str) -> None:
+    widget, entries = browser(keys=[Key.ENTER, '', Key.ENTER, '', 'ctrl-c'])
+    entries[:] = [replace(entries[1], workspace=workspace)]
+    widget.reload()
+    assert widget.loop() == 'two'
+    assert widget.confirm is None
+    assert widget.workspace == '/a/project'
+    assert entries[0].workspace == workspace
 
 
 def test_date_buckets() -> None:
@@ -262,7 +308,6 @@ def test_multiline_metadata_cannot_inject_terminal_rows() -> None:
         widget.buffer = 'rename\nnext'
         assert all('\n' not in line and '\r' not in line for line in widget.frame(width=120, height=24))
     widget.confirm = entries[0]
-    widget.confirm_action = f'Resume in {entries[0].workspace}'
     assert '\n' not in widget.footer()
     assert plain('first\nsecond', multiline=True) == 'first\nsecond'
     assert plain('first\nsecond') == 'first second'
@@ -294,3 +339,139 @@ def test_failed_idle_refresh_waits_before_retry(monkeypatch: pytest.MonkeyPatch)
     assert widget.loop() == ''
     assert attempts == ['']
     assert 'database unavailable' in widget.notice
+
+
+@pytest.mark.parametrize('repo_name', ['repo', 'repo\nname'])
+def test_repository_grouping_and_checkout_labels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, repo_name: str
+) -> None:
+    """Real Git metadata, not directory naming conventions, unifies linked checkouts."""
+    repo = tmp_path / repo_name
+    linked = tmp_path / '.herdr' / 'worktrees' / f'unrelated-long-directory-{repo_name}'
+    repository(repo, linked=linked, branch='feature/resume')
+    subdir = linked / 'src'
+    subdir.mkdir()
+    widget, entries = browser()
+    entries[:] = [
+        replace(entries[0], workspace=str(repo)),
+        replace(entries[1], workspace=str(linked)),
+        replace(entries[2], workspace=str(subdir)),
+    ]
+    widget.workspace = str(subdir)
+    widget.reload()
+    assert len(widget.projects) == 1
+    assert widget.project_label(widget.project) == repo_name
+    assert [e.id for e in widget.sessions] == ['one', 'two', 'three']
+    frame = '\n'.join(widget.frame(width=120, height=24))
+    assert f'{plain(repo_name)} (3)' in frame
+    assert '[main]' in frame and '[feature/resume]' in frame
+    assert str(linked) not in frame
+    widget.handle_key(Key.ENTER)
+    widget.selected_id = 'three'
+    assert widget.handle_key(Key.ENTER) == 'three'
+    widget.selected_id = 'two'
+    assert widget.handle_key(Key.ENTER) == 'two'
+    widget.reload()
+    assert widget.selected is not None and widget.selected.id == 'two'
+
+    resolved: list[str] = []
+
+    def observe_resolve(workspace: str) -> ProjectIdentity:
+        resolved.append(workspace)
+        return project_identity(workspace)
+
+    monkeypatch.setattr(module, 'project_identity', observe_resolve)
+    assert module.project_identity(str(linked)).checkout == 'feature/resume'
+    widget.reload()
+    widget.query = 'global'
+    assert f'[{plain(repo_name)}: feature/resume]' in '\n'.join(widget.frame(width=120, height=24))
+    assert resolved == [str(linked)]
+    git('-C', str(linked), 'checkout', '--detach')
+    assert project_identity(str(linked)).checkout == f'{linked.name} (detached)'
+
+
+@pytest.mark.parametrize('workspace', ['relative/project', '/missing/clai2/worktree'])
+def test_identity_fallback(workspace: str) -> None:
+    identity = project_identity(workspace)
+    assert identity.key == workspace
+    assert identity.name == Path(workspace).name
+    assert identity.checkout == ''
+    assert identity.missing == workspace.startswith('/')
+
+
+def test_checkout_tree_and_missing_folders(tmp_path: Path) -> None:
+    """Worktrees nest, dimmed, under their repository; deleted folders gather in one group last.
+
+    Rows are keyed by folder, so deleted folders sharing a name stay apart, labelled by path.
+    """
+    repo, linked, gone = tmp_path / 'repo', tmp_path / 'linked', tmp_path / 'gone'
+    old, twin = gone / 'old-worktree', gone / 'elsewhere' / 'old-worktree'
+    repository(repo, linked=linked, branch='feature')
+    widget, entries = browser()
+    entries[:] = [
+        replace(entries[0], workspace=str(repo)),
+        replace(entries[1], workspace=str(old)),
+        replace(entries[2], workspace=str(linked)),
+        ConversationSummary(id='four', workspace=str(gone / 'other'), title='Older'),
+        ConversationSummary(id='five', workspace=str(twin), title='Oldest'),
+    ]
+    widget.reload()
+    key = widget.project
+    assert widget.rows == [
+        (key, ''),
+        (key, widget.identity(str(repo)).root),
+        (key, widget.identity(str(linked)).root),
+        (MISSING, ''),
+        (MISSING, str(old)),
+        (MISSING, str(gone / 'other')),
+        (MISSING, str(twin)),
+    ]
+    assert widget.checkout_label(MISSING, str(twin)) == str(twin)
+    muted = module.theme.sgr(module.theme.MUTED)
+    highlight = module.theme.sgr(module.theme.INFO, bold=True)
+    frame = '\n'.join(widget.frame(width=120, height=24))
+    assert f'{highlight}> repo (2)\x1b[0m' in frame
+    assert f'{muted}  ├─ main (1)\x1b[0m' in frame
+    assert f'{muted}  └─ feature (1)\x1b[0m' in frame
+    assert '  missing folders (3)' in frame
+    assert f'{muted}  ├─ other (1)\x1b[0m' in frame
+    widget.handle_key(Key.DOWN)
+    assert [e.id for e in widget.sessions] == ['one']
+    assert 'SESSIONS: repo / main' in '\n'.join(widget.frame(width=120, height=24))
+    widget.handle_key(Key.DOWN)
+    assert [e.id for e in widget.sessions] == ['three']
+    assert f'{highlight}> └─ feature (1)\x1b[0m' in '\n'.join(widget.frame(width=120, height=24))
+    for _ in range(4):
+        widget.handle_key(Key.DOWN)
+    assert (widget.project, widget.checkout) == (MISSING, str(twin))
+    assert [e.id for e in widget.sessions] == ['five']
+    assert f'SESSIONS: missing folders / {twin}'[:60] in '\n'.join(widget.frame(width=300, height=24))
+    del entries[3:]
+    widget.reload()
+    assert (widget.project, widget.checkout) == (MISSING, '')
+    assert [e.id for e in widget.sessions] == ['two']
+    widget.query = 'global'
+    assert '[missing folders: old-worktree]' in '\n'.join(widget.frame(width=120, height=24))
+
+
+def test_independent_same_named_repositories(tmp_path: Path) -> None:
+    widget, entries = browser()
+    for index, parent in enumerate(('a', 'b')):
+        repo = tmp_path / parent / 'repo'
+        repo.mkdir(parents=True)
+        subprocess.run(['git', 'init', '-b', 'main', str(repo)], check=True, capture_output=True)
+        entries[index] = replace(entries[index], workspace=str(repo))
+    entries.pop()
+    widget.reload()
+    assert len(widget.projects) == 2
+    assert widget.project_label(widget.projects[0]) != widget.project_label(widget.projects[1])
+    assert len(widget.sessions) == 1
+
+
+@pytest.mark.parametrize('error', [FileNotFoundError('git'), subprocess.TimeoutExpired('git', 2)])
+def test_git_unavailable_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    def fail(*args: object, **kwargs: object) -> None:
+        raise error
+
+    monkeypatch.setattr(subprocess, 'run', fail)
+    assert project_identity(str(tmp_path)) == ProjectIdentity(key=str(tmp_path), name=tmp_path.name, root=str(tmp_path))

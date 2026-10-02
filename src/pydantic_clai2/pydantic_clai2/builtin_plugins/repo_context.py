@@ -1,12 +1,17 @@
-"""The built-in `repo_context` plugin: the workspace's instruction files, through harness `RepoContext`."""
+"""Give the model your repository's instruction files, such as AGENTS.md.
 
+The built-in `repo_context` plugin: the workspace's instruction files, through harness `RepoContext`.
+"""
+
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.repo_context import RepoContext
-from pydantic_clai2.plugins import DepsT, PluginHost
+from pydantic_clai2.plugins import DepsT, Plugin
 from pydantic_clai2.runtime._session import _supports_local_workspace  # pyright: ignore[reportPrivateUsage]
 
 
@@ -28,16 +33,18 @@ class RepoContextSettings(BaseModel):
     )
 
 
-def activate(host: PluginHost[DepsT]) -> None:
-    """Add `RepoContext`, anchored at the run workspace's working directory like the `coder` plugin."""
-    if not _supports_local_workspace():
-        return
-    settings = host.settings(RepoContextSettings)
-    host.add(
-        RepoContext[DepsT](
-            home_dir=Path.home() if settings.walk_up else None,
-            expose_inventory_tool=settings.inventory_tool,
-            nested_traversal=settings.nested_traversal,
-            nested_inject=settings.nested_inject,
+class RepoContextPlugin(Plugin[RepoContextSettings, DepsT]):
+    """`RepoContext`, anchored at the run workspace's working directory like the `coder` plugin."""
+
+    def get_capabilities(self) -> Sequence[AgentCapability[DepsT]]:
+        if not _supports_local_workspace():
+            return ()
+        settings = self.settings
+        return (
+            RepoContext[DepsT](
+                home_dir=Path.home() if settings.walk_up else None,
+                expose_inventory_tool=settings.inventory_tool,
+                nested_traversal=settings.nested_traversal,
+                nested_inject=settings.nested_inject,
+            ),
         )
-    )

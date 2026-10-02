@@ -28,7 +28,7 @@ Invoke this skill when:
 - An agent should run model-written Python that calls its tools (Code Mode)
 - The user wants sub-agents, planning, a model-written workflow over sub-agents, or a stronger model to advise a cheaper one
 - A long-running agent needs memory across sessions, context compaction, tool output limits, or `SKILL.md` skills loaded on demand
-- The user wants guardrails, prompt-injection screening, spend limits, human questions mid-run, or a second model reviewing the run
+- The user wants guardrails, prompt-injection screening, model-based tool-call decisions, spend limits, human questions mid-run, or a second model reviewing the run
 - The user wants web research beyond core web search (Exa, You.com), a real browser, or a hosted integration such as GitHub, Linear, Notion, Slack, or Google Workspace
 - A run must be saved, resumed, or forked, or an agent should be served over ACP
 
@@ -205,7 +205,7 @@ Load the references for the capabilities the task uses; each is self-contained.
 | Add sub-agents, planning, a model-written workflow over sub-agents, an advisor model, or background tools | [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) |
 | Keep a long run within its context window, trim or summarize history, limit large tool outputs, or catch prompt-cache busts | [Context Management](./references/CONTEXT-MANAGEMENT.md) |
 | Give the agent persistent memory, conversation search, `SKILL.md` skills, or Pydantic AI docs lookup | [Knowledge and Memory](./references/KNOWLEDGE-AND-MEMORY.md) |
-| Add guardrails, prompt-injection screening, spend limits, questions to the user, reminders, or a trajectory judge; repair malformed tool arguments | [Control and Safety](./references/CONTROL-AND-SAFETY.md) |
+| Add guardrails, prompt-injection screening, model-based tool-call decisions, spend limits, questions to the user, reminders, or a trajectory judge; repair malformed tool arguments | [Control and Safety](./references/CONTROL-AND-SAFETY.md) |
 | Research the web with Exa or You.com, use the `Researcher` stack, or drive a browser | [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) |
 | Connect GitHub, Linear, Notion, Slack, Google Workspace, PostHog, Logfire, or another hosted service | [Hosted Integrations](./references/HOSTED-INTEGRATIONS.md) |
 | Save, resume, or fork runs; run under AWS Lambda or Absurd; use managed prompts, runtime-created capabilities, ACP, GitHub Agentic Workflows, or agent specs | [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) |
@@ -267,10 +267,10 @@ any:
 |---|---|
 | [Coding and Workspaces](./references/CODING-AND-WORKSPACES.md) | `Coder` (`.coder`, `[coder]`); `FileSystem` (`.filesystem`); `Shell` (`.shell`); `ModalSandbox` (`.modal_sandbox`, `[modal]`); `E2BSandbox` (`.e2b_sandbox`, `[e2b]`); `SpritesSandbox` (`.sprites_sandbox`, `[sprites]`); `SSHWorkspace` (`.ssh_workspace`); `BubblewrapSandbox` (`.bubblewrap_sandbox`); `RepoContext` (`.repo_context`); `Macroscope` (`.macroscope`); `LocalStack` (`.localstack`) |
 | [Code Mode](./references/CODE-MODE.md) | `CodeMode` (`.code_mode`, `[codemode]`) |
-| [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent` (`.subagents`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
+| [Delegation and Planning](./references/DELEGATION-AND-PLANNING.md) | `Planning` (`.planning`); `SubAgents`, `SubAgent`, `DelegationReports` (`.subagents`); `DynamicWorkflow` (`.dynamic_workflow`, `[dynamic-workflow]`); `Advisor` (`.advisor`); `BackgroundTools` (`.background_tools`) |
 | [Context Management](./references/CONTEXT-MANAGEMENT.md) | `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction`, `TieredCompaction`, `FallbackCompaction`, `ClampOversizedMessages`, `DeduplicateFileReads`, `WarnNearLimits`, `ReportContextUsage` (`.compaction`); `ToolOutputLimits` (`.tool_output_limits`); `WarnOnCacheBusts` (`.warn_on_cache_busts`); media stores, not a capability (`.media`) |
 | [Knowledge and Memory](./references/KNOWLEDGE-AND-MEMORY.md) | `Memory` (`.memory`); `ConversationSearch` (`.conversation_search`); `Skills` (`.skills`, `[skills]`); `PydanticAIDocs` (`.pydantic_ai_docs`) |
-| [Control and Safety](./references/CONTROL-AND-SAFETY.md) | `RepairToolArguments` (`.repair_tool_arguments`); `InputGuardrail`, `OutputGuardrail`, `ToolGuardrail` (`.guardrails`); `PromptInjectionDefender` (`.prompt_injection_defender`, `[prompt-injection-defender]`); `SpendLimits` (`.spend`); `AskUser` (`.ask_user`); `SystemReminders` (`.system_reminders`); `TrajectoryJudge` (`.trajectory_judge`) |
+| [Control and Safety](./references/CONTROL-AND-SAFETY.md) | `RepairToolArguments` (`.repair_tool_arguments`); `InputGuardrail`, `OutputGuardrail`, `ToolGuardrail` (`.guardrails`); `PromptInjectionDefender` (`.prompt_injection_defender`, `[prompt-injection-defender]`); `ToolCallJudge` (`.tool_call_judge`); `SpendLimits` (`.spend`); `AskUser` (`.ask_user`); `SystemReminders` (`.system_reminders`); `TrajectoryJudge` (`.trajectory_judge`) |
 | [Research and Browsing](./references/RESEARCH-AND-BROWSING.md) | `Researcher` (`.researcher`, `[researcher]`); `ExaSearch`, `ExaAgent` (`.exa`, `[exa]`); `YouSearch`, `YouResearch` (`.youdotcom`, `[youdotcom]`); `BrowserUse` (`.browser_use`, `[browser-use]`); `PlaywrightBrowser` (`.playwright`, `[playwright]`) |
 | [Hosted Integrations](./references/HOSTED-INTEGRATIONS.md) | `GitHub` (`.github`, `[github]`); `Linear` (`.linear`, `[linear]`); `Notion` (`.notion`, `[notion]`); `GoogleWorkspace` (`.google_workspace`, `[google-workspace]`); `Slack` (`.slack`, `[slack]`); `StackOne` (`.stackone`, `[stackone]`); `Ordinal` (`.ordinal`, `[ordinal]`); `Grain` (`.grain`, `[grain]`); `DayAI` (`.day_ai`, `[day-ai]`); `PostHog` (`.posthog`, `[posthog]`); `Pylon` (`.pylon`, `[pylon]`); `LogfireMCP` (`.logfire_mcp`, `[logfire-mcp]`) |
 | [Runtime and Extension](./references/RUNTIME-AND-EXTENSION.md) | `StepPersistence` (`.step_persistence`, `[mongodb]` for MongoDB); `AWSLambdaDurability` (`.aws_lambda`, `[aws-lambda]`); `AbsurdDurability` (`.absurd`, `[absurd]`); `ManagedPrompt` (`.logfire`, `[logfire]`); `CapabilityCreation` (`.capability_creation`); experimental ACP server `run_acp_stdio` (`.experimental.acp`, `[acp]`) |
@@ -279,3 +279,24 @@ For offline tests and debugging of any of these, load [Testing and Debugging](./
 
 The full capability list, grouped by what each gives an agent, is on the
 [Pydantic AI Harness overview](https://pydantic.dev/docs/ai/harness/).
+
+## Managed subagent lifetime
+
+For background subagents, use `DelegationTasks` from `pydantic_ai_harness.subagents`.
+Keep `async with tasks.opened()` outside parent turns and inside the lifetime of all
+shared workspace/plugin resources. Bind with `with tasks.bind()` and add
+`DelegationReports(tasks, conversation_id=...)` to parent runs. `SubAgents` then
+exposes `background` and `resume`; its ordinary defaults remain unchanged outside
+this scope. Start receipts are not results. Reports are automated untrusted evidence,
+not user instructions or approval grants. Direct children consume their descendants'
+reports before settling. Use `await tasks.cancel(id)` for targeted subtree stop;
+user-stopped tasks need explicit `await tasks.allow_resume(id)` before model resume.
+One-shot agents cannot resume. Detached non-local workspaces are refused. Preserve
+stable child IDs and use `step_store` for process-crash checkpoints. For read-only
+specialists, combine `SubAgent(read_only=True)` with only trusted filesystem-reader
+capabilities; do not inherit shell, CodeMode, arbitrary Python, or plugin tools.
+`DelegationReports` defaults to `priority='when_idle'`. For a report-only
+continuation started by the host, use `priority='asap'` and `agent.run(None, ...)`
+so pending reports reach the first model request without a synthetic user message.
+The host owns idle wake-up scheduling; Harness does not start parent runs.
+See the subagents README for accounting, persistence, and lifecycle details.

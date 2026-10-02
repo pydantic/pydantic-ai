@@ -129,6 +129,7 @@ The reviewer works in the workspace you pass. [`ReadOnlyWorkspace`](https://pyda
    instruction files are not loaded twice.
 5. [`SubAgents`](https://pydantic.dev/docs/ai/harness/subagents/)`(include_self=True, agent_folders=None)`, so the agent can hand a self-contained
    sub-task to a fresh run of itself (see below). Pass `sub_agents=False` to leave it out.
+   Pass `agent_folders=` (same values as `SubAgents`) to also load disk-defined agents; it defaults to `None`.
 
 Then the plumbing, which the agent never calls directly:
 
