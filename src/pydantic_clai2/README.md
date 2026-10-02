@@ -317,16 +317,18 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
 When a newer build exists, the status row shows `update <version or commit>: /update`.
 CLAI checks once at startup and again when you change the channel, and only for
 `uv tool` installs. Offline, it shows nothing. `/update` runs `uv tool install --force`,
-shows uv's output, then exits; start `clai2` again to use the new build. Switching
-back to `stable` offers the latest release.
+shows uv's output, then restarts CLAI as the new build with the same launch options,
+resuming the current conversation. Switching back to `stable` offers the latest release.
+Run from a source checkout, `/update` installs CLAI as a `uv tool` the same way and
+restarts into that.
 
 Windows does not let a program replace files it is running from, so there
 `/update` exits first and installs in a new PowerShell window; start `clai2`
 again when that window reports success.
 
 The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
-again afterwards. Without uv on `PATH`, or outside a `uv tool` install, `/update`
-prints the command to run yourself, in PowerShell syntax on Windows.
+again afterwards. Without uv on `PATH`, `/update` prints the command to run
+yourself, in PowerShell syntax on Windows.
 
 ## Your own agent
 
