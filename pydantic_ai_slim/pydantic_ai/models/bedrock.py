@@ -201,7 +201,6 @@ _STREAM_EXCEPTION_STATUS_CODES: dict[str, int] = {
     'serviceunavailableexception': 503,
     'internalserverexception': 500,
     'validationexception': 400,
-    'modeltimeoutexception': 408,
 }
 """The HTTP status Bedrock documents for each `ConverseStream` exception event's error before the stream opens."""
 

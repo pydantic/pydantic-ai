@@ -240,7 +240,7 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'openai') -> Gene
         raise _map_connection_error(e, model_name) from e
     except APIError as e:
         # The SDK raises the base `APIError` for an error object inside a stream, after the HTTP 200 has already
-        # been received, so there is no status code to report.
+        # been received; it gets the status the same error has before a stream opens.
         raise _model_errors.stream_error(model_name, e.message, e.body) from e
 
 

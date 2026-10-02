@@ -107,19 +107,13 @@ _GRPC_STATUS_TO_HTTP: dict[grpc.StatusCode, int] = {
 
 
 @contextmanager
-def _map_api_errors(
-    model_name: str, *, status_map: dict[grpc.StatusCode, int] = _GRPC_STATUS_TO_HTTP
-) -> Generator[None]:
-    """Turn a gRPC error into the framework's HTTP-shaped errors.
-
-    `status_map` is a parameter because the image RPC maps one more status than chat does; it defaults
-    to the chat table so the chat call sites read unchanged.
-    """
+def _map_api_errors(model_name: str) -> Generator[None]:
+    """Turn a gRPC error into the framework's HTTP-shaped errors, mapping its status code to the HTTP equivalent."""
     try:
         yield
     except grpc.RpcError as e:
         grpc_status = e.code()
-        status_code = status_map.get(grpc_status)
+        status_code = _GRPC_STATUS_TO_HTTP.get(grpc_status)
         details = e.details() or str(e)
         category = _GRPC_STATUS_CATEGORIES.get(grpc_status)
         if grpc_status == grpc.StatusCode.INVALID_ARGUMENT and 'maximum prompt length' in details.lower():

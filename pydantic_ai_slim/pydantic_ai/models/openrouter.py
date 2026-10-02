@@ -1275,8 +1275,8 @@ class OpenRouterStreamedResponse(OpenAIStreamedResponse):
             try:
                 error = _OpenRouterError.model_validate(e.body)
             except ValidationError:
-                # An error object without an integer `code`: there's no status to report.
-                raise ModelAPIError(model_name=self._model_name, message=e.message, in_stream=True) from e
+                # An error object without an integer `code`: classify it like any OpenAI-compatible in-stream error.
+                raise _model_errors.stream_error(self._model_name, e.message, e.body) from e
             raise _map_openrouter_error(error, self._model_name, in_stream=True) from e
 
     @override

@@ -296,7 +296,8 @@ identifiers remain valid so custom deployments and newly released models continu
     - OpenRouter errors parsed from a 200-OK response report the error's own `code`.
     - An error sent inside an already open stream gets the status of the same error before the stream opens, like
       529 for Anthropic's `overloaded_error`. These have
-      [`in_stream`][pydantic_ai.exceptions.ModelAPIError.in_stream] set, and their `headers` are the stream's.
+      [`in_stream`][pydantic_ai.exceptions.ModelAPIError.in_stream] set, and their `headers`, if any, are the
+      stream's.
       A request can be streamed without you asking for it (e.g. when the agent has an event stream handler), which
       is why the error doesn't otherwise depend on it.
 

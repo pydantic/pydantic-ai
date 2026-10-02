@@ -564,8 +564,7 @@ class ModelAPIError(AgentRunError):
     retry_after: float | None
     """Seconds the provider asked you to wait before retrying, if it said.
 
-    An HTTP error reads it from the `retry-after-ms` or `Retry-After` response header; other errors carry it when the
-    provider sends a retry hint some other way, such as Google's `RetryInfo`.
+    An HTTP error reads it from the `retry-after-ms` or `Retry-After` response header.
     """
 
     def __init__(
@@ -600,11 +599,12 @@ class ModelAPIError(AgentRunError):
         }
 
     def __setstate__(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportIncompatibleMethodOverride]
-        self.body = state.get('body')
-        self.provider_error_code = state.get('provider_error_code')
-        self.provider_error_type = state.get('provider_error_type')
-        self.retry_after = state.get('retry_after')
-        self.in_stream = state.get('in_stream', False)
+        # Keep what `__init__` set for keys missing from state pickled by an older version.
+        self.body = state.get('body', self.body)
+        self.provider_error_code = state.get('provider_error_code', self.provider_error_code)
+        self.provider_error_type = state.get('provider_error_type', self.provider_error_type)
+        self.retry_after = state.get('retry_after', self.retry_after)
+        self.in_stream = state.get('in_stream', self.in_stream)
 
 
 class ModelRateLimitError(ModelAPIError):
@@ -766,7 +766,7 @@ class ModelHTTPError(ModelAPIError):
         self.headers = state.get('headers')
         self.suggested_model_id = state.get('suggested_model_id')
         if 'retry_after' not in state:
-            # Pickled before `retry_after` was stored.
+            # Pickled before `retry_after` was stored, so `__init__` saw no headers to read it from.
             self.retry_after = _parse_retry_after(self.headers)
         if self.suggested_model_id is not None:
             self.message += f'. Did you mean {self.suggested_model_id!r}?'

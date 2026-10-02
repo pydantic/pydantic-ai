@@ -578,6 +578,15 @@ def test_model_api_error_retry_after_stored():
     assert ModelAPIError('gpt-4', 'failed').retry_after is None
 
 
+def test_model_http_error_unpickles_state_from_before_categories():
+    """State pickled before the error categories only had `headers` and `suggested_model_id`; `body` survives."""
+    restored = ModelHTTPError(429, 'gpt-4', {'error': 'rate limited'})
+    restored.__setstate__({'headers': {'retry-after': '60'}, 'suggested_model_id': None})
+    assert restored.body == {'error': 'rate limited'}
+    assert restored.retry_after == 60.0
+    assert restored.in_stream is False
+
+
 def test_model_http_error_unpickles_state_without_retry_after():
     """An error pickled before `retry_after` was stored recomputes it from the headers."""
     exc = ModelHTTPError(429, 'gpt-4', headers={'retry-after': '60'})
