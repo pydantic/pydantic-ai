@@ -581,20 +581,27 @@ async def test_google_model_thinking_config(allow_model_requests: None, google_p
     assert result.output == snapshot('The capital of France is **Paris**.')
 
 
-async def test_google_model_gla_labels_raises_value_error(allow_model_requests: None, google_provider: GoogleProvider):
-    model = GoogleModel('gemini-2.0-flash', provider=google_provider)
-    settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
-    agent = Agent(model=model, instructions='You are a helpful chatbot.', model_settings=settings)
+async def test_google_model_gla_labels_reach_the_sdk(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """`google_labels` is forwarded to the SDK config on the Gemini API too.
 
-    # Raises before any request is made.
-    with pytest.raises(
-        ValueError,
-        match=re.escape(
-            'labels parameter is only supported in Gemini Enterprise Agent Platform mode, '
-            'not in Gemini Developer API mode.'
-        ),
-    ):
-        await agent.run('What is the capital of France?')
+    Not a VCR test: what happens next depends on the `google-genai` version. Before 2.26.0 the SDK
+    raises `ValueError` without sending anything; from 2.26.0 it sends the labels and the API accepts them.
+    """
+    model = GoogleModel('gemini-3.5-flash', provider=google_provider)
+    response = GenerateContentResponse(
+        candidates=[Candidate(content=Content(parts=[Part(text='Paris')], role='model'))],
+        response_id='1',
+        model_version='gemini-3.5-flash',
+    )
+    mock_generate = mocker.patch.object(model.client.aio.models, 'generate_content', return_value=response)
+
+    settings = GoogleModelSettings(google_labels={'environment': 'test', 'team': 'analytics'})
+    await Agent(model=model, model_settings=settings).run('What is the capital of France?')
+
+    _, kwargs = mock_generate.call_args
+    assert kwargs['config']['labels'] == {'environment': 'test', 'team': 'analytics'}
 
 
 async def test_google_model_vertex_provider(

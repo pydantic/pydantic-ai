@@ -4,12 +4,22 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
 
-def create_worktree(*, name: str) -> Path:
-    """Create a checkout in `.worktrees` on a new `clai/<name>` branch."""
+@dataclass(frozen=True, kw_only=True)
+class Worktree:
+    """The checkout CLAI starts in, and whether this launch created it."""
+
+    path: Path
+    branch: str
+    created: bool
+
+
+def open_worktree(*, name: str) -> Worktree:
+    """Reopen `.worktrees/NAME`, or check it out on `clai-NAME`, reusing that branch if it exists."""
     name = name or f'worktree-{uuid4().hex[:8]}'
     if re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]*', name) is None:
         raise ValueError('Worktree names must start with a letter or digit and contain only letters, digits, - or _.')
@@ -18,18 +28,17 @@ def create_worktree(*, name: str) -> Path:
         exclude = Path(_git('rev-parse', '--git-path', 'info/exclude'))
         contents = exclude.read_bytes() if exclude.exists() else b''
         path = root / '.worktrees' / name
-        branch = f'clai/{name}'
-        _git('branch', branch, 'HEAD')
-        try:
-            _git('worktree', 'add', '--', str(path), branch)
-        except (OSError, subprocess.CalledProcessError) as exc:
-            try:
-                _git('branch', '-d', '--', branch)
-            except (OSError, subprocess.CalledProcessError) as cleanup:
-                raise ValueError(
-                    f'Cannot create worktree at {path}: {exc}. Branch {branch} could not be removed: {cleanup}'
-                ) from cleanup
-            raise
+        registered = os.path.realpath(path) in _registered_worktrees()
+        if registered and path.exists():
+            branch = _git('-C', str(path), 'branch', '--show-current') or 'detached HEAD'
+            worktree = Worktree(path=path, branch=branch, created=False)
+        elif path.exists():
+            raise ValueError(f'Cannot create worktree: {path} exists but is not a Git worktree. Pick another name.')
+        else:
+            if registered:
+                _git('worktree', 'prune')  # The checkout was deleted by hand; Git still lists it until pruned.
+            worktree = Worktree(path=path, branch=_check_out(path=path, name=name), created=True)
+        # Also when reopening: a worktree made with plain `git worktree add` has no exclude entry yet.
         if b'/.worktrees/' not in contents.splitlines():
             try:
                 exclude.parent.mkdir(parents=True, exist_ok=True)
@@ -41,7 +50,35 @@ def create_worktree(*, name: str) -> Path:
         raise ValueError(f'Cannot create worktree: {exc.stderr.strip()}') from exc
     except OSError as exc:
         raise ValueError(f'Cannot create worktree: {exc}') from exc
-    return path
+    return worktree
+
+
+def _check_out(*, path: Path, name: str) -> str:
+    """Add the checkout on `clai-NAME`, creating that branch from `HEAD` only if it is missing."""
+    # Flat on purpose: Git refs are paths, so a nested `clai/NAME` cannot coexist with a user's `clai` branch.
+    branch = f'clai-{name}'
+    new_branch = not _git('branch', '--list', branch)
+    if new_branch:
+        _git('branch', branch, 'HEAD')
+    try:
+        _git('worktree', 'add', '--', str(path), branch)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        if not new_branch:
+            raise
+        try:
+            _git('branch', '-d', '--', branch)
+        except (OSError, subprocess.CalledProcessError) as cleanup:
+            raise ValueError(
+                f'Cannot create worktree at {path}: {exc}. Branch {branch} could not be removed: {cleanup}'
+            ) from cleanup
+        raise
+    return branch
+
+
+def _registered_worktrees() -> set[str]:
+    # `realpath`, not `Path.resolve`: it never raises, even on a symlink loop planted at `.worktrees/NAME`.
+    listing = _git('worktree', 'list', '--porcelain').splitlines()
+    return {os.path.realpath(line.removeprefix('worktree ')) for line in listing if line.startswith('worktree ')}
 
 
 def offer_worktree_cleanup() -> None:

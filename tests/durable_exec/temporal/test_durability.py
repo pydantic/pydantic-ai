@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, Mapping, Sequence
+from collections.abc import AsyncIterable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import pytest
@@ -93,6 +94,7 @@ from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
+from pydantic_ai.toolsets.abstract import AbstractToolset
 from pydantic_ai.toolsets.external import TOOL_SCHEMA_VALIDATOR
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceBackend, WorkspaceRef, WrapperWorkspace
@@ -109,12 +111,14 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityConfig
 
+    import pydantic_ai.durable_exec.temporal._toolset as temporal_toolset
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
+        TemporalWrapperToolset,
     )
     from pydantic_ai.durable_exec.temporal._function_toolset import (
         TemporalFunctionToolset,
@@ -865,6 +869,100 @@ def test_durability_coerces_activity_config_values():
     assert durability._model_activity_config.get('start_to_close_timeout') == timedelta(minutes=5)  # pyright: ignore[reportPrivateUsage]
     toolset_config = durability._toolset_activity_config['my_toolset']  # pyright: ignore[reportPrivateUsage]
     assert toolset_config.get('schedule_to_close_timeout') == timedelta(minutes=9)
+
+
+def test_durability_activity_config_tolerates_unschemable_annotations(monkeypatch: pytest.MonkeyPatch):
+    """A new `ActivityConfig` key Pydantic can't schema must not break module import.
+
+    temporalio 1.34 added `event_groups: Sequence[EventGroup] | None` to `ActivityConfig`
+    (#9572), which made the module-level `TypeAdapter(_ValidatedActivityConfig)` build raise
+    `PydanticSchemaGenerationError` at import. The locked temporalio predates that key, so this
+    test imports the production module under an isolated name so the test does not replace
+    class identities held by already-imported Temporal integration modules.
+    """
+
+    class _EventGroup:
+        """Stands in for a temporalio type Pydantic has no schema for."""
+
+    source_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(_durability_fn_model, name='activity_registration_source', deps_type=type(None))
+    )
+    sentinel_activity: Callable[..., object] = source_agent.temporal_activities[0]
+
+    class _CustomTemporalToolset(TemporalWrapperToolset[None]):
+        @property
+        def temporal_activities(self) -> list[Callable[..., object]]:
+            return [sentinel_activity]
+
+    def temporalize_toolset(
+        toolset: AbstractToolset[None],
+        activity_name_prefix: str,
+        activity_config: ActivityConfig,
+        tool_activity_config: dict[str, ActivityConfig | Literal[False]],
+        deps_type: type[None],
+        run_context_type: type[TemporalRunContext[None]],
+        agent: object | None,
+    ) -> AbstractToolset[None]:
+        return _CustomTemporalToolset(toolset)
+
+    existing_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            _durability_fn_model,
+            name='unschemable_before_import',
+            deps_type=type(None),
+            toolsets=[FunctionToolset[None](id='custom')],
+        ),
+        temporalize_toolset_func=temporalize_toolset,
+    )
+    assert sentinel_activity in existing_agent.temporal_activities
+
+    annotations = dict(ActivityConfig.__annotations__)
+    annotations['event_groups'] = Sequence[_EventGroup] | None
+    with monkeypatch.context() as import_patch:
+        import_patch.setattr(ActivityConfig, '__annotations__', annotations)
+        module_name = f'{temporal_toolset.__name__}__unschemable_test'
+        module_spec = importlib.util.spec_from_file_location(module_name, temporal_toolset.__file__)
+        assert module_spec is not None
+        assert module_spec.loader is not None
+        imported_module = importlib.util.module_from_spec(module_spec)
+        import_patch.setitem(sys.modules, module_name, imported_module)
+        module_spec.loader.exec_module(imported_module)
+        validate_activity_config: Callable[[ActivityConfig, str], ActivityConfig] = (
+            imported_module.validate_activity_config
+        )
+
+        # The import must complete with the plain-class annotation while validation stays strict.
+        with pytest.raises(UserError, match='unknown_key'):
+            validate_activity_config(cast(ActivityConfig, {'unknown_key': 1}), 'activity_config')
+
+        with pytest.raises(UserError, match='event_groups'):
+            validate_activity_config(cast(ActivityConfig, {'event_groups': [object()]}), 'activity_config')
+
+        # The unschemable type passes through while an ISO duration keeps its coercion.
+        event_group = _EventGroup()
+        config = validate_activity_config(
+            cast(ActivityConfig, {'start_to_close_timeout': 'PT5M', 'event_groups': [event_group]}),
+            'activity_config',
+        )
+        expected_config: dict[str, object] = {
+            'start_to_close_timeout': timedelta(minutes=5),
+            'event_groups': [event_group],
+        }
+        assert config == expected_config
+
+    # A new agent still registers custom wrapper activities after the import check restores SDK state.
+    custom_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            _durability_fn_model,
+            name='unschemable_after_import',
+            deps_type=type(None),
+            toolsets=[FunctionToolset[None](id='custom')],
+        ),
+        temporalize_toolset_func=temporalize_toolset,
+    )
+    assert sentinel_activity in custom_agent.temporal_activities
+    assert AgentPlugin(custom_agent).configure_worker({}) == {'activities': custom_agent.temporal_activities}
+    assert AgentPlugin(existing_agent).configure_worker({}) == {'activities': existing_agent.temporal_activities}
 
 
 def test_durability_shared_instance_across_agents():
@@ -1927,7 +2025,7 @@ async def test_durability_complex_agent_logfire_span_tree(
     basic_spans_by_id = {
         span['context']['span_id']: BasicSpan(
             parent_id=span['parent']['span_id'] if span['parent'] else None,
-            content=attributes.get('event') or attributes['logfire.msg'],
+            content=attributes.get('event') or attributes.get('logfire.msg') or span['name'],
         )
         for span in spans
         if (attributes := span.get('attributes'))

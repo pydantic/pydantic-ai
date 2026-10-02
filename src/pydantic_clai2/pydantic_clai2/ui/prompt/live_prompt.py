@@ -19,6 +19,7 @@ from termflow.tui.layout import truncate
 
 from pydantic_clai2.cli.shell_passthrough import shell_command
 from pydantic_clai2.commands import Commands, expand_bare_command, is_command_input
+from pydantic_clai2.ui import telemetry
 from pydantic_clai2.ui.prompt.image_input import ImageInput, clipboard_images, pasted_paths, read_images
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
@@ -39,6 +40,10 @@ class _Queued:
     text: str
     recorded: str = ''
     """The raw draft `accept` saved to history for this prompt, before command expansion."""
+
+
+class PromptWakeup(Exception):
+    """An automated continuation is ready; the editor draft is not a submission."""
 
 
 class LivePrompt:
@@ -64,7 +69,7 @@ class LivePrompt:
     ) -> None:
         """Bind editing state, terminal ownership and per-session services.
 
-        `chords` maps a two-key sequence such as `'ctrl-x ctrl-s'` to an action returning a
+        `chords` maps a key or sequence such as `'ctrl-b'` or `'ctrl-x ctrl-s'` to an action returning a
         footer notice. `pinned` returns an optional styled row painted above the footer.
         `run_now` may take an accepted draft instead of queueing it, returning whether it did.
         `spinner` returns the working animation; it is read on every frame, so a new choice shows at once.
@@ -100,6 +105,7 @@ class LivePrompt:
         self._recall_target: _Queued | None = None
         self._search_target: _Queued | None = None
         self._submitted = asyncio.Event()
+        self._wake_pending = False
         self._suspended = False
         self._completions: list[Completion] = []
         self._selection = -1
@@ -129,16 +135,25 @@ class LivePrompt:
         self._submitted.set()
         self.paint()
 
+    def wake(self) -> None:
+        """Wake an idle reader once, without changing its draft, history, or queue."""
+        self._wake_pending = True
+        self._submitted.set()
+
     def _discard(self, entry: _Queued) -> None:
         self._submissions.remove(entry)
-        if not self._submissions:
+        if not self._submissions and not self._wake_pending:
             self._submitted.clear()
 
     async def read(self) -> str:
         """Consume queued submissions in order."""
         await self._submitted.wait()
-        value = self._submissions.popleft()
         if not self._submissions:
+            self._wake_pending = False
+            self._submitted.clear()
+            raise PromptWakeup
+        value = self._submissions.popleft()
+        if not self._submissions and not self._wake_pending:
             self._submitted.clear()
         self.paint()
         if isinstance(value, BaseException):
@@ -170,7 +185,8 @@ class LivePrompt:
         if key == 'ctrl-c':
             self.interrupt()
         elif key == 'escape' and self.interrupts.active:
-            self.interrupts.cancel(exit_on_repeat=False)
+            cancelled = self.interrupts.cancel(exit_on_repeat=False)
+            telemetry.record('prompt interrupt', key='escape', cancelled_turn=cancelled)
         elif key == 'ctrl-d':
             if self.buffer.text:
                 self.buffer.edit('delete')
@@ -218,7 +234,9 @@ class LivePrompt:
 
     def interrupt(self) -> None:
         """Cancel running work, or else drop the draft and signal the reader."""
-        if not self.interrupts.cancel():
+        cancelled = self.interrupts.cancel()
+        telemetry.record('prompt interrupt', key='ctrl-c', cancelled_turn=cancelled)
+        if not cancelled:
             self.buffer.replace('')
             self.buffer.search = None
             self._editing = None
@@ -226,6 +244,9 @@ class LivePrompt:
 
     def _chord(self, key: str) -> bool:
         """Consume a chord prefix or its completion; any other second key acts on its own."""
+        if key in self.chords:
+            self.notice = self.chords[key]()
+            return True
         if self._chord_prefix:
             chord, self._chord_prefix = f'{self._chord_prefix} {key}', ''
             if chord in self.chords:
@@ -249,10 +270,12 @@ class LivePrompt:
             target = None
         if not text and target is None:
             return
+        recalled = self.buffer.history_index is not None
         self.buffer.history_index = None
         self.buffer.replace('')
         if target is not None and not text:
             self._discard(target)
+            telemetry.record('prompt submitted', route='discarded queued')
             return
         command = expand_bare_command(text)
         if target is not None and command == target.text:
@@ -260,12 +283,16 @@ class LivePrompt:
         self.history.append_string(text)
         self.buffer.history.append(text)
         if self.run_now is not None and self.run_now(command):
+            route = 'run now'
             if target is not None:
                 self._discard(target)
         elif target is not None:
+            route = 'edited queued'
             target.text, target.recorded = command, text
         else:
+            route = 'queued' if self.interrupts.active else 'submitted'
             self._enqueue(_Queued(command, recorded=text))
+        telemetry.record('prompt submitted', route=route, recalled=recalled, **_submission(command, self.commands))
 
     def recall(self, *, backwards: bool) -> None:
         """Walk queued prompts, newest first, before command history.
@@ -299,8 +326,10 @@ class LivePrompt:
             or shell_command(head.text) is not None
             or not self.steer(head.text)
         ):
+            telemetry.record('prompt steer', steered=False)
             return
         self._discard(head)
+        telemetry.record('prompt steer', steered=True)
 
     def complete(self, *, backwards: bool, accept_single: bool = True) -> None:
         """Cycle suggestions, accepting a sole candidate immediately, or look them up if none are shown."""
@@ -322,6 +351,11 @@ class LivePrompt:
     def accept_completion(self) -> None:
         """Apply the selected Termflow completion to its original prefix."""
         item = self._completions[self._selection]
+        telemetry.record(
+            'completion accepted',
+            source='command' if is_command_input(self.buffer.text) else 'path',
+            candidates=len(self._completions),
+        )
         start = max(0, self.buffer.cursor + item.start_position)
         self.buffer.replace_range(start, self.buffer.cursor, item.text)
         self.dismiss_completions()
@@ -526,3 +560,11 @@ def _capped(rows: list[str], *, limit: int, room: int, more: str) -> list[str]:
         return []
     shown = rows[: min(limit, room - 1)]
     return [*shown, more.format(len(rows) - len(shown))]
+
+
+def _submission(text: str, commands: Commands) -> dict[str, telemetry.Attribute]:
+    """What kind of input was submitted, and its length; a registered command's name, never the prompt's words."""
+    if is_command_input(text):
+        name = text.split(maxsplit=1)[0].removeprefix('/')
+        return {'kind': 'command', 'command': name if name in commands else 'unknown', 'chars': len(text)}
+    return {'kind': 'shell' if shell_command(text) is not None else 'prompt', 'chars': len(text)}

@@ -18,9 +18,9 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_clai2 import Session
 from pydantic_clai2._app import create_agent
-from pydantic_clai2.builtin_plugins.repo_context import activate as activate_repo_context
+from pydantic_clai2.builtin_plugins.repo_context import RepoContextPlugin
 from pydantic_clai2.customization import customization_guide, read_clai_customization_guide
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import PluginHost, load_plugin
 
 
 @pytest.mark.parametrize('supported', [True, False])
@@ -45,9 +45,8 @@ async def test_workspace_defaults_follow_platform_support(supported: bool, monke
         assert workspace.env['CLAI_USER_VARIABLE'] == 'forwarded'
         assert 'OPENAI_API_KEY' not in workspace.env
 
-    host = PluginHost[None](name='repo_context', console=Console(), settings={})
-    activate_repo_context(host)
-    assert any(isinstance(capability, RepoContext) for capability in host.capabilities) is supported
+    loaded = load_plugin(RepoContextPlugin, PluginHost[None](name='repo_context', console=Console(), settings={}))
+    assert any(isinstance(capability, RepoContext) for capability in loaded.capabilities) is supported
 
 
 async def test_default_agent_does_not_read_guide_for_normal_turn(monkeypatch: pytest.MonkeyPatch) -> None:

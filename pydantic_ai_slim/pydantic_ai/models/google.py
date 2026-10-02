@@ -263,9 +263,11 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
     google_labels: dict[str, str]
-    """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
+    """User-defined metadata attached to the request.
 
-    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    On Vertex AI, labels break down billed charges; see the [Vertex AI docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls).
+    The Gemini API accepts them from `google-genai` 2.26.0; earlier versions raise `ValueError` before sending the request.
+    See the [Gemini API reference](https://ai.google.dev/api/generate-content) for label requirements.
     """
 
     google_video_resolution: MediaResolution
@@ -601,7 +603,26 @@ class GoogleModel(Model[Client]):
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
-        return cast(GoogleModelProfile, super().profile)
+        """The model profile.
+
+        When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
+        `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
+        `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
+        """
+        profile = cast(GoogleModelProfile, super().profile)
+        # Google documents only `minimal` and `high` for this model on both APIs, but the Gemini API
+        # alone enforces that: verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` for this
+        # id and its `-preview`, while Vertex (`global`, `us`, `eu`) accepts them. So the level set
+        # follows the client's transport, which `google_model_profile` can't see from the model name.
+        # https://ai.google.dev/gemini-api/docs/image-generation
+        # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
+        if (
+            self._model_name.startswith('gemini-3.1-flash-image')
+            and 'google_thinking_levels' not in profile
+            and not self._is_google_cloud
+        ):
+            return {**profile, 'google_thinking_levels': frozenset(('MINIMAL', 'HIGH'))}
+        return profile
 
     @classmethod
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:

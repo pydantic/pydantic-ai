@@ -715,6 +715,10 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     can be referenced via [`openai_previous_response_id`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_previous_response_id].
     Pair this with `openai_previous_response_id='auto'` to avoid storing duplicate copies of
     the conversation history across retries and subsequent requests within the same run.
+
+    When set to `False` on `OpenAIResponsesModel`, image generation calls in the message history are
+    not sent back to the model, as the API can only look them up in a stored response. The model then
+    doesn't see that it generated those images.
     """
 
     openai_user: str
@@ -1267,7 +1271,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return _map_provider_details(response.choices[0])
 
-    def _process_response(
+    def _process_response(  # noqa: C901
         self, response: chat.ChatCompletion | str, *, include_raw_annotations: bool = False
     ) -> ModelResponse:
         """Process a non-streamed response, and prepare a message to return."""
@@ -1281,12 +1285,19 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
 
         timestamp = _now_utc()
-        if not response.created:
-            response.created = int(timestamp.timestamp())
+        # Some OpenAI-compatible providers send a `null` `created` (e.g. OpenRouter) or none at all (e.g. GitHub Copilot),
+        # which fails validation. Like a zero one, it records no provider timestamp, as a stream without one doesn't.
+        if response.created is None:  # pyright: ignore[reportUnnecessaryComparison]
+            response.created = 0
 
-        # Workaround for local Ollama which sometimes returns a `None` finish reason.
-        if response.choices and (choice := response.choices[0]) and choice.finish_reason is None:  # pyright: ignore[reportUnnecessaryComparison]
-            choice.finish_reason = 'stop'
+        # Some OpenAI-compatible providers omit the finish reason (e.g. local Ollama) or send an empty one (e.g. Snowflake
+        # Cortex), which fails validation. The response is treated as a `'stop'`, like a stream that ends without one
+        # (subclasses may pick another in `_validate_completion`), but that's not reported as the provider's value.
+        missing_finish_reason = False
+        if response.choices and not (choice := response.choices[0]).finish_reason:
+            missing_finish_reason = True
+            if choice.finish_reason is None:
+                choice.finish_reason = 'stop'
 
         try:
             response = self._validate_completion(response)
@@ -1294,6 +1305,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
 
         choice = response.choices[0]
+        finish_reason = self._map_finish_reason(choice.finish_reason)
+        if missing_finish_reason:
+            # Restore the missing value after validation, so it's not reported as the provider's.
+            choice.finish_reason = None  # pyright: ignore[reportAttributeAccessIssue]
 
         # Moderation and service tier are top-level fields, so they're read here rather than in the choice-scoped
         # `_process_provider_details` hook that subclasses may override.
@@ -1315,7 +1330,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 model_name=response.model,
                 timestamp=_now_utc(),
                 provider_details=provider_details or None,
-                provider_response_id=response.id,
+                provider_response_id=response.id or None,
                 provider_name=self._provider.name,
                 provider_url=self._provider.base_url,
                 finish_reason='content_filter',
@@ -1347,7 +1362,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 part.tool_call_id = _guard_tool_call_id(part)
                 items.append(part)
 
-        if response.created:  # pragma: no branch
+        if response.created:
             provider_details['timestamp'] = number_to_datetime(response.created)
 
         return ModelResponse(
@@ -1356,10 +1371,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             model_name=response.model,
             timestamp=timestamp,
             provider_details=provider_details or None,
-            provider_response_id=response.id,
+            provider_response_id=response.id or None,
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
-            finish_reason=self._map_finish_reason(choice.finish_reason),
+            finish_reason=finish_reason,
         )
 
     def _process_thinking(self, message: chat.ChatCompletionMessage) -> list[ThinkingPart] | None:
@@ -2084,8 +2099,6 @@ def _map_chat_content(
         message.content or '', profile.get('thinking_tags', DEFAULT_THINKING_TAGS)
     )
     if message.annotations:
-        if not content_parts:
-            content_parts = [TextPart('')]
         text_parts = [part for part in content_parts if isinstance(part, TextPart)]
         if len(content_parts) == 1 and text_parts:
             text_parts[0].citations = _map_chat_citations(message.annotations, text_parts[0].content)
@@ -2562,9 +2575,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputRefusal):
                         refusal_text = content.refusal
-                    elif isinstance(content, responses.ResponseOutputText):  # pragma: no branch
-                        text = content.text or ''
-                        citations = _map_responses_citations(content.annotations, text)
+                    # Like a stream, which only builds text from its deltas, empty text (such as the message that
+                    # follows a generated image, or `text=null` from gateways like Bifrost) doesn't make a part.
+                    elif isinstance(content, responses.ResponseOutputText) and content.text:
+                        citations = _map_responses_citations(content.annotations, content.text)
                         part_provider_details: dict[str, Any] | None = None
                         if content.logprobs:
                             part_provider_details = {'logprobs': _map_logprobs(content.logprobs)}
@@ -2576,11 +2590,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                         if item.phase is not None:
                             part_provider_details = part_provider_details or {}
                             part_provider_details['phase'] = item.phase
-                        # Some OpenAI-compatible gateways (e.g. Bifrost) return text=null;
-                        # coalesce to '' so the part (and its ID) is preserved for round-tripping.
                         items.append(
                             TextPart(
-                                text,
+                                content.text,
                                 id=item.id,
                                 provider_name=self.system,
                                 provider_details=part_provider_details,
@@ -2959,9 +2971,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         model_settings = self._prepare_responses_settings(messages, OpenAIResponsesModelSettings(**model_settings))
         _drop_sampling_params_for_reasoning(profile, model_settings, model_request_parameters)
         _drop_unsupported_params(profile, model_settings)
-        store: bool | Omit | None = model_settings.get('openai_store', OMIT)
-        if profile.get('openai_responses_requires_store_false', False):
-            store = False
+        store = self._resolve_store(model_settings)
         extra_headers, timeout = self._build_request_options(model_settings)
 
         # The SDK's Responses `PromptCacheOptions` has keys ours doesn't expose, so the TypedDicts aren't assignable.
@@ -3006,6 +3016,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 if model_response := _check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
+
+    def _resolve_store(self, model_settings: OpenAIResponsesModelSettings) -> bool | Omit | None:
+        if self.profile.get('openai_responses_requires_store_false', False):
+            return False
+        return model_settings.get('openai_store', OMIT)
 
     def _get_continuation_info(
         self, messages: list[ModelMessage], model_settings: OpenAIResponsesModelSettings
@@ -3512,6 +3527,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         send_item_ids = model_settings.get(
             'openai_send_reasoning_ids', profile.get('openai_supports_encrypted_reasoning_content', False)
         )
+        # Items from a response that wasn't stored can't be looked up by their ID later on.
+        store_disabled = self._resolve_store(model_settings) is False
         # With `execution='client'` tool search, `search_tools` calls/returns need to be
         # replayed as `tool_search_call` / `tool_search_output` items so the provider can
         # pair them with the builtin and unlock the discovered tools. The current
@@ -3791,15 +3808,18 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                                 )
                                 openai_messages.append(file_search_item)
                             elif item.tool_name == ImageGenerationTool.kind and item.tool_call_id:
-                                # The cast is necessary because of https://github.com/openai/openai-python/issues/2648
-                                image_generation_item = cast(
-                                    responses.response_input_item_param.ImageGenerationCall,
-                                    {
-                                        'id': item.tool_call_id,
-                                        'type': 'image_generation_call',
-                                    },
-                                )
-                                openai_messages.append(image_generation_item)
+                                # The API always resolves an `image_generation_call` by its ID, even when
+                                # `result` is sent inline, so one from an unstored response can't be sent back.
+                                if not store_disabled:
+                                    # The cast is necessary because of https://github.com/openai/openai-python/issues/2648
+                                    image_generation_item = cast(
+                                        responses.response_input_item_param.ImageGenerationCall,
+                                        {
+                                            'id': item.tool_call_id,
+                                            'type': 'image_generation_call',
+                                        },
+                                    )
+                                    openai_messages.append(image_generation_item)
                             elif (  # pragma: no branch
                                 item.tool_name.startswith(MCPServerTool.kind)
                                 and item.tool_call_id
@@ -4034,12 +4054,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         such an id without an explicit `image/*` media type also maps to `input_file`.
         """
         self._validate_uploaded_file_provider(item)
-        if item.media_type.startswith('image/'):
-            detail: Literal['auto', 'low', 'high'] = 'auto'
-            if metadata := item.vendor_metadata:
-                detail = metadata.get('detail', 'auto')
-            return ResponseInputImageContentParam(type='input_image', file_id=item.file_id, detail=detail)
-        return ResponseInputFileContentParam(type='input_file', file_id=item.file_id)
+        return _uploaded_file_to_response_content(item)
 
     @staticmethod
     async def _map_file_to_response_content(
@@ -4179,6 +4194,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                     }
                 if chunk.service_tier:
                     self.provider_details = {**(self.provider_details or {}), 'service_tier': chunk.service_tier}
+                if chunk_provider_details := self._map_chunk_provider_details(chunk):
+                    self.provider_details = {**(self.provider_details or {}), **chunk_provider_details}
 
                 # Empty on the final usage-only chunk; `None` from OpenAI-compatible providers emitting
                 # malformed chunks that the openai SDK's loose constructor lets through (https://github.com/pydantic/pydantic-ai/issues/5165).
@@ -4225,6 +4242,9 @@ class OpenAIStreamedResponse(StreamedResponse):
                     model_name=self.model_name,
                     message='Streamed response ended without a `finish_reason`',
                 )
+            if not self._has_finish_reason and not self._has_refusal and not self.cancelled:
+                # Some OpenAI-compatible providers never send a finish reason.
+                self.finish_reason = self._missing_finish_reason()
             for event in self._flush_pending_chat_annotations():
                 yield event
 
@@ -4233,8 +4253,10 @@ class OpenAIStreamedResponse(StreamedResponse):
             return
 
         part = self._parts_manager.get_part_by_vendor_id(self._vendor_part_id)
-        text = part.content if isinstance(part, TextPart) else ''
-        citations, provider_details = self._map_chat_annotations(self._pending_raw_annotations, text)
+        # Annotations belong to text, so a stream that ended without any (such as only thinking) has nowhere to put them.
+        if not isinstance(part, TextPart):
+            return
+        citations, provider_details = self._map_chat_annotations(self._pending_raw_annotations, part.content)
         if citations is None and provider_details is None:
             return
         yield from self._parts_manager.handle_text_delta(
@@ -4384,6 +4406,21 @@ class OpenAIStreamedResponse(StreamedResponse):
             self._logprobs.extend(logprobs)
         return provider_details or None
 
+    def _missing_finish_reason(self) -> FinishReason:
+        """The finish reason of a stream that ended without one, matching `OpenAIChatModel._process_response`.
+
+        This method may be overridden by subclasses of `OpenAIStreamResponse` whose model picks another one.
+        """
+        return 'stop'
+
+    def _map_chunk_provider_details(self, chunk: ChatCompletionChunk) -> dict[str, Any] | None:
+        """Hook that generates provider details from a chunk's top-level fields, rather than its choice.
+
+        This method may be overridden by subclasses of `OpenAIStreamResponse` to customize the provider details.
+        Unlike `_map_provider_details`, it's also called for chunks without choices, like the final usage-only chunk.
+        """
+        return None
+
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
         return _map_usage(response, self._provider_name, self._provider_url, self.model_name)
 
@@ -4497,6 +4534,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         if response.background:
             self.provider_details = {**(self.provider_details or {}), 'background': True}
 
+    def _handle_terminal_response(self, response: responses.Response) -> None:
+        """Take what the complete response that ends the stream reports as `_process_response` does."""
+        # A stream resumed with `starting_after` has no `response.created`, so this is where it first sees these.
+        self._model_name = response.model or self._model_name
+        self.provider_response_id = self.provider_response_id or response.id
+        if response.created_at and 'timestamp' not in (self.provider_details or {}):
+            self.provider_details = {
+                **(self.provider_details or {}),
+                'timestamp': number_to_datetime(response.created_at),
+            }
+        # Only terminal events report the tier that served the request; earlier ones echo the requested tier.
+        if service_tier := response.service_tier:
+            self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier}
+
     async def close_stream(self) -> None:
         await self._response.source.close()
 
@@ -4535,7 +4586,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # `in_progress`/`queued`) or only reaches a terminal event. `cancel_suspended_response`
                     # relies on it to cancel the server-side job.
                     self._track_background(chunk.response)
-                    # Only terminal events report the tier that served the request; earlier ones echo the requested tier.
                     if isinstance(
                         chunk,
                         (
@@ -4543,8 +4593,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             responses.ResponseFailedEvent,
                             responses.ResponseIncompleteEvent,
                         ),
-                    ) and (service_tier := chunk.response.service_tier):
-                        self.provider_details = {**(self.provider_details or {}), 'service_tier': service_tier}
+                    ):
+                        self._handle_terminal_response(chunk.response)
                 # NOTE: You can inspect the builtin tools used checking the `ResponseCompletedEvent`.
                 if isinstance(chunk, responses.ResponseCompletedEvent):
                     # Only the return part is backfilled; the call part is already emitted via `output_item.added`.
@@ -4965,7 +5015,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         # Annotation offsets address the done text, so they can't be placed on streamed text that
                         # differs from it.
                         citations = None
-                    if provider_details or citations:
+                    # Empty text makes no part, as in `_process_response`.
+                    if (provider_details or citations) and chunk.text:
                         for event in self._parts_manager.handle_text_delta(
                             vendor_part_id=vendor_part_id,
                             content='',
@@ -5025,7 +5076,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseCodeInterpreterCallInterpretingEvent):
                     pass  # there's nothing we need to do here
 
-                elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):  # pragma: no cover
+                elif isinstance(chunk, responses.ResponseImageGenCallCompletedEvent):
                     pass  # there's nothing we need to do here
 
                 elif isinstance(chunk, responses.ResponseImageGenCallGeneratingEvent):
@@ -5347,17 +5398,16 @@ def _map_logprobs(
     | list[responses.response_output_text.Logprob]
     | list[responses.response_text_done_event.Logprob],
 ) -> list[dict[str, Any]]:
+    # The SDK's `output_text.done` logprob types don't declare the `bytes` the API sends, but keep it as an extra field.
     return [
         {
             'token': lp.token,
-            'bytes': lp.bytes if not isinstance(lp, responses.response_text_done_event.Logprob) else None,
+            'bytes': getattr(lp, 'bytes', None),
             'logprob': lp.logprob,
             'top_logprobs': [
                 {
                     'token': tlp.token,
-                    'bytes': tlp.bytes
-                    if not isinstance(tlp, responses.response_text_done_event.LogprobTopLogprob)
-                    else None,
+                    'bytes': getattr(tlp, 'bytes', None),
                     'logprob': tlp.logprob,
                 }
                 for tlp in (lp.top_logprobs or [])
@@ -5940,6 +5990,18 @@ def _build_tool_search_return_part(
             'status': output_item.status,
         },
     )
+
+
+def _uploaded_file_to_response_content(
+    item: UploadedFile,
+) -> ResponseInputImageContentParam | ResponseInputFileContentParam:
+    """Map an `UploadedFile` whose provider has already been checked to its OpenAI Responses API content param."""
+    if item.media_type.startswith('image/'):
+        detail: Literal['auto', 'low', 'high'] = 'auto'
+        if metadata := item.vendor_metadata:
+            detail = metadata.get('detail', 'auto')
+        return ResponseInputImageContentParam(type='input_image', file_id=item.file_id, detail=detail)
+    return ResponseInputFileContentParam(type='input_file', file_id=item.file_id)
 
 
 def _map_web_search_tool_call(
