@@ -4554,7 +4554,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:  # noqa: C901
         with _map_api_errors(self._model_name, self._model_id_namespace):
             # Track annotations by item_id and content_index
-            _annotations_by_item: dict[tuple[str, int], list[Any]] = {}
+            _annotations_by_item: dict[tuple[str, int], list[object]] = {}
             # Track `phase` (commentary | final_answer) on assistant message items, captured
             # from the `output_item.added` event and merged into the corresponding
             # `TextPart.provider_details` on the first `output_text.delta` (so consumers can
