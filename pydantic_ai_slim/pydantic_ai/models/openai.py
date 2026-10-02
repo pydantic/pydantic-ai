@@ -2153,7 +2153,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             request_context.model_request_parameters,
         )
         response = await self._responses_compact(
-            request_context.messages,
+            list(request_context.messages),
             cast(OpenAIResponsesModelSettings, model_settings or {}),
             model_request_parameters,
             instructions_override=instructions,
@@ -2425,38 +2425,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         paired_tool_search_output_ids = {item.id for item in tool_search_outputs.values()}
         for item in response.output:
             if isinstance(item, responses.ResponseReasoningItem):
-                signature = item.encrypted_content
-                # Handle raw CoT content from gpt-oss models
-                provider_details: dict[str, Any] = {}
-                raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
-                if raw_content:
-                    provider_details['raw_content'] = raw_content
-
-                if item.summary:
-                    for summary in item.summary:
-                        # We use the same id for all summaries so that we can merge them on the round trip.
-                        items.append(
-                            ThinkingPart(
-                                content=summary.text,
-                                id=item.id,
-                                signature=signature,
-                                provider_name=self.system,
-                                provider_details=provider_details or None,
-                            )
-                        )
-                        # We only need to store the signature and raw_content once.
-                        signature = None
-                        provider_details = {}
-                elif signature or provider_details:
-                    items.append(
-                        ThinkingPart(
-                            content='',
-                            id=item.id,
-                            signature=signature,
-                            provider_name=self.system,
-                            provider_details=provider_details or None,
-                        )
-                    )
+                items.extend(_map_reasoning_item(item, self.system))
             elif isinstance(item, responses.ResponseOutputMessage):
                 for content in item.content:
                     if isinstance(content, responses.ResponseOutputRefusal):
@@ -3130,25 +3099,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         has_image_generating_tool = False
         for tool in model_request_parameters.native_tools:
             if isinstance(tool, WebSearchTool):
-                web_search_tool = responses.WebSearchToolParam(
-                    type='web_search', search_context_size=tool.search_context_size
-                )
-                if tool.user_location:
-                    web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
-                        type='approximate', **tool.user_location
-                    )
-                filters = responses.web_search_tool_param.Filters()
-                if tool.allowed_domains:
-                    filters['allowed_domains'] = tool.allowed_domains
-                if tool.blocked_domains:
-                    # The OpenAI API supports this field, but the SDK's `Filters` does not include it yet.
-                    cast(dict[str, object], filters)['blocked_domains'] = tool.blocked_domains
-                if filters:
-                    web_search_tool['filters'] = filters
-                if tool.external_web_access is not None:
-                    # The OpenAI API supports this field, but the SDK's `WebSearchToolParam` does not include it yet.
-                    cast(dict[str, object], web_search_tool)['external_web_access'] = tool.external_web_access
-                tools.append(web_search_tool)
+                tools.append(_map_web_search_tool_param(tool))
             elif isinstance(tool, FileSearchTool):
                 file_search_tool = cast(
                     responses.FileSearchToolParam,
@@ -5127,11 +5078,11 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
 
         return resolve
 
-    def _should_compact(self, messages: list[ModelMessage]) -> bool:
+    def _should_compact(self, messages: Sequence[ModelMessage]) -> bool:
         if not self.stateless:
             return False
         if self.trigger is not None:
-            return self.trigger(messages)
+            return self.trigger(list(messages))
         if self.message_count_threshold is not None:
             return len(messages) > self.message_count_threshold
         return False  # pragma: no cover
@@ -5169,7 +5120,9 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         compacted_response = await request_context.model.compact_messages(compact_ctx)
 
         # Replace message history with compaction + last request
-        request_context.messages = [compacted_response, request_context.messages[-1]]
+        messages = [compacted_response, request_context.messages[-1]]
+        request_context.messages = messages.copy()
+        ctx.messages[:] = messages
         return request_context
 
     @classmethod
@@ -5794,6 +5747,65 @@ def _build_tool_search_return_part(
             'status': output_item.status,
         },
     )
+
+
+def _map_web_search_tool_param(tool: WebSearchTool) -> responses.WebSearchToolParam:
+    """Map a [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] to a Responses `web_search` tool."""
+    web_search_tool = responses.WebSearchToolParam(type='web_search', search_context_size=tool.search_context_size)
+    if tool.user_location:
+        web_search_tool['user_location'] = responses.web_search_tool_param.UserLocation(
+            type='approximate', **tool.user_location
+        )
+    filters = responses.web_search_tool_param.Filters()
+    if tool.allowed_domains:
+        filters['allowed_domains'] = tool.allowed_domains
+    if tool.blocked_domains:
+        # The OpenAI API supports this field, but the SDK's `Filters` does not include it yet.
+        cast(dict[str, object], filters)['blocked_domains'] = tool.blocked_domains
+    if filters:
+        web_search_tool['filters'] = filters
+    if tool.external_web_access is not None:
+        # The OpenAI API supports this field, but the SDK's `WebSearchToolParam` does not include it yet.
+        cast(dict[str, object], web_search_tool)['external_web_access'] = tool.external_web_access
+    return web_search_tool
+
+
+def _map_reasoning_item(item: responses.ResponseReasoningItem, provider_name: str) -> list[ThinkingPart]:
+    """Map a Responses reasoning item to the `ThinkingPart`s that replay it."""
+    signature = item.encrypted_content
+    # Handle raw CoT content from gpt-oss models
+    provider_details: dict[str, Any] = {}
+    raw_content: list[str] | None = [c.text for c in item.content] if item.content else None
+    if raw_content:
+        provider_details['raw_content'] = raw_content
+
+    parts: list[ThinkingPart] = []
+    if item.summary:
+        for summary in item.summary:
+            # We use the same id for all summaries so that we can merge them on the round trip.
+            parts.append(
+                ThinkingPart(
+                    content=summary.text,
+                    id=item.id,
+                    signature=signature,
+                    provider_name=provider_name,
+                    provider_details=provider_details or None,
+                )
+            )
+            # We only need to store the signature and raw_content once.
+            signature = None
+            provider_details = {}
+    elif signature or provider_details:
+        parts.append(
+            ThinkingPart(
+                content='',
+                id=item.id,
+                signature=signature,
+                provider_name=provider_name,
+                provider_details=provider_details or None,
+            )
+        )
+    return parts
 
 
 def _uploaded_file_to_response_content(

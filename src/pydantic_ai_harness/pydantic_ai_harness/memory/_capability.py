@@ -192,6 +192,7 @@ class Memory(AbstractCapability[AgentDepsT]):
         # Scope-qualify the marker so several `Memory` capabilities on one agent
         # each refresh only their own injection instead of clobbering each other.
         marker = f'{_MEMORY_PART_METADATA}:{scope_hash}'
+        self._remove_previous_injection(ctx.messages, marker)
         self._remove_previous_injection(request_context.messages, marker)
         if not self.inject_memory:
             return request_context
