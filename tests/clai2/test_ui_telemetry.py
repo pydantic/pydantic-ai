@@ -61,7 +61,7 @@ def exporter(tmp_path: Path) -> Generator[InMemorySpanExporter]:
         advanced=logfire.AdvancedOptions(emit_configuration_span=False),
     )
     propagate.set_global_textmap(propagator)
-    unsubscribe = telemetry.subscribe(instance)
+    unsubscribe = telemetry.subscribe(logfire.Logfire(config=instance.config, otel_scope=telemetry.SCOPE))
     try:
         yield spans
     finally:
@@ -228,7 +228,7 @@ def test_only_the_newest_subscriber_records(exporter: InMemorySpanExporter, tmp_
         advanced=logfire.AdvancedOptions(emit_configuration_span=False),
     )
     propagate.set_global_textmap(propagator)
-    unsubscribe = telemetry.subscribe(newer)
+    unsubscribe = telemetry.subscribe(logfire.Logfire(config=newer.config, otel_scope=telemetry.SCOPE))
     try:
         with telemetry.span('command /{command}', command='session'):
             telemetry.record('inner')

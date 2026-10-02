@@ -56,7 +56,7 @@ from pydantic_clai2.plugins import (
     bare_screen,
 )
 from pydantic_clai2.plugins.loader import PluginError, PluginLoader
-from pydantic_clai2.runtime._session import Session, StockAgent, current_session_id
+from pydantic_clai2.runtime._session import Session, StockAgent
 from pydantic_clai2.runtime.capability_guard import CapabilitySetupError
 from pydantic_clai2.runtime.forks import Forks
 from pydantic_clai2.runtime.reloading import reload_clai
@@ -216,15 +216,17 @@ async def chat(
                     async with create_task_group() as workers:
                         workers.start_soon(shell.sessions.namer.run)
                         try:
-                            with transcript.capture(console):
-                                # Plugins must start with the saved conversation, not a temporary empty session.
+                            with (
+                                transcript.capture(console),
+                                shell.session.defer_identity() if resume is not None else nullcontext(),
+                            ):
+                                await shell.loader.load_all(fresh=fresh)
+                                _report_project_plugins(shell.loader, console)
                                 if resume is not None:
                                     console.print(
                                         await shell.sessions.command([resume] if resume else []), markup=False
                                     )
                                     resume = None
-                                await shell.loader.load_all(fresh=fresh)
-                                _report_project_plugins(shell.loader, console)
                             warming = warming or warm_imports.start()
                             reason = await shell.run()
                         finally:
@@ -528,7 +530,7 @@ def create_shell(
         full_screen=screen.full,
         project=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in project.plugins),
         conversation=session,
-        session_id=lambda: current_session_id() or session.summary.id,
+        session_id=lambda: session.session_id,
         status=status,
         enabled=load_plugins,
     )

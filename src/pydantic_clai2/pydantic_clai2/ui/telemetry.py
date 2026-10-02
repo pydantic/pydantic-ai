@@ -42,10 +42,10 @@ _emitting: ContextVar[bool] = ContextVar('_emitting', default=False)
 def subscribe(sink: logfire.Logfire, *, root: Callable[[], Span | None] = lambda: None) -> Callable[[], None]:
     """Send UI telemetry to `sink` until the returned function is called; calling it again does nothing.
 
-    Telemetry goes to one instance, the most recently subscribed, so each destination gets whole, correctly
-    nested traces; when it unsubscribes, the previous one takes over again.
+    The caller supplies an instance in `SCOPE`. Telemetry goes to the most recently subscribed instance,
+    so each destination gets whole, correctly nested traces; when it unsubscribes, the previous one takes over.
     """
-    subscribed = _Sink(instance=logfire.Logfire(config=sink.config, otel_scope=SCOPE), root=root)
+    subscribed = _Sink(instance=sink, root=root)
     _sinks.append(subscribed)
 
     def unsubscribe() -> None:

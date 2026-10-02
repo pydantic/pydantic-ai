@@ -174,9 +174,10 @@ async def test_clear_resume_and_reload_follow_saved_conversation_ids(recorder: R
     assert all(exporter.closed for exporter in recorder.exporters)
 
 
-@pytest.mark.parametrize('mode', ['id', 'browser', 'headless'])
+@pytest.mark.parametrize(('mode', 'run_turn'), [('id', True), ('browser', True), ('headless', True), ('id', False)])
+@pytest.mark.parametrize('ui_events', [False, True])
 async def test_startup_resume_opens_only_the_saved_conversation_root(
-    recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+    recorder: Recorder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, run_turn: bool, ui_events: bool
 ) -> None:
     monkeypatch.chdir(tmp_path)
     agent = Agent(TestModel(call_tools=[], custom_output_text='answer'))
@@ -191,7 +192,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
     monkeypatch.setattr(SessionBrowser, 'run', select)
     store = SettingsStore(tmp_path / 'config.db')
     plugins = tuple(
-        plugin.model_copy(update={'settings': {'ui_events': True}})
+        plugin.model_copy(update={'settings': {'ui_events': ui_events}})
         for plugin in DEFAULT_PLUGINS
         if plugin.id == 'observability'
     )
@@ -210,7 +211,7 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
         )
     else:
         with create_pipe_input() as pipe, create_app_session(input=pipe, output=DummyOutput()):
-            pipe.send_text('resumed\n/exit\n')
+            pipe.send_text(('resumed\n' if run_turn else '') + '/exit\n')
             await chat(
                 agent,
                 deps=None,
@@ -221,8 +222,19 @@ async def test_startup_resume_opens_only_the_saved_conversation_root(
             )
     roots = [span for span in recorder.spans() if span.name == 'CLAI session']
     assert [(span.attributes or {})['agent_session_id'] for span in roots] == [saved.summary.id]
-    startup = next(span for span in recorder.spans() if span.name == 'session started')
-    assert startup.parent == roots[0].context
+    root_context = roots[0].context
+    assert root_context is not None
+    ui = [
+        span
+        for span in recorder.spans()
+        if span.instrumentation_scope and span.instrumentation_scope.name == 'clai2 ui'
+    ]
+    assert bool(ui) is ui_events
+    if ui_events:
+        startup = next(span for span in ui if span.name == 'session started')
+        resumed = next(span for span in ui if span.name == 'conversation resumed')
+        assert startup.parent == resumed.parent == root_context
+    assert all(span.context is not None and span.context.trace_id == root_context.trace_id for span in recorder.spans())
 
 
 @pytest.mark.parametrize(('prompt', 'outcome'), [('hello', 'completed'), ('explode', 'failed'), ('block', 'cancelled')])

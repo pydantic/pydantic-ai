@@ -35,7 +35,7 @@ class SessionTracing(AbstractCapability[None]):
         """Reuse a saved conversation's root, including when it is resumed later in this shell."""
         if not self._active:
             return None
-        session_id = self.session_id() or self._fallback_id
+        session_id = self._bind_identity()
         if session_id not in self._roots:
             self._roots[session_id] = (
                 self.instance.config.get_tracer_provider()
@@ -52,7 +52,16 @@ class SessionTracing(AbstractCapability[None]):
             )
         return self._roots[session_id]
 
+    def _bind_identity(self) -> str:
+        session_id = self.session_id() or self._fallback_id
+        if session_id != self._fallback_id and (pending := self._roots.pop(self._fallback_id, None)) is not None:
+            # Startup UI records can precede --resume selection; keep their parent and bind it once known.
+            pending.set_attribute('agent_session_id', session_id)
+            self._roots[session_id] = pending
+        return session_id
+
     def end(self, reason: str) -> None:
+        self._bind_identity()
         self._active = False
         for span in self._roots.values():
             span.set_attribute('reason', reason)

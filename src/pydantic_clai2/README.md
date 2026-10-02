@@ -1690,7 +1690,7 @@ reloading starts new traces with the same saved conversation IDs.
 
 The root span's only identity tag is the email from `git config user.email`.
 It is not copied onto child spans or logs. If Git or the email is unavailable,
-the tag is omitted. UI records use the `clai2 ui` instrumentation scope, not a tag.
+the tag is omitted. UI records use the `clai2 ui` instrumentation scope.
 
 Prompts, responses, tool arguments/results, and binary image attachments are
 included by default, including retained history used by later turns. This can

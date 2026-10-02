@@ -396,7 +396,7 @@ It is never inherited by child spans or logs, and is independent of the content
 capture settings.
 
 `ui_events` (default `false`) also records CLAI's UI interactions on the same
-instance, as spans and logs in the `clai2 ui` scope, not a tag: menus opened and how they closed,
+instance, as spans and logs in the `clai2 ui` instrumentation scope: menus opened and how they closed,
 slash commands, `/set` changes, plugin actions, `/keys` saves and prompts, prompt
 submissions, steering, interrupts, completions, and session start, clear, and
 resume. Attributes carry names and listed choices, never prompt text, typed
@@ -2142,8 +2142,9 @@ again. Services with Dynamic Client Registration need none of this: add them as
 `await commit_messages(...)` persists and swaps it between turns, and `resolved_model()` is the
 model the next prompt will use. `host.session_id` is the current saved conversation
 ID, following `/clear` and `/resume`. During a run it identifies that run's
-conversation, including a background fork. It is `None` for a host without session
-persistence; custom hosts can supply a `session_id` callback to read their current
+conversation, including a background fork. It is `None` while startup resume is
+selecting a conversation, or for a host without session persistence. Custom hosts
+can supply a `session_id` callback to read their current
 ID. `host.status` is the footer's state:
 `context_tokens` and `context_window` render as compact used/max, such as
 `128k/1m`; `None` renders as `?`. Only set `context_window` for a known capacity,
