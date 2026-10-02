@@ -1271,8 +1271,9 @@ is not modified.
 The early splash and the `CLAI 2.0` banner keep Pydantic's brand colours under
 every palette, except on 16-colour terminals, where the palette owns the ANSI
 slots. Code uses the terminal foreground
-and ANSI syntax colours; bundled palettes use Termflow's default diff colours. Theme selection adds no
-model requests or telemetry.
+and ANSI syntax colours. File diffs tint added and removed lines with the palette's
+green and red over its background, and light palettes keep diff code dark enough
+to read. Theme selection adds no model requests or telemetry.
 
 ### Spinners
 
