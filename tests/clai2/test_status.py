@@ -11,12 +11,17 @@ import anyio
 import pytest
 from rich.console import Console
 
-from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
+from pydantic_ai import Agent, FunctionToolCallEvent, FunctionToolResultEvent, PartDeltaEvent, PartStartEvent
 from pydantic_ai.messages import NativeToolCallPart, TextPart, ToolCallPart, ToolCallPartDelta, ToolReturnPart
-from pydantic_clai2._app import _reset_status  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.models.test import TestModel
+from pydantic_clai2._app import _reset_status, create_shell  # pyright: ignore[reportPrivateUsage]
+from pydantic_clai2.commands import Command
+from pydantic_clai2.config.project_settings import ProjectSettings
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui.rendering import theme
 from pydantic_clai2.ui.rendering.status import Status, StatusLine
 from pydantic_clai2.ui.rendering.theme import LITHIUM, MUTED, THINKING, WARNING, sgr
+from tests.clai2.test_app_edges import inputs
 
 
 def test_estimate_includes_tool_argument_deltas() -> None:
@@ -27,8 +32,31 @@ def test_estimate_includes_tool_argument_deltas() -> None:
     assert 'context: ?' in status.text()
     status.context_tokens = 1000
     status.output_tokens = 20
-    assert 'context: 1,000 tokens' in status.text()
+    assert 'context: 1k/? tokens' in status.text()
     assert '20 output tokens' in status.text()
+
+
+@pytest.mark.parametrize(
+    ('used', 'window', 'expected'),
+    [
+        (None, None, '?/?'),
+        (None, 1_000_000, '?/1m'),
+        (127_846, None, '128k/?'),
+        (0, 1_000_000, '0/1m'),
+        (999, 1_000, '999/1k'),
+        (1_000, 200_000, '1k/200k'),
+        (127_846, 1_000_000, '128k/1m'),
+        (128_000, 1_048_576, '128k/1m'),
+        (999_499, 1_000_000, '999k/1m'),
+        (999_500, 1_000_000, '1m/1m'),
+        (1_500_000, 2_000_000, '1.5m/2m'),
+        (250_000, 200_000, '250k/200k'),
+    ],
+)
+def test_compact_context_usage(used: int | None, window: int | None, expected: str) -> None:
+    status = Status(context_tokens=used, context_window=window)
+    assert f'context: {expected} tokens' in status.text()
+    assert ''.join(text for _, text in status.toolbar()) == status.text()
 
 
 def test_workspace_follows_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,21 +85,21 @@ def test_workspace_without_a_home_directory_is_shown_whole(monkeypatch: pytest.M
 
 
 def test_toolbar_paints_the_context_figure_on_alert() -> None:
-    status = Status(model='m', context_tokens=90, context_alert=True)
+    status = Status(model='m', context_tokens=90, context_window=100, context_alert=True)
     assert status.toolbar() == [
         (MUTED, 'm | context: '),
-        (WARNING, '90'),
+        (WARNING, '90/100'),
         (MUTED, ' tokens | '),
         (LITHIUM, '~0'),
         (MUTED, ' streamed tokens | '),
         (MUTED, 'ready'),
     ]
     status.context_alert = False
-    assert status.toolbar()[1] == (MUTED, '90')
+    assert status.toolbar()[1] == (MUTED, '90/100')
     assert ''.join(text for _, text in status.toolbar()) == status.text()
     status.cost = Decimal('0.0123')
     status.context_alert = True
-    assert status.toolbar()[1] == (WARNING, '90')
+    assert status.toolbar()[1] == (WARNING, '90/100')
     assert '$0.0123' in status.toolbar()[4][1]
     assert ''.join(text for _, text in status.toolbar()) == status.text()
 
@@ -86,14 +114,41 @@ async def test_footer_paints_the_context_figure_on_alert(monkeypatch: pytest.Mon
     assert f'{sgr(WARNING)}9{sgr(WARNING)}0' in painted and f'{sgr(WARNING)}m' not in painted
 
 
-@pytest.mark.parametrize('command', ['/new', '/clear'])
+@pytest.mark.parametrize('command', ['/new', '/clear', '/resume'])
 def test_new_resets_the_figures_whatever_follows_it(command: str) -> None:
-    status = Status(context_tokens=90, context_alert=True, output_tokens=5, streamed_chars=8)
+    status = Status(context_tokens=90, context_window=100, context_alert=True, output_tokens=5, streamed_chars=8)
     _reset_status(f'{command} please', status)
     assert status == Status()
     status.context_alert = True
     _reset_status(f'{command}er', status)
     assert status.context_alert
+
+
+async def test_model_change_clears_the_previous_context_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inputs(monkeypatch, ['/inspect', '/set model test', '/inspect', '/exit'])
+    shell = create_shell(
+        Agent(TestModel(model_name='original')),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=io.StringIO()),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+    shell.status.model = 'original'
+    shell.status.context_window = 1_000_000
+    shell.status.context_alert = True
+    readings: list[tuple[int | None, bool]] = []
+
+    def inspect(args: list[str]) -> str:
+        readings.append((shell.status.context_window, shell.status.context_alert))
+        return ''
+
+    shell.commands.register(Command(name='inspect', description='Read status', handler=inspect))
+    await shell.run()
+    assert readings == [(1_000_000, True), (None, False)]
 
 
 def test_tool_status_transitions() -> None:

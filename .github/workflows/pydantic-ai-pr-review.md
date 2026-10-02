@@ -56,7 +56,7 @@ concurrency:
 # `activation` skips and takes the whole graph with it. That is the live bug in
 # pydantic-ai-ui-security-review (#6766 item 7). Referencing the job in the prompt
 # is what hoists it above `activation` and wires it into `activation.needs`.
-if: ${{ needs.eligibility.outputs.eligible == 'true' }}
+if: ${{ needs.provider_health.outputs.ready == 'true' && (needs.eligibility.outputs.eligible == 'true') }}
 tools:
   github:
     mode: gh-proxy
@@ -74,7 +74,9 @@ safe-outputs:
   needs: [eligibility]
   footer: false
   activation-comments: false
+  report-failure-as-issue: false
   noop:
+    report-as-issue: false
   create-pull-request-review-comment:
     max: 30
     target: ${{ needs.eligibility.outputs.pr_number }}
@@ -104,6 +106,7 @@ imports:
   - shared/review-context.md
   - shared/checkout.md
   - shared/engine-minimax.md
+  - shared/provider-health.md
   - shared/pre-steps.md
   - shared/pre-agent-steps.md
 pre-agent-steps:
@@ -384,6 +387,8 @@ jobs:
           logfire-read-key: ${{ secrets.LOGFIRE_READ_EXTERNAL_VARIABLES }}
           logfire-base-url: ${{ secrets.LOGFIRE_URL || vars.LOGFIRE_URL || 'https://logfire-api.pydantic.dev' }}
 ---
+<!-- provider_health must run before activation: ${{ needs.provider_health.outputs.ready }} -->
+
 
 ## The pull request under review
 
