@@ -126,6 +126,12 @@ RepoContext(
 
 `RepoContext` locates and loads CE; it does not parse skill/sub-agent frontmatter or hook bodies, and it does not rewrite or translate assets. Strategy 1 reads its files once per run, so mid-run edits to those files are not reloaded.
 
+## Telemetry
+
+`RepoContext` emits no spans or events of its own. Instruction files are read through the workspace at the start of each run, before the first model request, and their contents become part of the system instructions. Which files were loaded is visible only through those instructions, which the model request spans record when `trace_include_content` is enabled.
+
+The inventory tool is a tool call covered by core's `execute_tool` span. With `nested_traversal`, the pointer or file contents are added to a later model request and appear in its input messages under `trace_include_content`. Deprecated arguments raise a `HarnessDeprecationWarning` at construction.
+
 ## Further reading
 
 - [Pydantic AI capabilities](../capabilities/overview.md)

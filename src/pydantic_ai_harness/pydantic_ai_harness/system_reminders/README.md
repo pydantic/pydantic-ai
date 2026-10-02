@@ -160,6 +160,12 @@ SystemReminders(
 
 Per-run state (the request counter and per-reminder fire counts) is isolated via `for_run`, so concurrent runs on the same agent never share fire state.
 
+## Telemetry
+
+`SystemReminders` emits no spans of its own. A fired reminder is appended to the request in `wrap_model_request`, so it appears in that model request span's input messages when `trace_include_content` is enabled, and it never enters the stored message history. `ReminderFiredEvent` is for application code: core does not record it in traces.
+
+`LLMReminder` generates text with a separate agent named `system_reminders`. That run appears as an `invoke_agent system_reminders` span when `Agent.instrument_all()` is enabled, for example by `logfire.instrument_pydantic_ai()`, or when `model=` is an `InstrumentedModel`. The helper's own instrumentation settings control content recording; an `Instrumentation` capability on the parent agent does not carry over to it. Passing `on_fire` raises a `HarnessDeprecationWarning` at construction.
+
 ## Caching guarantee
 
 Reminders are never injected into the system prompt or instructions. They ride the ephemeral tail behind a `CachePoint`, so across turns the durable history grows append-only and stays eligible for a cache hit (subject to the provider's cache TTL -- a gap longer than `cache_ttl` expires the entry even under an unchanged prefix), while the reminder and its `CachePoint` live only in the per-request copy. The only added cost is re-reading the reminder each turn.

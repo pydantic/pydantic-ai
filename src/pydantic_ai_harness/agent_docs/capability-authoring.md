@@ -274,6 +274,46 @@ a value, a budget stopping a run, a history being rewritten, memory being
 injected. Those earn a span. Work core already spans (a model request, a tool
 call, an agent run) does not.
 
+### Spans, events, and callbacks
+
+These three signals reach different audiences, so one does not replace another:
+
+- **Spans** reach whoever operates the run, through any configured OpenTelemetry
+  backend, with no application code. Use them for the decision points above and
+  for work the capability starts on its own that core does not span: a model
+  call, a network request, or a file load made outside a tool call the model
+  asked for.
+- **Typed `CapabilityEvent`s** (`ctx.emit`) reach application code that
+  subscribes with `@agent.on_event` or reads the event stream. Use them for
+  semantic outcomes an application reacts to, such as a plan item completing or
+  a reminder firing. Core does not record events in traces. An event does not
+  stand in for a span when an operator needs to see the decision.
+- **Callbacks** (`on_verdict`, `on_detection`) are for an application that must
+  act on an outcome inside the hook that produced it. Prefer an event when the
+  application only needs to observe.
+
+Core's spans are enough when the capability's work is the body of a tool the
+model called. The tool call's span already records the duration and the
+failure, plus the arguments and result under `trace_include_content`. A tool
+that reads docs, writes a file, or loads a skill needs no span of its own.
+
+Work a hook does after the tool returns is different. An `after_tool_execute`
+hook runs after core's `execute_tool` span has ended, and that span records the
+result the tool returned, not the result the hook passed on to the model.
+
+A nested `Agent` a capability runs (a summarizer, a judge, a reminder generator)
+is traced only if that agent is instrumented. That happens through
+`Agent.instrument_all()` (which `logfire.instrument_pydantic_ai()` calls), an
+`InstrumentedModel` passed as the helper's `model=`, or an agent the user
+supplies with its own instrumentation. The nested agent's own instrumentation
+settings control content recording. The parent run's `Instrumentation`
+capability does not carry over.
+
+`warnings.warn` is a diagnostic for the developer, not telemetry. It is not
+recorded on a span.
+
+### What to emit
+
 Emitting nothing is a legitimate decision. `step_persistence` documents that it
 adds no spans because core's `Instrumentation` already covers the run, and
 `spend` documents that accrual emits nothing because a span per model request
@@ -300,8 +340,26 @@ The house pattern:
 - Put anything that could quote user content, a prompt, tool arguments, or a
   tenant or user id behind `ctx.trace_include_content`. A trace has a wider
   audience than the application that produced it.
-- Document the spans and their attributes in both the capability README and the
-  docs page, and cover them in tests like any other public behavior.
+- Cover spans and events in tests like any other public behavior.
+
+### What every capability documents
+
+Every capability's README and docs page has a `## Telemetry` section. An
+existing `## Observability` or `## Tracing` section also counts. It lists:
+
+- the spans the capability emits and their attributes, noting which are behind
+  `trace_include_content`;
+- the `CapabilityEvent`s it emits and the callbacks it calls;
+- the model calls, network requests, and file loads it makes outside a tool
+  call, and whether they are traced;
+- the warnings it raises while a run is in progress;
+- when it emits no spans of its own, which core spans cover its work.
+
+`test_capability_documents_telemetry` in `tests/harness/test_docs_parity.py`
+fails when a capability's README or docs page has no such section. Capabilities
+that predate this rule are in its `_TELEMETRY_BACKLOG`. The backlog only
+shrinks: the test also fails when a backlog entry has gained the section, so
+remove it from the list in the same PR.
 
 ## CI And Dependency Footprint
 

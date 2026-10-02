@@ -96,9 +96,15 @@ changed course, and what it cost.
 Emitting nothing is a valid answer when core's own spans already cover the work.
 It is an answer to state in the docs, not a step to skip.
 
-The house pattern (spans on `ctx.tracer`, attribute naming, content behind
-`trace_include_content`) is in `agent_docs/capability-authoring.md`
-"Telemetry".
+Every capability's README and docs page has a `## Telemetry` section listing its
+spans, events, callbacks, run-time warnings, and any model or network calls made
+outside a tool call. `test_capability_documents_telemetry` in
+`tests/harness/test_docs_parity.py` enforces it.
+
+When to use a span versus a `CapabilityEvent` or a callback, what the section
+must say, and the house pattern (spans on `ctx.tracer`, attribute naming,
+content behind `trace_include_content`) are in
+`agent_docs/capability-authoring.md` "Telemetry".
 
 ## Coding standards
 

@@ -319,6 +319,14 @@ again on replay.
   retries get distinct handles too (keyed per `retry`), so a retried call never clobbers the
   earlier attempt's spill.
 
+## Telemetry
+
+`ToolOutputLimits` emits no spans or events of its own. It reduces a result in an `after_tool_execute` hook, after core's `execute_tool` span has ended, so that span records the result the tool returned. The reduced result the model received appears in the input messages of the next model request span when `trace_include_content` is enabled.
+
+`Summarize` without a `summarize=` callable runs a separate agent named `tool_output_limits`. That run appears as an `invoke_agent tool_output_limits` span when `Agent.instrument_all()` is enabled, for example by `logfire.instrument_pydantic_ai()`, or when `model=` is an `InstrumentedModel`. The helper's own instrumentation settings control content recording; an `Instrumentation` capability on the parent agent does not carry over to it. Its usage is counted on the parent run (see "Usage accounting").
+
+A spill blocked by an unavailable or read-only workspace emits a `UserWarning` and falls back to the band's `then` action. Other storage errors, such as a full disk or insufficient permissions, fall back without a warning.
+
 ## Relationship to other capabilities
 
 - Supersedes the spill scope of PR #185 `ToolOutputManagement` (one-way truncate / spill with

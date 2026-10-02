@@ -119,6 +119,12 @@ Because authored capabilities hold live code, they are not spec-serializable
 (`get_serialization_name()` returns `None`) and are persisted as source rather than as an
 agent spec.
 
+## Telemetry
+
+`CapabilityCreation` emits no spans or events of its own. `author_capability`, `list_authored_capabilities`, and `disable_authored_capability` are tool calls, so core's `execute_tool` spans cover writing, importing, and validating authored code. The authored source is the `code` argument, which the span records only when `trace_include_content` is enabled.
+
+A validation failure is returned to the model as the tool result and stored as `last_error` in `manifest.json`, so it does not mark the span as failed. Loading authored capabilities with `store.load_active()` happens outside any run and is not traced.
+
 ## Typing
 
 Imported authored code is dynamic, but nothing typed `Any` crosses back into the harness:

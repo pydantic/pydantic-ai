@@ -409,3 +409,78 @@ def test_coder_entry_page_describes_current_tools(surface: str) -> None:
     assert 'allowlisted shell' not in introduction
     assert 'explorer sub-agent' not in introduction
     assert 'no default instructions' not in introduction
+
+
+# --- Telemetry sections -----------------------------------------------------
+#
+# `agent_docs/capability-authoring.md` ("What every capability documents") requires a telemetry
+# section on each capability's README and docs page (#9366). An existing "Observability" or
+# "Tracing" section counts, so older pages keep their anchors.
+
+_TELEMETRY_HEADING = re.compile(r'^## .*\b(?:telemetry|observability|tracing)\b', re.IGNORECASE | re.MULTILINE)
+
+# Capabilities that predate the rule. The list only shrinks: once a capability's README and docs
+# page both have the section, `test_capability_documents_telemetry` fails until it is removed here.
+_TELEMETRY_BACKLOG = frozenset(
+    {
+        'absurd',
+        'aws_lambda',
+        'browser_use',
+        'coder',
+        'conversation_search',
+        'dynamic_workflow',
+        'exa',
+        'experimental/acp',
+        'filesystem',
+        'github',
+        'google_workspace',
+        'linear',
+        'localstack',
+        'logfire',
+        'logfire_mcp',
+        'macroscope',
+        'memory',
+        'notion',
+        'ordinal',
+        'playwright',
+        'shell',
+        'slack',
+        'stackone',
+        'step_persistence',
+        'subagents',
+        'warn_on_cache_busts',
+        'youdotcom',
+    }
+)
+
+
+def _module(package: Path) -> str:
+    return package.relative_to(_PACKAGE).as_posix()
+
+
+def _telemetry_surfaces(module: str) -> list[Path]:
+    pages = [_DOCS_DIR / page for page, (page_module, _) in _CAPABILITY_PAGE_META.items() if page_module == module]
+    return [_PACKAGE / module / 'README.md', *pages]
+
+
+def test_telemetry_backlog_names_real_capabilities() -> None:
+    stale = sorted(_TELEMETRY_BACKLOG - {_module(package) for package in _CAPABILITY_PACKAGES})
+    assert not stale, f'remove {stale} from _TELEMETRY_BACKLOG: no such capability package'
+
+
+@pytest.mark.parametrize('package', _CAPABILITY_PACKAGES, ids=_module)
+def test_capability_documents_telemetry(package: Path) -> None:
+    module = _module(package)
+    missing = [
+        str(surface.resolve().relative_to(_ROOT.parents[1]))
+        for surface in _telemetry_surfaces(module)
+        if not _TELEMETRY_HEADING.search(surface.read_text(encoding='utf-8'))
+    ]
+    if module in _TELEMETRY_BACKLOG:
+        assert missing, f'{module} now documents telemetry everywhere; remove it from _TELEMETRY_BACKLOG.'
+    else:
+        assert not missing, (
+            f'{missing} need a `## Telemetry` section listing the spans, events, callbacks, run-time '
+            'warnings, and out-of-tool model or network calls of this capability. See '
+            'agent_docs/capability-authoring.md "Telemetry".'
+        )

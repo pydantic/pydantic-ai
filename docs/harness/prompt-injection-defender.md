@@ -106,6 +106,10 @@ When a result is rejected, the replacement `ToolReturn` also carries a diagnosti
 summary in metadata under `prompt_injection`. Metadata is available to the
 application and is not sent to the model.
 
+## Telemetry
+
+`PromptInjectionDefender` emits no spans or events of its own. It classifies a result in an `after_tool_execute` hook, after core's `execute_tool` span has ended, so that span records the original tool result rather than the withheld replacement. The replacement appears in the input messages of the next model request span when `trace_include_content` is enabled. Use `on_detection` to log or export detections.
+
 ## Scope and limitations
 
 - The capability classifies results from normally completed client-executed tools.
