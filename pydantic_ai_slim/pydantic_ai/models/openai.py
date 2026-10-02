@@ -734,6 +734,16 @@ class OpenAIChatModelSettings(ModelSettings, total=False):
     for more details.
     """
 
+    openai_text_verbosity: Literal['low', 'medium', 'high']
+    """Constrains the verbosity of the model's text response.
+
+    Lower values will result in more concise responses, while higher values will
+    result in more verbose responses.
+
+    Supported by both the Chat Completions API (as `verbosity`) and the Responses API
+    (as `text.verbosity`). Parameter support can differ depending on the model.
+    """
+
     openai_service_tier: Literal['auto', 'default', 'flex', 'priority']
     """The service tier to use for the model request.
 
@@ -870,14 +880,6 @@ class OpenAIResponsesModelSettings(OpenAIChatModelSettings, total=False):
     - `auto`: If the context of this response and previous ones exceeds the model's context window size,
         the model will truncate the response to fit the context window by dropping input items in the
         middle of the conversation.
-    """
-
-    openai_text_verbosity: Literal['low', 'medium', 'high']
-    """Constrains the verbosity of the model's text response.
-
-    Lower values will result in more concise responses, while higher values will
-    result in more verbose responses. Currently supported values are `low`,
-    `medium`, and `high`.
     """
 
     openai_previous_response_id: Literal['auto'] | str
@@ -1240,6 +1242,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     top_logprobs=model_settings.get('openai_top_logprobs', OMIT),
                     store=model_settings.get('openai_store', OMIT),
                     moderation=model_settings.get('openai_moderation', OMIT),
+                    verbosity=model_settings.get('openai_text_verbosity', OMIT),
                     prompt_cache_key=model_settings.get('openai_prompt_cache_key', OMIT),
                     prompt_cache_retention=model_settings.get('openai_prompt_cache_retention', OMIT),
                     prompt_cache_options=model_settings.get('openai_prompt_cache_options', OMIT),

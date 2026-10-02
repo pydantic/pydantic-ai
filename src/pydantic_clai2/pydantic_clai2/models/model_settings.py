@@ -58,7 +58,7 @@ class ModelSettingsForm(BaseModel):
         default=None, description='Responses reasoning summary display.'
     )
     openai_text_verbosity: Literal['low', 'medium', 'high'] | None = Field(
-        default=None, description='Responses answer verbosity.'
+        default=None, description='OpenAI answer verbosity.'
     )
     anthropic_thinking_mode: Literal['enabled', 'adaptive', 'disabled'] | None = Field(
         default=None, description='Claude thinking mode. Overrides generic thinking.'

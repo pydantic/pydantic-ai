@@ -70,6 +70,7 @@ def _openai_options(*, provider: str, name: str, family_defaults: bool) -> dict[
         options['thinking'] = ()
         efforts = _openai_efforts(name=name)
         options['openai_reasoning_effort'] = tuple(efforts)
+        options['openai_text_verbosity'] = ()
         if provider != 'openai-chat':
             options['openai_reasoning_summary'] = ()
             options['openai_reasoning_context'] = (
@@ -79,7 +80,6 @@ def _openai_options(*, provider: str, name: str, family_defaults: bool) -> dict[
             )
             if family_defaults or profile.get('openai_responses_supports_reasoning_mode', False):
                 options['openai_reasoning_mode'] = ()
-            options['openai_text_verbosity'] = ()
     return options
 
 

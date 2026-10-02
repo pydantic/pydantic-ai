@@ -2472,13 +2472,13 @@ Older branches must receive this fix too. The minimum read-side backport is
 `model_settings_from_json`; keep the form itself strict. Also backport preservation
 of unknown keys on save and the shell's model-settings validation error handler.
 
-The editor offers OpenAI reasoning effort, Responses reasoning context, mode,
-summary, and verbosity, and Claude classic/adaptive thinking and effort.
+The editor offers OpenAI reasoning effort and verbosity, Responses reasoning
+context, mode, and summary, and Claude classic/adaptive thinking and effort.
 The editor hides generic request fields such as timeouts and penalties.
 Reasoning GPT models do not show sampling controls. Previously saved overrides
 remain visible so they can be reset. Choices depend on the model and API: Chat Completions does not get Responses
-controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort
-and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
+controls. OpenRouter and vLLM GPT routes expose Chat Completions reasoning effort,
+verbosity, and service tier, not Responses-only controls. `all_turns` appears only on compatible models, and adaptive Claude
 models do not get a token budget. Classic thinking budgets must be at least
 1024 and below an explicit `max_tokens`. Without one, Pydantic AI
 leaves room for the answer beyond the budget. Other unset fields
