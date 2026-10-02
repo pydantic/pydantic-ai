@@ -35,7 +35,7 @@ class UnpricedModelWarning(UserWarning):
 
 
 class SpendCompositionWarning(UserWarning):
-    """Warned when wrapper ordering can hide billed responses from `SpendLimits`."""
+    """Deprecated: no longer emitted, since `SpendLimits` counts every billed response whatever the capability order."""
 
 
 class UnpricedModelError(UserError):

@@ -256,9 +256,7 @@ State lives across runs deliberately, so `for_run` is not overridden: a daily bu
 
 `defer_loading=True` is refused. A deferred capability's hooks do not run until the model loads it, so an exhausted budget would not stop a request and the requests made meanwhile would go uncounted -- a brake the thing being braked decides when to apply.
 
-When Pydantic AI exposes `ModelRequestContext.usage_responses`, `SpendLimits` accrues the provider responses whose usage core committed, even if a later hook or wrapper rejects them. Core merges a successful continuation chain into one response, so `price` and `on_spend` each run once for its combined usage. If core records multiple accounting responses during a lifecycle, each recorded response is accrued separately. A cache response that never reached a provider is not charged.
-
-On older supported Pydantic AI releases, `SpendLimits` accrues the response returned by its inner handler. A cache response may therefore be priced, and continuation segments are priced as one merged response. An inner wrapper that rejects a billed response before returning it can hide that response from the counter. `SpendLimits` retains its innermost placement and emits `SpendCompositionWarning` for detectable arrangements with that risk; list it last among innermost capabilities. The warning is unnecessary on core versions with provider-response accounting.
+`SpendLimits` accrues every response the provider billed, even one that a hook nested inside it rejects or replaces, so where you list it among other capabilities doesn't change what it counts. Core merges a successful continuation chain into one response, so `price` and `on_spend` each run once for its combined usage; a continuation that was partly billed before an error hook recovered is accrued response by response. A cached response, or one supplied with `SkipModelRequest`, never reached the provider and is not charged.
 
 **Durable execution.** `SpendLimits` supports Pydantic AI durability capabilities. Its clock read, counter read, and accrual are separate durable operations. Temporal therefore reads the clock in an activity rather than workflow orchestration, and DBOS or Prefect record the same boundary in their own durable units. On replay, the engine returns each operation's recorded result without reading the clock or store again. The response is accrued once, and the window key comes from the original recorded clock value.
 
@@ -331,7 +329,7 @@ The fields above are what `SpendLimits.from_spec` names in its signature, which 
 
 `SpendLimits`, `Budget`, `SpendSnapshot`, `BudgetStatus`, `Spent`, `BatchSpendStore`,
 `SpendEntry`, `SpendStore`, `InMemorySpendStore`, `RedisSpendStore`, `SpendLimitExceeded`,
-`UnpricedModelError`, `UnpricedModelWarning`, and `SpendCompositionWarning` are exported from
+`UnpricedModelError`, and `UnpricedModelWarning` are exported from
 `pydantic_ai_harness.spend`. Signatures and defaults are rendered from the source on the
 [docs page](https://pydantic.dev/docs/ai/harness/spend/), which is the copy that cannot drift.
 

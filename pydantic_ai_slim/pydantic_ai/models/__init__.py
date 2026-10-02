@@ -380,12 +380,15 @@ class ModelRequestContext:
     )
 
     @property
-    def usage_responses(self) -> tuple[ModelResponse, ...]:
+    def _usage_responses(self) -> tuple[ModelResponse, ...]:
         """The model responses whose usage was counted for this request.
 
         Empty until the model responds. It includes responses a hook later replaced, and can hold more
         than one response when a continued response was partly billed before an error hook recovered.
         Request contexts copied with `dataclasses.replace()` see the same responses.
+
+        Private for now: read by the `Instrumentation` capability and by the Pydantic AI Harness's
+        `SpendLimits`, which pins this package's exact version.
         """
         return tuple(self._usage_response_ledger.responses)
 

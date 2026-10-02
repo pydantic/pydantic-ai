@@ -28,7 +28,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
@@ -134,12 +133,6 @@ def _memory_contexts(messages: list[ModelMessage]) -> list[str]:
         for content in part.content
         if isinstance(content, TextContent) and content.content.startswith('<memory>\n')
     ]
-
-
-def _assert_history_memory_count(messages: list[ModelMessage], *, released_core: int) -> None:
-    """Account for the request/history split introduced alongside provider usage accounting."""
-    expected = 0 if hasattr(ModelRequestContext, 'usage_responses') else released_core
-    assert len(_memory_contexts(messages)) == expected
 
 
 def _latest_memory_context(messages: list[ModelMessage]) -> str:
@@ -1083,7 +1076,7 @@ class TestInjection:
 
         first = await Agent(FunctionModel(finish), capabilities=[Memory(store=store)]).run('first')
         serialized = first.all_messages_json()
-        _assert_history_memory_count(first.all_messages(), released_core=1)
+        assert not _memory_contexts(first.all_messages())
         await _seed(store, 'main/MEMORY.md', '- version two')
 
         for history in (
@@ -1104,7 +1097,7 @@ class TestInjection:
             assert len(captured[0]) == 1
             assert '- version one' not in captured[0][0]
             assert '- version two' in captured[0][0]
-            _assert_history_memory_count(continued.all_messages(), released_core=1)
+            assert not _memory_contexts(continued.all_messages())
 
     async def test_compaction_before_memory_preserves_request_only_injection(self) -> None:
         store = InMemoryStore()
@@ -1133,7 +1126,7 @@ class TestInjection:
         persisted = result.all_messages()
         assert len(persisted) == 3
         assert isinstance(persisted[0], ModelResponse)
-        _assert_history_memory_count(persisted, released_core=1)
+        assert not _memory_contexts(persisted)
 
     async def test_cleanup_preserves_user_content_merged_with_memory_context(self) -> None:
         store = InMemoryStore()
@@ -1171,7 +1164,7 @@ class TestInjection:
         assert len(_memory_contexts(captured[0])) == 1
         assert 'ORIGINAL USER PROMPT' in _user_text(continued.all_messages())
         assert 'UNRELATED USER CONTEXT' in _user_text(continued.all_messages())
-        _assert_history_memory_count(continued.all_messages(), released_core=1)
+        assert not _memory_contexts(continued.all_messages())
 
     async def test_disabled_injection_removes_memory_context_from_continued_history(self) -> None:
         store = InMemoryStore()
@@ -1256,7 +1249,7 @@ class TestInjection:
             assert len(contexts) == 2
             assert any('personal fact' in context for context in contexts)
             assert any('org fact' in context for context in contexts)
-        _assert_history_memory_count(second.all_messages(), released_core=2)
+        assert not _memory_contexts(second.all_messages())
 
     async def test_legacy_unqualified_marker_is_stripped_from_continued_history(self) -> None:
         store = InMemoryStore()
@@ -1286,7 +1279,7 @@ class TestInjection:
         assert len(captured[0]) == 1
         assert 'durable fact' in captured[0][0]
         assert 'stale fact' not in captured[0][0]
-        _assert_history_memory_count(result.all_messages(), released_core=1)
+        assert not _memory_contexts(result.all_messages())
 
 
 class TestConfigurationAndSpecs:
