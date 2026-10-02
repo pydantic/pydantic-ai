@@ -444,6 +444,18 @@ class TestPixeltableMemoryStoreRecovery:
         assert result == MemoryMutation(version=None, replayed=True, existed=True)
         assert await store.read('d.md', max_chars=10) is None
 
+    async def test_prepared_missing_delete_replays_after_new_file(self, store: PixeltableMemoryStore) -> None:
+        operation = MemoryOperation(id='run-1:call-missing', fingerprint='delete:missing.md')
+        _insert_prepared_receipt(
+            store, operation, file='missing.md', op='delete', expected=None, new=None, version=None, existed=False
+        )
+        created = await store.write('missing.md', 'new', expected_version=None)
+
+        assert await store.get_operation(operation) == MemoryMutation(version=None, replayed=True, existed=False)
+        file = await store.read('missing.md', max_chars=10)
+        assert file is not None
+        assert (file.content, file.version) == ('new', created.version)
+
     async def test_prepared_receipt_after_apply_does_not_double_write(self, store: PixeltableMemoryStore) -> None:
         # The file mutation landed but the receipt never completed.
         operation = MemoryOperation(id='run-1:call-11', fingerprint='write:b.md:one')

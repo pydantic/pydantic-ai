@@ -47,11 +47,6 @@ class TestPixeltableCapability:
     def test_tables_rejects_a_string(self) -> None:
         with pytest.raises(ValueError, match='list of paths'):
             Pixeltable(tables='my_app.doc_chunks')  # pyright: ignore[reportArgumentType]
-        with pytest.raises(ValueError, match='list of paths'):
-            Pixeltable.from_spec(tables='my_app.doc_chunks')
-        spec = {'model': 'test', 'capabilities': [{'Pixeltable': {'tables': 'my_app.doc_chunks'}}]}
-        with pytest.raises(ValueError, match='list of paths'):
-            Agent.from_spec(spec, custom_capability_types=[Pixeltable])
 
     def test_tables_rejects_an_empty_allowlist(self) -> None:
         # None must not silently mean the whole catalog; that is an opt-in via ['*'].

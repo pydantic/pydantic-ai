@@ -11,6 +11,7 @@ from collections.abc import Callable
 
 import numpy as np
 import pixeltable as pxt
+from PIL import Image
 
 DIM = 8
 
@@ -37,3 +38,9 @@ def tiny_embed(text: str) -> pxt.Array[(8,), pxt.Float]:
     norm = math.hypot(*raw)  # never zero: no byte maps to 0.0
     # Pixeltable's `Array` annotation is a column type, not the ndarray the UDF returns.
     return np.array([value / norm for value in raw], dtype=np.float32)  # pyright: ignore[reportReturnType]
+
+
+@pxt.udf  # pyright: ignore[reportUnknownMemberType]
+def tiny_image_embed(image: Image.Image) -> pxt.Array[(8,), pxt.Float]:
+    """Local image embedding for catalog behavior tests."""
+    return np.array([1, 0, 0, 0, 0, 0, 0, 0], dtype=np.float32)  # pyright: ignore[reportReturnType]

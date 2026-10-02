@@ -294,7 +294,8 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
             table: Pixeltable table path.
             query: Text to embed and search for.
             column: Column with an embedding index.
-            columns: Extra columns to return with the match text and score.
+            columns: Extra columns to return with the match and score. Indexed media is
+                omitted unless explicitly requested, in which case it is rejected.
             limit: Maximum rows to return, capped by the capability.
             idx: Embedding index name. Required when the column has more than one index.
 
@@ -310,7 +311,9 @@ class PixeltableToolset(FunctionToolset[AgentDepsT]):
         if column not in column_md:
             raise ModelRetry(f'Unknown column {column!r} on {_norm(metadata["path"])!r}. Call describe_table.')
         selected = self._default_columns(metadata) if columns is None else list(columns)
-        if column not in selected and not _is_skipped_type(column_md[column]['type_']):
+        if column not in selected and not (
+            _is_skipped_type(column_md[column]['type_']) or _is_media_type(column_md[column]['type_'])
+        ):
             selected = [column, *[name for name in selected if name != column]]
         # A real column named `score` must not be shadowed by the similarity score.
         score_name = 'score'

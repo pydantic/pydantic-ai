@@ -11,11 +11,12 @@ from pathlib import Path
 import numpy as np
 import pixeltable as pxt
 import pytest
+from PIL import Image
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai_harness.pixeltable import Pixeltable, PixeltableToolset
 
-from .support import DIM, create_table, get_table, insert_rows, tiny_embed
+from .support import DIM, create_table, get_table, insert_rows, tiny_embed, tiny_image_embed
 
 
 @pytest.fixture
@@ -349,6 +350,20 @@ class TestPixeltableToolsetQuery:
 
 
 class TestPixeltableToolsetSimilarity:
+    def test_image_similarity_omits_local_file_path(self, catalog: str, tmp_path: Path) -> None:
+        images = create_table(f'{catalog}.images', {'image': pxt.Image, 'title': pxt.String})
+        image_path = tmp_path / 'photo.png'
+        Image.new('RGB', (2, 2), color='red').save(image_path)
+        insert_rows(images, [{'image': str(image_path), 'title': 'photo'}])
+        images.add_embedding_index('image', image_embed=tiny_image_embed, string_embed=tiny_embed)
+
+        tools = _tools([f'{catalog}.images'])
+        result = tools.similarity_search(f'{catalog}.images', 'red photo', 'image')
+        assert result['rows'][0]['title'] == 'photo'
+        assert set(result['rows'][0]) == {'title', 'score'}
+        with pytest.raises(ModelRetry, match='local file path'):
+            tools.similarity_search(f'{catalog}.images', 'red photo', 'image', columns=['image', 'title'])
+
     def test_similarity_ranks_exact_text(self, catalog: str) -> None:
         get_table(f'{catalog}.chunks').add_embedding_index('text', string_embed=tiny_embed)
         result = _chunks(catalog).similarity_search(f'{catalog}.chunks', 'cats sit on mats', 'text', limit=3)

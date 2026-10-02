@@ -79,10 +79,10 @@ print(result.output)
   catalog, including any memory table. A view inside an allowed directory exposes its base table's
   columns. Version handles (`'dir.tbl:3'`) are refused, since an old version keeps rows deleted and
   columns dropped since.
-- Default columns skip media, array, and binary columns. Computed columns that are not stored rerun
-  their function (possibly a model call) on every read, so the tools skip them by default and reject
-  them in `columns` and `where`. Explicit media columns are rejected because their local file paths
-  are not usable by a remote model.
+- Default columns skip media, array, and binary columns, including when searching an indexed media
+  column. Computed columns that are not stored rerun their function (possibly a model call) on every
+  read, so the tools skip them by default and reject them in `columns` and `where`. Explicit media
+  columns are rejected because their local file paths are not usable by a remote model.
 - `max_rows` (default 20) and `max_chars` (default 8000) bound the results of `query_table` and
   `similarity_search`. An oversized string is cut to end in `...`, any other oversized value becomes
   `null`, and `truncated` is set. Both return the `{"table", "rows", "truncated"}` envelope.

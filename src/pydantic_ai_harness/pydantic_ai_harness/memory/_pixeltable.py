@@ -345,7 +345,7 @@ class PixeltableMemoryStore:
             raise conflict
         row = self._file_row(t, recorded['file'])
         current = None if row is None else str(row['version'])
-        applied = current is None if recorded['op'] == 'delete' else current == receipt.version
+        applied = (not receipt.existed or current is None) if recorded['op'] == 'delete' else current == receipt.version
         if not applied and current == recorded['expected']:
             # Claim first: a writer withdrawing this intent deletes it only while unclaimed.
             if t.update({'last_operation_id': _CLAIMED}, where=receipt_row).row_count_stats.upd_rows != 1:
@@ -356,7 +356,11 @@ class PixeltableMemoryStore:
                 # A peer may have applied it concurrently; re-check before declaring a conflict.
                 row = self._file_row(t, recorded['file'])
                 current = None if row is None else str(row['version'])
-                applied = current is None if recorded['op'] == 'delete' else current == receipt.version
+                applied = (
+                    (not receipt.existed or current is None)
+                    if recorded['op'] == 'delete'
+                    else current == receipt.version
+                )
             else:
                 applied = True
         if not applied:
