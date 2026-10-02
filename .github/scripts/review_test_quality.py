@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 import tomllib
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 
 _API = 'https://api.github.com'
 _CHECK_NAME = 'Test Quality Review'
@@ -39,6 +39,8 @@ _UV_VALUE_OPTIONS = {
 }
 _INVENTORY = Path('.test-quality-context/candidate-inventory.json')
 _CI_EVIDENCE = Path('.test-quality-context/ci-evidence.json')
+_MAPPING_ADAPTER = TypeAdapter(dict[str, object])
+_OBJECTS_ADAPTER = TypeAdapter(list[object])
 
 
 class ReportEntry(BaseModel):
@@ -120,13 +122,33 @@ def _path_is_test_candidate(path: str) -> bool:
     }
 
 
+def _mapping(value: object) -> dict[str, object] | None:
+    """Validate an untrusted JSON object without leaving unknown key or value types."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        return _MAPPING_ADAPTER.validate_python(value, strict=True)
+    except ValidationError:
+        return None
+
+
+def _objects(value: object) -> list[object] | None:
+    """Validate an untrusted JSON array with elements exposed only as objects."""
+    if not isinstance(value, list):
+        return None
+    try:
+        return _OBJECTS_ADAPTER.validate_python(value, strict=True)
+    except ValidationError:
+        return None
+
+
 def _relevant_pyproject_changed(before: str, after: str) -> bool:
     """Return whether pytest or coverage configuration changed in a valid TOML file."""
     old_data = tomllib.loads(before)
     new_data = tomllib.loads(after)
-    old_tool = old_data.get('tool', {})
-    new_tool = new_data.get('tool', {})
-    if not isinstance(old_tool, Mapping) or not isinstance(new_tool, Mapping):
+    old_tool = _mapping(old_data.get('tool', {}))
+    new_tool = _mapping(new_data.get('tool', {}))
+    if old_tool is None or new_tool is None:
         return False
     for section in ('pytest', 'coverage'):
         if old_tool.get(section) != new_tool.get(section):
@@ -369,15 +391,18 @@ def has_completed_report(
 ) -> bool:
     """Recognize only a completed substantive result for the same pinned identity."""
     marker = f'<!-- test-quality-review:v1 base={base_sha} head={head_sha} workflow={workflow_version} -->'
-    return any(
-        check.get('name') == _CHECK_NAME
-        and check.get('status') == 'completed'
-        and isinstance(check.get('output'), Mapping)
-        and check['output'].get('title') in {'Protection accounted for', 'Changes needed', 'No candidate changes'}
-        and marker in str(check['output'].get('summary', ''))
-        and check.get('conclusion') == 'neutral'
-        for check in check_runs
-    )
+    for check in check_runs:
+        output = _mapping(check.get('output'))
+        if (
+            check.get('name') == _CHECK_NAME
+            and check.get('status') == 'completed'
+            and output is not None
+            and output.get('title') in {'Protection accounted for', 'Changes needed', 'No candidate changes'}
+            and marker in str(output.get('summary', ''))
+            and check.get('conclusion') == 'neutral'
+        ):
+            return True
+    return False
 
 
 class GitHub:
@@ -414,13 +439,14 @@ class GitHub:
             query = urllib.parse.urlencode({'per_page': 100, 'page': page})
             response = self.request(f'{path}?{query}')
             if collection is None:
-                if not isinstance(response, list):
+                items = _objects(response)
+                if items is None:
                     raise ValueError(f'expected a list from GitHub API: {path}')
-                items = response
             else:
-                if not isinstance(response, Mapping) or not isinstance(response.get(collection), list):
+                container = _mapping(response)
+                items = _objects(container.get(collection)) if container is not None else None
+                if items is None:
                     raise ValueError(f'expected a {collection} list from GitHub API: {path}')
-                items = response[collection]
             results.extend(items)
             if len(items) < 100:
                 return results
@@ -441,11 +467,15 @@ def _context_from_file(path: Path = _INVENTORY) -> ReviewContext:
 
 
 def _check_runs(github: GitHub, head_sha: str) -> list[Mapping[str, object]]:
-    response = github.request(f'commits/{head_sha}/check-runs?per_page=100')
-    if not isinstance(response, Mapping) or not isinstance(response.get('check_runs'), list):
+    response = _mapping(github.request(f'commits/{head_sha}/check-runs?per_page=100'))
+    values = _objects(response.get('check_runs')) if response is not None else None
+    if values is None:
         raise ValueError('check-run response is incomplete')
-    values = response['check_runs']
-    return [value for value in values if isinstance(value, Mapping)]
+    check_runs: list[Mapping[str, object]] = []
+    for value in values:
+        if (check_run := _mapping(value)) is not None:
+            check_runs.append(check_run)
+    return check_runs
 
 
 def _set_output(name: str, value: str) -> None:
@@ -493,7 +523,8 @@ def _pr_number_from_context() -> int | None:
             context = json.loads(os.environ.get('AW_CONTEXT', '{}'))
         except json.JSONDecodeError:
             return None
-        if not isinstance(context, Mapping) or context.get('item_type') != 'pull_request':
+        context = _mapping(context)
+        if context is None or context.get('item_type') != 'pull_request':
             return None
         number = context.get('item_number')
         return number if isinstance(number, int) and not isinstance(number, bool) else None
@@ -515,43 +546,49 @@ def _resolve_pr_number(github: GitHub) -> int | None:
     if not trigger_sha or not branch:
         return None
     matches = github.paginated(f'commits/{trigger_sha}/pulls')
-    numbers = {
-        item.get('number')
-        for item in matches
-        if isinstance(item, Mapping)
-        and item.get('state') == 'open'
-        and isinstance(item.get('head'), Mapping)
-        and item['head'].get('ref') == branch
-        and isinstance(item.get('number'), int)
-    }
+    numbers: set[int] = set()
+    for value in matches:
+        item = _mapping(value)
+        head = _mapping(item.get('head')) if item is not None else None
+        number = item.get('number') if item is not None else None
+        if item is not None and item.get('state') == 'open' and head is not None and head.get('ref') == branch:
+            if isinstance(number, int) and not isinstance(number, bool):
+                numbers.add(number)
     return next(iter(numbers)) if len(numbers) == 1 else None
 
 
 def _find_ci_run(github: GitHub, head_sha: str) -> Mapping[str, object] | None:
-    response = github.request(f'actions/workflows/ci.yml/runs?head_sha={head_sha}&event=pull_request&per_page=100')
-    if not isinstance(response, Mapping) or not isinstance(response.get('workflow_runs'), list):
+    response = _mapping(
+        github.request(f'actions/workflows/ci.yml/runs?head_sha={head_sha}&event=pull_request&per_page=100')
+    )
+    raw_runs = _objects(response.get('workflow_runs')) if response is not None else None
+    if raw_runs is None:
         raise ValueError('CI workflow run response is incomplete')
-    matches = [
-        run
-        for run in response['workflow_runs']
-        if isinstance(run, Mapping)
-        and run.get('head_sha') == head_sha
-        and run.get('event') == 'pull_request'
-        and run.get('status') == 'completed'
-        and run.get('conclusion') == 'success'
-    ]
+    matches: list[dict[str, object]] = []
+    for value in raw_runs:
+        run = _mapping(value)
+        if (
+            run is not None
+            and run.get('head_sha') == head_sha
+            and run.get('event') == 'pull_request'
+            and run.get('status') == 'completed'
+            and run.get('conclusion') == 'success'
+        ):
+            matches.append(run)
     return max(matches, key=lambda item: str(item.get('updated_at', ''))) if matches else None
 
 
 def _ci_jobs(github: GitHub, run_id: int) -> list[dict[str, object]]:
     raw_jobs = github.paginated(f'actions/runs/{run_id}/jobs', collection='jobs')
     jobs: list[dict[str, object]] = []
-    for job in raw_jobs:
-        if not isinstance(job, Mapping):
+    for value in raw_jobs:
+        job = _mapping(value)
+        if job is None:
             raise ValueError('CI job metadata is incomplete')
-        steps = job.get('steps')
-        if not isinstance(steps, list):
+        steps = _objects(job.get('steps'))
+        if steps is None:
             raise ValueError('CI step metadata is incomplete')
+        step_data = [_mapping(step) for step in steps]
         jobs.append(
             {
                 'name': _object_string(job, 'name'),
@@ -562,8 +599,8 @@ def _ci_jobs(github: GitHub, run_id: int) -> list[dict[str, object]]:
                         'name': _object_string(step, 'name'),
                         'conclusion': _object_string(step, 'conclusion'),
                     }
-                    for step in steps
-                    if isinstance(step, Mapping)
+                    for step in step_data
+                    if step is not None
                 ],
             }
         )
@@ -646,24 +683,24 @@ def _pin_review(github: GitHub) -> PinnedReview | None:
         skip('could not resolve exactly one pull request from trusted trigger context')
         return None
 
-    pr = github.request(f'pulls/{pr_number}')
-    if not isinstance(pr, Mapping):
+    pr = _mapping(github.request(f'pulls/{pr_number}'))
+    if pr is None:
         skip('pull-request response is incomplete', original_sha)
         return None
-    head, base = pr.get('head'), pr.get('base')
-    if not isinstance(head, Mapping) or not isinstance(base, Mapping):
+    head, base = _mapping(pr.get('head')), _mapping(pr.get('base'))
+    if head is None or base is None:
         skip('pull-request head or base metadata is incomplete', original_sha)
         return None
     head_sha, base_sha = _object_string(head, 'sha'), _object_string(base, 'sha')
     base_ref = _object_string(base, 'ref')
-    head_repo, base_repo = head.get('repo'), base.get('repo')
+    head_repo, base_repo = _mapping(head.get('repo')), _mapping(base.get('repo'))
     if pr.get('state') != 'open' or pr.get('draft') is not False:
         skip('pull request is closed or draft', original_sha or head_sha)
         return None
     if (
-        not isinstance(head_repo, Mapping)
+        head_repo is None
         or head_repo.get('full_name') != repository
-        or not isinstance(base_repo, Mapping)
+        or base_repo is None
         or base_repo.get('full_name') != repository
     ):
         skip('fork pull requests are outside this workflow scope', original_sha)
@@ -713,19 +750,20 @@ def _pin_review(github: GitHub) -> PinnedReview | None:
 
 def _matches_pinned_pr(pr: object, pinned: PinnedReview, repository: str) -> bool:
     """Reject a PR whose state, head, or base changed after eligibility was pinned."""
-    if not isinstance(pr, Mapping) or pr.get('state') != 'open' or pr.get('draft') is not False:
+    pr = _mapping(pr)
+    if pr is None or pr.get('state') != 'open' or pr.get('draft') is not False:
         return False
-    head, base = pr.get('head'), pr.get('base')
-    if not isinstance(head, Mapping) or not isinstance(base, Mapping):
+    head, base = _mapping(pr.get('head')), _mapping(pr.get('base'))
+    if head is None or base is None:
         return False
-    head_repo, base_repo = head.get('repo'), base.get('repo')
+    head_repo, base_repo = _mapping(head.get('repo')), _mapping(base.get('repo'))
     return (
         head.get('sha') == pinned.head_sha
         and base.get('sha') == pinned.base_sha
         and base.get('ref') == pinned.base_ref
-        and isinstance(head_repo, Mapping)
+        and head_repo is not None
         and head_repo.get('full_name') == repository
-        and isinstance(base_repo, Mapping)
+        and base_repo is not None
         and base_repo.get('full_name') == repository
     )
 
@@ -738,9 +776,9 @@ def _candidate_inventory(
     """Build the complete changed-file inventory and collect CI job evidence."""
     jobs = _ci_jobs(github, pinned.run_id)
     raw_files = github.paginated(f'pulls/{pinned.pr_number}/files')
-    if any(not isinstance(value, Mapping) for value in raw_files):
+    files = [file for value in raw_files if (file := _mapping(value)) is not None]
+    if len(files) != len(raw_files):
         raise ValueError('pull-request file metadata is incomplete')
-    files = [value for value in raw_files if isinstance(value, Mapping)]
     expected_file_count = pinned.pr.get('changed_files')
     if not isinstance(expected_file_count, int) or expected_file_count != len(files):
         raise ValueError('pull-request file listing is incomplete')
@@ -942,15 +980,19 @@ def _safe_output_report(agent_output_path: Path) -> str | None:
         outer = json.loads(agent_output_path.read_text(encoding='utf-8'))
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(outer, Mapping) or not isinstance(outer.get('items'), list):
+    outer = _mapping(outer)
+    items = _objects(outer.get('items')) if outer is not None else None
+    if items is None:
         return None
     matching: list[str] = []
-    for item in outer['items']:
-        if not isinstance(item, Mapping) or item.get('type') != 'record_test_quality_review':
+    for value in items:
+        item = _mapping(value)
+        if item is None or item.get('type') != 'record_test_quality_review':
             continue
-        if not isinstance(item.get('report'), str):
+        report = item.get('report')
+        if not isinstance(report, str):
             return None
-        matching.append(item['report'])
+        matching.append(report)
     return matching[0] if len(matching) == 1 else None
 
 
@@ -978,7 +1020,8 @@ def publish_result() -> int:
     github = GitHub(token, context.repository)
     try:
         result = json.loads(Path(os.environ.get('RESULT_PATH', 'validated-result.json')).read_text(encoding='utf-8'))
-        if not isinstance(result, Mapping):
+        result = _mapping(result)
+        if result is None:
             raise ValueError('validated report artifact is malformed')
         if (
             not context.complete
