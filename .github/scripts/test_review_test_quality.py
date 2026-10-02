@@ -76,6 +76,93 @@ def test_new_test_is_candidate_and_unrelated_source_is_not() -> None:
     assert unrelated_complete and unrelated == []
 
 
+@pytest.mark.parametrize('path', ['pytest.toml', '.pytest.toml', 'pytest.ini', '.pytest.ini'])
+@pytest.mark.parametrize('status', ['added', 'removed'])
+def test_empty_dedicated_pytest_configs_are_candidates(path: str, status: str) -> None:
+    candidates, complete, reason = build_candidates([{'filename': path, 'status': status}])
+
+    assert complete, reason
+    assert [candidate.path for candidate in candidates] == [path]
+    assert candidates[0].relevant_paths == [path]
+
+
+@pytest.mark.parametrize('path', ['pytest.toml', '.pytest.toml', 'pytest.ini', '.pytest.ini'])
+def test_renamed_away_dedicated_pytest_configs_remain_candidates(path: str) -> None:
+    candidates, complete, reason = build_candidates(
+        [{'filename': 'config/pytest-settings', 'previous_filename': path, 'status': 'renamed'}]
+    )
+
+    assert complete, reason
+    assert [candidate.path for candidate in candidates] == ['config/pytest-settings']
+    assert candidates[0].relevant_paths == [path]
+
+
+def test_setup_cfg_candidate_tracks_only_the_tool_pytest_section() -> None:
+    before = '[tool:pytest]\ntestpaths = tests\n\n[metadata]\nname = old\n\n[flake8]\nmax-line-length = 100\n'
+    unrelated_after = '[tool:pytest]\ntestpaths = tests\n\n[metadata]\nname = new\n\n[flake8]\nmax-line-length = 120\n'
+    relevant_after = (
+        '[tool:pytest]\ntestpaths = integration\n\n[metadata]\nname = old\n\n[flake8]\nmax-line-length = 100\n'
+    )
+
+    unrelated, unrelated_complete, _ = build_candidates(
+        [{'filename': 'setup.cfg', 'status': 'modified'}],
+        setup_cfg_before=before,
+        setup_cfg_after=unrelated_after,
+    )
+    relevant, relevant_complete, _ = build_candidates(
+        [{'filename': 'setup.cfg', 'status': 'modified'}],
+        setup_cfg_before=before,
+        setup_cfg_after=relevant_after,
+    )
+
+    assert unrelated_complete and unrelated == []
+    assert relevant_complete and [candidate.path for candidate in relevant] == ['setup.cfg']
+
+
+def test_setup_cfg_section_presence_addition_removal_and_rename_are_candidates() -> None:
+    added, added_complete, _ = build_candidates(
+        [{'filename': 'setup.cfg', 'status': 'added'}], setup_cfg_before=None, setup_cfg_after='[tool:pytest]\n'
+    )
+    removed, removed_complete, _ = build_candidates(
+        [{'filename': 'setup.cfg', 'status': 'removed'}], setup_cfg_before='[tool:pytest]\n', setup_cfg_after=None
+    )
+    renamed, renamed_complete, _ = build_candidates(
+        [{'filename': 'pytest-config.cfg', 'previous_filename': 'setup.cfg', 'status': 'renamed'}],
+        setup_cfg_before='[tool:pytest]\ntestpaths = tests\n',
+        setup_cfg_after=None,
+    )
+
+    assert added_complete and [candidate.path for candidate in added] == ['setup.cfg']
+    assert removed_complete and [candidate.path for candidate in removed] == ['setup.cfg']
+    assert renamed_complete and [candidate.path for candidate in renamed] == ['pytest-config.cfg']
+    assert renamed[0].relevant_paths == ['setup.cfg']
+
+
+def test_setup_cfg_default_values_do_not_hide_direct_section_changes() -> None:
+    before = '[DEFAULT]\ntestpaths = tests\n\n[tool:pytest]\n'
+    after = '[DEFAULT]\ntestpaths = tests\n\n[tool:pytest]\ntestpaths = tests\n'
+
+    candidates, complete, _ = build_candidates(
+        [{'filename': 'setup.cfg', 'status': 'modified'}], setup_cfg_before=before, setup_cfg_after=after
+    )
+
+    assert complete and [candidate.path for candidate in candidates] == ['setup.cfg']
+
+
+@pytest.mark.parametrize(
+    'before,after',
+    [(None, None), ('[broken', '[tool:pytest]\ntestpaths = tests\n')],
+)
+def test_setup_cfg_missing_or_malformed_source_fails_closed(before: str | None, after: str | None) -> None:
+    candidates, complete, reason = build_candidates(
+        [{'filename': 'setup.cfg', 'status': 'modified'}], setup_cfg_before=before, setup_cfg_after=after
+    )
+
+    assert candidates == []
+    assert not complete
+    assert reason
+
+
 def test_current_ci_test_workflows_are_candidates() -> None:
     workflow_paths = [
         '.github/workflows/benchmark.yml',

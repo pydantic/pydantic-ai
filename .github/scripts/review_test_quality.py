@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import json
 import os
 import re
@@ -118,6 +119,9 @@ def _path_is_test_candidate(path: str) -> bool:
         '.github/workflows/ci.yml',
         'Makefile',
         'pytest.ini',
+        '.pytest.ini',
+        'pytest.toml',
+        '.pytest.toml',
         'tox.ini',
     }
 
@@ -142,18 +146,45 @@ def _objects(value: object) -> list[object] | None:
         return None
 
 
-def _relevant_pyproject_changed(before: str, after: str) -> bool:
-    """Return whether pytest or coverage configuration changed in a valid TOML file."""
-    old_data = tomllib.loads(before)
-    new_data = tomllib.loads(after)
-    old_tool = _mapping(old_data.get('tool', {}))
-    new_tool = _mapping(new_data.get('tool', {}))
-    if old_tool is None or new_tool is None:
-        return False
-    for section in ('pytest', 'coverage'):
-        if old_tool.get(section) != new_tool.get(section):
-            return True
-    return False
+class _CaseSensitiveConfigParser(configparser.ConfigParser):
+    """ConfigParser variant that preserves option names exactly as written."""
+
+    def optionxform(self, optionstr: str) -> str:
+        return optionstr
+
+
+def _setup_cfg_pytest_section(source: str | None) -> tuple[bool, dict[str, str]]:
+    """Read only direct [tool:pytest] options, without inheriting [DEFAULT] values."""
+    parser = _CaseSensitiveConfigParser(interpolation=None, default_section='')
+    if source is not None:
+        parser.read_string(source)
+    has_section = parser.has_section('tool:pytest')
+    return has_section, dict(parser.items('tool:pytest', raw=True)) if has_section else {}
+
+
+def _relevant_config_changed(
+    config_path: Literal['pyproject.toml', 'setup.cfg'], before: str | None, after: str | None
+) -> bool | None:
+    """Compare test selection config; return None when either source is incomplete or malformed."""
+    if config_path == 'pyproject.toml':
+        if before is None or after is None:
+            return None
+        try:
+            old_data = tomllib.loads(before)
+            new_data = tomllib.loads(after)
+            old_tool = _mapping(old_data.get('tool', {}))
+            new_tool = _mapping(new_data.get('tool', {}))
+            if old_tool is None or new_tool is None:
+                return None
+            return any(old_tool.get(section) != new_tool.get(section) for section in ('pytest', 'coverage'))
+        except (tomllib.TOMLDecodeError, TypeError):
+            return None
+    if before is None and after is None:
+        return None
+    try:
+        return _setup_cfg_pytest_section(before) != _setup_cfg_pytest_section(after)
+    except configparser.Error:
+        return None
 
 
 def _indented_yaml_block(lines: list[str], start: int, parent_indent: int) -> tuple[list[str], int]:
@@ -243,11 +274,17 @@ def build_candidates(
     *,
     pyproject_before: str | None = None,
     pyproject_after: str | None = None,
+    setup_cfg_before: str | None = None,
+    setup_cfg_after: str | None = None,
     workflow_contents: Mapping[str, tuple[str | None, str | None]] | None = None,
 ) -> tuple[list[Candidate], bool, str]:
     """Select possible test or test-selection changes, failing closed on incomplete metadata."""
     candidates: list[Candidate] = []
     seen_paths: set[str] = set()
+    config_sources: tuple[tuple[Literal['pyproject.toml', 'setup.cfg'], str | None, str | None], ...] = (
+        ('pyproject.toml', pyproject_before, pyproject_after),
+        ('setup.cfg', setup_cfg_before, setup_cfg_after),
+    )
     for file_data in files:
         path = file_data.get('filename')
         status = file_data.get('status')
@@ -276,14 +313,14 @@ def build_candidates(
                 return [], False, 'pinned workflow content is missing from both revisions'
             if any(content is not None and _workflow_may_select_tests(content) for content in contents):
                 relevant_paths.append(workflow_path)
-        if path == 'pyproject.toml' or previous == 'pyproject.toml':
-            if pyproject_before is None or pyproject_after is None:
-                return [], False, 'pinned pyproject.toml sections could not be compared'
-            try:
-                if _relevant_pyproject_changed(pyproject_before, pyproject_after):
-                    relevant_paths.append('pyproject.toml')
-            except (tomllib.TOMLDecodeError, TypeError):
-                return [], False, 'pinned pyproject.toml could not be parsed'
+        for config_path, before, after in config_sources:
+            if config_path not in names:
+                continue
+            changed = _relevant_config_changed(config_path, before, after)
+            if changed is None:
+                return [], False, f'pinned {config_path} could not be compared or parsed'
+            if changed:
+                relevant_paths.append(config_path)
         if relevant_paths and path not in seen_paths:
             candidates.append(
                 Candidate(
@@ -786,6 +823,13 @@ def _candidate_inventory(
     ):
         before = _git_text('show', f'{merge_base_sha}:pyproject.toml')
         after = _git_text('show', f'{pinned.head_sha}:pyproject.toml')
+    setup_cfg_before = setup_cfg_after = None
+    if any(file.get('filename') == 'setup.cfg' or file.get('previous_filename') == 'setup.cfg' for file in files):
+        revisions: list[str | None] = []
+        for revision in (merge_base_sha, pinned.head_sha):
+            tree_paths = _git_text('ls-tree', '-r', '--name-only', revision, '--', 'setup.cfg').splitlines()
+            revisions.append(_git_text('show', f'{revision}:setup.cfg') if 'setup.cfg' in tree_paths else None)
+        setup_cfg_before, setup_cfg_after = revisions
     changed_workflows = {
         path
         for file in files
@@ -809,6 +853,8 @@ def _candidate_inventory(
         files,
         pyproject_before=before,
         pyproject_after=after,
+        setup_cfg_before=setup_cfg_before,
+        setup_cfg_after=setup_cfg_after,
         workflow_contents=workflow_contents,
     )
     if not complete:
