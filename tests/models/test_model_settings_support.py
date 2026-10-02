@@ -73,6 +73,7 @@ with try_import() as openai_available:
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.models.openai_codex import OpenAICodexModel
+    from pydantic_ai.models.openai_decisions import OpenAIDecisionsModel
     from pydantic_ai.models.openrouter import OpenRouterModel
     from pydantic_ai.models.snowflake import SnowflakeModel
     from pydantic_ai.models.zai import ZaiModel
@@ -83,6 +84,7 @@ with try_import() as openai_available:
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
     from pydantic_ai.providers.openai_codex import OpenAICodexCredentials, OpenAICodexProvider
+    from pydantic_ai.providers.openai_decisions import OpenAIDecisionsProvider
     from pydantic_ai.providers.openrouter import OpenRouterProvider
     from pydantic_ai.providers.snowflake import SnowflakeProvider
     from pydantic_ai.providers.zai import ZaiProvider
@@ -591,6 +593,10 @@ def _system_one(client: httpx2.AsyncClient) -> Model:
     )
 
 
+def _openai_decisions(client: httpx2.AsyncClient) -> Model:
+    return OpenAIDecisionsModel('gpt-6-luna', provider=OpenAIDecisionsProvider(api_key=PROBE_KEY, http_client=client))
+
+
 CASES = [
     Case(
         'OpenAIChatModel',
@@ -637,6 +643,12 @@ CASES = [
     Case('MCPSamplingModel', ('MCP Sampling',), mcp_sampling_probe, _needs(mcp_available, 'mcp')),
     Case('TypeSafeModel', ('TypeSafe',), decision_probe(_typesafe), _needs(typesafe_available, 'typesafe-sdk')),
     Case('SystemOneModel', ('System One',), decision_probe(_system_one)),
+    Case(
+        'OpenAIDecisionsModel',
+        ('OpenAI Decisions',),
+        decision_probe(_openai_decisions),
+        _needs(openai_available, 'openai'),
+    ),
 ]
 
 
