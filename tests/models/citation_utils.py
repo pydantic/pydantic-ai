@@ -8,7 +8,7 @@ class IsCitationList(list[Citation]):
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, list):  # pragma: no cover
-            return False  # pragma: no cover
+            return False
         citations = cast(list[object], other)
         return bool(citations) and all(isinstance(item, Citation) for item in citations)
 
