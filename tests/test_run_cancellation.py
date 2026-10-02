@@ -1058,11 +1058,15 @@ def _interrupt_sync_run_once(started: asyncio.Event) -> Generator[None]:
         )
         if started_waiter.done():
             raise KeyboardInterrupt
+        assert future.done(), 'the run neither finished nor set `started` in time'
         return future.result()
 
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(loop, 'run_until_complete', interrupt_once)
-        yield
+    try:
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(loop, 'run_until_complete', interrupt_once)
+            yield
+    finally:
+        started_waiter.cancel()
 
 
 def _fast_then_slow_tool_agent(started: asyncio.Event) -> Agent[None, str]:
@@ -1177,7 +1181,46 @@ def test_run_stream_sync_keyboard_interrupt_while_streaming_output_carries_run_s
 
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
-    assert _tool_returns(cancelled) == ['fast done']
+    assert cancelled.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[UserPromptPart(content='go', timestamp=IsNow(tz=timezone.utc))],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='fast_tool', tool_call_id=IsStr())],
+                usage=RequestUsage(input_tokens=50),
+                model_name='function::stream_text_after_tool',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='fast_tool',
+                        content='fast done',
+                        tool_call_id=IsStr(),
+                        timestamp=IsNow(tz=timezone.utc),
+                    )
+                ],
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='partial ')],
+                usage=RequestUsage(input_tokens=50, output_tokens=1),
+                model_name='function::stream_text_after_tool',
+                timestamp=IsNow(tz=timezone.utc),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+                state='interrupted',
+            ),
+        ]
+    )
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason='`asyncio.timeout()` needs Python 3.11+')
