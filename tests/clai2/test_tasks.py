@@ -455,6 +455,7 @@ async def test_tasks_without_arguments_opens_the_live_task_browser(
     def escape(timeout: float) -> str:
         return 'escape'
 
+    monkeypatch.setattr('termflow.tui.menu.raw_mode', nullcontext)
     monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', escape)
     shell = shell_for(tmp_path, ForkModel(), io.StringIO())
     record = task(conversation_id=shell.session.summary.id)
