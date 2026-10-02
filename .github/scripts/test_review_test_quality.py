@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from pydantic import ValidationError
 from review_test_quality import (
     Candidate,
+    GitHub,
     PinnedReview,
     ReviewContext,
     _ci_jobs,
@@ -120,12 +122,25 @@ def test_sandbox_nightly_local_caller_removal_or_rename_is_a_candidate(status: s
 @pytest.mark.parametrize(
     'command',
     [
+        'pytest tests/test_example.py',
+        'tox -e py313',
+        'nox -s tests',
+        'unittest',
+        'python -m pytest',
+        'python3.13 -m unittest',
         'coverage run -m pytest',
         'uv run coverage run -m pytest',
         'uv run --no-sync coverage run -m pytest',
+        'uv run --with=pytest pytest',
+        'uv run --with pytest pytest tests/test_example.py',
+        'uv run --directory=tests pytest',
+        'make test',
+        'make testcov',
+        'make test-integration',
+        'make integration-ci',
     ],
 )
-def test_coverage_wrapped_pytest_workflow_commands_are_candidates(command: str) -> None:
+def test_known_workflow_test_commands_are_candidates(command: str) -> None:
     path = '.github/workflows/coverage-tests.yml'
     source = f'jobs:\n  tests:\n    steps:\n      - run: {command}\n'
 
@@ -135,6 +150,50 @@ def test_coverage_wrapped_pytest_workflow_commands_are_candidates(command: str) 
 
     assert complete, reason
     assert [candidate.path for candidate in candidates] == [path]
+
+
+def test_long_workflow_command_options_are_recognized_and_rejected_deterministically() -> None:
+    path = '.github/workflows/long-tests.yml'
+    long_selector = '--with=! ' * 1000
+    long_valid = '--with=test-dependency ' * 1000
+
+    candidate, complete, reason = build_candidates(
+        [{'filename': path, 'status': 'modified'}],
+        workflow_contents={
+            path: (
+                f'jobs:\n  tests:\n    steps:\n      - run: uv run {long_selector}not-a-test-command\n',
+                f'jobs:\n  tests:\n    steps:\n      - run: uv run {long_valid}pytest\n',
+            )
+        },
+    )
+
+    assert complete, reason
+    assert [item.path for item in candidate] == [path]
+    assert candidate[0].relevant_paths == [path]
+
+
+def test_irrelevant_long_workflow_command_is_not_a_candidate() -> None:
+    path = '.github/workflows/long-tests.yml'
+    source = f'jobs:\n  docs:\n    steps:\n      - run: uv run {"--with=! " * 1000}not-a-test-command\n'
+
+    candidates, complete, reason = build_candidates(
+        [{'filename': path, 'status': 'modified'}], workflow_contents={path: (source, source)}
+    )
+
+    assert complete, reason
+    assert candidates == []
+
+
+def test_uv_option_without_value_does_not_raise_or_select_a_test() -> None:
+    path = '.github/workflows/malformed-test-command.yml'
+    source = 'jobs:\n  docs:\n    steps:\n      - run: uv run --with\n'
+
+    candidates, complete, reason = build_candidates(
+        [{'filename': path, 'status': 'modified'}], workflow_contents={path: (source, source)}
+    )
+
+    assert complete, reason
+    assert candidates == []
 
 
 def test_changed_workflow_commands_are_detected_in_both_revisions() -> None:
@@ -378,17 +437,22 @@ def test_pinned_pull_request_recheck_rejects_head_or_base_changes() -> None:
 
 
 def test_ci_evidence_preserves_skipped_job_and_step_conclusions() -> None:
-    class FakeGitHub:
-        def paginated(self, path: str) -> list[object]:
-            assert path == 'actions/runs/10/jobs'
-            return [
-                {
-                    'name': 'optional test matrix',
-                    'conclusion': 'skipped',
-                    'html_url': 'https://github.com/pydantic/pydantic-ai/actions/runs/10/job/20',
-                    'steps': [{'name': 'classify', 'conclusion': 'success'}],
-                }
-            ]
+    class FakeGitHub(GitHub):
+        def __init__(self) -> None:
+            super().__init__('unused', 'pydantic/pydantic-ai')
+
+        def request(self, path: str, **kwargs: object) -> object:
+            assert path.startswith('actions/runs/10/jobs?')
+            return {
+                'jobs': [
+                    {
+                        'name': 'optional test matrix',
+                        'conclusion': 'skipped',
+                        'html_url': 'https://github.com/pydantic/pydantic-ai/actions/runs/10/job/20',
+                        'steps': [{'name': 'classify', 'conclusion': 'success'}],
+                    }
+                ]
+            }
 
     assert _ci_jobs(FakeGitHub(), 10) == [
         {
@@ -398,3 +462,49 @@ def test_ci_evidence_preserves_skipped_job_and_step_conclusions() -> None:
             'steps': [{'name': 'classify', 'conclusion': 'success'}],
         }
     ]
+
+
+def test_ci_jobs_paginate_wrapped_job_collections() -> None:
+    class FakeGitHub(GitHub):
+        def __init__(self) -> None:
+            super().__init__('unused', 'pydantic/pydantic-ai')
+            self.calls: list[str] = []
+
+        def request(self, path: str, **kwargs: object) -> object:
+            self.calls.append(path)
+            page = int(parse_qs(urlsplit(path).query)['page'][0])
+            jobs = [
+                {
+                    'name': f'job {index}',
+                    'conclusion': 'success',
+                    'html_url': f'https://github.com/pydantic/pydantic-ai/actions/runs/10/job/{index}',
+                    'steps': [],
+                }
+                for index in range((page - 1) * 100, 101 if page == 2 else 100)
+            ]
+            return {'total_count': 101, 'jobs': jobs}
+
+    github = FakeGitHub()
+
+    jobs = _ci_jobs(github, 10)
+
+    assert len(jobs) == 101
+    assert jobs[0]['name'] == 'job 0'
+    assert jobs[-1]['name'] == 'job 100'
+    assert github.calls == [
+        'actions/runs/10/jobs?per_page=100&page=1',
+        'actions/runs/10/jobs?per_page=100&page=2',
+    ]
+
+
+@pytest.mark.parametrize('response', [{'total_count': 0}, {'jobs': None}, {'jobs': {}}])
+def test_ci_jobs_malformed_wrapped_response_fails_closed(response: Mapping[str, object]) -> None:
+    class FakeGitHub(GitHub):
+        def __init__(self) -> None:
+            super().__init__('unused', 'pydantic/pydantic-ai')
+
+        def request(self, path: str, **kwargs: object) -> object:
+            return response
+
+    with pytest.raises(ValueError, match='expected a jobs list'):
+        _ci_jobs(FakeGitHub(), 10)

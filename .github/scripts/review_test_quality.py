@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from itertools import dropwhile
 from pathlib import Path
 from typing import Literal
 
@@ -24,16 +25,18 @@ _API = 'https://api.github.com'
 _CHECK_NAME = 'Test Quality Review'
 _MAX_CHECK_SUMMARY_BYTES = 65_535
 _TEST_NAME = re.compile(r'(?:test_.*|.*_test)\.py\Z')
-_TEST_COMMAND = re.compile(
-    r'^(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:'
-    r'uv\s+run(?:\s+(?:--(?:directory|extra|group|package|project|python|with|with-editable|with-requirements)(?:=|\s+)\S+|--[\w-]+(?:=[^\s]+)?))*\s+'
-    r'(?:pytest|tox|nox|unittest|coverage\s+run\s+-m\s+pytest|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest))'
-    r'|coverage\s+run\s+-m\s+pytest'
-    r'|python(?:3(?:\.\d+)?)?\s+-m\s+(?:pytest|unittest)'
-    r'|(?:pytest|tox|nox|unittest)\b'
-    r'|make\s+(?:test|testcov|test-[\w-]+|integration-[\w-]+)\b'
-    r')'
-)
+_PYTHON_COMMAND = re.compile(r'python(?:3(?:\.\d+)?)?\Z')
+_UV_VALUE_OPTIONS = {
+    '--directory',
+    '--extra',
+    '--group',
+    '--package',
+    '--project',
+    '--python',
+    '--with',
+    '--with-editable',
+    '--with-requirements',
+}
 _INVENTORY = Path('.test-quality-context/candidate-inventory.json')
 _CI_EVIDENCE = Path('.test-quality-context/ci-evidence.json')
 
@@ -157,8 +160,7 @@ def _workflow_may_select_tests(source: str) -> bool:
         if not stripped or stripped.startswith('#'):
             index += 1
             continue
-        if stripped.startswith('- '):
-            stripped = stripped[2:]
+        stripped = stripped.removeprefix('- ')
         is_uses = stripped.startswith('uses:') and (len(stripped) == 5 or stripped[5].isspace())
         if is_uses:
             value = stripped[5:].split('#', 1)[0].strip().strip('\'"')
@@ -193,8 +195,24 @@ def _workflow_may_select_tests(source: str) -> bool:
         if command.endswith('\\'):
             pending = command[:-1].rstrip()
             continue
-        if any(_TEST_COMMAND.match(segment.strip()) for segment in re.split(r'&&|\|\||[;|]', command)):
-            return True
+        for segment in re.split(r'&&|\|\||[;|]', command):
+            parts = list(dropwhile(lambda token: re.match(r'[A-Za-z_][A-Za-z0-9_]*=', token), segment.strip().split()))
+            command_index = 2 if parts[:2] == ['uv', 'run'] else 0
+            while command_index < len(parts) and parts[command_index].startswith('--'):
+                option, separator, _ = parts[command_index].partition('=')
+                command_index += 1 + int((option in _UV_VALUE_OPTIONS) & (not separator))
+            command_name = parts[command_index] if command_index < len(parts) else ''
+            target = parts[command_index + 1] if command_index + 1 < len(parts) else ''
+            is_test_command = command_name in {'pytest', 'tox', 'nox', 'unittest'}
+            is_test_command |= parts[command_index : command_index + 4] == ['coverage', 'run', '-m', 'pytest']
+            is_test_command |= bool(_PYTHON_COMMAND.fullmatch(command_name)) & (
+                parts[command_index + 1 : command_index + 3] in (['-m', 'pytest'], ['-m', 'unittest'])
+            )
+            is_test_command |= (command_name == 'make') & (
+                target in {'test', 'testcov'} or target.startswith(('test-', 'integration-'))
+            )
+            if is_test_command:
+                return True
     return False
 
 
@@ -389,16 +407,22 @@ class GitHub:
         except (urllib.error.URLError, json.JSONDecodeError) as exc:
             raise RuntimeError(f'GitHub API request failed: {method} {path}: {exc}') from exc
 
-    def paginated(self, path: str) -> list[object]:
+    def paginated(self, path: str, *, collection: str | None = None) -> list[object]:
         results: list[object] = []
         page = 1
         while True:
             query = urllib.parse.urlencode({'per_page': 100, 'page': page})
             response = self.request(f'{path}?{query}')
-            if not isinstance(response, list):
-                raise ValueError(f'expected a list from GitHub API: {path}')
-            results.extend(response)
-            if len(response) < 100:
+            if collection is None:
+                if not isinstance(response, list):
+                    raise ValueError(f'expected a list from GitHub API: {path}')
+                items = response
+            else:
+                if not isinstance(response, Mapping) or not isinstance(response.get(collection), list):
+                    raise ValueError(f'expected a {collection} list from GitHub API: {path}')
+                items = response[collection]
+            results.extend(items)
+            if len(items) < 100:
                 return results
             page += 1
 
@@ -520,7 +544,7 @@ def _find_ci_run(github: GitHub, head_sha: str) -> Mapping[str, object] | None:
 
 
 def _ci_jobs(github: GitHub, run_id: int) -> list[dict[str, object]]:
-    raw_jobs = github.paginated(f'actions/runs/{run_id}/jobs')
+    raw_jobs = github.paginated(f'actions/runs/{run_id}/jobs', collection='jobs')
     jobs: list[dict[str, object]] = []
     for job in raw_jobs:
         if not isinstance(job, Mapping):

@@ -264,6 +264,7 @@ Account for each changed test surface, including helpers, fixtures, parameters, 
 Trace renamed and deleted tests from their old paths.
 Check fixture, import, collection, and environment changes before declaring a move equivalent.
 Inspect cassette assertions and matching behavior; a recording alone is not a guarantee.
+When a fixture or mock replaces a boundary, name what it bypasses; credit the test only with the behavior it actually exercises.
 
 Reuse the supplied CI evidence.
 Name the job and selection that actually reach the claimed protection.
