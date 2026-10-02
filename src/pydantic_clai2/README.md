@@ -1045,8 +1045,10 @@ to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
 window by default). `/compact` runs the same chain between turns regardless of that
-threshold. Add words to say what the summary must keep: `/compact the auth refactor, not the CSS`. You get one line
-with the message counts before and after and an estimate of the tokens saved.
+threshold. Add free text to say what the summary must keep, for example
+`/compact don't lose the "auth" decisions`. The focus is passed to the summariser
+as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
+You get one line with the message counts before and after and an estimate of the tokens saved.
 An empty conversation, or one that fits inside the protected tail, says so and
 sends nothing.
 
@@ -1067,6 +1069,12 @@ turns it off, `/compact` included:
 | `protected_tokens` | `50000` | tokens of the most recent messages never compacted |
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
+
+The status row shows compact used/max context tokens, such as `128k/1m`.
+The maximum comes from the request's model or the `context_window` override;
+it stays `?` until the plugin reports a known window. An unknown model's fallback
+compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
+larger counts round to whole thousands (`k`) or tenths of a million (`m`).
 
 The context figure turns yellow when a request still exceeds `threshold` after
 compaction, for example because the protected tail is too large. For windows smaller

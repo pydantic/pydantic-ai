@@ -482,8 +482,8 @@ Live refuses a stated requirement it cannot meet rather than accepting and ignor
 | Image input | Full feature support | [Images](audio.md#images) provide context for the next turn |
 | Manual turns and interruption | Full feature support | `turn_detection=False` plus [commit/create verbs](turns.md#push-to-talk); [`interrupt(played_ms=...)`](turns.md#barge-in) records the heard cutoff |
 | Input transcription | Full feature support | [Dedicated model](audio.md#input-transcription); `'auto'` by default |
-| Native tools | Unsupported | Configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Usage | Full feature support | Token, audio, and cache breakdowns |
+| Native tools | Unsupported | The API offers remote MCP servers, which Pydantic AI does not expose yet ([#9032](https://github.com/pydantic/pydantic-ai/issues/9032)); configure [local fallbacks](tools.md#native-tools) for web capabilities |
 | Reconnection | Full feature support | The connection has no resumable server handle, so Pydantic AI [replays completed local history](lifecycle.md#state-restoration) into a new session; in-flight media is lost |
 
 ## Provider-specific quirks
