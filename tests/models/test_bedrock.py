@@ -1831,9 +1831,9 @@ def _bedrock_history_with_citations(
     provider_name: str,
     location: dict[str, Any] = {'documentChar': {'documentIndex': 0, 'start': 21, 'end': 32}},
     anchor: ContentCitationAnchor | None = ContentCitationAnchor(start=0, end=len('Thirty days.')),
+    text: str = 'Thirty days.',
 ) -> list[ModelMessage]:
     """Message history as it comes back from JSON storage, with a text document and a cited answer."""
-    text = 'Thirty days.'
     return ModelMessagesTypeAdapter.validate_json(
         ModelMessagesTypeAdapter.dump_json(
             [
@@ -1976,6 +1976,17 @@ async def test_bedrock_sends_unverifiable_citations_as_text(
     assert await _bedrock_replayed_answer(bedrock_provider, mocker, history) == {
         'role': 'assistant',
         'content': [{'text': 'Thirty days.'}, {'text': 'Uncited note.'}],
+    }
+
+
+async def test_bedrock_sends_citations_on_empty_text_as_text(
+    allow_model_requests: None, bedrock_provider: BedrockProvider, mocker: MockerFixture
+) -> None:
+    history = _bedrock_history_with_citations('bedrock', anchor=None, text='')
+
+    assert await _bedrock_replayed_answer(bedrock_provider, mocker, history) == {
+        'role': 'assistant',
+        'content': [{'text': ''}, {'text': 'Uncited note.'}],
     }
 
 

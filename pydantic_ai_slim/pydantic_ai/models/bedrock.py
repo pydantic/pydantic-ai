@@ -488,7 +488,10 @@ def _map_citations_for_replay(
     part. Every source must be a character range that still selects its excerpt from a plain-text document in the
     request. `document_texts` holds the text of each document in the request's messages, or `None` if it isn't text.
     """
-    if not citations or len(citations) != 1 or citations[0].anchor != ContentCitationAnchor(start=0, end=len(text)):
+    if not citations or len(citations) != 1:
+        return None
+    anchor = citations[0].anchor
+    if not isinstance(anchor, ContentCitationAnchor) or (anchor.start, anchor.end) != (0, len(text)):
         return None
     mapped_sources: list[CitationOutputTypeDef] = []
     for source in citations[0].sources:
