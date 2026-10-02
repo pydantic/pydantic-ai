@@ -275,6 +275,11 @@ async def _run_lifecycle_hooks(  # noqa: C901
             except BaseException as exc:
                 _handler_errors.append(exc)
                 raise
+            if isinstance(error, asyncio.CancelledError):
+                # Cancellation can't be recovered, so `on_run_error` only observes it. Re-raise it
+                # here rather than return the attempted recovery, so `wrap_run` still sees the
+                # cancellation and its `except asyncio.CancelledError` cleanup runs.
+                raise error
         elif result_ready is not None and not result_ready():  # pragma: no cover
             # The caller finished without a result (e.g. `break` out of iteration): there is
             # nothing to return, so park until the wrap task is cancelled below. Normally the

@@ -750,7 +750,8 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         failures that this hook does not recover.
 
         Cancellation is terminal: the hook may observe it and clean up, but cannot recover the
-        run to success.
+        run to success. A result returned for a cancellation is discarded, and `wrap_run` still
+        sees the `CancelledError`.
 
         Not called for `GeneratorExit` or `KeyboardInterrupt`.
 
