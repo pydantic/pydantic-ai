@@ -1,7 +1,6 @@
 from __future__ import annotations as _annotations
 
 import itertools
-import re
 import string
 from collections.abc import AsyncGenerator, AsyncIterator, Iterable
 from contextlib import asynccontextmanager
@@ -467,20 +466,24 @@ class _JsonSchemaTestData:
         """Generate data for the JSON schema."""
         return self._gen_any(self.schema)
 
-    def _gen_any(self, schema: dict[str, Any]) -> Any:
+    def _gen_any(self, schema: dict[str, Any] | bool) -> Any:  # noqa: C901
         """Generate data for any JSON Schema."""
-        if 'const' in schema:
+        if isinstance(schema, bool):
+            # a boolean schema has no structure to generate from
+            return self._char()
+        elif 'const' in schema:
             return schema['const']
         elif enum := schema.get('enum'):
             return enum[self.seed % len(enum)]
         elif examples := schema.get('examples'):
             return examples[self.seed % len(examples)]
         elif ref := schema.get('$ref'):
-            key = re.sub(r'^#/\$defs/', '', ref)
-            js_def = self.defs[key]
-            return self._gen_any(js_def)
+            return self._gen_any(self._resolve_ref(ref))
         elif any_of := schema.get('anyOf'):
             return self._gen_any(any_of[self.seed % len(any_of)])
+        elif schema.get('oneOf') and 'type' not in schema:
+            # a `oneOf` beside a `type` narrows that type, so the `type` drives generation
+            return self._one_of_gen(schema)
 
         type_ = schema.get('type')
         if type_ is None:
@@ -503,6 +506,29 @@ class _JsonSchemaTestData:
         else:
             raise NotImplementedError(f'Unknown type: {type_}, please submit a PR to extend JsonSchemaTestData!')
 
+    def _resolve_ref(self, ref: str) -> dict[str, Any]:
+        """Look up a JSON Schema `$ref` in the schema's `$defs`."""
+        return self.defs[ref.removeprefix('#/$defs/')]
+
+    def _one_of_gen(self, schema: dict[str, Any]) -> Any:
+        """Generate data for a JSON Schema `oneOf`."""
+        one_of = schema['oneOf']
+        member = one_of[self.seed % len(one_of)]
+        if not _utils.is_str_dict(member):
+            # a boolean subschema has no structure to generate from
+            return self._char()
+        # Pydantic leaves a defaulted discriminator tag out of `required`, but validation needs it to pick the
+        # member. A nested union passes on the `required` its parent union added.
+        required = schema.get('required', [])
+        discriminator = schema.get('discriminator')
+        if _utils.is_str_dict(discriminator) and (tag := discriminator.get('propertyName')):
+            required = [*required, tag]
+        if required:
+            if ref := member.get('$ref'):
+                member = self._resolve_ref(ref)
+            member = {**member, 'required': [*member.get('required', []), *required]}
+        return self._gen_any(member)
+
     def _object_gen(self, schema: dict[str, Any]) -> dict[str, Any]:
         """Generate data for a JSON Schema object."""
         required = set(schema.get('required', []))
@@ -517,10 +543,7 @@ class _JsonSchemaTestData:
             add_prop_key = 'additionalProperty'
             while add_prop_key in data:
                 add_prop_key += '_'
-            if addition_props is True:
-                data[add_prop_key] = self._char()
-            else:
-                data[add_prop_key] = self._gen_any(addition_props)
+            data[add_prop_key] = self._gen_any(addition_props)
 
         return data
 
@@ -612,14 +635,21 @@ class _JsonSchemaTestData:
         """Generate an array from a JSON Schema array."""
         data: list[Any] = []
         unique_items = schema.get('uniqueItems')
-        if prefix_items := schema.get('prefixItems'):
-            for item in prefix_items:
-                data.append(self._gen_any(item))
-                if unique_items:
-                    self.seed += 1
-
-        items_schema = schema.get('items', {})
+        max_items = schema.get('maxItems')
+        prefix_items: list[dict[str, Any] | bool] | None = schema.get('prefixItems')
+        items_schema: dict[str, Any] | bool | list[dict[str, Any] | bool] = schema.get('items', {})
+        if isinstance(items_schema, list):
+            # Drafts before 2020-12 spell a tuple as an `items` list; 2020-12 replaced it with `prefixItems`.
+            prefix_items, items_schema = prefix_items or items_schema, {}
         min_items = schema.get('minItems', 0)
+        for index, item in enumerate(prefix_items or []):
+            # stop at `maxItems`, compared as for `items` below, unless `minItems` asks for more
+            if isinstance(max_items, (int, float)) and not max_items > index and not min_items > index:
+                break
+            data.append(self._gen_any(item))
+            if unique_items:
+                self.seed += 1
+
         if min_items > len(data):
             for _ in range(min_items - len(data)):
                 data.append(self._gen_any(items_schema))
@@ -627,7 +657,6 @@ class _JsonSchemaTestData:
                     self.seed += 1
         elif items_schema:
             # if there is an `items` schema, add an item unless it would break `maxItems` rule
-            max_items = schema.get('maxItems')
             if max_items is None or max_items > len(data):
                 data.append(self._gen_any(items_schema))
                 if unique_items:

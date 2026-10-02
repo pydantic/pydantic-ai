@@ -56,7 +56,7 @@ async def test_provider_error_message(
     store = SettingsStore(tmp_path / 'config.db')
     if mode == 'headless':
         monkeypatch.setattr(headless, 'create_agent', lambda: agent)
-        monkeypatch.setattr(headless, 'DEFAULT_PLUGINS', ())
+        monkeypatch.setattr(headless, 'STOCK_PLUGINS', ())
         assert (
             await headless.run_headless(
                 text='hi there', settings=Settings(model='test'), store=store, project=ProjectSettings()

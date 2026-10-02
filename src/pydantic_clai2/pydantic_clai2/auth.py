@@ -3,8 +3,10 @@
 import asyncio
 import webbrowser
 from collections.abc import Awaitable, Callable, Mapping
+from functools import partial
 from urllib.parse import parse_qs, urlparse
 
+import anyio
 from anyio import fail_after
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
@@ -20,6 +22,7 @@ from pydantic_ai.providers.openai_codex import (
     OpenAICodexProvider,
 )
 from pydantic_clai2.config.credential_store import credentials_path, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models import LOGIN_ALIASES, github_copilot, login_names
 from pydantic_clai2.plugins import PluginLogin
 from pydantic_clai2.ui.rendering import theme
@@ -31,9 +34,16 @@ ReadLine = Callable[[str], Awaitable[str]]
 
 
 async def login_command(
-    args: list[str], *, codex: 'CodexAuth', plugins: Mapping[str, PluginLogin] | None = None
+    args: list[str],
+    *,
+    codex: 'CodexAuth',
+    plugins: Mapping[str, PluginLogin] | None = None,
+    store: SettingsStore | None = None,
 ) -> str:
-    """`/login NAME` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` stays Codex."""
+    """`/login NAME` signs in to CLAI's subscriptions or one a plugin adds; bare `/login` stays Codex.
+
+    A plugin sign-in that succeeds saves its `models` to `store`.
+    """
     plugins = plugins or {}
     if len(args) > 1:
         raise ValueError(_login_usage(plugins))
@@ -43,7 +53,11 @@ async def login_command(
     if name == 'copilot':
         return await github_copilot.login(console=codex.console)
     if (login := plugins.get(name)) is not None:
-        return await login.handler()
+        message = await login.handler()
+        if store is not None:
+            for model in login.models:
+                store.add_model(name=model)
+        return message
     raise ValueError(_login_usage(plugins))
 
 
@@ -77,7 +91,7 @@ class CodexCredentials(OpenAICodexCredentialSource):
 
     async def load(self) -> OpenAICodexCredentials:
         """Load credentials without falling back to another application's tokens."""
-        value = await asyncio.to_thread(load_codex_credentials)
+        value = await anyio.to_thread.run_sync(load_codex_credentials, abandon_on_cancel=True)
         if value is None:
             raise UserError('Codex is not connected. Run /login codex.')
         try:
@@ -88,7 +102,7 @@ class CodexCredentials(OpenAICodexCredentialSource):
     async def save(self, credentials: OpenAICodexCredentials) -> None:
         """Persist login or refresh results using the configured OS credential backend."""
         value = _CREDENTIALS.dump_json(credentials).decode()
-        await asyncio.to_thread(save_codex_credentials, value=value)
+        await anyio.to_thread.run_sync(partial(save_codex_credentials, value=value), abandon_on_cancel=True)
 
 
 class CodexAuth:
@@ -118,7 +132,7 @@ class CodexAuth:
 
         # Launching in a thread keeps the loop available for core's callback listener.
         async def open_browser() -> None:
-            await asyncio.to_thread(webbrowser.open, flow.authorization_url())
+            await anyio.to_thread.run_sync(webbrowser.open, flow.authorization_url(), abandon_on_cancel=True)
 
         browser = asyncio.create_task(open_browser())
         try:
