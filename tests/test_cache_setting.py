@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from pydantic_ai import Agent
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models import ModelRequestParameters
@@ -45,10 +46,6 @@ with try_import() as google_imports:
     from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
     from pydantic_ai.providers.google import GoogleProvider
 
-pytestmark = [
-    pytest.mark.anyio,
-]
-
 
 def _echo(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     return ModelResponse(parts=[TextPart(content='ok')])
@@ -72,8 +69,6 @@ def _resolve_cache(model: FunctionModel, cache: CacheSetting) -> tuple[ModelSett
 
 async def test_cache_setting_end_to_end_run():
     """The setting survives a full agent run on a supporting model without reaching the model function."""
-    from pydantic_ai import Agent
-
     result = await Agent(_make_model(supports_cache=True), model_settings={'cache': True}).run('hi')
     assert result.output == 'ok'
 
