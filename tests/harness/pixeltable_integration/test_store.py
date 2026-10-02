@@ -381,9 +381,7 @@ class TestPixeltableMemoryStoreSearch:
         statements: list[str] = []
 
         def record(*args: object) -> None:
-            statement = args[2]
-            if isinstance(statement, str) and 'SELECT' in statement:
-                statements.append(statement)
+            statements.append(str(args[2]))
 
         event.listen(Engine, 'before_cursor_execute', record)
         try:
