@@ -113,22 +113,22 @@ README, or source code.
 - Relevant protocol-shaped output is snapshotted.
 - **Harness cassettes are re-recorded on composition change.** Each packaged
   harness has a recorded end-to-end integration test (e.g.
-  `tests/coder/test_coder_integration.py`) that runs it against a real task.
+  `tests/harness/coder/test_coder_integration.py`) that runs it against a real task.
   Any change to that harness's composition, defaults, or instructions
   re-records the cassette in the same PR
   (`uv run --env-file .env --no-sync pytest -p no:cacheprovider <test> --record-mode=rewrite`) —
   a green replay of a stale cassette proves nothing about the new definition.
-- Run the local verification commands in `AGENTS.md` before handoff.
+- Run the local verification commands in `src/pydantic_ai_harness/AGENTS.md` before handoff.
 
 ## Docs
 
 Every released capability ships two hand-maintained docs that must stay in sync
 with the code and with each other:
 
-- the **README** next to the implementation (`pydantic_ai_harness/<capability>/README.md`,
-  or `pydantic_ai_harness/experimental/<capability>/README.md` for ACP), which
+- the **README** next to the implementation (`src/pydantic_ai_harness/pydantic_ai_harness/<capability>/README.md`,
+  or `src/pydantic_ai_harness/pydantic_ai_harness/experimental/<capability>/README.md` for ACP), which
   serves GitHub and PyPI, and
-- the **unified doc** on the docs site, flat under `docs/<capability>.md`. The
+- the **unified doc** on the docs site, flat under `docs/harness/<capability>.md`. The
   sidebar is a flat list under "Pydantic AI Harness" -- no `capabilities/` or
   `experimental/` subdirectories.
 
@@ -138,14 +138,14 @@ Checks:
   (public class, params, defaults, tool names, extras, safety semantics). A
   change reflected in only one of them is a defect, not a follow-up.
 - The `pydantic-ai-harness` agent skill
-  (`pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`) reflects the change:
+  (`src/pydantic_ai_harness/pydantic_ai_harness/.agents/skills/pydantic-ai-harness/`) reflects the change:
   a new capability is listed in its routing table and covered in the matching
   `references/` file, and a changed parameter, default, tool name, or extra is
   updated there too.
 - **Harness blown-out parity.** A packaged harness (`Coder`, `Researcher`, ...)
   has its composition written out in full — default instructions and allowlists
   included, not imported — in its docs page's "Blown-out equivalent" AND in its
-  `examples/` counterpart. Any change to a harness's composition or defaults
+  `src/pydantic_ai_harness/examples/` counterpart. Any change to a harness's composition or defaults
   updates all three together (implementation, docs page, example) in the same
   PR; drift here is a defect, not a follow-up.
 - The two do not contradict each other or the source on extras, option names,
@@ -182,10 +182,10 @@ Checks:
 
 The mechanical half of these checks (README present + linked, flat page present,
 source link present, name matches, no experimental strings on non-ACP pages, no
-hook name in the lead) is enforced by `tests/test_docs_parity.py`. The semantic
+hook name in the lead) is enforced by `tests/harness/test_docs_parity.py`. The semantic
 half (does the prose match the code, are snippets truly runnable) is what the
 reviewer below is for.
 
 This is the last documentation gate before merge. Run the `docs-parity-reviewer`
-subagent (`.agents/agents/docs-parity-reviewer.md`) on the change as the final
+skill (`.agents/skills/docs-parity-reviewer/SKILL.md`) on the change as the final
 review step; treat its blocking findings as merge blockers.

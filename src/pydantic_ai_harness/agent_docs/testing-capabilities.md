@@ -8,7 +8,7 @@ helpers.
 - Import `TestModel` from `pydantic_ai.models.test` for model behavior.
 - Keep real provider calls out of tests.
 - Prefer `Agent(..., capabilities=[...])` tests for public behavior.
-- Mirror source packages under `tests/<capability>/`.
+- Mirror source packages under `tests/harness/<capability>/`.
 - Use `pytest-anyio` for async capability/toolset behavior.
 
 ## Lower-Level Tests
@@ -64,8 +64,8 @@ Run Ruff across the repository. Run pytest and Pyright for the changed paths:
 ```bash
 uv run --no-sync ruff format --check .
 uv run --no-sync ruff check .
-uv run --no-sync pytest -p no:cacheprovider tests/<capability>
-PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright pydantic_ai_harness/<module>.py tests/<module>.py
+uv run --no-sync pytest -p no:cacheprovider tests/harness/<capability>
+PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright src/pydantic_ai_harness/pydantic_ai_harness/<capability>/ tests/harness/<capability>/
 ```
 
 CI runs the repository-wide typecheck, test, and combined coverage gates.

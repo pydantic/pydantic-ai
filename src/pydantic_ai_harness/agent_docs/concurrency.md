@@ -175,8 +175,8 @@ before writing cleanup.
   tasks.
 - Order steps with `Event`s, not sleeps, and wait on them with a module-level
   readiness timeout, not a one-second literal: short waits flake under `xdist`
-  (pydantic/pydantic-ai#5399). `tests/shell/test_shell.py` and
-  `tests/guardrails/test_input_guardrail.py` already carry sleeps; when you touch
+  (pydantic/pydantic-ai#5399). `tests/harness/shell/test_shell.py` and
+  `tests/harness/guardrails/test_input_guardrail.py` already carry sleeps; when you touch
   one, convert it.
 - Prove ownership directly: diff `asyncio.all_tasks()` for ordinary leak
   checks; for a subprocess, assert the process group is gone after the timeout
