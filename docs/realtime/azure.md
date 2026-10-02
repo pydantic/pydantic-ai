@@ -193,12 +193,40 @@ Voice Live defaults input transcription to `whisper-1` when the deployment name 
 `gpt-realtime` deployment routed through `profile=` receives the `azure-speech` default; set
 `input_transcription_model` explicitly when that is not the intended deployment.
 
-Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_reduction` as on GA,
-adapting them to the model: for example, semantic VAD on a
-[cascade model][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade] uses
-Voice Live's own semantic VAD. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
+Voice Live applies `thinking`, `openai_turn_detection`, and `openai_input_noise_reduction` as on GA.
+On a [cascade model][pydantic_ai.realtime.azure.AzureRealtimeModelProfile.azure_voice_live_cascade],
+which can't take OpenAI's semantic VAD or near/far-field noise reduction, they become Voice Live's own
+semantic VAD and deep noise suppression. [`azure_voice_live_temperature`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_temperature]
 sets the sampling temperature. Voice Live ignores `openai_output_speed`, `openai_truncation`, and
 `parallel_tool_calls`.
+
+### Turn detection and audio processing
+
+Voice Live's own audio processing is configured with
+[`azure_voice_live_turn_detection`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_turn_detection],
+[`azure_voice_live_noise_reduction`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_noise_reduction],
+and [`azure_voice_live_echo_cancellation`][pydantic_ai.realtime.azure.AzureRealtimeModelSettings.azure_voice_live_echo_cancellation].
+[`AzureSemanticVAD`][pydantic_ai.realtime.azure.AzureSemanticVAD] works on every model;
+[end-of-utterance detection][pydantic_ai.realtime.azure.AzureEndOfUtteranceDetection], which lets the
+user pause mid-sentence, works only on a cascade model:
+
+```python
+from pydantic_ai.realtime.azure import (
+    AzureEndOfUtteranceDetection,
+    AzureRealtimeModelSettings,
+    AzureSemanticVAD,
+)
+
+settings = AzureRealtimeModelSettings(
+    azure_voice_live_turn_detection=AzureSemanticVAD(
+        type='azure_semantic_vad_multilingual',
+        languages=['en', 'fr'],
+        end_of_utterance_detection=AzureEndOfUtteranceDetection(model='semantic_detection_v1_multilingual'),
+    ),
+    azure_voice_live_noise_reduction='azure_deep_noise_suppression',
+    azure_voice_live_echo_cancellation=True,
+)
+```
 
 ### Voices
 
