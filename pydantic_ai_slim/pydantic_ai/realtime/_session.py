@@ -2997,10 +2997,12 @@ class RealtimeSession:
     def _bound_retained_audio(self) -> None:
         """Evict the oldest retained audio until what the session retains fits `retain_audio_max_seconds`.
 
-        Everything retained counts: audio recorded in history, segments waiting for their transcript, and the
-        turns being spoken now. Recorded audio goes first, oldest first, each part keeping its transcript;
-        then the waiting segments, oldest first; and only then the turns being spoken now, which keep their
-        most recent audio. Only the local copy is trimmed: the provider received all of it.
+        Everything retained counts: audio recorded in history, parts finalized but not recorded yet (in a
+        response still in flight, say), segments waiting for their transcript, and the turns being spoken now.
+        Audio recorded in history goes first, oldest first, each part keeping its transcript; then the waiting
+        segments, oldest first; and only then the turns being spoken now, which keep their most recent audio.
+        A part not recorded yet is only evicted once it is. Only the local copy is trimmed: the provider
+        received all of it.
         """
         budget = self._audio_budget
         excess = budget.excess(

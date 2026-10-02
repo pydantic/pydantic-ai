@@ -5545,9 +5545,10 @@ async def test_audio_retention_budget_zero_retains_nothing() -> None:
     ]
 
 
-async def test_audio_retention_budget_must_be_non_negative() -> None:
-    with pytest.raises(UserError, match='`retain_audio_max_seconds` must be at least 0'):
-        RealtimeSession(FakeRealtimeConnection([]), retain_audio_max_seconds=-1)
+@pytest.mark.parametrize('max_seconds', [-1, float('nan'), float('inf')])
+async def test_audio_retention_budget_must_be_finite_and_non_negative(max_seconds: float) -> None:
+    with pytest.raises(UserError, match='`retain_audio_max_seconds` must be a finite number of at least 0'):
+        RealtimeSession(FakeRealtimeConnection([]), retain_audio_max_seconds=max_seconds)
 
 
 async def test_send_rejects_unsupported_binary_content() -> None:

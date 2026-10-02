@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 from ..exceptions import UserError
@@ -23,8 +24,8 @@ class RetainedAudioBudget:
     """
 
     def __init__(self, max_seconds: float | None, *, input_sample_rate: int, output_sample_rate: int) -> None:
-        if max_seconds is not None and max_seconds < 0:
-            raise UserError('`retain_audio_max_seconds` must be at least 0, or `None` for no limit.')
+        if max_seconds is not None and not (math.isfinite(max_seconds) and max_seconds >= 0):
+            raise UserError('`retain_audio_max_seconds` must be a finite number of at least 0, or `None` for no limit.')
         self.retains_audio = max_seconds != 0
         """Whether any audio may be retained at all: `False` for a budget of `0`."""
         self._input_byte_weight = output_sample_rate
