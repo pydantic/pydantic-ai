@@ -36,6 +36,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from ._deprecated_fallback_model import check_deprecated_fallback_model
+from ._merge import merge_capability_fields
 from .abstract import AbstractCapability
 from .native_or_local import NativeOrLocalTool
 
@@ -156,8 +157,9 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     `ImageGenerator` or `ImageGenerationModel`.
 
     When passing a custom `native` instance or factory, its settings are also used for the
-    `fallback_subagent_model` subagent; capability-level fields override any `native` settings. A static
-    instance's `aspect_ratio` is also inherited by the direct fallback.
+    `fallback_subagent_model` subagent; capability-level fields override any `native` settings. The
+    direct fallback reads a static instance the same way: it inherits its `aspect_ratio`, refuses its
+    `action='edit'`, and warns about its `model` and the native-only settings it drops.
     """
 
     local: str | ImageGenerator | Tool[AgentDepsT] | Callable[..., Any] | AbstractToolset[AgentDepsT] | bool | None = (
@@ -175,7 +177,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     `fallback_image_model`'s to take.
 
     A generator is kept as declared; the `generate_image` tool is derived from it and the
-    capability's settings each time the toolset is requested.
+    capability's settings, again for every copy `dataclasses.replace` or a merge makes.
     """
 
     fallback_subagent_model: ImageGenerationFallbackModel
@@ -193,7 +195,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     that returns a `Model` instance or model name string.
 
     The model is kept as declared; the `generate_image` tool is derived from it and the
-    capability's settings each time the toolset is requested.
+    capability's settings, again for every copy `dataclasses.replace` or a merge makes.
     """
 
     fallback_image_model: ImageGenerationModel | str | None = None
@@ -211,7 +213,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
     `image_model` with a warning.
 
     The model is kept as declared; the `generate_image` tool is derived from it and the
-    capability's settings each time the toolset is requested.
+    capability's settings, again for every copy `dataclasses.replace` or a merge makes.
     """
 
     # Keep these fields in sync with ImageGenerationTool in native_tools.py.
@@ -396,8 +398,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         # The three fallbacks are alternatives: two of them leave one silently unused, and the local
         # tool would take effect with the others ignored. Checked here rather than in `__init__` so a
         # merge is held to it too: `combine` can pair one instance's `fallback_subagent_model` with
-        # another's `local`, which no constructor accepts. Runs before the base resolves `local`, so
-        # it reads what was declared rather than what was materialized.
+        # another's `local`, which no constructor accepts.
         stated = [
             name
             for name, value in (
@@ -504,11 +505,10 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                     if value is not None
                 ),
             ]
-        # The notices follow the base's validation, which is what rejects a `local` that is no tool.
+        # The notices follow the base's validation, which is what rejects a `local` that is no tool
+        # and builds the subagent tool, failing for a subagent this configuration can't run -- an
+        # image-only model, a `native` of the wrong type.
         super().__post_init__()
-        # Built here only so a subagent this configuration can't run -- an image-only model, a
-        # `native` of the wrong type -- fails at construction; `get_toolset` builds the tool it uses.
-        self._fallback_subagent_tool()
         if unapplied:
             # user → `__init__` → here → `warn`; `from_spec` adds a frame and so lands one short.
             warnings.warn(
@@ -574,18 +574,6 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         """
         return self._direct_generator is not None
 
-    def _has_local_fallback(self) -> bool:
-        # `fallback_image_model` and `fallback_subagent_model` are local implementations the base
-        # cannot see: they live on fields of this class, and `get_toolset` is where the
-        # `generate_image` tool each stands for gets built. Without this, `native=False` beside one
-        # would read as a no-op capability. A generator on `local` needs no help — the base reads
-        # that field itself.
-        return (
-            super()._has_local_fallback()
-            or self.fallback_image_model is not None
-            or self.fallback_subagent_model is not None
-        )
-
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Merge like `NativeOrLocalTool`, except that `dimensions` is one value, not a collection.
@@ -596,17 +584,20 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         tuple that is no size at all. It takes the later stated value instead, the rule the scalar
         fields already get.
 
-        Applied after the base merge because `__post_init__` reads only whether `dimensions` is
-        set, never what it is, and a merge never turns a stated pair into `None`.
+        Applied before the tools are resolved again, because the `generate_image` tool carries the
+        pair.
         """
-        merged = super().combine(capabilities)
-        assert isinstance(merged, cls)
         stated = [
             capability.dimensions
             for capability in capabilities
             if isinstance(capability, ImageGeneration) and capability.dimensions is not None
         ]
-        return replace_no_init(merged, dimensions=stated[-1]) if stated else merged
+        merged = merge_capability_fields(capabilities)
+        # Copied either way, as the base does, so resolving again never touches an instance the caller holds.
+        merged = replace_no_init(merged, dimensions=stated[-1]) if stated else replace_no_init(merged)
+        assert isinstance(merged, cls)
+        merged.__post_init__()
+        return merged
 
     @classmethod
     def from_spec(
@@ -682,21 +673,27 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return direct_only
 
     def _native_only_settings(self) -> list[str]:
-        """Settings only the native tool can express, which a direct generator drops."""
+        """Settings only the native tool can express, which a direct generator drops.
+
+        A declared `ImageGenerationTool` instance states them too. It can't say which of its values
+        were passed rather than defaulted, so only those that differ from the tool's defaults count.
+        """
+        defaults = ImageGenerationTool()
+        native = self.native if isinstance(self.native, ImageGenerationTool) else defaults
         # Collected as a table rather than a chain of `if`s to keep the callers under the
         # complexity limit.
         return [
             name
-            for name, value in (
-                ('background', self.background),
-                ('input_fidelity', self.input_fidelity),
-                ('moderation', self.moderation),
-                ('output_compression', self.output_compression),
-                ('output_format', self.output_format),
-                ('quality', self.quality),
-                ('size', self.size),
+            for name, value, native_value, default in (
+                ('background', self.background, native.background, defaults.background),
+                ('input_fidelity', self.input_fidelity, native.input_fidelity, defaults.input_fidelity),
+                ('moderation', self.moderation, native.moderation, defaults.moderation),
+                ('output_compression', self.output_compression, native.output_compression, defaults.output_compression),
+                ('output_format', self.output_format, native.output_format, defaults.output_format),
+                ('quality', self.quality, native.quality, defaults.quality),
+                ('size', self.size, native.size, defaults.size),
             )
-            if value is not None
+            if value is not None or native_value != default
         ]
 
     def _native_geometry(self) -> tuple[dict[str, Any], list[str]]:
@@ -766,32 +763,28 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         )
 
     def _direct_local_tool(self, generator: ImageGenerator | ImageGenerationModel) -> Tool[Any]:
-        """Build the `generate_image` tool from the capability's current settings.
-
-        Derived when the toolset is requested rather than stored at construction, so what the tool
-        carries is always what the capability declares: `dataclasses.replace` and `combine` both
-        produce an instance whose fields no longer match a tool built from an earlier one.
-        """
+        """Build the `generate_image` tool from the capability's settings."""
+        # A custom `native` instance is the base and capability-level fields override it, the same
+        # precedence `_resolved_native` gives the `fallback_subagent_model` subagent.
+        native = self.native if isinstance(self.native, ImageGenerationTool) else None
         settings: ImageGenerationSettings = {}
         if self.dimensions is not None:
             settings['dimensions'] = self.dimensions
-        # A custom `native` instance is the base and capability-level fields override it, the same
-        # precedence `_resolved_native` gives the `fallback_subagent_model` subagent. `size` has no
-        # counterpart on the other side of that merge; `dimensions` is the capability's own
-        # spelling of the geometry the inherited `aspect_ratio` expresses, and the two are mutually
-        # exclusive in `ImageGenerationSettings`, so inheriting alongside it would fail the generate
-        # call over a setting the user never passed to the capability.
+        # `size` has no counterpart on the other side of that merge; `dimensions` is the capability's
+        # own spelling of the geometry the inherited `aspect_ratio` expresses, and the two are
+        # mutually exclusive in `ImageGenerationSettings`, so inheriting alongside it would fail the
+        # generate call over a setting the user never passed to the capability.
         aspect_ratio = self.aspect_ratio
-        if aspect_ratio is None and self.dimensions is None and isinstance(self.native, ImageGenerationTool):
-            aspect_ratio = self.native.aspect_ratio
+        if aspect_ratio is None and self.dimensions is None and native is not None:
+            aspect_ratio = native.aspect_ratio
         if aspect_ratio is not None:
             settings['aspect_ratio'] = aspect_ratio
         return Tool[Any](
             _DirectImageGenerationTool(
                 generator=generator,
                 settings=settings,
-                action=self.action,
-                image_model=self.image_model,
+                action=native.action if self.action is None and native is not None else self.action,
+                image_model=native.model if self.image_model is None and native is not None else self.image_model,
             ).__call__,
             name='generate_image',
             description='Generate an image based on the given prompt.',
@@ -804,13 +797,15 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         """Get the ImageGenerationTool for the fallback, with capability-level overrides applied."""
         return self._resolve_native_with_overrides(ImageGenerationTool, self._image_gen_kwargs())
 
-    def _fallback_subagent_tool(self) -> Tool[AgentDepsT] | None:
-        """Build the `generate_image` tool that runs `fallback_subagent_model`, from the current settings.
+    def _resolve_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
+        # A direct generator, on `local` or named by `fallback_image_model`, becomes the
+        # `generate_image` tool built around it.
+        if (generator := self._direct_generator) is not None:
+            return self._direct_local_tool(generator)
+        return super()._resolve_local()
 
-        Derived when the toolset is requested, like the direct generator's tool, rather than stored
-        on `local`: `dataclasses.replace` feeds every field back through `__init__`, where a derived
-        tool on `local` would read as a second fallback beside `fallback_subagent_model`.
-        """
+    def _default_local(self) -> Tool[AgentDepsT] | None:
+        """The `generate_image` tool that runs `fallback_subagent_model`, built from the current settings."""
         if self.fallback_subagent_model is None:
             return None
         from pydantic_ai.common_tools.image_generation import image_generation_tool
@@ -818,23 +813,14 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return image_generation_tool(model=self.fallback_subagent_model, native_tool=self._resolved_native())
 
     def get_toolset(self) -> AbstractToolset[AgentDepsT] | None:
-        capability = self
-        if (generator := self._direct_generator) is not None:
-            # The base builds its toolset from a `Tool` or toolset on `local`, so the direct
-            # generator becomes the `generate_image` tool on a copy. Deriving it here rather than
-            # keeping it on the capability is what keeps a replaced or merged instance from sending
-            # an earlier one's settings.
-            capability = replace_no_init(self, local=self._direct_local_tool(generator))
-        elif (subagent_tool := self._fallback_subagent_tool()) is not None:
-            capability = replace_no_init(self, local=subagent_tool)
-        toolset = super(ImageGeneration, capability).get_toolset()
+        toolset = super().get_toolset()
         # A callable `native` is resolved per request by the framework, so whether it yields a tool
         # that supersedes the generator can't be known here without invoking it a second time.
         # A resolved `native` tool also means the base wrapped the local toolset for `unless_native`,
         # so the diagnostics join that prepare function instead of nesting a second wrapper.
         if (
             not isinstance(toolset, PreparedToolset)
-            or not isinstance(self.native, ImageGenerationTool)
+            or not isinstance(self._native_tool, ImageGenerationTool)
             or not self._has_direct_generator
         ):
             return toolset

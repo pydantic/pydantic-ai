@@ -454,7 +454,7 @@ Some constraint fields require the native tool (the bundled local fallback can't
 # Limit to 5 searches per run — requires native (the local fallback can't track call count)
 WebSearch(max_uses=5)
 
-# Only fetch example.com — enforced locally when native is unavailable
+# Only fetch example.com — enforced by the bundled fetcher when native is unavailable
 WebFetch(allowed_domains=['example.com'], local=True)
 ```
 

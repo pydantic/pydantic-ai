@@ -64,6 +64,7 @@ from pydantic_ai.native_tools import (
 )
 from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.settings import ModelSettings as _ModelSettings
+from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from ._inline_snapshot import snapshot
 from .capability_models import (
@@ -3415,8 +3416,7 @@ def test_native_or_local_native_unique_id_non_abstract():
     from pydantic_ai.capabilities.native_or_local import NativeOrLocalTool
 
     cap = NativeOrLocalTool.__new__(NativeOrLocalTool)
-    cap.native = lambda ctx: WebSearchTool()
-    cap.local = False
+    cap._native_tool = lambda ctx: WebSearchTool()  # pyright: ignore[reportPrivateUsage]
 
     with pytest.raises(UserError, match='cannot derive native unique_id'):
         cap._native_unique_id()  # pyright: ignore[reportPrivateUsage]
@@ -3525,7 +3525,10 @@ def test_mcp_local_url_string_override_uses_provided_url():
         local='https://override.example.com/mcp',
         native=True,
     )
-    assert isinstance(cap.local, MCPToolset)
+    assert cap.local == 'https://override.example.com/mcp'
+    toolset = cap.get_toolset()
+    assert isinstance(toolset, PreparedToolset)
+    assert isinstance(toolset.wrapped, MCPToolset)
 
 
 def test_validate_capability_not_dataclass():
