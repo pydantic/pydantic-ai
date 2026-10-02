@@ -544,12 +544,21 @@ def _sanitize_tool_name(name: str) -> str:
     return sanitized or '_'
 
 
+class CodeModeReturnSchemaWarning(UserWarning):
+    """A sandboxed tool has no return schema, so its generated signature shows `-> Any`.
+
+    The model then writes code against a result shape it has to guess. A function tool gets a
+    return schema from its return annotation; an MCP tool gets one when its server declares an
+    `outputSchema`. When the tools come from a server you do not control, silence this category
+    alone with `warnings.filterwarnings('ignore', category=CodeModeReturnSchemaWarning)`.
+    """
+
+
 def _warn_missing_return_schemas(names: Sequence[str]) -> None:
     """Warn once for every tool whose sandbox signature will show `-> Any`.
 
-    Without a return schema the model gets no type information about the return shape,
-    which limits code mode effectiveness. MCP servers commonly omit output schemas, so the
-    tools are named in one warning rather than one warning each.
+    MCP servers commonly omit output schemas, so the tools are named in one warning rather
+    than one warning each.
     """
     if not names:
         return
@@ -558,7 +567,12 @@ def _warn_missing_return_schemas(names: Sequence[str]) -> None:
     else:
         listed = ', '.join(repr(name) for name in names)
         message = f'CodeMode: {len(names)} tools have no return schema ({listed}); their signatures will show `-> Any`'
-    warnings.warn(f'{message}, which may reduce code mode effectiveness.', UserWarning, stacklevel=3)
+    warnings.warn(
+        f'{message}, which may reduce code mode effectiveness. Add a return annotation to a function tool, '
+        'or an `outputSchema` to an MCP tool; to silence this, filter `CodeModeReturnSchemaWarning`.',
+        CodeModeReturnSchemaWarning,
+        stacklevel=3,
+    )
 
 
 def global_mode_is_sequential(get_mode: Callable[..., ParallelExecutionMode]) -> bool:
