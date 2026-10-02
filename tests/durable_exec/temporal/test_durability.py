@@ -6,7 +6,7 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterable, Callable, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
@@ -57,6 +57,7 @@ from pydantic_ai.capabilities import (
     Capability,
     DynamicCapability,
     Fallback,
+    Hooks,
     ImageGeneration,
     Instrumentation,
     NativeTool,
@@ -70,6 +71,7 @@ from pydantic_ai.capabilities.combined import CombinedCapability
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
 from pydantic_ai.exceptions import (
     ModelAPIError,
+    ModelHTTPError,
     ModelRetry,
     SkipModelRequest,
     UnexpectedModelBehavior,
@@ -356,9 +358,8 @@ fallback_durable_agent = Agent(
     FunctionModel(_failing_model_fn, model_name='failing'),
     name='durability_fallback_agent',
     capabilities=[
-        # Model errors reach the workflow as `ActivityError`, not as the `ModelAPIError` the default
-        # `fallback_on` matches, so this falls back on any error.
-        Fallback('fallback_target', fallback_on=lambda exc: True),
+        # The default `fallback_on`: the model error reaches the workflow as itself, not as `ActivityError`.
+        Fallback('fallback_target'),
         TemporalDurability(
             activity_config=BASE_ACTIVITY_CONFIG,
             models={'fallback_target': FunctionModel(_fallback_target_fn, model_name='fallback_target')},
@@ -394,6 +395,107 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
     assert output == 'from fallback'
     # The failed attempt on the agent's model and the one on the fallback model.
     assert _scheduled_activity_count(history) == 2
+
+
+# --- Model errors reach workflow code with their original type ---
+
+
+def _overloaded_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ModelHTTPError(503, 'overloaded-model', body={'error': 'overloaded'}, headers={'Retry-After': '7'})
+
+
+async def _overloaded_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    raise ModelHTTPError(503, 'overloaded-model', body={'error': 'overloaded'}, headers={'Retry-After': '7'})
+    yield ''  # pragma: no cover
+
+
+def _broken_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    raise ValueError('not a model error')
+
+
+def _describe(error: Exception) -> str:
+    if isinstance(error, ModelHTTPError):
+        return f'{type(error).__name__} {error.status_code} {error.retry_after} {error.body}'
+    return type(error).__name__
+
+
+async def _describe_model_error(
+    ctx: RunContext[None], *, request_context: ModelRequestContext, error: Exception
+) -> ModelResponse:
+    """Recover with a description of the error the hook received in workflow code."""
+    return ModelResponse(parts=[TextPart(_describe(error))])
+
+
+async def _drain_events(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for _ in stream:
+        pass
+
+
+def _model_error_agent(name: str, model: FunctionModel, *, streamed: bool = False) -> Agent[None, str]:
+    # A failure to open a streamed request isn't handed to `on_model_request_error`, so the streamed
+    # agent lets the error reach the workflow, which describes it instead.
+    capabilities: list[AbstractCapability[None]] = (
+        [ProcessEventStream(_drain_events)] if streamed else [Hooks[None](model_request_error=_describe_model_error)]
+    )
+    capabilities.append(TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG))
+    return Agent(model, name=name, deps_type=type(None), capabilities=capabilities)
+
+
+model_error_agent = _model_error_agent('durability_model_error', FunctionModel(_overloaded_model_fn))
+streamed_model_error_agent = _model_error_agent(
+    'durability_streamed_model_error', FunctionModel(stream_function=_overloaded_stream_fn), streamed=True
+)
+other_error_agent = _model_error_agent('durability_other_error', FunctionModel(_broken_model_fn))
+
+
+@workflow.defn
+class ModelErrorWorkflow:
+    @workflow.run
+    async def run(self, agent_name: str) -> str:
+        agent = {agent.name: agent for agent in (model_error_agent, streamed_model_error_agent, other_error_agent)}[
+            agent_name
+        ]
+        try:
+            return (await agent.run('hello')).output
+        except ModelHTTPError as error:
+            return _describe(error)
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [pytest.param(model_error_agent, id='request'), pytest.param(streamed_model_error_agent, id='stream')],
+)
+async def test_durability_model_error_reaches_workflow_with_its_type(client: Client, agent: Agent[None, str]):
+    """A model activity's `ModelHTTPError` reaches workflow code as itself, fields included, not as `ActivityError`."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ModelErrorWorkflow],
+        plugins=[AgentPlugin(agent)],
+    ):
+        output = await client.execute_workflow(
+            ModelErrorWorkflow.run,
+            args=[agent.name],
+            id=f'{ModelErrorWorkflow.__name__}_{agent.name}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == "ModelHTTPError 503 7.0 {'error': 'overloaded'}"
+
+
+async def test_durability_non_model_error_still_reaches_workflow_as_activity_error(client: Client):
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ModelErrorWorkflow],
+        plugins=[AgentPlugin(other_error_agent)],
+    ):
+        output = await client.execute_workflow(
+            ModelErrorWorkflow.run,
+            args=[other_error_agent.name],
+            id=f'{ModelErrorWorkflow.__name__}_{other_error_agent.name}',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'ActivityError'
 
 
 # --- Durability with tools ---

@@ -38,9 +38,6 @@ Handlers may be sync or async. A handler whose first parameter is annotated as [
 
 When every model has failed or been rejected, `Fallback` raises [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] with every exception, plus a [`ResponseRejected`][pydantic_ai.models.fallback.ResponseRejected] counting any rejected responses.
 
-!!! warning "Temporal"
-    Under [Temporal](../durable_execution/temporal.md), a failed model request currently reaches the workflow as Temporal's `ActivityError` rather than the [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] the default `fallback_on` matches. Until model errors are rebuilt on the workflow side, widen `fallback_on` to match the errors you want to fall back on, or keep using [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which falls back inside a single activity.
-
 !!! note
     Provider SDKs often retry failed requests themselves before raising, which delays falling back. See [The layers](../retries.md#the-layers) in the retries guide for how to turn those retries off.
 
