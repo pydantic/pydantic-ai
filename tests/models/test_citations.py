@@ -39,7 +39,7 @@ with try_import() as openai_available:
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 
-pytestmark = [pytest.mark.anyio, pytest.mark.vcr]
+pytestmark = pytest.mark.vcr
 
 # The Anthropic recordings sent this explicitly; without it, requests are streamed behind the scenes.
 ANTHROPIC_SETTINGS = ModelSettings(max_tokens=4096)
