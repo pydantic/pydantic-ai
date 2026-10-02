@@ -52,6 +52,7 @@ from pydantic_ai import (
     WebSearchUserLocation,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
     Capability,
     DynamicCapability,
@@ -540,13 +541,28 @@ def test_durability_rejects_default_model_key():
         )
 
 
-def test_durability_from_agent_rejects_duplicates():
-    agent = Agent(
-        _durability_fn_model,
-        name='duplicate_durability',
-        capabilities=[TemporalDurability(), TemporalDurability()],
-    )
+def test_durability_rejects_a_second_engine():
+    with pytest.raises(
+        UserError,
+        match=r'An agent can have only one durable execution engine, but this one would have 2: '
+        r'`TemporalDurability`, `TemporalDurability`\.',
+    ):
+        Agent(
+            _durability_fn_model,
+            name='duplicate_durability',
+            capabilities=[TemporalDurability(), TemporalDurability()],
+        )
 
+
+def test_durability_from_agent_rejects_duplicates():
+    """`Agent` refuses a second engine before binding, but `from_agent` accepts any `AbstractAgent`."""
+
+    class _TwoEngines(WrapperAgent[None, str]):
+        @property
+        def root_capability(self) -> CombinedCapability[None]:
+            return CombinedCapability([TemporalDurability(), TemporalDurability()])
+
+    agent = _TwoEngines(Agent(_durability_fn_model, name='duplicate_durability'))
     with pytest.raises(
         UserError,
         match=r'Multiple TemporalDurability capabilities are attached to this agent; attach at most one\.',
