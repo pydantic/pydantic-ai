@@ -4232,14 +4232,13 @@ class OpenAIStreamedResponse(StreamedResponse):
         if not self._pending_raw_annotations:
             return
 
-        part = self._parts_manager.get_part_by_vendor_id('content')
-        if not isinstance(part, TextPart):
-            yield from self._parts_manager.handle_text_delta(vendor_part_id='content', content='')
-            part = self._parts_manager.get_part_by_vendor_id('content')
-            assert isinstance(part, TextPart)
-        citations, provider_details = self._map_chat_annotations(self._pending_raw_annotations, part)
+        part = self._parts_manager.get_part_by_vendor_id(self._vendor_part_id)
+        text = part.content if isinstance(part, TextPart) else ''
+        citations, provider_details = self._map_chat_annotations(self._pending_raw_annotations, text)
+        if citations is None and provider_details is None:
+            return
         yield from self._parts_manager.handle_text_delta(
-            vendor_part_id='content',
+            vendor_part_id=self._vendor_part_id,
             content='',
             provider_name=self.provider_name if provider_details is not None else None,
             provider_details=provider_details,
@@ -4328,7 +4327,7 @@ class OpenAIStreamedResponse(StreamedResponse):
             self._pending_raw_annotations.extend(cast(list[object], raw_annotations))
 
     def _map_chat_annotations(
-        self, raw_annotations: list[object], part: TextPart
+        self, raw_annotations: list[object], text: str
     ) -> tuple[list[Citation] | None, dict[str, Any] | None]:
         annotations: list[chat.chat_completion_message.Annotation] = []
         serialized_annotations: list[object] = []
@@ -4340,8 +4339,8 @@ class OpenAIStreamedResponse(StreamedResponse):
             else:
                 annotations.append(annotation)
                 serialized_annotations.append(chat_annotation_ta.dump_python(annotation, warnings=False))
-        if self._raw_text_content == part.content:
-            citations = _map_chat_citations(annotations, part.content)
+        if self._raw_text_content == text:
+            citations = _map_chat_citations(annotations, text)
         else:
             # Annotation offsets address the raw provider text, not text transformed by
             # thinking-tag removal or leading-whitespace normalization.

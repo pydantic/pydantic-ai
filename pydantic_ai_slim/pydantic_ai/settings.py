@@ -472,18 +472,16 @@ class ModelSettings(TypedDict, total=False):
     """
 
     include_citations: bool
-    """Whether to request provider-native citations when the provider requires an explicit opt-in.
+    """Whether to ask for citations from providers that only return them when asked.
 
-    Citation responses are normalized onto [`TextPart.citations`][pydantic_ai.messages.TextPart.citations].
-    This setting does not retain raw provider annotation payloads; use the relevant provider-specific setting
-    when those are also needed.
+    Citations are put on [`TextPart.citations`][pydantic_ai.messages.TextPart.citations]. To also keep the provider's
+    raw annotations, use the provider's own setting, such as `openai_include_raw_annotations`.
 
     Supported by:
 
     * Anthropic (documents and Web Fetch)
 
-    Providers that return citations without an explicit request setting ignore this field; their citations are
-    still normalized when present.
+    Providers that always return citations ignore this setting.
     """
 
     service_tier: ServiceTier
