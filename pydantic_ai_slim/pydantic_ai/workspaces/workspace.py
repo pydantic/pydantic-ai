@@ -338,7 +338,7 @@ class _ShellFilesystem(SupportsFilesystem):
             'case "$part" in ""|.) ;; ..) resolved="${resolved%/*}";; *) '
             f'if [ "$links" -lt {_SHELL_MAX_SYMLINKS} ] && [ -L "$resolved/$part" ]; then '
             'links=$((links + 1)); '
-            'target=$(readlink -n -- "$resolved/$part"; printf x); target="${target%x}"; '
+            'target=$(readlink -n -- "$resolved/$part" && printf x) || exit 1; target="${target%x}"; '
             'case "$target" in /*) resolved=;; esac; rest="$target/$rest"; '
             'else resolved="$resolved/$part"; fi;; esac; done; '
             'value="${resolved:-/}"; printf %s "$value" | wc -c; printf %s "$value" | base64',
@@ -505,7 +505,8 @@ class Workspace(WorkspaceBackend):
         """Follow every symlink in `path` in the environment, like `os.path.realpath(path, strict=False)`.
 
         Uses the backend's [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath], else `readlink` in
-        its shell. Without either, it only normalizes the path as text: symlinks are not followed, so a
+        its shell, raising [`WorkspaceError`][pydantic_ai.workspaces.WorkspaceError] if `readlink` fails on a
+        link. Without either, it only normalizes the path as text: symlinks are not followed, so a
         path check built on it can be escaped through a link.
 
         `..` climbs from a symlink's target, as it does for commands. File methods open
