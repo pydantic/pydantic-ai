@@ -85,7 +85,7 @@ from pydantic_ai.durable_exec._base import construction_toolsets
 from pydantic_ai.exceptions import ContentFilterError
 from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
-from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, FunctionModel
+from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.native_tools import (
@@ -12072,6 +12072,51 @@ def test_text_before_native_tool_call_followed_by_text_is_not_output():
     result = Agent(FunctionModel(respond)).run_sync('What is the weather?')
 
     assert result.output == 'It is sunny.'
+
+
+def test_text_before_native_tool_call_with_function_tool_call_is_not_early_output():
+    """With function tool calls, text before a native tool call stays commentary, so `end_strategy='early'` runs them."""
+
+    class Weather(BaseModel):
+        summary: str
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[TextPart('{"summary": "unknown"}'), *_native_web_search_parts(), ToolCallPart('get_city', {})]
+            )
+        return ModelResponse(parts=[TextPart('{"summary": "sunny in Amsterdam"}')])
+
+    agent = Agent(FunctionModel(respond), output_type=PromptedOutput(Weather), end_strategy='early')
+
+    @agent.tool_plain
+    def get_city() -> str:
+        return 'Amsterdam'
+
+    result = agent.run_sync('What is the weather?')
+
+    assert result.output == Weather(summary='sunny in Amsterdam')
+
+
+async def test_streamed_text_before_native_tool_call_with_function_tool_call_is_not_output():
+    class Weather(BaseModel):
+        summary: str
+
+    async def stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls | BuiltinToolCallsReturns]:
+        yield '{"summary": "unknown"}'
+        call, tool_return = _native_web_search_parts()
+        native_parts: list[BuiltinToolCallsReturns] = [{1: call}, {2: tool_return}]
+        for native_part in native_parts:
+            yield native_part
+        yield {3: DeltaToolCall(name='get_city', json_args='{}', tool_call_id='city')}
+
+    agent = Agent(FunctionModel(stream_function=stream), output_type=PromptedOutput(Weather), end_strategy='early')
+
+    with pytest.raises(UnexpectedModelBehavior, match='Output validation failed during streaming'):
+        async with agent.run_stream('What is the weather?') as result:
+            await result.get_output()
 
 
 async def test_streamed_text_before_trailing_native_tool_call_is_output():

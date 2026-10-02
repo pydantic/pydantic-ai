@@ -309,8 +309,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         # not part of the final result output, so we reset the accumulated text
                         text_before_native_tool_call = text or text_before_native_tool_call
                         text = ''
-                # Unless no text follows, as in `CallToolsNode`.
-                text = text or text_before_native_tool_call
+                # Unless no text or function tool call follows the last native tool call (see `CallToolsNode`).
+                if not message.tool_calls:
+                    text = text or text_before_native_tool_call
 
                 run_ctx = replace(self._run_ctx, partial_output=allow_partial)
                 return await run_output_with_hooks(

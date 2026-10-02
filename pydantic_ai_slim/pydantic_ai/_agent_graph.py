@@ -2296,9 +2296,11 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 else:
                     assert_never(part)
 
-            # Unless no text follows the last native tool call: Gemini reports the searches that grounded its text
-            # in metadata after that text, so their calls come last.
-            text = text or text_before_native_tool_call
+            # Unless no text or function tool call follows the last native tool call: Gemini reports the searches
+            # that grounded its text in metadata after that text, so their calls come last. With function tool calls,
+            # the text is still commentary that `end_strategy='early'` mustn't take as the output.
+            if not tool_calls:
+                text = text or text_before_native_tool_call
 
             # Use compaction content as text fallback when the response has no other
             # actionable text (e.g. Anthropic pause_after_compaction=True)
