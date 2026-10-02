@@ -41,7 +41,8 @@ def _dump_messages_json(messages: list[_messages.ModelMessage], info: pydantic.S
         exclude_computed_fields=info.exclude_computed_fields,
         round_trip=info.round_trip,
         serialize_as_any=info.serialize_as_any,
-        polymorphic_serialization=info.polymorphic_serialization,
+        # Not `polymorphic_serialization`: `SerializationInfo` has no such attribute in pydantic 2.12, the
+        # oldest supported, so reading it would fail every dump there.
         context=info.context,
     )
 
