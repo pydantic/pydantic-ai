@@ -2,8 +2,7 @@
 durable agent run.
 
 The capability captures the run's cancellation controller in `before_run` and triggers it from
-`cancel()`. Each durable engine wires its own external-cancellation mechanism (a Temporal
-`@workflow.signal`, a DBOS/Prefect equivalent) to that one method; the engine-agnostic binding is
+`cancel()`, which a Temporal `@workflow.signal` handler calls; the engine-agnostic binding is
 exercised here without any durable runtime, since the behavior under test is pure control flow
 around injected `asyncio` cancellation that no recorded provider response can trigger. The Temporal
 signal wiring itself is covered end-to-end in `tests/durable_exec/temporal/test_agent.py`.
@@ -74,9 +73,7 @@ async def test_cancel_after_run_finishes_is_a_no_op():
     assert await asyncio.sleep(0, result='unrelated') == 'unrelated'
 
 
-def test_capability_is_safe_at_runtime_and_not_spec_constructible():
-    """The capability introduces no durable units, so it may be added per-run inside a durable
-    container (`_safe_at_runtime`), and it holds a live controller reference, so it opts out of
-    spec construction."""
-    assert DurableRunCancellation._safe_at_runtime is True  # pyright: ignore[reportPrivateUsage]
+def test_capability_is_not_spec_constructible():
+    """It holds a live controller reference, so it opts out of spec construction. (That it can be
+    attached per-run inside a durable workflow is covered by the Temporal signal tests.)"""
     assert DurableRunCancellation.get_serialization_name() is None

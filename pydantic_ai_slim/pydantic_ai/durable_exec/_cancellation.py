@@ -10,10 +10,9 @@ first-party "the run was cancelled" outcome.
 [`DurableRunCancellation`][pydantic_ai.durable_exec.DurableRunCancellation] bridges that gap with a
 per-run capability. It captures the run's [`RunCancellation`][pydantic_ai._cancel.RunCancellation]
 controller in `before_run`, and its [`cancel`][pydantic_ai.durable_exec.DurableRunCancellation.cancel]
-method triggers it. Each durable engine wires its own external-cancellation mechanism to that one
-method — for Temporal a `@workflow.signal` handler (a signal runs on the workflow event loop and is
-recorded in history, so the resulting cancellation is deterministic on replay) — while the binding
-between the trigger and the run stays engine-agnostic here.
+method triggers it. The capability itself is engine-agnostic; what calls `cancel()` is up to the
+engine. On Temporal that's a `@workflow.signal` handler: a signal runs on the workflow event loop and
+is recorded in history, so the resulting cancellation is deterministic on replay.
 """
 
 from __future__ import annotations
@@ -74,8 +73,8 @@ class DurableRunCancellation(AbstractCapability[AgentDepsT]):
     ```
 
     An external actor then cancels the run by signalling the workflow
-    (`await handle.signal(MyAgentWorkflow.cancel)`). DBOS and Prefect bind their own
-    external-cancellation mechanisms to the same `cancel()` method.
+    (`await handle.signal(MyAgentWorkflow.cancel)`). The capability itself is engine-agnostic; on
+    other engines, `cancel()` has to be called from user code running in the same workflow or flow.
 
     A single instance binds to a single run; create a fresh one per durable execution (e.g. in the
     workflow's `__init__`), not a module-level singleton shared across concurrent runs.
