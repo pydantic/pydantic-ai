@@ -646,7 +646,7 @@ this directory is an executable startup configuration, not a sandbox. The defaul
 Coder runs as your OS user and can modify it, just as it can modify your shell
 startup files. Use a separate OS identity or sandbox for untrusted agent work.
 
-Two ways to install one:
+Three ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
    `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
@@ -658,6 +658,30 @@ Two ways to install one:
    clai2 plugins add notify my_package.notify
    /plugins add coder pydantic_ai_harness.coder:Coder '{"unrestricted_filesystem": true}'
    ```
+3. From inside CLAI, clone a trusted Git repository:
+
+   ```text
+   /plugins add https://github.com/your-org/my-plugin.git
+   /plugins add git@github.com:your-org/my-plugin.git
+   ```
+
+   Git must be installed. The repository must have an `__init__.py` or `plugin.py`
+   at its root that defines one public `Plugin` subclass. If both exist,
+   `__init__.py` is used. Relative imports can load other files from the checkout.
+   Install the plugin's dependencies in CLAI's Python environment first; this
+   command does not install packages or run build scripts.
+
+   CLAI clones the default branch into `plugins/_git/my_plugin/` under its
+   configuration directory. The repository name becomes the plugin ID, with
+   hyphens and dots replaced by underscores. Names must start with a letter and
+   contain only letters, digits, dots, hyphens, or underscores. Existing plugins
+   and checkouts are never replaced. HTTPS, SSH (including `git@host:path`), `git://`, and `file://`
+   URLs are supported; HTTPS and SSH URLs may also start with `git+`.
+   Authentication uses your existing Git credentials without terminal prompts.
+   A failed or cancelled clone is removed. If the plugin itself fails to load,
+   its checkout and declaration remain so you can fix it and `/plugins enable my_plugin`.
+   `/plugins reload` reloads local code; it does not fetch updates from Git.
+   `/plugins remove` disables the plugin without deleting the checkout.
 
 No restart needed when you do it from inside CLAI. A plugin you add or enable is
 active for the next prompt; one you disable or remove is gone for the next

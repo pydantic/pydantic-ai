@@ -1589,9 +1589,13 @@ class Search(Plugin):
         self.host.console.bell()
 ```
 
-Drop the file in `~/.config/pydantic-clai2/plugins/`, or register anything
-importable with `/plugins add NAME module[:Class] [JSON]`. It is live for the
-next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
+Drop the file in `~/.config/pydantic-clai2/plugins/`, register anything
+importable with `/plugins add NAME module[:Class] [JSON]`, or clone a trusted
+repository with `/plugins add https://github.com/your-org/my-plugin.git`.
+Git repositories need an `__init__.py` or `plugin.py` at their root; install
+any dependencies in CLAI's Python environment first. See
+[where plugins live](PLUGINS.md#where-plugins-live) for supported URLs and checkout management.
+The plugin is live for the next prompt; no restart. `/plugins` alone opens a full-screen menu to enable, disable,
 reload, and remove. Closing the menu returns to the prompt without printing the
 plugin list. Use `/plugins list` to print it. Plugins are trusted code running as you.
 
