@@ -18,6 +18,7 @@ from inline_snapshot import snapshot
 from pydantic_ai import Agent
 from pydantic_ai._http import ConnectPoolTimeoutCap, create_async_httpx2_client
 from pydantic_ai.models import create_async_http_client
+from pydantic_ai.settings import ModelSettings
 
 from .conftest import try_import
 
@@ -108,26 +109,20 @@ _DEFAULT = object()
 )
 async def test_created_client_caps_scalar_connect_and_pool_timeouts(
     family: str,
-    requested: object,
+    requested: Any,
     expected: dict[str, float | None],
     sent_timeouts: Callable[[dict[str, Any]], list[dict[str, float | None]]],
 ):
     sent = sent_timeouts({})
-    if family == 'httpx2':
-        client = create_async_httpx2_client()
-        timeout_type = httpx2.Timeout
-    else:
-        client = create_async_http_client()
-        timeout_type = httpx.Timeout
+    request_kwargs: dict[str, Any] = {}
+    if isinstance(requested, tuple):
+        timeout_type = httpx2.Timeout if family == 'httpx2' else httpx.Timeout
+        request_kwargs['timeout'] = timeout_type(requested[0], connect=requested[1])
+    elif requested is not _DEFAULT:
+        request_kwargs['timeout'] = requested
 
-    async with client:
-        if requested is _DEFAULT:
-            await client.get('https://example.com')
-        elif isinstance(requested, tuple):
-            await client.get('https://example.com', timeout=timeout_type(requested[0], connect=requested[1]))
-        else:
-            assert requested is None or isinstance(requested, float)
-            await client.get('https://example.com', timeout=requested)
+    async with create_async_httpx2_client() if family == 'httpx2' else create_async_http_client() as client:
+        await client.get('https://example.com', **request_kwargs)
 
     assert sent == [expected]
 
@@ -186,7 +181,7 @@ async def test_model_settings_timeout_leaves_user_client_untouched(
 )
 async def test_google_provider_client_keeps_connect_timeout(
     allow_model_requests: None,
-    model_settings: dict[str, Any],
+    model_settings: ModelSettings,
     expected: dict[str, float | None],
     sent_timeouts: Callable[[dict[str, Any]], list[dict[str, float | None]]],
 ):
