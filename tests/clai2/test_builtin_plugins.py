@@ -185,6 +185,26 @@ async def test_failed_coder_reload_brings_back_what_it_included(tmp_path: Path) 
         await plugins.close('exit')
 
 
+async def test_disabling_coder_loads_the_rest_when_one_it_included_fails(tmp_path: Path) -> None:
+    """A released plugin that fails to load is reported without stopping the others."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    store.save_plugin(PluginSettings(id='subagents', factory='pydantic_ai_harness.subagents:SubAgents'))
+    coder, compaction = (
+        next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == name) for name in ('coder', 'compaction')
+    )
+    delegating = coder.model_copy(update={'settings': {**coder.settings, 'sub_agents': True}})
+    plugins = _loader(store, (delegating, compaction))
+    try:
+        await plugins.load_all()
+        store.save_plugin(compaction.model_copy(update={'settings': {'strategy': 'forget'}}))
+        await plugins.disable('coder')
+        states = {entry.name: entry.state for entry in plugins.entries()}
+        assert states['compaction'].startswith('enabled, failed: ValidationError')
+        assert (states['coder'], states['subagents']) == ('disabled', 'enabled, loaded')
+    finally:
+        await plugins.close('exit')
+
+
 def test_saved_logfire_opens_observability_setup_when_enabled(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'settings.db')
     store.save_plugin(

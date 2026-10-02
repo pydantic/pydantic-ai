@@ -604,7 +604,11 @@ class PluginLoader(Generic[DepsT]):
         included = INCLUDED.get(owner.declaration.factory, {})
         for entry in self._registration_order():
             if entry.declaration.factory in included and entry.declaration.enabled and entry.included_in is None:
-                await self.load(entry.name)
+                # Like `load_all`: one that fails is reported and keeps its error, and the rest still load.
+                try:
+                    await self.load(entry.name)
+                except PluginError as exc:
+                    self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
 
     async def reload(self, name: str) -> None:
         """Unload, re-import the module, and load again."""
