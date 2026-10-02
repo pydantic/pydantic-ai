@@ -11,7 +11,9 @@ from datetime import datetime
 from importlib.util import find_spec
 from types import ModuleType, NoneType
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from pydantic import BaseModel
 
@@ -913,9 +915,6 @@ class TestDeclaredNativeAndLocal:
 
     def test_replace_rebuilds_the_bundled_local_fetcher(self, allow_model_requests: None):
         """The bundled fetcher enforces the copy's domains, not the ones it was copied from."""
-        from unittest.mock import AsyncMock, patch
-
-        import httpx
 
         def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):

@@ -248,6 +248,10 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         instance's, so a composed restriction would read as applied while the request went out
         without it.
 
+        A native tool the user passed in is left alone: it states its own configuration, and
+        rebuilding would discard it. Two of those take the later, like any other value the merge
+        cannot reconcile.
+
         The merged instance is validated the way a constructed one is. `replace_no_init` skips
         `__post_init__`, and a merge can reach a combination no constructor would accept -- a
         `native=False` instance beside one carrying native-only constraints leaves a capability that
@@ -256,10 +260,18 @@ class NativeOrLocalTool(AbstractCapability[AgentDepsT]):
         """
         # Copied even when the merge changed nothing, which hands back the last instance itself:
         # resolving again in place would replace the tools of a capability the caller still holds.
-        merged = replace_no_init(merge_capability_fields(capabilities))
+        merged = replace_no_init(cls._merge_fields(capabilities))
         assert isinstance(merged, cls)
         merged.__post_init__()
         return merged
+
+    @classmethod
+    def _merge_fields(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Merge the declared fields; `combine` then resolves the tools from the result.
+
+        Override in a subclass with a field the default merge would get wrong.
+        """
+        return merge_capability_fields(capabilities)
 
     def _resolve_native_with_overrides(
         self, tool_cls: type[_NativeToolT], overrides: dict[str, Any]

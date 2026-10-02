@@ -29,15 +29,17 @@ class WebFetch(NativeOrLocalTool[AgentDepsT]):
     allowed_domains: list[str] | None
     """Only fetch from these domains.
 
-    Enforced by the native tool and by the bundled `local=True` fetcher. A `local` tool you supply
-    doesn't enforce it, so beside one it requires native support.
+    Enforced by the native tool built from these fields and by the bundled `local=True` fetcher. A
+    `native=WebFetchTool(...)` instance carries its own; a `local` tool you supply doesn't enforce
+    it, so beside one it requires native support.
     """
 
     blocked_domains: list[str] | None
     """Never fetch from these domains.
 
-    Enforced by the native tool and by the bundled `local=True` fetcher. A `local` tool you supply
-    doesn't enforce it, so beside one it requires native support.
+    Enforced by the native tool built from these fields and by the bundled `local=True` fetcher. A
+    `native=WebFetchTool(...)` instance carries its own; a `local` tool you supply doesn't enforce
+    it, so beside one it requires native support.
     """
 
     max_uses: int | None

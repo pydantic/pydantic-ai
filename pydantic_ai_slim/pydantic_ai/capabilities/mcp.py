@@ -47,15 +47,15 @@ class MCP(NativeOrLocalTool[AgentDepsT]):
     authorization_token: str | None
     """Authorization header value for MCP server requests.
 
-    Passed to the native tool and to the local toolset built from a URL. A `local` toolset or client
-    you supply connects with its own headers.
+    Passed to the native tool and the local toolset built from a URL. A `native=MCPServerTool(...)`
+    instance, or a `local` toolset or client you supply, carries its own.
     """
 
     headers: dict[str, str] | None
     """HTTP headers for MCP server requests.
 
-    Passed to the native tool and to the local toolset built from a URL. A `local` toolset or client
-    you supply connects with its own headers.
+    Passed to the native tool and the local toolset built from a URL. A `native=MCPServerTool(...)`
+    instance, or a `local` toolset or client you supply, carries its own.
     """
 
     allowed_tools: list[str] | None

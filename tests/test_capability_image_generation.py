@@ -587,6 +587,7 @@ class TestImageGenerationCapability:
                 '`output_format`, `quality`',
                 id='instance_and_capability',
             ),
+            pytest.param(ImageGenerationTool(partial_images=2), {}, '`partial_images`', id='instance_only_field'),
         ],
     )
     async def test_image_generation_direct_fallback_reports_a_native_instances_native_only_settings(
@@ -626,7 +627,7 @@ class TestImageGenerationCapability:
             native=ImageGenerationTool(model='gpt-image-1'), fallback_image_model=TestImageGenerationModel()
         )
 
-        with pytest.warns(UserWarning, match=r'ignored `image_model`'):
+        with pytest.warns(UserWarning, match=r"ignored the `native` tool's `model`;"):
             result = await Agent(direct_generation_model, capabilities=[capability]).run('Generate an image')
 
         assert result.output == 'done'

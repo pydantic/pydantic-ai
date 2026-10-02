@@ -36,7 +36,6 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
 from ._deprecated_fallback_model import check_deprecated_fallback_model
-from ._merge import merge_capability_fields
 from .abstract import AbstractCapability
 from .native_or_local import NativeOrLocalTool
 
@@ -101,7 +100,8 @@ class _DirectImageGenerationTool:
     generator: ImageGenerator | ImageGenerationModel
     settings: ImageGenerationSettings
     action: Literal['generate', 'edit', 'auto'] | None
-    image_model: ImageGenerationModelName | None
+    ignored_model_setting: str | None
+    """The setting that names a model the direct generator can't use, spelled as the warning reports it."""
 
     async def __call__(self, prompt: str) -> BinaryImage:
         if self.action == 'edit':
@@ -110,9 +110,9 @@ class _DirectImageGenerationTool:
             # is unserviceable is only known once the model has dropped the native tool and called
             # this one instead.
             raise UserError(_EDIT_ACTION_UNSUPPORTED)
-        if self.image_model is not None:
+        if self.ignored_model_setting is not None:
             warnings.warn(
-                'Direct `ImageGeneration` fallback ignored `image_model`; '
+                f'Direct `ImageGeneration` fallback ignored {self.ignored_model_setting}; '
                 'the direct image model is already selected by `local` or `fallback_image_model`',
                 UserWarning,
                 stacklevel=2,
@@ -575,7 +575,7 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return self._direct_generator is not None
 
     @classmethod
-    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+    def _merge_fields(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Merge like `NativeOrLocalTool`, except that `dimensions` is one value, not a collection.
 
         The default merge unions two sequences, and a `(width, height)` pair's entries are not
@@ -583,21 +583,14 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         orientation neither instance asked for, and two disjoint pairs union to a three-element
         tuple that is no size at all. It takes the later stated value instead, the rule the scalar
         fields already get.
-
-        Applied before the tools are resolved again, because the `generate_image` tool carries the
-        pair.
         """
+        merged = super()._merge_fields(capabilities)
         stated = [
             capability.dimensions
             for capability in capabilities
             if isinstance(capability, ImageGeneration) and capability.dimensions is not None
         ]
-        merged = merge_capability_fields(capabilities)
-        # Copied either way, as the base does, so resolving again never touches an instance the caller holds.
-        merged = replace_no_init(merged, dimensions=stated[-1]) if stated else replace_no_init(merged)
-        assert isinstance(merged, cls)
-        merged.__post_init__()
-        return merged
+        return replace_no_init(merged, dimensions=stated[-1]) if stated else merged
 
     @classmethod
     def from_spec(
@@ -692,6 +685,8 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
                 ('output_format', self.output_format, native.output_format, defaults.output_format),
                 ('quality', self.quality, native.quality, defaults.quality),
                 ('size', self.size, native.size, defaults.size),
+                # The capability has no field of its own for this one.
+                ('partial_images', None, native.partial_images, defaults.partial_images),
             )
             if value is not None or native_value != default
         ]
@@ -779,12 +774,18 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
             aspect_ratio = native.aspect_ratio
         if aspect_ratio is not None:
             settings['aspect_ratio'] = aspect_ratio
+        if self.image_model is not None:
+            ignored_model_setting = '`image_model`'
+        elif native is not None and native.model is not None:
+            ignored_model_setting = "the `native` tool's `model`"
+        else:
+            ignored_model_setting = None
         return Tool[Any](
             _DirectImageGenerationTool(
                 generator=generator,
                 settings=settings,
                 action=native.action if self.action is None and native is not None else self.action,
-                image_model=native.model if self.image_model is None and native is not None else self.image_model,
+                ignored_model_setting=ignored_model_setting,
             ).__call__,
             name='generate_image',
             description='Generate an image based on the given prompt.',
