@@ -194,7 +194,7 @@ def test_duplicate_aliases_and_editing_current_entry(folders: FolderMenu[object]
         assert folders.problem(spelling, named=False, index=None) == 'This folder is already in the list.'
         assert folders.problem(spelling, named=False, index=0) is None
     uppercase = directory.with_name('SHARED')
-    if uppercase.exists():
+    if uppercase.exists():  # pragma: lax no cover - only case-insensitive filesystems (macOS, Windows)
         assert directory.samefile(uppercase)
         assert folders.problem(str(uppercase), named=False, index=None) == 'This folder is already in the list.'
     assert folders.problem('agents', named=True, index=None) is None
