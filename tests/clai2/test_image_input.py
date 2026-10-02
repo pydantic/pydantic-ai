@@ -252,9 +252,9 @@ async def test_image_hooks_and_expired_history(image_path: Path, tmp_path: Path,
     store = SettingsStore(tmp_path / 'config.db')
     store.plugins_dir.mkdir()
     (store.plugins_dir / 'caption.py').write_text(
-        'def activate(host):\n'
-        "    @host.on('turn_start')\n"
-        '    async def start(event):\n'
+        'from pydantic_clai2.plugins import Plugin\n'
+        'class Caption(Plugin):\n'
+        '    async def on_turn_start(self, event):\n'
         "        assert event.text == 'caption'\n"
         + {
             'rewrite': "        event.text = 'rewritten'\n",

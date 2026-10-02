@@ -209,7 +209,7 @@ The sub-agents are listed in the system prompt via `get_instructions`, using eac
 
 ## Loading sub-agents from disk
 
-A repo's markdown agent definitions can become delegates without writing any `Agent` code. With `agent_folders` set, every `*.md` file under those folders is loaded as a sub-agent, alongside the explicitly-passed `agents`.
+A repo's agent definitions can become delegates without writing any `Agent` code. With `agent_folders` set, every Claude-style `*.md` file and Codex-style `*.toml` file under those folders is loaded as a sub-agent, alongside the explicitly-passed `agents`. Files are read in sorted filename order.
 
 ```python
 from pydantic_ai import Agent
@@ -225,7 +225,7 @@ Definitions are read at the start of every run from the run's [workspace](https:
 
 `agent_folders` controls which folders are read:
 
-- A folder-name `str` (`'agents'` is the conventional layout): load from both `.agents/<name>/` and `.claude/<name>/` under the workspace's working directory, so a workspace that uses `.agents/` for something else (such as skills) still loads agents from `.claude/`. A run without a workspace skips them.
+- A folder-name `str` (`'agents'` is the conventional layout): load from `.agents/<name>/`, `.claude/<name>/`, and `.codex/<name>/` under the workspace's working directory, in that order, so a workspace that uses `.agents/` for something else (such as skills) still loads agents from the others. A run without a workspace skips them.
 - A sequence of workspace paths, absolute or relative to the working directory, loads from exactly those folders, in order.
 - `None`, the default, disables disk loading, exposing only the explicitly-passed `agents`.
 
@@ -235,7 +235,7 @@ Until this release, the folders were read from this machine, including the home 
 
 ### Definition format
 
-A definition is a markdown file with optional frontmatter:
+A definition is a Claude-style markdown file with optional frontmatter, or a Codex-style TOML file. Markdown:
 
 ```markdown
 ---
@@ -254,6 +254,23 @@ You research topics. Report your findings, each with a source.
 
 Frontmatter is read by a small, dependency-free parser limited to those keys (`pyyaml` is not a harness dependency). Full YAML frontmatter is not supported.
 
+A Codex-style standalone TOML file:
+
+```toml
+name = "reviewer"
+description = "Reviews code for bugs"
+developer_instructions = "Inspect the code and report findings. Do not edit files."
+tools = ["Read", "Grep"]
+```
+
+- `name`, `description`, and `developer_instructions` are required nonempty strings.
+- `tools` (or `allowed-tools`) is optional: a list of strings or a comma-separated string, not both keys.
+- `model`, `effort`, `model_reasoning_effort`, and `color` are ignored with a warning; use `agent_overrides` for models and effort.
+- Any other key, including sandbox or permission settings, skips that file with a warning rather than silently granting broader tools. The older `[agents.<name>] config_file` layout is not supported.
+- TOML is parsed with the standard library `tomllib`, so it needs Python 3.11 or newer; on 3.10 TOML files are skipped with a warning.
+
+Nothing in a definition file is executed. A malformed or invalid file is skipped with a warning without blocking the others.
+
 ### Models and effort
 
 Disk agents inherit the parent run's model by default. Per agent, the caller can override the model and set a thinking/effort level via `agent_overrides`, keyed by the agent's name:
@@ -268,7 +285,9 @@ SubAgents(
 )
 ```
 
-Every agent the capability builds runs at a minimum thinking-effort floor. `MINIMUM_EFFORT_FLOOR` and the `clamp_effort(level, floor=...)` helper are exported so an orchestrator can apply the same floor to its own agents (that orchestrator-side application is the caller's responsibility). `clamp_effort` maps `None`/`False` to the floor, leaves `True` (provider-default effort) unchanged, and raises a concrete level below the floor up to it. Effort is applied through pyai's `ModelSettings.thinking`.
+When `effort` is unset, the disk agent adds no thinking setting, so the inherited model's defaults apply. An explicit value, including `False` or `'minimal'`, is passed through unchanged via Pydantic AI's `ModelSettings.thinking`.
+
+`MINIMUM_EFFORT_FLOOR` and `clamp_effort(level, floor=...)` remain importable for compatibility but are deprecated. `SubAgents` no longer uses them. Pass `AgentOverride(effort=...)` when a disk agent needs an explicit level, or apply an application-specific floor outside the capability.
 
 ### Tools
 
@@ -361,3 +380,78 @@ SubAgent(
 ::: pydantic_ai_harness.subagents.DelegationStartEvent
 
 ::: pydantic_ai_harness.subagents.DelegationEndEvent
+
+## Managed delegation sessions
+
+`SubAgents` keeps its existing foreground-only behavior unless a caller explicitly
+opens and binds `DelegationTasks`. This owner adds `background` and `resume` to the
+delegate tool's schema, gives every child a stable conversation ID, and owns every
+worker until shutdown. Use `DelegationReports` on the parent run to deliver settled
+background reports through core's `SystemPromptPart` queue. The reports are
+explicitly automated, untrusted data, not user instructions or permission grants.
+No extra agent loop is implemented. Reports default to `priority='when_idle'`
+so active parents finish their current work first. A host that starts an idle
+continuation should use `DelegationReports(..., priority='asap')` and
+`agent.run(None, ...)`: pending reports then enter the first model request, with
+no synthetic user prompt. The host owns wake-up scheduling between runs.
+
+```python {test="skip"}
+from pathlib import Path
+
+from pydantic_ai import Agent
+from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks, SubAgents
+
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[SubAgents(include_self=True)])
+tasks = DelegationTasks(directory=Path('.task-history'))
+
+async def converse():
+    async with tasks.opened():
+        with tasks.bind():
+            result = await agent.run(
+                'Delegate an independent investigation in the background.',
+                conversation_id='review',
+                capabilities=[DelegationReports(tasks, conversation_id='review')],
+            )
+            print(result.output)
+            # Keep this owner open across subsequent parent turns.
+```
+
+`opened()` drains workers on exit. Keep workspace and plugin resources alive outside
+that scope. Detached execution is refused for run-owned non-local workspaces;
+foreground delegation still works. `max_depth=4` counts the main run and allows
+three child layers. An explicitly configured non-default `SubAgents.max_depth`
+still takes precedence. Ordinary `SubAgents` retains its original depth default.
+
+`background(task_id)` releases a foreground waiter without restarting the child.
+`await cancel(task_id)` stops and drains that child and its descendants. A user stop
+blocks model-requested resume until the application explicitly calls
+`await allow_resume(task_id)`. `one_shot` names never resume. A resume uses the same
+child ID and its independent history, a new run ID, and the current direct parent.
+A child waits for its own descendants and consumes their reports before its final
+output settles. Reports are routed to the direct parent; an idle parent receives
+pending reports on its next explicitly started run. Enqueue delivery is acknowledged
+only when core emits `EnqueuedMessagesEvent`, and acknowledgements are persisted.
+
+An observer receives `DelegationTaskEvent`, with the task identity and an optional
+correlated child stream event. Managed start/end events carry `task_id` and
+`parent_id`. Managed cancellation and uncontained exceptions produce terminal
+outcomes; unmanaged events and exception propagation keep their original contract.
+Metadata and final/interrupted histories are atomically saved under `directory`.
+Pass `step_store` to checkpoint through `StepPersistence` and recover a process-killed
+child's latest frontier. Loading an interrupted record never executes its tools.
+Inspect possible partial effects before an explicit resume.
+
+Managed children with `forward_usage=True` share live usage accounting and inherit
+parent ceilings. A per-child budget is converted to an absolute ceiling at launch;
+concurrent sibling spend may reach that ceiling earlier, but cannot bypass the
+parent's budget. The ordinary unmanaged per-child accounting contract is unchanged.
+
+`agents`, `aliases`, and `instructions` extend the roster and guidance only inside
+the bound scope; they do not add delegation to an agent without `SubAgents`.
+`SubAgent(read_only=True)` wraps the child's workspace in `ReadOnlyWorkspace`.
+Also give that agent only trusted read-only capabilities: arbitrary Python tools
+can bypass the workspace API. CLAI's Explore and Plan specialists use filesystem
+readers and expose no shell, code execution, or parent plugin tools.
+
+Core's agent/model/tool spans provide execution telemetry; task IDs, parent IDs,
+and child run IDs provide correlation. This owner adds no logging exporter.

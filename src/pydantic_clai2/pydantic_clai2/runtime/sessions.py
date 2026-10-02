@@ -1,11 +1,15 @@
-"""Shell integration for persisted conversations, the browser, and auxiliary naming."""
+"""Save conversations so /resume can restore them, and name them in the background.
+
+Shell integration for persisted conversations, the browser, and auxiliary naming.
+"""
 
 import asyncio
-from collections.abc import Awaitable, Coroutine
+from collections.abc import Awaitable, Coroutine, Sequence
 from typing import Generic, TypeVar
 
 from rich.console import Console
 
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai_harness.step_persistence import StepPersistence
 from pydantic_ai_harness.step_persistence.conversations import (
     ConversationSummary,
@@ -14,7 +18,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
 )
 from pydantic_ai_harness.step_persistence.recovery import inspect_recovery
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import Plugin
 from pydantic_clai2.runtime._session import Session
 from pydantic_clai2.runtime.session_naming import NamingResult, SessionNamer, generate_name
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -120,7 +124,9 @@ class Sessions(Generic[DepsT, OutputT]):
         return await self.session.resume(selected, allow_other_workspace=True)
 
 
-def activate(host: PluginHost[None]) -> None:
-    """Declare the normal step-capture capability over the shell's configured store."""
-    if host.conversation.step_store is not None:
-        host.add(StepPersistence(store=host.conversation.step_store, capture_frontier=True))
+class PersistencePlugin(Plugin):
+    """The normal step-capture capability over the shell's configured store."""
+
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        store = self.host.conversation.step_store
+        return () if store is None else (StepPersistence(store=store, capture_frontier=True),)

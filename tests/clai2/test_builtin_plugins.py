@@ -104,7 +104,7 @@ def test_saved_logfire_opens_observability_setup_when_enabled(tmp_path: Path) ->
     plugins = _loader(store, (builtin,))
     menu = PluginMenu(plugins, apply=_apply)
     item, _save_and_close = menu.items()
-    assert item.value == 'observability' and '[ ] observability' in item.label
+    assert item.value == 'observability' and '○ observability' in item.label
     assert plugins.entries()[0].state == 'disabled'
     try:
         result = menu.toggle(Menu(), item)
@@ -133,7 +133,11 @@ async def test_legacy_logfire_sources_share_one_runtime_identity(tmp_path: Path,
     if source == 'folder':
         store.plugins_dir.mkdir()
         path = store.plugins_dir / 'logfire.py'
-        path.write_text('from pydantic_clai2.builtin_plugins.logfire import activate\n')
+        path.write_text(
+            'from pydantic_clai2.builtin_plugins.logfire import LogfirePlugin\n\n\n'
+            'class Observability(LogfirePlugin):\n'
+            '    pass\n'
+        )
         store.save_plugin(legacy.model_copy(update={'path': str(path)}))
         project = ()
     builtin = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'observability')
@@ -186,8 +190,8 @@ def test_capability_saved_from_the_old_catalog_still_loads(tmp_path: Path) -> No
     assert len(plugins.capabilities()) == 1
     menu = PluginMenu(plugins, apply=_apply)
     item, _save_and_close = menu.items()
-    assert '(built-in)' not in menu.details(item)
-    assert 'enabled, loaded' in menu.details(item)
+    assert 'built-in' not in menu.details(item)
+    assert 'installed' in item.description and 'on' in item.description
     menu.remove(Menu(), item)
     assert store.plugins() == []
     assert plugins.entries() == []

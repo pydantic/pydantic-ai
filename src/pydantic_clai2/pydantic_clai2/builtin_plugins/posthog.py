@@ -1,4 +1,6 @@
-"""The built-in `posthog` plugin: PostHog's hosted MCP server through harness `PostHog`.
+"""Use PostHog through PostHog's hosted MCP server.
+
+The built-in `posthog` plugin: PostHog's hosted MCP server through harness `PostHog`.
 
 The personal API key is never kept in plugin settings, which are plaintext SQLite. It lives in `/keys`, and the
 plugin saves only the key's name, in the credential store beside the `vllm` and `openrouter` connections, so `/keys`
@@ -13,7 +15,7 @@ organization pins, and keyring-backed sign-in all need a client of CLAI's own.
 
 import asyncio
 import re
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator, Sequence
 from dataclasses import replace
 from functools import partial
 from typing import Literal
@@ -27,6 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, f
 from termflow.tui import MenuBuilder, MenuItem, TextInputBuilder
 from termflow.tui.menu import Menu
 
+from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness.posthog import PostHog
 from pydantic_clai2.commands import Command
@@ -41,7 +44,7 @@ from pydantic_clai2.config.api_keys import (
 )
 from pydantic_clai2.config.credential_store import load_codex_credentials
 from pydantic_clai2.mcp import OAUTH_TIMEOUT, TokenStore, http_client, sign_in
-from pydantic_clai2.plugins import PluginHost
+from pydantic_clai2.plugins import Plugin, PluginHost, SessionStart
 from pydantic_clai2.ui.menus.field_menu import (
     SAVE_AND_CLOSE_DETAILS,
     TERMINAL,
@@ -186,41 +189,49 @@ def _bearer() -> str:
     return f'Bearer {resolve_key(token=reference)}'
 
 
-def activate(host: PluginHost[None]) -> None:
-    """Add `PostHog` from the saved settings, and offer the settings menu and `/posthog`."""
-    settings = host.settings(PostHogSettings)
-    capability = PostHog[None](client=client(settings), include_instructions=settings.include_instructions)
-    host.add(capability)
-    tokens = TokenStore(TOKENS)
+class PostHogPlugin(Plugin[PostHogSettings]):
+    """`PostHog` from the saved settings, with a settings menu and `/posthog`."""
 
-    @host.configure
-    async def configure() -> str:
-        if not host.console.is_terminal:
+    def __init__(self, host: PluginHost[None], settings: PostHogSettings) -> None:
+        super().__init__(host, settings)
+        self.capability = PostHog[None](client=client(settings), include_instructions=settings.include_instructions)
+        self.tokens = TokenStore(TOKENS)
+
+    def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+        return (self.capability,)
+
+    def get_commands(self) -> Sequence[Command]:
+        return (
+            Command(
+                name='posthog',
+                description='Show how PostHog connects, or forget its browser sign-in (/posthog logout).',
+                handler=self._command,
+                complete=lambda args: ['logout'] if len(args) <= 1 else [],
+            ),
+        )
+
+    async def configure(self) -> str:
+        if not self.host.console.is_terminal:
             return f'Configure PostHog from a terminal: {SETUP}'
-        return await _configure(PostHogSource(host))
+        return await _configure(PostHogSource(self.host))
 
-    async def command(args: list[str]) -> str:
+    async def on_session_start(self, event: SessionStart) -> None:
+        usable = _usable_key() if self.settings.auth == 'key' else None
+        if isinstance(usable, str):
+            # Loading anyway keeps the settings menu available; each run fails closed until a key is chosen.
+            self.host.console.print(usable, style=theme.color(theme.WARNING), markup=False)
+
+    async def _command(self, args: list[str]) -> str:
         if args == ['logout']:
-            await anyio.to_thread.run_sync(tokens.forget, abandon_on_cancel=True)
+            await anyio.to_thread.run_sync(self.tokens.forget, abandon_on_cancel=True)
             # The live sign-in still holds the tokens it loaded, so later runs need a fresh one.
-            capability.client = client(host.settings(PostHogSettings))
+            self.capability.client = client(self.host.settings(PostHogSettings))
             return 'Signed out of PostHog. The next prompt that uses browser sign-in opens the browser again.'
         if args:
             raise ValueError('Usage: /posthog [logout]; change settings with /plugins configure posthog')
-        return await anyio.to_thread.run_sync(_status, host.settings(PostHogSettings), tokens, abandon_on_cancel=True)
-
-    host.commands.register(
-        Command(
-            name='posthog',
-            description='Show how PostHog connects, or forget its browser sign-in (/posthog logout).',
-            handler=command,
-            complete=lambda args: ['logout'] if len(args) <= 1 else [],
+        return await anyio.to_thread.run_sync(
+            _status, self.host.settings(PostHogSettings), self.tokens, abandon_on_cancel=True
         )
-    )
-    usable = _usable_key() if settings.auth == 'key' else None
-    if isinstance(usable, str):
-        # Loading anyway keeps the settings menu available; each run fails closed until a key is chosen.
-        host.console.print(usable, style=theme.color(theme.WARNING), markup=False)
 
 
 def client(settings: PostHogSettings) -> Client[StreamableHttpTransport]:

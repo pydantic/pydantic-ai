@@ -39,6 +39,8 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
     assert store.load().speculative_code_mode is False
     # Databases from before `/spinner` keep the braille they always showed.
     assert store.load().spinner == 'working'
+    # Databases from before `/update` follow stable releases.
+    assert store.load().update_channel == 'stable'
     assert store.overrides() == {'model': 'test', 'display.thinking': False}
     assert store.plugins() == [PluginSettings(id='notify', factory='notify', enabled=False, settings={'sound': False})]
     assert store.models() == []
@@ -191,7 +193,7 @@ def test_codex_speed_labels_preserve_existing_preferences(tmp_path: Path, tier: 
 
 
 def test_saved_coder_declarations_keep_delegation_off(tmp_path: Path) -> None:
-    """A `coder` saved before `sub_agents` existed still loads, since CLAI passes plugins to each run."""
+    """A `coder` saved before `sub_agents` existed keeps its previous delegation opt-out."""
     store = SettingsStore(tmp_path / 'settings.db')
     with closing(sqlite3.connect(store.path)) as connection, connection:
         connection.executemany(
@@ -214,6 +216,44 @@ def test_saved_coder_declarations_keep_delegation_off(tmp_path: Path) -> None:
         'mine': {'sub_agents': True},
         'other': {},
     }
+
+
+def test_database_without_requirement_tags_loads_unchanged(tmp_path: Path) -> None:
+    """A database from before requirement tags, written as those builds wrote it, keeps every setting."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)')
+        connection.execute('CREATE TABLE plugins (id TEXT PRIMARY KEY, declaration TEXT NOT NULL)')
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_ai_harness.coder:Coder", "enabled": true, '
+                '"settings": {"unrestricted_filesystem": true, "repo_context": false, "sub_agents": true}}',
+            ),
+        )
+    store = SettingsStore(path)
+    assert store.plugins() == [
+        PluginSettings(
+            id='coder',
+            factory='pydantic_ai_harness.coder:Coder',
+            settings={'unrestricted_filesystem': True, 'repo_context': False, 'sub_agents': True},
+        )
+    ]
+    assert store.plugin_requirements('coder') is None
+    with closing(sqlite3.connect(path)) as connection:
+        snapshot = list(connection.iterdump())
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+    SettingsStore(path)
+    SettingsStore(path)
+    with closing(sqlite3.connect(path)) as connection:
+        assert list(connection.iterdump()) == snapshot
+        # Older builds refuse any other version, so the requirements table must not bump it.
+        assert connection.execute('PRAGMA user_version').fetchone() == (1,)
+        # Tags sit in their own table; older builds never read it.
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        assert 'plugin_requirements' in tables
 
 
 def test_saved_spinner_from_a_removed_plugin_is_kept(tmp_path: Path) -> None:
