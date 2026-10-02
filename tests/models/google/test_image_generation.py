@@ -1,8 +1,8 @@
 """Tests for image generation on `GoogleModel`.
 
-Gemini image models generate images natively, as `BinaryImage` output or through `ImageGenerationTool`, which
-also sets the image size, aspect ratio, and format. On a text model an `ImageGeneration` capability runs its
-local fallback instead.
+Gemini image models return images alongside or instead of text; `ImageGenerationTool` only configures them
+(size and aspect ratio, plus output format and compression on Vertex AI). On a text model an `ImageGeneration`
+capability runs its local fallback instead.
 """
 
 from __future__ import annotations as _annotations
@@ -122,6 +122,20 @@ def test_google_optional_image_generation_tool_dropped_on_text_model(gemini_api_
     model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     _, params = model.prepare_request(None, ModelRequestParameters(native_tools=[ImageGenerationTool(optional=True)]))
     assert params.native_tools == []
+
+
+async def test_google_image_generation_tool(allow_model_requests: None, gemini_api_key: str):
+    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
+
+    with pytest.raises(
+        UserError,
+        match=re.escape(
+            "`ImageGenerationTool` is not supported by model 'gemini-2.5-flash'. "
+            "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
+        ),
+    ):
+        await agent.run('Generate an image of an axolotl.')
 
 
 async def test_google_image_generation(allow_model_requests: None, gemini_api_key: str):
@@ -614,20 +628,6 @@ async def test_google_image_generation_with_web_search(allow_model_requests: Non
     )
 
 
-async def test_google_image_generation_tool(allow_model_requests: None, gemini_api_key: str):
-    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
-    agent = Agent(model=model, capabilities=[NativeTool(ImageGenerationTool())])
-
-    with pytest.raises(
-        UserError,
-        match=re.escape(
-            "`ImageGenerationTool` is not supported by model 'gemini-2.5-flash'. "
-            "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
-        ),
-    ):
-        await agent.run('Generate an image of an axolotl.')
-
-
 async def test_google_image_generation_tool_aspect_ratio(gemini_api_key: str) -> None:
     model = GoogleModel('gemini-2.5-flash-image', provider=GoogleProvider(api_key=gemini_api_key))
     params = ModelRequestParameters(native_tools=[ImageGenerationTool(aspect_ratio='16:9')])
@@ -746,6 +746,23 @@ async def test_google_image_generation_tool_compression_validation(
         )
 
 
+async def test_google_image_generation_tool_all_fields(vertex_client_google_provider: GoogleProvider) -> None:
+    """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
+    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
+    params = ModelRequestParameters(
+        native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
+    )
+
+    tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
+    assert tools == []
+    assert image_config == {
+        'aspect_ratio': '16:9',
+        'image_size': '2K',
+        'output_mime_type': 'image/jpeg',
+        'output_compression_quality': 90,
+    }
+
+
 async def test_google_image_generation_silently_ignored_by_gemini_api(gemini_api_key: str) -> None:
     """Test that output_format and compression are silently ignored by the Gemini API (google)."""
     model = GoogleModel('gemini-2.5-flash-image', provider=GoogleProvider(api_key=gemini_api_key))
@@ -779,23 +796,6 @@ async def test_google_vertexai_image_generation_with_output_format(
 
     result = await agent.run('Generate an image of an axolotl.')
     assert result.output.media_type == 'image/jpeg'
-
-
-async def test_google_image_generation_tool_all_fields(vertex_client_google_provider: GoogleProvider) -> None:
-    """Test that all ImageGenerationTool fields are mapped correctly on Vertex AI."""
-    model = GoogleModel('gemini-3-pro-image-preview', provider=vertex_client_google_provider)
-    params = ModelRequestParameters(
-        native_tools=[ImageGenerationTool(aspect_ratio='16:9', size='2K', output_format='jpeg', output_compression=90)]
-    )
-
-    tools, image_config = model._get_native_tools(params)  # pyright: ignore[reportPrivateUsage]
-    assert tools == []
-    assert image_config == {
-        'aspect_ratio': '16:9',
-        'image_size': '2K',
-        'output_mime_type': 'image/jpeg',
-        'output_compression_quality': 90,
-    }
 
 
 async def test_google_vertexai_image_generation(
