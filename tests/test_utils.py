@@ -347,6 +347,10 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
 def test_run_until_complete_interrupt_keeps_existing_context():
     """An interrupt that already has a `__context__` keeps it, rather than getting the cleanup's exception.
 
+    This is the case when `run_sync()` is interrupted while the caller is handling another exception:
+    the interrupt's traceback still shows that exception, at the cost of the run state not being
+    reachable from it.
+
     A unit test for the same reason as `test_run_until_complete_cleans_up_own_task_on_interrupt`;
     `test_run_sync_keyboard_interrupt_carries_run_state` covers chaining the cleanup's exception.
     """

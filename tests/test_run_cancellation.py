@@ -1089,6 +1089,17 @@ def _fast_then_slow_tool_agent(started: asyncio.Event) -> Agent[None, str]:
     return agent
 
 
+def _context_chain_loops_back(exc: BaseException) -> bool:
+    """Whether following `__context__` from `exc` ever comes back to it."""
+    node, seen = exc.__context__, set[int]()
+    while node is not None and id(node) not in seen:
+        if node is exc:
+            return True
+        seen.add(id(node))
+        node = node.__context__
+    return False
+
+
 def _tool_returns(cancelled: RunCancelled) -> list[Any]:
     return [
         part.content
@@ -1111,6 +1122,7 @@ def test_run_sync_keyboard_interrupt_carries_run_state():
         agent.run_sync('go')
 
     assert exc_info.value.__suppress_context__
+    assert not _context_chain_loops_back(exc_info.value)
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
     assert _tool_returns(cancelled) == ['fast done']
@@ -1126,6 +1138,7 @@ def test_run_stream_sync_keyboard_interrupt_before_final_result_carries_run_stat
             result.get_output()  # pragma: no cover
 
     assert exc_info.value.__suppress_context__
+    assert not _context_chain_loops_back(exc_info.value)
     cancelled = RunCancelled.from_cancellation(exc_info.value)
     assert cancelled is not None
     assert _tool_returns(cancelled) == ['fast done']

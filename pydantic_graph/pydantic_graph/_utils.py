@@ -131,12 +131,26 @@ def chain_cleanup_exception(exc: BaseException, cleanup_exc: BaseException) -> N
     (typically its `CancelledError`) would otherwise be lost, along with anything attached to it --
     like the run state that `pydantic_ai.RunCancelled.from_cancellation()` recovers from a cancelled
     agent run. `__suppress_context__` keeps the traceback of `exc` as it was. An existing
-    `__context__` is left alone, as is `__cause__`.
+    `__context__` is left alone (so an interrupt raised while another exception is being handled
+    doesn't carry the cleanup's exception), as is `__cause__`.
     """
     # Never chain `exc` to itself: cleanup can re-raise it, e.g. `asyncio.TaskGroup` re-raises a child's `KeyboardInterrupt`.
-    if exc.__context__ is None and cleanup_exc is not exc:
-        exc.__context__ = cleanup_exc
-        exc.__suppress_context__ = True
+    if exc.__context__ is not None or cleanup_exc is exc:
+        return
+    # The cleanup ran while `exc` was being handled, so implicit chaining made `exc` the context of
+    # (an exception in the chain of) `cleanup_exc`. Unlink it, as CPython does when chaining, so the
+    # chain doesn't loop back to `exc`.
+    node: BaseException | None = cleanup_exc
+    seen: set[int] = set()
+    # `exc` is always in the chain when cleanup ran while it was handled; the other exits are a safety net.
+    while node is not None and id(node) not in seen:  # pragma: no branch
+        seen.add(id(node))
+        if node.__context__ is exc:
+            node.__context__ = None
+            break
+        node = node.__context__
+    exc.__context__ = cleanup_exc
+    exc.__suppress_context__ = True
 
 
 def get_union_args(tp: Any) -> tuple[Any, ...]:
