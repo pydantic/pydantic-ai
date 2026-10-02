@@ -35,6 +35,7 @@ from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileSystem
 from pydantic_ai_harness.shell import Shell
 from tests.harness._temporal import skip_temporal_sandbox_on_314
+from tests.temporal_utils import temporal_dev_server_cache_dir
 
 
 @pytest.fixture
@@ -224,7 +225,7 @@ async def test_temporal_new_worker_keeps_shell_cwd(tmp_path: Path, monkeypatch: 
     )
     queue = f'restart-{uuid4().hex}'
     try:
-        async with await WorkflowEnvironment.start_local() as env:  # pyright: ignore[reportUnknownMemberType]
+        async with await WorkflowEnvironment.start_local(download_dest_dir=temporal_dev_server_cache_dir()) as env:  # pyright: ignore[reportUnknownMemberType]
             client = await Client.connect(env.client.service_client.config.target_host, plugins=[PydanticAIPlugin()])
             async with Worker(client, task_queue=queue, workflows=[ShellRestartWorkflow], workflow_runner=runner):
                 handle = await client.start_workflow(

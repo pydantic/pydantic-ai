@@ -360,36 +360,49 @@ async def test_snowflake_openai_model(allow_model_requests: None, live_provider:
     assert result.all_messages()[-1].finish_reason == 'stop'  # type: ignore[union-attr]
 
 
-def test_snowflake_validate_completion_coerces_empty_finish_reason(provider: SnowflakeProvider):
-    """Cortex returns an empty `finish_reason` for Claude models, which must not fail response validation.
+@pytest.mark.parametrize('raw_finish_reason', ['', None])
+@pytest.mark.parametrize(
+    ('message', 'finish_reason'),
+    [
+        (chat.ChatCompletionMessage(role='assistant', content='4'), 'stop'),
+        (
+            chat.ChatCompletionMessage(
+                role='assistant',
+                tool_calls=[
+                    ChatCompletionMessageFunctionToolCall(
+                        id='call_123', type='function', function=Function(name='get_weather', arguments='{}')
+                    )
+                ],
+            ),
+            'tool_call',
+        ),
+    ],
+)
+async def test_snowflake_response_without_finish_reason(
+    allow_model_requests: None,
+    raw_finish_reason: str | None,
+    message: chat.ChatCompletionMessage,
+    finish_reason: str,
+):
+    """Cortex returns an empty `finish_reason` for Claude models, which is then picked as for a stream without one.
 
-    This can't be reached through a recorded request because the OpenAI SDK parses responses
-    leniently; the strict validation only happens in our `_validate_completion` hook.
+    A `null` one is treated the same. Neither is in a recorded response: the OpenAI SDK parses responses leniently,
+    so the strict validation only happens in our `_validate_completion` hook, and Cortex hasn't been seen to send `null`.
     """
-    model = SnowflakeModel('claude-sonnet-4-6', provider=provider)
-
-    def completion(message: chat.ChatCompletionMessage) -> chat.ChatCompletion:
-        return chat.ChatCompletion.model_construct(
-            id='chatcmpl-123',
-            choices=[Choice.model_construct(finish_reason='', index=0, message=message)],
-            created=1751234567,
-            model='claude-sonnet-4-6',
-            object='chat.completion',
-        )
-
-    text_response = completion(chat.ChatCompletionMessage(role='assistant', content='4'))
-    validated = model._validate_completion(text_response)  # pyright: ignore[reportPrivateUsage]
-    assert validated.choices[0].finish_reason == 'stop'
-
-    tool_call_response = completion(
-        chat.ChatCompletionMessage(
-            role='assistant',
-            tool_calls=[
-                ChatCompletionMessageFunctionToolCall(
-                    id='call_123', type='function', function=Function(name='get_weather', arguments='{}')
-                )
-            ],
-        )
+    completion = chat.ChatCompletion.model_construct(
+        id='chatcmpl-123',
+        choices=[Choice.model_construct(finish_reason=raw_finish_reason, index=0, message=message)],
+        created=1751234567,
+        model='claude-sonnet-4-6',
+        object='chat.completion',
     )
-    validated_tool = model._validate_completion(tool_call_response)  # pyright: ignore[reportPrivateUsage]
-    assert validated_tool.choices[0].finish_reason == 'tool_calls'
+    model = SnowflakeModel(
+        'claude-sonnet-4-6', provider=SnowflakeProvider(openai_client=MockOpenAI.create_mock(completion))
+    )
+
+    response = await model.request(
+        [ModelRequest.user_text_prompt('What is the weather?')], None, ModelRequestParameters()
+    )
+
+    assert response.finish_reason == finish_reason
+    assert 'finish_reason' not in (response.provider_details or {})

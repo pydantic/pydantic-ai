@@ -47,7 +47,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
     VideoUrl,
 )
-from pydantic_ai.models import DEFAULT_HTTP_TIMEOUT, Model
+from pydantic_ai.models import Model
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from . import cassette_hooks
@@ -865,15 +865,14 @@ async def request_capture(anyio_backend: str) -> AsyncIterator[RequestCapture]:
 
 
 _HttpClient: TypeAlias = 'httpx.AsyncClient | httpx2.AsyncClient'
-_HttpClientCache: TypeAlias = 'dict[tuple[str, int, int], _HttpClient]'
+_HttpClientCache: TypeAlias = 'dict[tuple[str, str], _HttpClient]'
 
 
 @pytest.fixture(autouse=True)
 def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClientCache]:
     """Monkeypatch the HTTP client factories in all loaded modules and track created clients.
 
-    Within a single test, calls with the same (timeout, connect) args reuse the same
-    client. On teardown, all clients are closed — no process-global state leaks.
+    Within a single test, calls with the same arguments reuse the same client. On teardown, all clients are closed — no process-global state leaks.
 
     This is a sync fixture so it applies to both sync and async tests. For async tests, the
     companion `close_httpx_clients` fixture handles async cleanup first.
@@ -886,7 +885,8 @@ def track_httpx_clients(monkeypatch: pytest.MonkeyPatch) -> Iterator[_HttpClient
         family: str, factory: Callable[..., _HttpClient], expected: type[_HttpClient]
     ) -> Callable[..., _HttpClient]:
         def cached_per_test(**kwargs: Any) -> _HttpClient:
-            key = (family, kwargs.get('timeout', DEFAULT_HTTP_TIMEOUT), kwargs.get('connect', 5))
+            # `repr`, because `Timeout` and `Limits` arguments compare by value but aren't hashable.
+            key = (family, repr(sorted(kwargs.items())))
             if key not in cache or cache[key].is_closed:
                 cache[key] = factory(**kwargs)
             client = cache[key]
