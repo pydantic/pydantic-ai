@@ -41,6 +41,7 @@ from pydantic_clai2.runtime.sandbox_calls import DelegationToolCallEvent
 from pydantic_clai2.runtime.tasks import TaskPresentation, Tasks, task_row, task_tree
 from pydantic_clai2.ui.menus.field_menu import Runners
 from pydantic_clai2.ui.menus.task_menu import TaskDetail, TaskMenu, open_tasks, run_tasks
+from tests.clai2.test_forks import Model as ForkModel, shell_for
 
 
 def task(*, task_id: str = 'a' * 32, parent_id: str | None = None) -> DelegationTask:
@@ -446,6 +447,22 @@ async def test_task_commands_and_plugin_lifetime(tmp_path: Path) -> None:
         )
         assert 'Resume requested' in await shell.tasks_command(['resume', 'aaaa'])
         assert record.id in shell.editor.queued_messages[0]
+    await shell.forks.close()
+
+
+async def test_tasks_without_arguments_opens_the_live_task_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def escape(timeout: float) -> str:
+        return 'escape'
+
+    monkeypatch.setattr('pydantic_clai2.ui.menus.menu_worker.read_key', escape)
+    shell = shell_for(tmp_path, ForkModel(), io.StringIO())
+    record = task()
+    record.conversation_id = shell.session.summary.id
+    shell.tasks.owner.records[record.id] = record
+    assert await shell.commands.execute_async('/tasks') == ''
+    assert 'worker [aaaaaaaa] running' in capsys.readouterr().out
     await shell.forks.close()
 
 

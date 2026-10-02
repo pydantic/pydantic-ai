@@ -4,6 +4,7 @@ import asyncio
 import io
 import signal
 import threading
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -17,16 +18,22 @@ from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.subagents import DelegationTask
 from pydantic_clai2 import chat
+from pydantic_clai2._app import create_shell, create_stock_agent
 from pydantic_clai2.auth import CodexAuth
 from pydantic_clai2.cli.command_context import CommandContext
 from pydantic_clai2.commands import Command
 from pydantic_clai2.config import Settings, api_keys
+from pydantic_clai2.config.project_settings import ProjectSettings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.ui.menus import key_menu
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
 from pydantic_clai2.ui.menus.model_menu import ModelSettingsSource, model_settings_command, open_add_model_menu
+from pydantic_clai2.ui.prompt.live_prompt import PromptWakeup
 from pydantic_clai2.ui.rendering import theme
 from tests.clai2.menu_script import Script, pick, typed
 
@@ -92,6 +99,62 @@ async def test_chat_boundaries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, 
         assert 'Turn cancelled' in output.getvalue()
     elif mode == 'interrupt':
         assert 'Input cleared' in output.getvalue()
+
+
+def stock_shell(tmp_path: Path, output: io.StringIO, model: FunctionModel | None = None):
+    return create_shell(
+        create_stock_agent(model),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=output, width=120),
+        settings=None,
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+    )
+
+
+def delegated_task(conversation_id: str) -> DelegationTask:
+    return DelegationTask(id='a' * 32, agent_name='worker', prompt='inspect', conversation_id=conversation_id)
+
+
+async def test_plugin_commands_wait_for_a_running_delegated_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A running child may use a plugin's transports, so `/plugins` stays closed until it settles."""
+    inputs(monkeypatch, ['/plugins list', '/exit'])
+    output = io.StringIO()
+    shell = stock_shell(tmp_path, output)
+    child = delegated_task(shell.session.summary.id)
+    shell.tasks.owner.records[child.id] = child
+    assert await shell.run() == 'exit'
+    assert output.getvalue().endswith(
+        'Plugin changes wait for delegated tasks. Stop them in /tasks or wait for completion.\n\nGoodbye.\n\n'
+    )
+
+
+async def test_double_interrupt_during_a_background_report_turn_exits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A settled background report starts a turn on its own; pressing Ctrl-C twice there quits CLAI."""
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'Reading the report'
+        signal.raise_signal(signal.SIGINT)
+        signal.raise_signal(signal.SIGINT)
+        await asyncio.Event().wait()
+
+    inputs(monkeypatch, [PromptWakeup()])
+    output = io.StringIO()
+    shell = stock_shell(tmp_path, output, FunctionModel(stream_function=stream))
+    report = delegated_task(shell.session.summary.id)
+    report.background, report.status, report.outcome, report.output = True, 'finished', 'ok', 'child result'
+    shell.tasks.owner.records[report.id] = report
+    assert await shell.run() == 'exit'
+    assert 'Turn cancelled. Use /exit to quit.' in output.getvalue()
+    # The interrupt stops only children the turn started, not the settled report it was reading.
+    assert not report.user_stopped
 
 
 async def test_model_string_and_non_command_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
