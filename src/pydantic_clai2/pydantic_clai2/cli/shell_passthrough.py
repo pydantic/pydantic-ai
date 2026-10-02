@@ -2,16 +2,14 @@
 
 import asyncio
 import contextlib
-import ntpath
-import os
 import signal
-import subprocess
 import sys
 import time
 
 from rich.console import Console
 from rich.text import Text
 
+from pydantic_clai2.runtime._processes import kill_process_tree, signal_process_group
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.rendering import theme
 
@@ -21,48 +19,10 @@ HELP = '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Wind
 _INTERRUPT_GRACE = 0.25
 
 
-def _taskkill_path() -> str:
-    """Resolve `taskkill.exe` in the system directory, never through the working directory."""
-    return ntpath.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'taskkill.exe')
-
-
-def _signal_process_group(process: asyncio.subprocess.Process, signum: int) -> None:
-    """Signal the shell's process group, which holds every descendant that has not left it."""
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signum)
-
-
 def _interrupt(process: asyncio.subprocess.Process) -> None:
     """Forward Ctrl-C, which the terminal delivers to CLAI but not to a command in its own session."""
     if sys.platform != 'win32':  # The Windows console delivers Ctrl-C to every attached process.
-        _signal_process_group(process, signal.SIGINT)
-
-
-async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
-    """Kill the shell and its descendants."""
-    if sys.platform == 'win32':
-        try:
-            killer = await asyncio.create_subprocess_exec(
-                _taskkill_path(),
-                '/PID',
-                str(process.pid),
-                '/T',
-                '/F',
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            await killer.wait()
-        except OSError:
-            killer_succeeded = False
-        else:
-            killer_succeeded = killer.returncode == 0
-        if not killer_succeeded:
-            with contextlib.suppress(ProcessLookupError):
-                process.kill()
-    else:
-        # Descendants that left the session with `setsid()` detached on purpose, as under any shell.
-        _signal_process_group(process, signal.SIGKILL)
+        signal_process_group(process, signal.SIGINT)
 
 
 def shell_command(text: str) -> str | None:
@@ -100,7 +60,7 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
             _interrupt(process)
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(process.wait(), _INTERRUPT_GRACE)
-            await _kill_process_tree(process)
+            await kill_process_tree(process)
             await process.wait()
             raise
 

@@ -621,10 +621,12 @@ class PluginLoader(Generic[DepsT]):
             )
         action, *rest = args
         if action == 'add' and len(rest) <= 1:
-            declaration = await install_git_plugin(
+            async with install_git_plugin(
                 rest[0] if rest else '', plugins_dir=self.plugins_dir, names=[entry.name for entry in self.entries()]
-            )
-            self._store.save_plugin(declaration)
+            ) as declaration:
+                if any(entry.name == declaration.id for entry in self.entries()):
+                    raise ValueError(f'Plugin {declaration.id} already exists; it has not been changed.')
+                self._store.save_plugin(declaration, overwrite=False)
             _requested('add', declaration.id)
             await self.enable(declaration.id)
             return await self._configure_new(declaration.id, f'Added and loaded {declaration.id}.')

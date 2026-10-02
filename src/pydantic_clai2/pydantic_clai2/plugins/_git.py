@@ -1,16 +1,20 @@
 """Install an explicitly trusted Git repository as a file-based plugin."""
 
+import asyncio
 import os
 import re
 import shutil
-from collections.abc import Collection
+import subprocess
+from collections.abc import AsyncGenerator, Collection
+from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from anyio import fail_after, run_process
+from anyio import CancelScope, fail_after
 
 from pydantic_clai2.config import PluginSettings
 from pydantic_clai2.config.settings_store import canonical_plugin_id
+from pydantic_clai2.runtime._processes import kill_process_tree
 
 _SCP_URL = re.compile(r'(?:[\w.-]+@)?[\w.-]+:[^:\s].*')
 _PLUGIN_ID = re.compile(r'[A-Za-z][A-Za-z0-9_]*')
@@ -41,8 +45,11 @@ def parse_repository(source: str) -> tuple[str, str]:
     return url, canonical_plugin_id(name)
 
 
-async def install_git_plugin(source: str, *, plugins_dir: Path, names: Collection[str]) -> PluginSettings:
-    """Clone a repository without importing it; failed or cancelled clones leave no installation."""
+@asynccontextmanager
+async def install_git_plugin(
+    source: str, *, plugins_dir: Path, names: Collection[str]
+) -> AsyncGenerator[PluginSettings, None]:
+    """Clone without importing; roll back unless the caller successfully saves its declaration."""
     url, name = parse_repository(source)
     if name in names:
         raise ValueError(f'Plugin {name} already exists; choose a repository with a different name.')
@@ -55,20 +62,15 @@ async def install_git_plugin(source: str, *, plugins_dir: Path, names: Collectio
     try:
         try:
             with fail_after(120):
-                result = await run_process(
-                    ['git', '-c', 'credential.interactive=false', 'clone', '--depth', '1', '--', url, str(destination)],
-                    env={**os.environ, 'GIT_TERMINAL_PROMPT': '0'},
-                    start_new_session=True,
-                    check=False,
-                )
+                returncode, stderr = await clone_repository(url, destination)
         except FileNotFoundError as exc:
             raise ValueError(
                 'Git is required to install a plugin from a repository. Install git and try again.'
             ) from exc
         except TimeoutError as exc:
             raise ValueError('Cloning the plugin repository timed out after 120 seconds.') from exc
-        if result.returncode:
-            detail = result.stderr.decode(errors='replace').strip()
+        if returncode:
+            detail = stderr.decode(errors='replace').strip()
             raise ValueError(f'Could not clone the plugin repository: {detail}')
         entry = next(
             (path for filename in ('__init__.py', 'plugin.py') if (path := destination / filename).is_file()),
@@ -76,7 +78,41 @@ async def install_git_plugin(source: str, *, plugins_dir: Path, names: Collectio
         )
         if entry is None or entry.is_symlink():
             raise ValueError('A plugin repository must contain a regular __init__.py or plugin.py at its root.')
-        return PluginSettings(id=name, factory=name, path=str(entry))
+        yield PluginSettings(id=name, factory=name, path=str(entry))
     except BaseException:
         shutil.rmtree(destination)
         raise
+
+
+async def clone_repository(url: str, destination: Path) -> tuple[int, bytes]:
+    """Own Git's process group until cloning finishes or cancellation cleanup completes."""
+    spawn = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            'git',
+            '-c',
+            'credential.interactive=false',
+            'clone',
+            '--depth',
+            '1',
+            '--',
+            url,
+            str(destination),
+            env={**os.environ, 'GIT_TERMINAL_PROMPT': '0'},
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        ),
+        name='clai-plugin-clone',
+    )
+    try:
+        process = await asyncio.shield(spawn)
+        _, stderr = await process.communicate()
+    except BaseException:
+        with CancelScope(shield=True):
+            process = await spawn
+            await kill_process_tree(process)
+            await process.communicate()
+        raise
+    assert process.returncode is not None and stderr is not None
+    return process.returncode, stderr
