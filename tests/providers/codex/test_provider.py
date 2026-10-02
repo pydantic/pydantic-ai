@@ -17,6 +17,7 @@ import json
 import locale
 import pickle
 import socket
+import sys
 import time
 from collections.abc import AsyncIterator
 from dataclasses import asdict
@@ -153,6 +154,7 @@ def test_from_codex_cli_honors_code_home(env: TestEnv, tmp_path: Path):
     assert auth_json.read_text() == original
 
 
+@pytest.mark.skipif(bool(sys.flags.utf8_mode), reason='UTF-8 mode decodes as UTF-8 whatever the locale')
 def test_from_codex_cli_non_utf8_locale(env: TestEnv, tmp_path: Path):
     """`auth.json` is decoded as UTF-8 even when the locale's default codec is not.
 
