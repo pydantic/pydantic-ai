@@ -301,9 +301,10 @@ _MAX_TRUNCATABLE_AUDIO_ITEMS = 32
 _BARGE_IN_TURN_HOLD_SECONDS = 5.0
 # How long a spoken turn that joined the conversation may hold back history recorded after it while it waits for
 # its transcript, with the session core: the turn is never inserted ahead of what was recorded since. Counted from
-# when something after it is ready (normally the reply), by which time a transcript has usually long arrived; past
-# this, the turn is recorded with what it has.
-_TRANSCRIPT_HOLD_SECONDS = 5.0
+# when something after it is ready (normally the reply). Transcripts can arrive after the reply and the next turn
+# (recorded: push-to-talk on gpt-realtime and gpt-realtime-2.1), so this is generous; past it, the turn is recorded
+# with what it has, so a transcript that never comes can't hide the rest of the conversation for good.
+_TRANSCRIPT_HOLD_SECONDS = 30.0
 # The byte budget alone would let a stream of tiny deltas queue millions of objects, so the window is
 # also capped in chunks: five minutes at 10 ms apiece, well below any provider's real chunk size.
 _AUDIO_TAP_MAX_CHUNKS = 30_000
@@ -1425,8 +1426,8 @@ class RealtimeSession:
                 await session.wait_for_reply()
         ```
 
-        The reply can show up in [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] a little
-        later than it ends, where history waits for the transcript of a spoken turn before it (see
+        The reply can show up in [`all_messages()`][pydantic_ai.realtime.RealtimeSession.all_messages] later than
+        it ends (by up to 30 seconds), where history waits for the transcript of a spoken turn before it (see
         [History](../realtime/history.md#transcription-and-history-edge-cases)).
 
         Waiting for the model to stop *generating* is not the same as waiting for the speaker to stop

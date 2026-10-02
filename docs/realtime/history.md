@@ -179,7 +179,7 @@ On OpenAI, Azure OpenAI, and xAI, history follows the order of the provider's ow
   it. A turn the user started while the model was still answering, but which the provider only committed
   after that answer ended, is recorded after the answer.
 - A message appears in `all_messages()` once everything before it is final. A reply waits for the
-  transcript of the spoken turn before it, which can arrive after the reply itself is done, for up to five
+  transcript of the spoken turn before it, which can arrive after the reply itself is done, for up to 30
   seconds after that; past that, the turn is recorded with the transcript it has so far.
 - Nothing is inserted ahead of messages already returned, so each snapshot starts with the one before it.
   The one exception is a tool's return, which always directly follows the response that called it.
