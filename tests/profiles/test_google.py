@@ -198,8 +198,9 @@ def test_openapi_schema_transformer_prunes_map_schemas_before_traversal():
 
     class RecordingTransformer(GoogleOpenAPISchemaTransformer):
         def transform(self, schema: JsonSchema) -> JsonSchema:
-            if isinstance(schema_type := schema.get('type'), str):
-                visited_types.append(schema_type)
+            schema_type = schema['type']
+            assert isinstance(schema_type, str)
+            visited_types.append(schema_type)
             return super().transform(schema)
 
     transformed = RecordingTransformer(schema).walk()
