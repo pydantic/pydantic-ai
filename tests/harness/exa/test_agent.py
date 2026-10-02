@@ -147,6 +147,20 @@ def _retry_parts(messages: list[ModelMessage]) -> list[RetryPromptPart]:
 
 
 class TestExaAgentToolset:
+    async def test_standalone_toolset_creates_the_run_itself(self) -> None:
+        toolset = ExaAgentToolset[None](
+            runs=_FakeRuns(created=_run('queued', run_id='run_7')),
+            effort=None,
+            output_schema=None,
+            system_prompt=None,
+            owner_id='owner',
+        )
+        with pytest.raises(CallDeferred) as exc_info:
+            await toolset.exa_agent('research task')
+        metadata = exc_info.value.metadata
+        assert metadata is not None
+        assert metadata[RUN_ID_METADATA_KEY] == 'run_7'
+
     async def test_creates_run_and_defers(self) -> None:
         runs = _FakeRuns(created=_run('queued', run_id='run_42'))
         toolset = ExaAgent[None](runs=runs, effort='high', system_prompt='Be thorough.').get_toolset()

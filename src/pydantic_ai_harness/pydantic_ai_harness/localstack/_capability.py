@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import AgentToolset
-from pydantic_ai_harness.localstack._toolset import LocalStackToolset
+from pydantic_ai_harness._durable import RetryRequest, retry_as_result
+from pydantic_ai_harness._mcp import one_connection
+from pydantic_ai_harness.localstack._toolset import LocalStackOperations, LocalStackToolset
 
 _INSTRUCTIONS = (
     'You have access to an emulated AWS environment powered by LocalStack at {endpoint_url}. '
@@ -37,6 +39,10 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     result = agent.run_sync('Create an S3 bucket called reports and list all buckets.')
     print(result.output)
     ```
+
+    Each AWS CLI command and health check runs as a durable operation, so under
+    durable execution a recovered run reuses the recorded output instead of
+    running the command again.
     """
 
     endpoint_url: str = 'http://localhost.localstack.cloud:4566'
@@ -104,6 +110,15 @@ class LocalStack(AbstractCapability[AgentDepsT]):
     include_instructions: bool = True
     """If True, add instructions telling the model how to use the emulated environment."""
 
+    _: KW_ONLY
+    id: str | None = 'localstack'
+    """Stable identity for durable execution, which records each command's output under it."""
+
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
+        return one_connection(capabilities)
+
     def get_instructions(self) -> str | None:
         """Explain the emulated environment to the model, unless disabled."""
         if not self.include_instructions:
@@ -112,8 +127,33 @@ class LocalStack(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT]:
         """Build and return the LocalStack toolset."""
+        return self._build_toolset(
+            self.endpoint_url,
+            manage_container=self.manage_container,
+            id=self.id,
+            operations=LocalStackOperations(aws_cli=self._aws_cli, localstack_health=self._localstack_health),
+        )
+
+    @durable_operation('aws_cli')
+    async def _aws_cli(self, endpoint_url: str, command: str, timeout_seconds: float | None) -> str | RetryRequest:
+        return await retry_as_result(
+            self._build_toolset(endpoint_url).aws_cli(command, timeout_seconds=timeout_seconds)
+        )
+
+    @durable_operation('localstack_health')
+    async def _localstack_health(self, endpoint_url: str) -> str:
+        return await self._build_toolset(endpoint_url).localstack_health()
+
+    def _build_toolset(
+        self,
+        endpoint_url: str,
+        *,
+        manage_container: bool = False,
+        id: str | None = None,
+        operations: LocalStackOperations | None = None,
+    ) -> LocalStackToolset[AgentDepsT]:
         return LocalStackToolset[AgentDepsT](
-            endpoint_url=self.endpoint_url,
+            endpoint_url=endpoint_url,
             region=self.region,
             access_key_id=self.access_key_id,
             secret_access_key=self.secret_access_key,
@@ -122,7 +162,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
             default_timeout=self.default_timeout,
             max_output_chars=self.max_output_chars,
             aws_cli_path=self.aws_cli_path,
-            manage_container=self.manage_container,
+            manage_container=manage_container,
             image=self.image,
             host_address=self.host_address,
             service_port_range=self.service_port_range,
@@ -131,4 +171,6 @@ class LocalStack(AbstractCapability[AgentDepsT]):
             container_env=self.container_env,
             docker_path=self.docker_path,
             startup_timeout=self.startup_timeout,
+            id=id,
+            operations=operations,
         )

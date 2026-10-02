@@ -2,23 +2,48 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+
 import anyio
 import anyio.to_thread
 
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness.capability_creation._store import CapabilityStore
+from pydantic_ai_harness._durable import RetryRequest, raise_retry
+from pydantic_ai_harness.capability_creation._store import AuthoredCapability, CapabilityStore
+
+
+@dataclass(frozen=True)
+class CapabilityCreationOperations:
+    """The durable operations a `CapabilityCreation` capability runs its toolset's store reads and writes through."""
+
+    write: Callable[[str, str], Awaitable[AuthoredCapability | RetryRequest]]
+    list_all: Callable[[], Awaitable[list[AuthoredCapability]]]
+    disable: Callable[[str], Awaitable[bool]]
 
 
 class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
-    """Exposes `author_capability`, `list_authored_capabilities`, and `disable_authored_capability`."""
+    """Exposes `author_capability`, `list_authored_capabilities`, and `disable_authored_capability`.
+
+    `CapabilityCreation` passes `operations` so that each store read and write
+    runs as one of its durable operations, whose result durable execution
+    records instead of writing the authored module again on recovery.
+    """
 
     # The store is synchronous disk I/O (and imports the authored module), so each tool runs it
     # in a worker thread rather than on the event loop.
-    def __init__(self, store: CapabilityStore) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        store: CapabilityStore,
+        *,
+        id: str | None = None,
+        operations: CapabilityCreationOperations | None = None,
+    ) -> None:
+        super().__init__(id=id)
         self._store = store
+        self._operations = operations
         # Parallel tool calls would otherwise overlap the manifest's read-modify-write cycles
         # (losing an update) and the import's process-global `sys.dont_write_bytecode` toggle.
         self._store_lock = anyio.Lock()
@@ -46,7 +71,10 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
         """
         try:
             async with self._store_lock:
-                record = await anyio.to_thread.run_sync(self._store.write, name, code)
+                if self._operations is not None:
+                    record = raise_retry(await self._operations.write(name, code))
+                else:
+                    record = await anyio.to_thread.run_sync(self._store.write, name, code)
         except ValueError as exc:
             raise ModelRetry(str(exc)) from exc
         if record.last_error is not None:
@@ -61,7 +89,10 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
 
     async def list_authored_capabilities(self) -> str:
         """List the capabilities authored so far, with their status and any validation error."""
-        records = await anyio.to_thread.run_sync(self._store.list_all)
+        if self._operations is not None:
+            records = await self._operations.list_all()
+        else:
+            records = await anyio.to_thread.run_sync(self._store.list_all)
         if not records:
             return 'No capabilities authored yet.'
         lines: list[str] = []
@@ -78,7 +109,10 @@ class CapabilityCreationToolset(FunctionToolset[AgentDepsT]):
             name: Name of the capability to disable.
         """
         async with self._store_lock:
-            found = await anyio.to_thread.run_sync(self._store.disable, name)
+            if self._operations is not None:
+                found = await self._operations.disable(name)
+            else:
+                found = await anyio.to_thread.run_sync(self._store.disable, name)
         if found:
             return f'Capability {name!r} disabled; it will not be injected on the next run.'
         return f'No authored capability named {name!r}.'

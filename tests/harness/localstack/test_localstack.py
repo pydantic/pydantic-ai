@@ -326,6 +326,13 @@ class TestLocalStackHealth:
         assert server.paths == ['/_localstack/health']
         assert '"s3": "available"' in result
 
+    async def test_through_the_capability(self) -> None:
+        with http_server([HttpResponse(200, '{"services": {"s3": "available"}}')]) as server:
+            toolset = LocalStack(endpoint_url=server.endpoint_url).get_toolset()
+            assert isinstance(toolset, LocalStackToolset)
+            result = await toolset.localstack_health()
+        assert '"s3": "available"' in result
+
     async def test_trailing_slash_endpoint(self) -> None:
         with http_server([HttpResponse(200)]) as server:
             await _toolset(endpoint_url=f'{server.endpoint_url}/').localstack_health()

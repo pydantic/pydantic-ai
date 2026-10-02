@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
+from functools import cached_property
 from typing import TYPE_CHECKING
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.messages import ToolReturn
 from pydantic_ai.tools import AgentDepsT
+from pydantic_ai_harness._durable import RetryRequest, retry_as_result
+from pydantic_ai_harness._mcp import one_connection
 from pydantic_ai_harness.exa._toolset import (
     EXA_MAX_NUM_RESULTS,
     EXA_MAX_PAGE_TEXT_CHARS,
     ExaClient,
+    ExaSearchOperations,
     ExaSearchToolset,
+    default_client,
 )
 
 if TYPE_CHECKING:
@@ -51,6 +57,10 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
 
     Authentication comes from the `EXA_API_KEY` environment variable by
     default; pass `client` to configure it explicitly.
+
+    Each tool's Exa request runs as a durable operation, so under durable
+    execution a recovered run reuses the recorded result instead of making the
+    request again.
     """
 
     num_results: int = 5
@@ -113,6 +123,10 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     key explicitly, point at a different base URL, or substitute a fake in tests.
     """
 
+    _: KW_ONLY
+    id: str | None = 'exa_search'
+    """Stable identity for durable execution, which records each Exa request under it."""
+
     def __post_init__(self) -> None:
         """Validate configuration against the Exa API's documented bounds."""
         if not 1 <= self.num_results <= EXA_MAX_NUM_RESULTS:
@@ -138,16 +152,54 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
             instructions += _DEEP_INSTRUCTIONS_SUFFIX
         return instructions
 
+    @classmethod
+    def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
+        """Two under one `id` are one configuration stated twice; two that disagree raise rather than merge."""
+        return one_connection(capabilities)
+
     def get_toolset(self) -> ExaSearchToolset[AgentDepsT]:
         """Build the toolset providing `web_search`, `get_page`, and the optional `deep_search` tool."""
+        return self._build_toolset(
+            id=self.id,
+            operations=ExaSearchOperations(
+                web_search=self._web_search, get_page=self._get_page, deep_search=self._deep_search
+            ),
+        )
+
+    @durable_operation('web_search')
+    async def _web_search(self, query: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.web_search(query))
+
+    @durable_operation('get_page')
+    async def _get_page(self, url: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.get_page(url))
+
+    @durable_operation('deep_search')
+    async def _deep_search(self, question: str) -> ToolReturn[str] | RetryRequest:
+        return await retry_as_result(self._requests.deep_search(question))
+
+    @cached_property
+    def _client(self) -> ExaClient:
+        return self.client if self.client is not None else default_client()
+
+    @cached_property
+    def _requests(self) -> ExaSearchToolset[AgentDepsT]:
+        """The toolset whose tools make the Exa requests that the durable operations run."""
+        return self._build_toolset()
+
+    def _build_toolset(
+        self, *, id: str | None = None, operations: ExaSearchOperations | None = None
+    ) -> ExaSearchToolset[AgentDepsT]:
         return ExaSearchToolset[AgentDepsT](
-            client=self.client,
+            client=self._client,
             num_results=self.num_results,
             max_text_chars=self.max_text_chars,
             include_deep_search=self.include_deep_search,
             include_domains=self.include_domains,
             exclude_domains=self.exclude_domains,
             text_summary=self.text_summary,
+            id=id,
+            operations=operations,
         )
 
     @classmethod
