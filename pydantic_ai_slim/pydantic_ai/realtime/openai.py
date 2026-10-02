@@ -1631,7 +1631,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
                 model_name=server_model,
                 model_name_getter=model_name_getter,
-                audio_output_sample_rate=self.profile.get('audio_output_sample_rate', DEFAULT_AUDIO_SAMPLE_RATE),
+                audio_output_sample_rate=self.audio_output_sample_rate,
             )
 
         async with connect_openai_protocol(
