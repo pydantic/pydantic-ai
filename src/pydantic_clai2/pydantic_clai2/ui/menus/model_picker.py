@@ -111,7 +111,9 @@ def _run_model_picker(context: CommandContext, *, runners: Runners) -> tuple[Men
             .build()
         )
         if not confirmation.cancelled and confirmation.item is not None and confirmation.item.value is True:
-            context.store.remove_model(name=name)
+            if not context.store.remove_model(name=name):
+                message = f'Kept {name}: it became the saved default.'
+                continue
             message = f'Deleted {name}.'
             messages.append(message)
 

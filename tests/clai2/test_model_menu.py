@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import JsonValue, ValidationError
 from termflow.tui import MenuItem
-from termflow.tui.menu import MenuResult
+from termflow.tui.menu import Menu, MenuResult
 
 from pydantic_ai import Agent, ModelRequestContext, RunContext
 from pydantic_ai.capabilities import Hooks
@@ -19,7 +19,7 @@ from pydantic_clai2.config import Settings
 from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.models.model_catalog import catalog, genai_prices_models, runnable_providers
 from pydantic_clai2.models.model_settings import ModelSettingsForm, model_settings_from_json
-from pydantic_clai2.ui.menus.field_menu import FieldMenu
+from pydantic_clai2.ui.menus.field_menu import FieldMenu, Runners
 from pydantic_clai2.ui.menus.model_menu import ModelMenu, ModelSettingsSource, open_add_model_menu, run_model_flow
 from pydantic_clai2.ui.menus.model_picker import (
     DeleteModel,
@@ -296,22 +296,24 @@ def test_remove_model_persists_without_changing_other_preferences(tmp_path: Path
     if saved_default is not None:
         store.set('model', saved_default)
     store.set('display.thinking', False)
+    settings: dict[str, JsonValue] = {'max_tokens': 5, 'custom_params': {'extra_body.key': 'value'}}
     for name in ['test', 'unused:model']:
         store.add_model(name=name)
-        store.save_model_settings(name, {'max_tokens': 5, 'custom_params': {'extra_body.key': 'value'}})
+        store.save_model_settings(name, settings)
 
-    store.remove_model(name='unused:model')
-    store.remove_model(name='unused:model')
+    removable = saved_default != 'unused:model'
+    assert store.remove_model(name='unused:model') is removable
+    assert store.remove_model(name='unused:model') is removable
     reopened = SettingsStore(store.path)
-    assert reopened.models() == ['test']
-    assert reopened.model_settings('unused:model') == {}
-    assert reopened.model_settings('test') == {'max_tokens': 5, 'custom_params': {'extra_body.key': 'value'}}
+    assert reopened.models() == (['test'] if removable else ['test', 'unused:model'])
+    assert reopened.model_settings('unused:model') == ({} if removable else settings)
+    assert reopened.model_settings('test') == settings
     expected: dict[str, JsonValue] = {'display.thinking': False}
     if saved_default is not None:
         expected['model'] = saved_default
     assert reopened.overrides() == expected
     reopened.add_model(name='unused:model')
-    assert reopened.model_settings('unused:model') == {}
+    assert reopened.model_settings('unused:model') == ({} if removable else settings)
 
 
 @pytest.mark.parametrize('delete_key', ['ctrl-d', 'delete'])
@@ -384,6 +386,23 @@ async def test_cannot_delete_current_model(
     assert context.store.model_settings(original) == {'max_tokens': 5}
     assert context.settings.model == original and applied == []
     assert 'Select another model' in capsys.readouterr().out
+
+
+async def test_saved_default_changed_during_delete_confirmation(tmp_path: Path) -> None:
+    context, applied = make_context(tmp_path)
+    context.store.add_model(name='unused:model')
+    context.store.save_model_settings('unused:model', {'max_tokens': 5})
+    script = Script(lists=[pick(DeleteModel(name='unused:model')), MenuResult(cancelled=True)], choices=[], texts=[])
+
+    def confirm_after_default_changes(menu: Menu) -> MenuResult:
+        SettingsStore(context.store.path).set('model', 'unused:model')
+        return pick(True)
+
+    runners = Runners(run_list=script.run_list, run_choice=confirm_after_default_changes, run_text=script.run_text)
+    assert await model_command(context, [], runners=runners) == 'No changes.'
+    assert 'unused:model' in context.store.models()
+    assert context.store.model_settings('unused:model') == {'max_tokens': 5}
+    assert context.store.load().model == 'unused:model' and applied == []
 
 
 @pytest.mark.parametrize('current', [None, 'test'])

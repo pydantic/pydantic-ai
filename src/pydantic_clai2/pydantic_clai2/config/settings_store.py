@@ -115,11 +115,17 @@ class SettingsStore:
         with self._connect() as connection:
             connection.execute('INSERT OR IGNORE INTO models VALUES (?)', (name,))
 
-    def remove_model(self, *, name: str) -> None:
-        """Forget a saved model and its overrides without changing preferences."""
+    def remove_model(self, *, name: str) -> bool:
+        """Forget a model and its overrides; return `False` if it is the saved default."""
         with self._connect() as connection:
+            # Keep the default check and both deletes atomic across CLAI sessions.
+            connection.execute('BEGIN IMMEDIATE')
+            row = connection.execute("SELECT value_json FROM settings WHERE key = 'model'").fetchone()
+            if row is not None and _JSON.validate_json(row[0]) == name:
+                return False
             connection.execute('DELETE FROM models WHERE name = ?', (name,))
             connection.execute('DELETE FROM model_settings WHERE model = ?', (name,))
+        return True
 
     def reset(self, key: str) -> None:
         """Remove a setting override, restoring its default."""
