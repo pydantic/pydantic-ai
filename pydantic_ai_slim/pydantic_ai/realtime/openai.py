@@ -138,12 +138,6 @@ from .model import RealtimeClientSecret, RealtimeModel, RealtimeProviderSession,
 from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfileSpec
 from .settings import RealtimeModelSettings, ReconnectPolicy
 
-# `input_transcription_model='auto'` resolves to this — OpenAI's recommended realtime transcription model
-# ("For the lowest-latency streaming transcription path, use gpt-realtime-whisper"; it's natively streaming
-# and designed for realtime sessions, unlike the legacy `whisper-1`). Kept behind the `'auto'` sentinel
-# (see `resolve_transcription_model`) so it can be bumped without changing the behavior of apps on `'auto'`.
-_AUTO_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper'
-
 _OUTPUT_AUDIO_BUFFER_CLEAR_EVENT = 'output_audio_buffer.clear'
 _MAX_TRACKED_OUTPUT_ITEMS = 32
 """How many recent output items a barge-in can still name for truncation: far more than can be queued for playback."""
@@ -179,10 +173,14 @@ LatestOpenAIRealtimeModelNames = Literal['gpt-realtime', 'gpt-realtime-2.1', 'gp
 OpenAIRealtimeModelName = str | LatestOpenAIRealtimeModelNames
 
 LatestOpenAIRealtimeTranscriptionModelNames = Literal[
+    # OpenAI deprecated these three on 2026-08-26 and shuts them down on 2027-02-26, in favor of
+    # `gpt-live-transcribe` and `gpt-transcribe`.
     'whisper-1',
     'gpt-4o-transcribe',
     'gpt-4o-mini-transcribe',
     'gpt-realtime-whisper',
+    'gpt-live-transcribe',
+    'gpt-transcribe',
 ]
 OpenAIRealtimeTranscriptionModelName = str | LatestOpenAIRealtimeTranscriptionModelNames
 
@@ -1295,6 +1293,10 @@ class OpenAIRealtimeModel(RealtimeModel):
     # The connection class `connect` yields; a protocol clone (Azure) overrides it to correct the
     # vendor a closed or rejecting connection names in its errors.
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = OpenAIRealtimeConnection
+    # What `input_transcription_model='auto'` resolves to (see `resolve_transcription_model`): the model
+    # OpenAI's realtime transcription guide says to start with, which streams transcript deltas as speech
+    # arrives. Behind the sentinel so it can follow OpenAI's recommendation; pin an id to keep one.
+    _auto_transcription_model: ClassVar[str] = 'gpt-live-transcribe'
 
     model: OpenAIRealtimeModelName
     _: KW_ONLY
@@ -1362,7 +1364,7 @@ class OpenAIRealtimeModel(RealtimeModel):
             'turn_detection': turn_detection_config(turn_detection),
         }
         transcription_model = resolve_transcription_model(
-            model_settings.get('input_transcription_model', 'auto'), default=_AUTO_TRANSCRIPTION_MODEL
+            model_settings.get('input_transcription_model', 'auto'), default=self._auto_transcription_model
         )
         if transcription_model is not None:
             audio_input['transcription'] = {'model': transcription_model}
