@@ -272,7 +272,7 @@ class JsonSchemaTransformer(ABC):
 
 
 class InlineDefsJsonSchemaTransformer(JsonSchemaTransformer):
-    """Transforms the JSON Schema to inline `$defs`.
+    """Transforms the JSON Schema to inline `$defs`, and `$ref`s that point elsewhere in the schema like `#/properties/from`.
 
     Object keywords (`properties`, `additionalProperties`, `patternProperties`) are only walked when `type` is
     `'object'`, and array keywords (`items`, `prefixItems`) only when it is `'array'`. On a schema with no `type`, or
