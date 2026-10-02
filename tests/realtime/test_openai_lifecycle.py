@@ -834,7 +834,7 @@ async def test_an_assistant_messages_phase_is_kept_for_its_part() -> None:
     def item_added(item: object) -> dict[str, Any]:
         return {'type': 'response.output_item.added', 'response_id': 'resp_1', 'item': item}
 
-    message = {'type': 'message', 'role': 'assistant', 'content': []}
+    message: dict[str, Any] = {'type': 'message', 'role': 'assistant', 'content': []}
     stream = Stream(
         created('resp_1'),
         item_added({**message, 'id': 'item_a1', 'phase': 'commentary'}),
