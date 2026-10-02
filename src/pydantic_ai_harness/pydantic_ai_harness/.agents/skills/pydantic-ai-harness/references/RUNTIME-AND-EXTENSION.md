@@ -12,6 +12,7 @@ Agentic Workflow.
 | I want to ... | Use |
 |---|---|
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
+| Retry a flaky tool's transient failures (rate limits, timeouts) with backoff, without failing the run | `RetryPolicy` |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
@@ -54,6 +55,41 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## RetryPolicy
+
+Retries a tool's transient failures with exponential backoff and jitter: rate limits, timeouts,
+connection drops, retryable HTTP status codes. It retries nothing by default, because a retry re-runs
+the tool's function; a tool is retried only when the caller marks it safe to re-run (the tool author's
+call to make) and the `allow_idempotent_retries` gate is open. Model requests are not touched; retries
+for those live at the transport and provider layers.
+
+```python {test="skip"}
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import RetryPolicy
+
+agent = Agent(
+    'test',
+    capabilities=[
+        RetryPolicy(
+            allow_idempotent_retries=True,
+            idempotent_tools=frozenset({'web_search'}),  # retry only this tool
+            max_retries=3,
+            backoff_factor=0.5,  # delays of 0.5s, 1s, 2s, capped by max_backoff
+        )
+    ],
+)
+```
+
+Key parameters: `max_retries` (retry attempts after the first, `0` disables), `backoff_factor`
+(base delay in seconds, doubles per attempt), `max_backoff` (delay cap, default `30.0`),
+`retryable_status_codes` (default `429`/`500`/`502`/`503`/`504`, read from `status_code` on the
+exception or its `.response`), `retryable_exceptions` (default `TimeoutError`, `ConnectionError`),
+`tool_overrides` (per-tool values for any of the above plus `idempotent`, `on_retry`, `on_failure`),
+and the two opt-in pieces: `allow_idempotent_retries` (the gate, default `False`) and
+`idempotent_tools` (tools safe to re-run). `on_retry(tool_name, attempt, exc)` runs before each retry;
+`on_failure(tool_name, exc)` runs when a transient failure is surfaced.
 
 Key parameters: `store` (default `InMemoryStepStore()`), `agent_name` (prefix for the derived run id),
 `run_id` (explicit, single-use), `parent_run_id` (auto-filled when a tool of one persisted agent runs

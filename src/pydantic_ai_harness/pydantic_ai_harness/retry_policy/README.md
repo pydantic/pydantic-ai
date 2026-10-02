@@ -52,7 +52,7 @@ other tool is surfaced immediately, with `on_failure` called first if you set it
 A generic wrapper cannot know whether re-running a tool is safe; the tool author does. For a tool
 whose flakiness is known and localized, retrying just the failing call inside the tool (with
 [tenacity](https://tenacity.readthedocs.io/), for example) is often the better shape; see
-[Transient failures inside a tool](https://pydantic.dev/docs/ai/retries/#transient-failures-inside-a-tool)
+[Tool retries](https://pydantic.dev/docs/ai/retries/#tool-retries)
 in the retries guide. `RetryPolicy` is for keeping that policy out of the tool, in one place,
 across many tools.
 
