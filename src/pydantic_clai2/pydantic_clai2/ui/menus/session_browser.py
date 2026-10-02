@@ -109,9 +109,19 @@ class SessionBrowser:
                 self.identities[workspace] = project_identity(workspace)
 
     def place(self, workspace: str) -> tuple[str, str]:
-        """The sidebar project and checkout a workspace belongs to; deleted checkouts share one group."""
+        """The sidebar project and checkout root a workspace belongs to; deleted folders share one project."""
         identity = self.identity(workspace)
-        return (MISSING, identity.name) if identity.missing else (identity.key, identity.checkout)
+        return (MISSING if identity.missing else identity.key), identity.root
+
+    def checkout_label(self, project: str, root: str) -> str:
+        """A checkout's branch or a deleted folder's name, or its path when that is ambiguous."""
+        labels: dict[str, str] = {}
+        for entry in self.entries:
+            identity = self.identity(entry.workspace)
+            if self.place(entry.workspace)[0] == project:
+                labels[identity.root] = identity.name if identity.missing else identity.checkout
+        label = labels[root]
+        return label if list(labels.values()).count(label) == 1 else root
 
     def project_label(self, project: str) -> str:
         """Disambiguate independent repositories with the same name without merging them."""
@@ -130,19 +140,19 @@ class SessionBrowser:
 
     @property
     def rows(self) -> list[tuple[str, str]]:
-        """Sidebar rows: each project, then its checkouts when it has more than one."""
+        """Sidebar rows: each project, then its checkout roots when it has more than one."""
         places = [self.place(entry.workspace) for entry in self.entries]
         rows: list[tuple[str, str]] = []
         for project in self.projects:
-            checkouts = list(dict.fromkeys(checkout for key, checkout in places if key == project))
+            checkouts = list(dict.fromkeys(root for key, root in places if key == project))
             rows.append((project, ''))
             if len(checkouts) > 1:
                 rows.extend((project, checkout) for checkout in checkouts)
         return rows
 
     def _in_row(self, entry: ConversationSummary, project: str, checkout: str) -> bool:
-        key, location = self.place(entry.workspace)
-        return key == project and checkout in ('', location)
+        key, root = self.place(entry.workspace)
+        return key == project and checkout in ('', root)
 
     @property
     def sessions(self) -> list[ConversationSummary]:
@@ -212,7 +222,7 @@ class SessionBrowser:
             marker = '> ' if (project, checkout) == chosen else '  '
             if checkout:
                 last = index + 1 == len(rows) or not rows[index + 1][1]
-                line = f'{marker}{"└─" if last else "├─"} {checkout} ({count})'
+                line = f'{marker}{"└─" if last else "├─"} {self.checkout_label(project, checkout)} ({count})'
             else:
                 line = f'{marker}{self.project_label(project)} ({count})'
             if (project, checkout) == chosen:
@@ -230,7 +240,9 @@ class SessionBrowser:
         start = max(0, cursor - capacity + 1)
         location = f'Search all projects: {self.query}' if self.query else ''
         if not self.query and self.project:
-            location = self.project_label(self.project) + (f' / {self.checkout}' if self.checkout else '')
+            location = self.project_label(self.project)
+            if self.checkout:
+                location += f' / {self.checkout_label(self.project, self.checkout)}'
         lines = [
             colored(
                 f'{"SELECT SESSION" if self.mode == "sessions" else "SESSIONS"}: '
@@ -264,7 +276,8 @@ class SessionBrowser:
                 + ' '
                 + chips
             )
-            project, location = self.place(entry.workspace)
+            project, root = self.place(entry.workspace)
+            location = self.checkout_label(project, root)
             if self.query:
                 location = f'{self.project_label(project)}: {location}' if location else entry.workspace
             if location:

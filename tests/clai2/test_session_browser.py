@@ -393,34 +393,41 @@ def test_identity_fallback(workspace: str) -> None:
 
 
 def test_checkout_tree_and_missing_folders(tmp_path: Path) -> None:
-    """Worktrees nest, dimmed, under their repository; deleted checkouts gather in one group last."""
+    """Worktrees nest, dimmed, under their repository; deleted folders gather in one group last.
+
+    Rows are keyed by folder, so deleted folders sharing a name stay apart, labelled by path.
+    """
     repo, linked, gone = tmp_path / 'repo', tmp_path / 'linked', tmp_path / 'gone'
+    old, twin = gone / 'old-worktree', gone / 'elsewhere' / 'old-worktree'
     repository(repo, linked=linked, branch='feature')
     widget, entries = browser()
     entries[:] = [
         replace(entries[0], workspace=str(repo)),
-        replace(entries[1], workspace=str(gone / 'old-worktree')),
+        replace(entries[1], workspace=str(old)),
         replace(entries[2], workspace=str(linked)),
         ConversationSummary(id='four', workspace=str(gone / 'other'), title='Older'),
+        ConversationSummary(id='five', workspace=str(twin), title='Oldest'),
     ]
     widget.reload()
     key = widget.project
     assert widget.rows == [
         (key, ''),
-        (key, 'main'),
-        (key, 'feature'),
+        (key, widget.identity(str(repo)).root),
+        (key, widget.identity(str(linked)).root),
         (MISSING, ''),
-        (MISSING, 'old-worktree'),
-        (MISSING, 'other'),
+        (MISSING, str(old)),
+        (MISSING, str(gone / 'other')),
+        (MISSING, str(twin)),
     ]
+    assert widget.checkout_label(MISSING, str(twin)) == str(twin)
     muted = module.theme.sgr(module.theme.MUTED)
     highlight = module.theme.sgr(module.theme.INFO, bold=True)
     frame = '\n'.join(widget.frame(width=120, height=24))
     assert f'{highlight}> repo (2)\x1b[0m' in frame
     assert f'{muted}  ├─ main (1)\x1b[0m' in frame
     assert f'{muted}  └─ feature (1)\x1b[0m' in frame
-    assert '  missing folders (2)' in frame
-    assert f'{muted}  └─ other (1)\x1b[0m' in frame
+    assert '  missing folders (3)' in frame
+    assert f'{muted}  ├─ other (1)\x1b[0m' in frame
     widget.handle_key(Key.DOWN)
     assert [e.id for e in widget.sessions] == ['one']
     assert 'SESSIONS: repo / main' in '\n'.join(widget.frame(width=120, height=24))
@@ -429,9 +436,10 @@ def test_checkout_tree_and_missing_folders(tmp_path: Path) -> None:
     assert f'{highlight}> └─ feature (1)\x1b[0m' in '\n'.join(widget.frame(width=120, height=24))
     for _ in range(4):
         widget.handle_key(Key.DOWN)
-    assert (widget.project, widget.checkout) == (MISSING, 'other')
-    assert '[other]' in '\n'.join(widget.frame(width=120, height=24))
-    entries.pop()
+    assert (widget.project, widget.checkout) == (MISSING, str(twin))
+    assert [e.id for e in widget.sessions] == ['five']
+    assert f'SESSIONS: missing folders / {twin}'[:60] in '\n'.join(widget.frame(width=300, height=24))
+    del entries[3:]
     widget.reload()
     assert (widget.project, widget.checkout) == (MISSING, '')
     assert [e.id for e in widget.sessions] == ['two']
@@ -459,4 +467,4 @@ def test_git_unavailable_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
         raise error
 
     monkeypatch.setattr(subprocess, 'run', fail)
-    assert project_identity(str(tmp_path)) == ProjectIdentity(key=str(tmp_path), name=tmp_path.name)
+    assert project_identity(str(tmp_path)) == ProjectIdentity(key=str(tmp_path), name=tmp_path.name, root=str(tmp_path))
