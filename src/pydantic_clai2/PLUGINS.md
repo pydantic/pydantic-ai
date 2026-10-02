@@ -1621,7 +1621,7 @@ runtime: the console, the conversation, the status row, the full screen, and its
 saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_plugin_load_failed`
 
 Five `async` methods fire outside the agent run, in the shell:
 
