@@ -553,7 +553,10 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
         instructions: str | None = None,
         tools: Sequence[ToolDefinition] | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> WebRTCAnswer:
+        # As on OpenAI, the call takes no conversation items: the sideband seeds the history when it attaches.
+        del message_history
         secret = await self.create_client_secret(instructions=instructions, tools=tools, model_settings=model_settings)
         return await _relay_sdp_offer(
             http_client=self._http_client,

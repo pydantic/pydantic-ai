@@ -1487,7 +1487,11 @@ class OpenAIRealtimeModel(RealtimeModel):
         instructions: str | None = None,
         tools: Sequence[ToolDefinition] | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> WebRTCAnswer:
+        # The Realtime API's calls endpoint takes no conversation items (`session.input` is rejected), so
+        # history is seeded by the sideband when it attaches, as `connect_webrtc` does.
+        del message_history
         return await _answer_webrtc_offer(
             http_client=self._http_client,
             calls_url=self._webrtc_calls_url(),

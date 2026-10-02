@@ -1410,6 +1410,28 @@ def _is_voiced(pcm: bytes) -> bool:
     return any(abs(sample) > _VOICE_FLOOR for sample in samples)
 
 
+def _check_seeded_history(expected: list[dict[str, Any]], started: SessionStartedEvent) -> None:
+    """Refuse to attach a sideband whose history isn't the history the Live session started with.
+
+    Live takes history only when a session starts, which on a WebRTC call is the offer. A sideband opened
+    with other history would record a conversation the model never saw, so it raises rather than attach.
+    """
+    # Compared with whitespace collapsed: what matters is that it is the same conversation, and a false
+    # mismatch would leave the call running with nothing to run its tools.
+    seeded = [
+        (item.role, [' '.join(part.text.split()) for part in item.content]) for item in started.session.input or []
+    ]
+    wanted = [(item['role'], [' '.join(part['text'].split()) for part in item['content']]) for item in expected]
+    if seeded == wanted:
+        return
+    raise UserError(
+        'An OpenAI GPT-Live session takes its history when it starts, which on a WebRTC call is when '
+        '`answer_webrtc_offer()` starts it, so the sideband must be opened with the same `message_history`. '
+        'Bind the history once with `agent.realtime(model, message_history=...)` and use that for both the '
+        'offer and the session, or pass the same history to `answer_webrtc_offer()` and `connect_webrtc()`.'
+    )
+
+
 def _backend_reasoning_effort(
     delegation_settings: OpenAILiveResponsesDelegation, settings: OpenAILiveModelSettings, backend_model: str
 ) -> ReasoningEffort:
@@ -1683,11 +1705,13 @@ class OpenAILiveModel(RealtimeModel):
         instructions: str | None = None,
         tools: Sequence[ToolDefinition] | None = None,
         model_settings: RealtimeModelSettings | None = None,
+        message_history: Sequence[ModelMessage] | None = None,
     ) -> WebRTCAnswer:
         """Start a Live session for a browser's WebRTC offer, and return the SDP answer and the session to attach to.
 
         Live's configuration is fixed when the session starts, so everything is set here: the voice and
-        instructions, and the delegated backend with the agent's instructions and tools. The browser's
+        instructions, the delegated backend with the agent's instructions and tools, and the
+        `message_history` the call continues, seeded as on a WebSocket session. The browser's
         data channel is closed unless `openai_live_data_channel` opens it. The audio format is negotiated
         by WebRTC, so the profile's sample rates don't apply.
         """
@@ -1698,7 +1722,7 @@ class OpenAILiveModel(RealtimeModel):
             instructions=instructions or '',
             tools=list(tools) if tools else None,
             native_tools=[],
-            messages=[],
+            messages=message_history or [],
             settings=settings,
         )
         # WebRTC negotiates the audio format on the media transport, and Live rejects one set here.
@@ -1729,18 +1753,14 @@ class OpenAILiveModel(RealtimeModel):
 
         The session was fully configured when it started, and Live can't reconfigure it, so the sideband
         only runs it: it executes the backend's tool calls and records the conversation, while the browser
-        holds the audio. For the same reason it can't be seeded with `message_history`.
+        holds the audio. For the same reason it seeds nothing: the history it is opened with has to be the
+        history the offer seeded, which it checks against the session Live replays.
         """
         if session.provider_name != self.system:
             raise UserError(
                 f'This WebRTC call was negotiated by provider {session.provider_name!r}, but this realtime '
                 f'model connects through {self.system!r}. Answer the offer and attach the sideband with the '
                 'same model/provider.'
-            )
-        if seed_input_items(messages, provider_name=self.system):
-            raise UserError(
-                'An OpenAI GPT-Live session takes its history when it starts, so a WebRTC sideband attaching to '
-                'one cannot seed `message_history`. Start the session without it, or connect over WebSockets.'
             )
         settings = cast('OpenAILiveModelSettings', self._merge_model_settings(model_settings) or {})
         self._reject_unsupported(settings)
@@ -1762,6 +1782,7 @@ class OpenAILiveModel(RealtimeModel):
                     started = SessionStartedEvent.model_validate(started_frame)
                 except ValidationError as e:
                     raise RealtimeHandshakeError(f'Malformed `{_SESSION_STARTED_EVENT}` event: {e}') from e
+            _check_seeded_history(seed_input_items(messages, provider_name=self.system), started)
             delegation = started.session.delegation
             connection = OpenAILiveConnection(
                 ws,
