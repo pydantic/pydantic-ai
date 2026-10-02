@@ -330,6 +330,18 @@ The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
 again afterwards. Without uv on `PATH`, `/update` prints the command to run
 yourself, in PowerShell syntax on Windows.
 
+## Environment variables
+
+CLAI loads the nearest `.env` file at startup using `python-dotenv`, before reading
+settings or importing agents and plugins. It searches the launch directory first,
+then its parents, and loads only the first file found. With `--worktree`, this
+happens before switching directories. A missing `.env` is fine.
+
+Use `.env` for provider API keys and settings such as `CLAI_MODEL` or
+`CLAI_NO_SPLASH`. Existing environment variables take precedence, including empty
+values. Set `PYTHON_DOTENV_DISABLED=1` in your environment to disable loading.
+Keep `.env` files containing credentials out of version control.
+
 ## Your own agent
 
 ```bash
