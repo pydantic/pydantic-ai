@@ -108,6 +108,13 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
     `include_deep_search`), or set `''` to contribute no instructions at all.
     """
 
+    client: ExaClient | None = None
+    """Exa client to use; when `None`, an `exa_py.AsyncExa` is built from `EXA_API_KEY`.
+
+    Any object satisfying the `ExaClient` protocol works: use it to pass an API
+    key explicitly, point at a different base URL, or substitute a fake in tests.
+    """
+
     native: bool = False
     """Use the model's native web search where it has one, with Exa's `web_search` as the fallback. Off by default.
 
@@ -120,13 +127,6 @@ class ExaSearch(AbstractCapability[AgentDepsT]):
 
     To use Exa as the fallback of a core `WebSearch` instead, with its native
     options and no `get_page`, pass `WebSearch(local=ExaSearch().web_search_tool())`.
-    """
-
-    client: ExaClient | None = None
-    """Exa client to use; when `None`, an `exa_py.AsyncExa` is built from `EXA_API_KEY`.
-
-    Any object satisfying the `ExaClient` protocol works: use it to pass an API
-    key explicitly, point at a different base URL, or substitute a fake in tests.
     """
 
     def __post_init__(self) -> None:
