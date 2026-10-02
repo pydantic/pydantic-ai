@@ -27,6 +27,11 @@ per agent, wrap extras in core `PrefixTools(wrapped=..., prefix='cb')`, or use `
 (needs the `pydantic-ai-slim[duckduckgo]` extra) whose DuckDuckGo tool is `duckduckgo_search`. `Researcher` includes core `WebSearch`, so do not add
 `ExaSearch`/`YouSearch` next to it on Anthropic models without `PrefixTools`.
 
+To use the provider's native search where the model has one and Exa or You.com elsewhere, set
+`ExaSearch(native=True)` / `YouSearch(native=True)` (their `web_search` is then only sent to models without
+native search; `get_page` stays), or pass `WebSearch(local=ExaSearch().web_search_tool())` to keep core
+`WebSearch`'s native options.
+
 ## Researcher
 
 A combined capability: default research instructions, `WebSearch(local=True)`, `WebFetch(local=True)`,
