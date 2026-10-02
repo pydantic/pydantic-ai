@@ -3619,6 +3619,17 @@ async def test_truncate_resets_generated_audio_between_responses() -> None:
     }
 
 
+async def test_truncate_clamps_at_the_profile_output_sample_rate(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 3200 bytes of mono PCM16 is 100 ms at 16 kHz (and would be ~67 ms at the 24 kHz default).
+    ws = FakeWebSocket([_created(), _updated(), _audio_delta('item_7', audio_bytes=3200)])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', FakeConnect(ws))
+    model = OpenAIRealtimeModel('gpt-realtime', profile=RealtimeModelProfile(audio_output_sample_rate=16000))
+    async with _connect(model, 'x') as conn:
+        _ = [e async for e in conn]
+        await conn.send(TruncateOutput(audio_end_ms=1000))
+    assert json.loads(ws.sent[-1])['audio_end_ms'] == 100
+
+
 async def test_truncate_sideband_connection_does_not_clamp() -> None:
     ws = FakeWebSocket([_audio_delta('item_7')])
     conn = OpenAIRealtimeConnection(ws, observes_output_audio=False)  # type: ignore[arg-type]

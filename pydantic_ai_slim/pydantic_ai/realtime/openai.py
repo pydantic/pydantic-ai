@@ -135,7 +135,7 @@ from .codec import (
     TruncateOutput,
 )
 from .model import RealtimeClientSecret, RealtimeModel, RealtimeProviderSession, WebRTCAnswer
-from .profiles import RealtimeModelProfileSpec
+from .profiles import DEFAULT_AUDIO_SAMPLE_RATE, RealtimeModelProfileSpec
 from .settings import RealtimeModelSettings, ReconnectPolicy
 
 # `input_transcription_model='auto'` resolves to this — OpenAI's recommended realtime transcription model
@@ -432,6 +432,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         model_name: str | None = None,
         model_name_getter: Callable[[], str | None] | None = None,
         observes_output_audio: bool = True,
+        audio_output_sample_rate: int = DEFAULT_AUDIO_SAMPLE_RATE,
     ) -> None:
         self._ws = ws
         self._interrupts_response_on_speech = interrupts_response_on_speech
@@ -449,6 +450,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._reconnects_used = 0
         self._gave_up = False
         self._observes_output_audio = observes_output_audio
+        # Output audio is mono PCM16 at this rate: 2 bytes per sample, so a barge-in's truncation can be
+        # clamped to the milliseconds of audio actually generated.
+        self._output_audio_bytes_per_second = audio_output_sample_rate * 2
         # The Realtime API rejects `response.create` while a response is already being generated.
         # We track that window and defer requests (e.g. a background tool result that lands while the
         # model is mid-answer) until the active response finishes, so the model still announces it.
@@ -641,7 +645,7 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # directly between the browser and provider. Only clamp connections that observe those
         # deltas; otherwise the byte counter stays zero and every barge-in would truncate to zero.
         if self._observes_output_audio:
-            audio_end_ms = min(audio_end_ms, generated * 1000 // 48_000)
+            audio_end_ms = min(audio_end_ms, generated * 1000 // self._output_audio_bytes_per_second)
         await self._send_event(
             {
                 'type': CONVERSATION_ITEM_TRUNCATE_EVENT,
@@ -1621,6 +1625,7 @@ class OpenAIRealtimeModel(RealtimeModel):
                 interrupts_response_on_speech=config_interrupts_response_on_speech(session_config),
                 model_name=server_model,
                 model_name_getter=model_name_getter,
+                audio_output_sample_rate=self.audio_output_sample_rate,
             )
 
         async with connect_openai_protocol(
