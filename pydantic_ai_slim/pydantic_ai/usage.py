@@ -485,8 +485,8 @@ def _incr_usage_tokens(slf: RunUsage | RequestUsage, incr_usage: RunUsage | Requ
 class UsageLimits:
     """Limits on model usage.
 
-    The request count is tracked by Pydantic AI, and the request limit is checked before each step of the agent
-    loop sends a request to the model. Token counts are provided in responses from the model, and the token limits are checked after each response.
+    The request count is tracked by Pydantic AI, and the request limit is checked at the start of each step of the
+    agent loop. Token counts are provided in responses from the model, and the token limits are checked after each response.
 
     Each of the limits can be set to `None` to disable that limit.
     """
@@ -499,7 +499,8 @@ class UsageLimits:
     This bounds the number of turns of the agent loop, not the number of requests sent to the provider: attempts a
     [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] moved on from, continuation requests, and
     provider SDK or HTTP transport retries aren't counted. The tokens and cost of a response a `FallbackModel`
-    rejected, and of continuation requests, do count towards the token and cost limits.
+    rejected, and of continuation requests, do count towards the token and cost limits. It's checked at the start
+    of each step, including a step answered without a request to the model.
     """
     tool_calls_limit: int | None = None
     """The maximum number of successful tool calls allowed to be executed."""
