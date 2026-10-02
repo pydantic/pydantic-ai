@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING
 
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.native_tools import AbstractNativeTool
+from pydantic_ai.tools import AgentDepsT, Tool
+from pydantic_ai_harness._web_search import native_web_search
 from pydantic_ai_harness.youdotcom._toolset import (
     DEFAULT_SEARCH_TIMEOUT_MS,
     YOU_MAX_NUM_RESULTS,
@@ -93,6 +96,20 @@ class YouSearch(AbstractCapability[AgentDepsT]):
     timeout_ms: int = DEFAULT_SEARCH_TIMEOUT_MS
     """Per-request timeout for the default client, in milliseconds. Ignored when `client` is set."""
 
+    native: bool = False
+    """Use the model's native web search where it has one, with You.com's `web_search` as the fallback. Off by default.
+
+    When enabled, the capability also adds the provider's native web search
+    tool, and You.com's `web_search` is only sent to models that do not support
+    it, so the two never share a request. `get_page` stays You.com's on every
+    model. `include_domains` and `exclude_domains` are passed to the native tool
+    as `allowed_domains` and `blocked_domains`; the other search options only
+    apply to You.com's search.
+
+    To use You.com as the fallback of a core `WebSearch` instead, with its native
+    options and no `get_page`, pass `WebSearch(local=YouSearch().web_search_tool())`.
+    """
+
     client: YouClient | None = None
     """You.com client to use; when `None`, a `youdotcom.You` is built from `YDC_API_KEY`.
 
@@ -135,7 +152,16 @@ class YouSearch(AbstractCapability[AgentDepsT]):
             freshness=self.freshness,
             country=self.country,
             timeout_ms=self.timeout_ms,
+            defer_to_native=self.native,
         )
+
+    def get_native_tools(self) -> Sequence[AbstractNativeTool]:
+        """The native web search tool, when `native` is set."""
+        return [native_web_search(self.include_domains, self.exclude_domains)] if self.native else []
+
+    def web_search_tool(self) -> Tool[AgentDepsT]:
+        """You.com's `web_search` on its own, configured from this capability, to pass as `WebSearch(local=...)`."""
+        return Tool[AgentDepsT](self.get_toolset().web_search, name='web_search')
 
     @classmethod
     def from_spec(
@@ -151,6 +177,7 @@ class YouSearch(AbstractCapability[AgentDepsT]):
         country: str | None = None,
         guidance: str | None = None,
         timeout_ms: int = DEFAULT_SEARCH_TIMEOUT_MS,
+        native: bool = False,
     ) -> YouSearch[AgentDepsT]:
         """Construct the capability from serializable spec options.
 
@@ -168,4 +195,5 @@ class YouSearch(AbstractCapability[AgentDepsT]):
             country=country,
             guidance=guidance,
             timeout_ms=timeout_ms,
+            native=native,
         )

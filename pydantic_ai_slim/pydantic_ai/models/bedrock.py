@@ -19,6 +19,7 @@ from typing_extensions import ParamSpec, TypedDict, assert_never
 
 try:
     from botocore.client import BaseClient
+    from botocore.eventstream import ParserError as EventStreamParserError
     from botocore.exceptions import (
         BotoCoreError,
         ClientError,
@@ -140,6 +141,11 @@ if TYPE_CHECKING:
     )
 
 
+# botocore parses a 200 body that's empty, not JSON, or JSON without the operation's fields to a response lacking them,
+# instead of raising.
+_MISSING_RESPONSE_FIELD = 'Response has no {field!r} field'
+
+
 @contextmanager
 def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Generator[None]:
     try:
@@ -163,6 +169,10 @@ def _map_api_errors(model_name: str, model_id_namespace: str = 'bedrock') -> Gen
     except (HTTPClientError, BotocoreConnectionError) as e:
         # botocore raises transport failures (timeouts, connection errors) as `BotoCoreError`, not `ClientError`.
         raise ModelAPIError(model_name=model_name, message=str(e)) from e
+    except EventStreamParserError as e:
+        # botocore's event stream parser raises its own `ParserError`, not a `BotoCoreError`, for a streamed 200 whose
+        # body isn't an event stream, e.g. keep-alive whitespace before an upstream failure.
+        raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as an event stream: {e}') from e
 
 
 class _BotocoreRequestParams(TypedDict):
@@ -894,6 +904,8 @@ class BedrockConverseModel(Model[BaseClient]):
         client = self.client
         with _map_api_errors(self.model_name, self._provider.model_id_namespace):
             response = await _call_bedrock(client, client.count_tokens, params, settings.get('extra_headers'))
+        if 'inputTokens' not in response:
+            raise ModelAPIError(model_name=self.model_name, message=_MISSING_RESPONSE_FIELD.format(field='inputTokens'))
         return usage.RequestUsage(input_tokens=response['inputTokens'])
 
     @asynccontextmanager
@@ -1126,6 +1138,10 @@ class BedrockConverseModel(Model[BaseClient]):
                 )
             else:
                 model_response = await _call_bedrock(client, client.converse, params, settings.get('extra_headers'))
+                if 'output' not in model_response:
+                    raise ModelAPIError(
+                        model_name=self.model_name, message=_MISSING_RESPONSE_FIELD.format(field='output')
+                    )
         return model_response
 
     @staticmethod

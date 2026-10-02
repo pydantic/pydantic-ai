@@ -241,7 +241,7 @@ class Forks(Generic[DepsT, OutputT]):
         # Deep copy, so nothing the fork does to its messages can reach the foreground history.
         try:
             return copy.deepcopy(list(self._history()))
-        except Exception:
+        except Exception:  # noqa: BLE001 -- a failed copy must not block the fork.
             self.console.print(
                 "/fork couldn't copy the current conversation. Forking with a fresh context.",
                 style=theme.color(theme.WARNING),
@@ -257,7 +257,7 @@ class Forks(Generic[DepsT, OutputT]):
             with move_on_after(5, shield=True):
                 await self._fire(TurnEnd(text=prompt, outcome='cancelled'))
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- a failed fork reports and never reaches the shell.
             record = self._finish(fork_id, 'failed', session)
             first_line = (error_message(exc).strip().splitlines() or [''])[0]
             self._notify(

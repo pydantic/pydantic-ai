@@ -70,7 +70,11 @@ class AbstractConcurrencyLimiter(ABC):
 
     @abstractmethod
     def release(self) -> None:
-        """Release a slot."""
+        """Release a slot.
+
+        This can run on a different task than the matching `acquire()`: a streamed model response
+        is iterated and closed on whichever task consumes it.
+        """
         ...
 
 
@@ -95,9 +99,13 @@ class ConcurrencyLimit:
 class ConcurrencyLimiter(AbstractConcurrencyLimiter):
     """A concurrency limiter that tracks waiting operations for observability.
 
-    This class wraps an anyio.CapacityLimiter and tracks the number of waiting operations.
+    This class wraps an anyio.Semaphore and tracks the number of waiting operations.
     When an operation has to wait to acquire a slot, a span is created for
     observability purposes.
+
+    Slots are not owned by tasks. Each successful `acquire()` must be paired with one
+    `release()`, which can run on a different task. Calling `acquire()` again consumes another
+    slot and waits if none is available.
     """
 
     def __init__(
@@ -122,7 +130,10 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
         """
         _validate_max_running(max_running)
         _validate_max_queued(max_queued)
-        self._limiter = anyio.CapacityLimiter(max_running)
+        # A semaphore rather than `anyio.CapacityLimiter`, which ties each slot to the task that took it:
+        # `release()` must work from any task.
+        self._limiter = anyio.Semaphore(max_running, max_value=max_running)
+        self._max_running = max_running
         self._max_queued = max_queued
         self._name = name
         self._tracer = tracer
@@ -171,17 +182,17 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
     @property
     def running_count(self) -> int:
         """Number of operations currently running."""
-        return self._limiter.statistics().borrowed_tokens
+        return self._max_running - self._limiter.value
 
     @property
     def available_count(self) -> int:
         """Number of slots available."""
-        return int(self._limiter.available_tokens)
+        return self._limiter.value
 
     @property
     def max_running(self) -> int:
         """Maximum concurrent operations allowed."""
-        return int(self._limiter.total_tokens)
+        return self._max_running
 
     def _get_tracer(self) -> Tracer:
         """Get the tracer, falling back to global tracer if not set."""
@@ -227,7 +238,7 @@ class ConcurrencyLimiter(AbstractConcurrencyLimiter):
             attributes: dict[str, str | int] = {
                 'source': source,
                 'waiting_count': self._waiting_count,
-                'max_running': int(self._limiter.total_tokens),
+                'max_running': self._max_running,
             }
             if self._name is not None:
                 attributes['limiter_name'] = self._name
