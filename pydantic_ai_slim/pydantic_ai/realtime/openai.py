@@ -75,7 +75,6 @@ from ._openai_protocol import (
     INPUT_AUDIO_BUFFER_APPEND_EVENT,
     INPUT_AUDIO_BUFFER_CLEAR_EVENT,
     INPUT_AUDIO_BUFFER_COMMIT_EVENT,
-    INPUT_AUDIO_BUFFER_COMMITTED_EVENT,
     INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED_EVENT,
     INPUT_TRANSCRIPT_DONE_TYPES,
     RESPONSE_CANCEL_EVENT,
@@ -505,9 +504,9 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         self._output_audio_playing = False
         self._output_speech_clear_sent = False
         # Input items server VAD committed because its `idle_timeout_ms` ran out with nobody speaking. The
-        # server commits the silent buffer and starts a follow-up response to it, but no user turn happened,
-        # so the commit and its transcription (empty, or failed) are not surfaced as one. Kept until that
-        # transcription ends, or only until the commit when transcription is off.
+        # server commits the silent buffer and starts a follow-up response to it, but no user turn happened:
+        # the lifecycle keeps the commit out of the user turns, and the connection drops the item's
+        # transcription (empty, or failed). Tracked only while transcribing, until that transcription ends.
         self._idle_timeout_items: set[str] = set()
 
     @property
@@ -931,20 +930,13 @@ class OpenAIRealtimeConnection(RealtimeConnection):
         # response, emit usage, and clear the suppression.
         if self._is_cancelled_straggler(event_type, data):
             return _DecodedFrame()
-        if event_type == INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED_EVENT:
+        if event_type == INPUT_AUDIO_BUFFER_TIMEOUT_TRIGGERED_EVENT and self._input_transcription_enabled:
             self._idle_timeout_items.add(InputAudioBufferTimeoutTriggered.model_validate(data).item_id)
-            return _DecodedFrame()
         # A frame about a response that has already ended repeats or trails its terminal.
         stale = self._lifecycle.is_ended(frame_response_id(event_type, data))
         self._lifecycle.before_frame(event_type, data)
-        idle_timeout_commit = (
-            event_type == INPUT_AUDIO_BUFFER_COMMITTED_EVENT and data.get('item_id') in self._idle_timeout_items
-        )
-        if idle_timeout_commit and not self._input_transcription_enabled:
-            # No transcript will follow to retire the item.
-            self._idle_timeout_items.discard(data['item_id'])
         try:
-            after = [] if idle_timeout_commit else self._lifecycle.frame(event_type, data)
+            after = self._lifecycle.frame(event_type, data)
         except ValueError:
             # Only the lifecycle reads these frames, and the codec events never depended on them.
             after = []
