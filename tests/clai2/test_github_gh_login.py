@@ -15,12 +15,12 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.github import GITHUB_MCP_URL, GitHub
 from pydantic_clai2 import DEFAULT_PLUGINS
+from pydantic_clai2.builtin_plugins.github import FINISHED, SETUP
 from pydantic_clai2.commands import Commands
+from pydantic_clai2.config.settings_store import SettingsStore
 from pydantic_clai2.gh_cli import INSTALL, GhToken, gh_command, gh_host, gh_token, start_login
-from pydantic_clai2.github import FINISHED, SETUP
-from pydantic_clai2.plugin_loader import PluginLoader
 from pydantic_clai2.plugins import SessionStart
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.plugins.loader import PluginLoader
 from tests.clai2.conftest import FakeGh
 from tests.clai2.menu_script import Script, pick
 
@@ -49,7 +49,7 @@ class Shell:
 
 def script(monkeypatch: pytest.MonkeyPatch, choices: list[MenuResult]) -> Script:
     scripted = Script(lists=[pick('login'), CLOSE], choices=choices, texts=[])
-    monkeypatch.setattr('pydantic_clai2.github.RUNNERS', scripted.runners)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.RUNNERS', scripted.runners)
     return scripted
 
 
@@ -90,7 +90,9 @@ async def test_signed_in_gh_loads_without_a_warning(
 ) -> None:
     fake_gh.sign_in()
     shell = Shell(tmp_path)
-    monkeypatch.setattr('pydantic_clai2.github.RUNNERS', Script(lists=[CLOSE], choices=[], texts=[]).runners)
+    monkeypatch.setattr(
+        'pydantic_clai2.builtin_plugins.github.RUNNERS', Script(lists=[CLOSE], choices=[], texts=[]).runners
+    )
     assert await shell.loader.command(['enable', 'github']) == 'Enabled github.\nGitHub settings unchanged.'
     assert shell.output.getvalue() == ''
 
@@ -133,7 +135,7 @@ async def test_sign_in_continues_when_no_browser_opens(
     def no_browser(url: str) -> bool:
         raise webbrowser.Error('no browser')
 
-    monkeypatch.setattr('pydantic_clai2.github.OPEN_BROWSER', no_browser)
+    monkeypatch.setattr('pydantic_clai2.builtin_plugins.github.OPEN_BROWSER', no_browser)
     shell = Shell(tmp_path)
     await shell.loader.enable('github')
     script(monkeypatch, [pick('gh'), pick(FINISHED)])
