@@ -74,6 +74,28 @@ def test_anthropic_modes_and_effort() -> None:
         assert 'max' not in model_options(model=f'anthropic:{name}')['anthropic_effort']
 
 
+@pytest.mark.parametrize('name', ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-mythos-5'])
+def test_anthropic_omits_disabled_where_thinking_cannot_be_turned_off(name: str) -> None:
+    """These profiles mark thinking as always on and answer `disabled` with a 400."""
+    options = model_options(model=f'anthropic:{name}')
+    assert options['anthropic_thinking_mode'] == ('adaptive',)
+    with pytest.raises(ValueError, match='choose adaptive'):
+        validate_model_options(
+            model=f'anthropic:{name}', form=model_settings_from_json({'anthropic_thinking_mode': 'disabled'})
+        )
+
+
+@pytest.mark.parametrize(
+    ('name', 'modes'),
+    [
+        ('claude-opus-5', ('adaptive', 'disabled')),
+        ('claude-sonnet-4-5', ('enabled', 'disabled')),
+    ],
+)
+def test_anthropic_offers_disabled_where_thinking_can_be_turned_off(name: str, modes: tuple[str, ...]) -> None:
+    assert model_options(model=f'anthropic:{name}')['anthropic_thinking_mode'] == modes
+
+
 @pytest.mark.parametrize(
     ('model', 'values', 'error'),
     [

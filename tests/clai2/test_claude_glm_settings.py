@@ -128,13 +128,16 @@ def test_disabled_thinking_ignores_display_and_binding() -> None:
 @pytest.mark.parametrize(
     'model,values,message',
     [
+        # Fable 5.1's profile marks thinking as always on, so `disabled` is rejected before the
+        # display control is even considered.
         (
             'anthropic:claude-fable-5-1',
             {'anthropic_thinking_mode': 'disabled', 'anthropic_thinking_display': 'updates'},
-            'display or binding',
+            'choose adaptive',
         ),
+        # Opus 5 can still disable thinking, and its preserved-thinking control needs it on.
         (
-            'anthropic:claude-fable-5-1',
+            'anthropic:claude-opus-5',
             {'anthropic_thinking_mode': 'disabled', 'anthropic_preserved_thinking': 'error'},
             'display or binding',
         ),

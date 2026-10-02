@@ -40,7 +40,13 @@ def _anthropic_options(*, name: str) -> dict[str, tuple[str, ...]]:
     options: dict[str, tuple[str, ...]] = {key: () for key in ('max_tokens', 'temperature', 'top_p', 'custom_params')}
     claude = anthropic_model_profile(name) or {}
     adaptive = claude.get('anthropic_supports_adaptive_thinking', False)
-    options['anthropic_thinking_mode'] = ('adaptive', 'disabled') if adaptive else ('enabled', 'disabled')
+    modes = ('adaptive',) if adaptive else ('enabled',)
+    # Models whose profile marks thinking as always on (Fable 5, Mythos 5, Opus 5.5, Sonnet 5.5)
+    # answer `thinking={'type': 'disabled'}` with a 400, so the mode is only offered where the
+    # profile allows it.
+    if not claude.get('thinking_always_enabled', False):
+        modes += ('disabled',)
+    options['anthropic_thinking_mode'] = modes
     if not adaptive:
         options['anthropic_thinking_budget'] = ()
     if claude.get('anthropic_supports_effort', False):
