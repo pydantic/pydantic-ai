@@ -1052,7 +1052,11 @@ def _record_attempts_usage(usage: _usage.RunUsage, attempts: Sequence[_messages.
             _usage_attribution.record_usage(usage, attempt.usage)
 
 
-def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: _usage.RequestUsage) -> None:
+def _check_continuation_usage(
+    run_context: RunContext[Any],
+    continuation_usage: _usage.RequestUsage,
+    attempts: Sequence[_messages.ModelRequestAttempt] | None = None,
+) -> None:
     """Enforce token limits mid-turn against a provisional total during continuations.
 
     Continuation segments accumulate usage but aren't committed to the run usage until the
@@ -1063,12 +1067,18 @@ def _check_continuation_usage(run_context: RunContext[Any], continuation_usage: 
     the agent graph (where `run_context.usage` is the live run usage) and inside a durable
     boundary (where it's the serialized snapshot the activity/step/task received — the final
     workflow-side check still applies when the merged response is committed).
+
+    `attempts` are the turn's failed attempts (e.g. responses a `FallbackModel` rejected before the one
+    that suspended), whose usage is committed alongside the merged response's.
     """
     if run_context.usage_limits:
         provisional = deepcopy(run_context.usage)
         provisional.incr(continuation_usage)  # usage-attribution: a provisional copy, for a check only
+        attempt_usages = [attempt.usage for attempt in attempts or () if attempt.usage is not None]
+        for attempt_usage in attempt_usages:
+            provisional.incr(attempt_usage)  # usage-attribution: a provisional copy, for a check only
         run_context.usage_limits.check_tokens(provisional)
-        if continuation_usage.cost is not None:
+        if continuation_usage.cost is not None or any(usage.cost is not None for usage in attempt_usages):
             # Continuation usage is provisional, so only warn after the run successfully finishes.
             run_context.usage_limits.check_cost(provisional, warn_if_cost_unavailable=False)
 
@@ -1082,7 +1092,7 @@ async def _check_resume_seed_usage(
         return
     try:
         fill_response_cost(seed)
-        _check_continuation_usage(run_context, seed.usage)
+        _check_continuation_usage(run_context, seed.usage, seed.failed_attempts)
     except BaseException:
         await cancel_suspended_job(model, seed)
         raise
@@ -1193,7 +1203,7 @@ async def model_request(
                 if response.state == 'suspended':
                     fill_response_cost(response)
                     try:
-                        _check_continuation_usage(run_context, response.usage)
+                        _check_continuation_usage(run_context, response.usage, response.failed_attempts)
                     except BaseException:
                         await cancel_suspended_job(model, response)
                         raise
@@ -1209,7 +1219,7 @@ async def model_request(
                 # Enforce token limits early against a provisional total so a runaway
                 # continuation can't blow the budget; the total is committed once later.
                 try:
-                    _check_continuation_usage(run_context, response.usage)
+                    _check_continuation_usage(run_context, response.usage, response.failed_attempts)
                 except BaseException:
                     # The limit tripped on a still-suspended merge: cancel the live
                     # server-side job before propagating so it doesn't leak (mirrors the

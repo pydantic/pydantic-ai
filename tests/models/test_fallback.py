@@ -1912,6 +1912,32 @@ async def test_all_rejected_usage_counts_towards_token_limits() -> None:
     assert isinstance(exc_info.value.__cause__, FallbackExceptionGroup)
 
 
+async def test_rejected_usage_counts_towards_limits_before_a_continuation() -> None:
+    """A rejected response's cost counts towards the limit checked before a suspended response is continued."""
+    backup_calls = 0
+
+    def rejected(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('rejected')], usage=RequestUsage(cost=Decimal('0.02')))
+
+    def backup(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal backup_calls
+        backup_calls += 1
+        return ModelResponse(parts=[TextPart('paused')], usage=RequestUsage(cost=Decimal('0.001')), state='suspended')
+
+    def reject_primary(response: ModelResponse) -> bool:
+        return response.model_name == 'primary'
+
+    model = FallbackModel(
+        FunctionModel(rejected, model_name='primary'),
+        FunctionModel(backup, model_name='backup'),
+        fallback_on=reject_primary,
+    )
+
+    with pytest.raises(UsageLimitExceeded, match='cost_limit'):
+        await Agent(model).run('test', usage_limits=UsageLimits(cost_limit=Decimal('0.01')))
+    assert backup_calls == 1
+
+
 async def test_rejected_usage_counts_towards_token_limits() -> None:
     def reject_primary(response: ModelResponse) -> bool:
         return response.model_name == 'primary'
