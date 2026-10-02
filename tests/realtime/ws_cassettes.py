@@ -40,6 +40,8 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from unittest import mock
 
+from pydantic_ai._utils import is_str_dict
+
 from ..conftest import try_import
 
 with try_import() as imports_successful:
@@ -79,6 +81,14 @@ def _gemini_realtime_audio(frame: dict[str, Any]) -> dict[str, Any] | None:
         return None
     audio = cast('dict[str, Any]', realtime_input).get('audio')
     return cast('dict[str, Any]', audio) if isinstance(audio, dict) else None
+
+
+def _transcription_model(frame: dict[str, Any]) -> object:
+    """The input transcription model an OpenAI GA `session.update` frame sets, if any."""
+    value: object = frame
+    for key in ('session', 'audio', 'input', 'transcription', 'model'):
+        value = value.get(key) if is_str_dict(value) else None
+    return value
 
 
 def _is_audio_send(frame: dict[str, Any]) -> bool:
@@ -421,6 +431,11 @@ class ReplayWebSocket:
             # `response_request_metadata`); only that is let through, and the rest of the frame is still pinned.
             if (response := actual.get('response')) is not None and set(response) == {'metadata'}:
                 del actual['response']
+        if actual.get('type') == 'session.update' and _transcription_model(expected) == 'gpt-realtime-whisper':
+            # Recorded before OpenAI's `input_transcription_model='auto'` resolved to `gpt-live-transcribe`;
+            # only that model is let through, and the rest of the frame is still pinned.
+            if _transcription_model(actual) == 'gpt-live-transcribe':
+                actual['session']['audio']['input']['transcription']['model'] = 'gpt-realtime-whisper'
         assert actual == expected, (
             f'Outbound WebSocket frame did not match cassette at position {self._position - 1}.\n'
             f'expected={expected!r}\nactual={actual!r}'

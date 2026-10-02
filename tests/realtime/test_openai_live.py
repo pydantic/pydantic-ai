@@ -13,6 +13,7 @@ import base64
 import json
 from contextlib import contextmanager
 from dataclasses import replace
+from datetime import timezone
 from decimal import Decimal
 from typing import Any
 
@@ -36,6 +37,10 @@ from pydantic_ai.messages import (
     ImageUrl,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
+    NativeToolReturnPart,
+    PartEndEvent,
+    PartStartEvent,
     RealtimeSessionErrorEvent,
     RetryPromptPart,
     SpeechPart,
@@ -51,6 +56,7 @@ from pydantic_ai.messages import (
     VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.realtime import (
     RealtimeError,
     RealtimeModelProfile,
@@ -79,7 +85,7 @@ from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
-from ..conftest import try_import
+from ..conftest import IsNow, try_import
 
 with try_import() as imports_successful:
     import httpx2
@@ -119,6 +125,7 @@ def model() -> OpenAILiveModel:
 def _config(model: OpenAILiveModel, **kwargs: Any) -> dict[str, Any]:
     kwargs.setdefault('instructions', '')
     kwargs.setdefault('tools', [])
+    kwargs.setdefault('native_tools', [])
     kwargs.setdefault('messages', [])
     kwargs.setdefault('settings', OpenAILiveModelSettings())
     return model._session_config(**kwargs)  # pyright: ignore[reportPrivateUsage]
@@ -170,7 +177,8 @@ def test_profile(model: OpenAILiveModel) -> None:
         responses_are_requests=False,
         # Live reports its own context usage; the tokens it reports are the delegated backend's.
         response_usage_covers_context=False,
-        supported_native_tools=frozenset(),
+        # The delegated backend runs web search; Live refuses every other native Responses tool.
+        supported_native_tools=frozenset({WebSearchTool}),
         audio_input_sample_rate=24000,
         audio_output_sample_rate=24000,
         context_window=128_000,
@@ -1282,6 +1290,153 @@ def test_strict_tools_reach_the_backend(model: OpenAILiveModel) -> None:
     assert 'tool_choice' not in responses
     # With no agent instructions there is no backend prompt to send.
     assert 'instructions' not in responses
+
+
+def test_web_search_reaches_the_backend(model: OpenAILiveModel) -> None:
+    """`WebSearchTool` is advertised to the backend next to the function tools, with every option.
+
+    Live accepts any `web_search` shape at session start and hands it to the backend unchecked (an
+    unknown key only fails the first delegation), so the options are pinned here, where a drift would
+    otherwise go unseen until a search behaved differently.
+    """
+    tool = ToolDefinition(name='lookup', parameters_json_schema={'type': 'object'})
+    web_search = WebSearchTool(
+        search_context_size='high',
+        user_location={'city': 'Amsterdam', 'country': 'NL'},
+        allowed_domains=['wikipedia.org'],
+        blocked_domains=['example.com'],
+        external_web_access=False,
+    )
+    responses = _config(model, tools=[tool], native_tools=[web_search])['delegation']['responses']
+
+    assert responses['tools'] == snapshot(
+        [
+            {'type': 'function', 'name': 'lookup', 'parameters': {'type': 'object'}},
+            {
+                'type': 'web_search',
+                'search_context_size': 'high',
+                'user_location': {'type': 'approximate', 'city': 'Amsterdam', 'country': 'NL'},
+                'filters': {'allowed_domains': ['wikipedia.org'], 'blocked_domains': ['example.com']},
+                'external_web_access': False,
+            },
+        ]
+    )
+    # With no function tools, web search is the backend's only tool.
+    assert _config(model, native_tools=[WebSearchTool()])['delegation']['responses']['tools'] == snapshot(
+        [{'type': 'web_search', 'search_context_size': 'medium'}]
+    )
+
+
+def test_a_backend_web_search_is_recorded_as_native_tool_parts() -> None:
+    """A finished `web_search_call` becomes the call and return parts a standard Responses run records."""
+    connection = _connection()
+    search = {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': 'd1',
+        'event': {
+            'type': 'response.output_item.done',
+            'sequence_number': 3,
+            'output_index': 1,
+            'item': {
+                'id': 'ws_1',
+                'type': 'web_search_call',
+                'status': 'completed',
+                'action': {'type': 'search', 'query': 'Amsterdam population', 'queries': ['Amsterdam population']},
+            },
+        },
+    }
+    connection._map_event(_event(_delegation_created('d1')))  # pyright: ignore[reportPrivateUsage]
+
+    first = connection._map_event(_event(search))  # pyright: ignore[reportPrivateUsage]
+    call = NativeToolCallPart(
+        tool_name='web_search',
+        args={'type': 'search', 'query': 'Amsterdam population', 'queries': ['Amsterdam population']},
+        tool_call_id='ws_1',
+        id='ws_1',
+        provider_name='openai',
+    )
+    result = NativeToolReturnPart(
+        tool_name='web_search',
+        content={'status': 'completed'},
+        tool_call_id='ws_1',
+        timestamp=IsNow(tz=timezone.utc),
+        provider_name='openai',
+    )
+    assert first == [
+        PartStartEvent(index=0, part=call),
+        PartEndEvent(index=0, part=call),
+        PartStartEvent(index=1, part=result),
+        PartEndEvent(index=1, part=result),
+    ]
+    # A second search is numbered after the first, so its parts never replace the first's.
+    second = connection._map_event(_event(search))  # pyright: ignore[reportPrivateUsage]
+    assert [event.index for event in second if isinstance(event, PartStartEvent)] == [2, 3]
+
+
+def _output_item_done(item: dict[str, Any], *, delegation_id: str = 'd1') -> dict[str, Any]:
+    return {
+        'type': 'response.event',
+        'event_id': 'e',
+        'delegation_id': delegation_id,
+        'event': {'type': 'response.output_item.done', 'sequence_number': 1, 'output_index': 0, 'item': item},
+    }
+
+
+def _reasoning(item_id: str) -> dict[str, Any]:
+    return {'id': item_id, 'type': 'reasoning', 'summary': [], 'encrypted_content': f'enc-{item_id}'}
+
+
+_SEARCH_ITEM = {'id': 'ws_1', 'type': 'web_search_call', 'status': 'completed', 'action': {'type': 'search'}}
+
+
+def test_a_search_is_recorded_with_the_reasoning_that_led_to_it() -> None:
+    """OpenAI replays a search only with its reasoning item, so that is recorded with it, as a Responses run does.
+
+    Reasoning that leads to anything else (a function call, the answer) isn't recorded: nothing needs it.
+    """
+    connection = _connection()
+    connection._map_event(_event(_delegation_created('d1')))  # pyright: ignore[reportPrivateUsage]
+    connection._map_event(_event(_delegation_created('d2')))  # pyright: ignore[reportPrivateUsage]
+
+    def parts(frame: dict[str, Any]) -> list[str]:
+        events = connection._map_event(_event(frame))  # pyright: ignore[reportPrivateUsage]
+        return [
+            f'{type(e.part).__name__}:{getattr(e.part, "id", None)}' for e in events if isinstance(e, PartStartEvent)
+        ]
+
+    # Reasoning waits for what it leads to.
+    assert parts(_output_item_done(_reasoning('rs_1'))) == []
+    # Another delegation's reasoning is its own.
+    assert parts(_output_item_done(_reasoning('rs_other'), delegation_id='d2')) == []
+    assert parts(_output_item_done(_SEARCH_ITEM)) == [
+        'ThinkingPart:rs_1',
+        'NativeToolCallPart:ws_1',
+        'NativeToolReturnPart:None',
+    ]
+    # Reasoning before a function call or the answer is dropped when that arrives.
+    parts(_output_item_done(_reasoning('rs_2')))
+    call: dict[str, Any] = {'id': 'fc_1', 'type': 'function_call', 'call_id': 'c1', 'name': 'lookup', 'arguments': '{}'}
+    connection._map_event(_event(_output_item_done(call)))  # pyright: ignore[reportPrivateUsage]
+    assert parts(_output_item_done(_SEARCH_ITEM)) == ['NativeToolCallPart:ws_1', 'NativeToolReturnPart:None']
+    parts(_output_item_done(_reasoning('rs_2b')))
+    message: dict[str, Any] = {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'status': 'completed',
+        'content': [],
+    }
+    assert parts(_output_item_done(message)) == []
+    assert parts(_output_item_done(_SEARCH_ITEM)) == ['NativeToolCallPart:ws_1', 'NativeToolReturnPart:None']
+    # And so is reasoning a response ends with.
+    parts(_output_item_done(_reasoning('rs_3')))
+    connection._map_response_event(_backend_terminal('response.completed'), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+    assert parts(_output_item_done(_SEARCH_ITEM, delegation_id='d2')) == [
+        'ThinkingPart:rs_other',
+        'NativeToolCallPart:ws_1',
+        'NativeToolReturnPart:None',
+    ]
 
 
 def _backend(model: OpenAILiveModel, **settings: Any) -> str:
