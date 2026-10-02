@@ -79,6 +79,9 @@ from ._transports import (
     _WorkspaceCallTransport,
 )
 
+_STABLE_DEFAULT_RUN_ID_PATCH = 'pydantic_ai:stable_default_run_id'
+"""`workflow.patched()` ID marking histories in which every agent run drew its default `run_id`."""
+
 _DEFAULT_MODEL_HEARTBEAT_TIMEOUT = timedelta(seconds=30)
 """Default `heartbeat_timeout` for the model-request activities.
 
@@ -492,6 +495,12 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def _default_run_id(self) -> str | None:
         if not self.in_durable_context:
+            return None
+        # `workflow.uuid4()` draws from the workflow's random sequence. Histories recorded before every
+        # durable run got a stable default only drew here when the agent supplied workspaces, so those
+        # replay without the draw and keep the sequence (and the random run ID) they were recorded with.
+        supplies_workspaces = self._agent is not None and self._agent.root_capability._has_get_workspace  # pyright: ignore[reportPrivateUsage]
+        if not supplies_workspaces and not workflow.patched(_STABLE_DEFAULT_RUN_ID_PATCH):
             return None
         return f'{workflow.info().run_id}:{workflow.uuid4()}'
 

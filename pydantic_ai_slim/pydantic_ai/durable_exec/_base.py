@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import uuid
 from abc import abstractmethod
 from collections.abc import (
     AsyncGenerator,
@@ -172,6 +173,9 @@ class _RestrictedRunContext(Protocol):
 
 
 MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
+
+_CONVERSATION_ID_NAMESPACE = uuid.UUID('b4a5470b-7dc5-4744-b6d4-27f7c81a3775')
+"""Namespace for the UUID5 a durable run derives its default `conversation_id` from."""
 
 
 class _BoundModelOperations(NamedTuple):
@@ -870,6 +874,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     @abstractmethod
     def in_durable_context(self) -> bool:
         """Whether execution is currently inside this engine's durable container (workflow or flow)."""
+
+    def _default_conversation_id(self, run_id: str) -> str | None:
+        # Derived from the run ID, which is itself replay-stable here (the engine's default, or the
+        # caller's), so a re-execution of the run gets the same conversation ID without another draw.
+        if not self.in_durable_context:
+            return None
+        return str(uuid.uuid5(_CONVERSATION_ID_NAMESPACE, run_id))
 
     def _register_toolsets(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Wrap the agent's leaf toolsets in engine wrappers and index them by toolset `id`."""

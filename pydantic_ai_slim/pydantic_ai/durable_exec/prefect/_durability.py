@@ -114,7 +114,7 @@ class PrefectDurability(BaseDurabilityCapability[AgentDepsT]):
         if context is None:
             return None
         assert context.flow_run is not None
-        key = 'pydantic_ai:workspace_run_id'
+        key = 'pydantic_ai:default_run_id'
         sequence = context.task_run_dynamic_keys.get(key, 0)
         assert isinstance(sequence, int)
         context.task_run_dynamic_keys[key] = sequence + 1
