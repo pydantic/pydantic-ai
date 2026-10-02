@@ -21,12 +21,15 @@ from typing_extensions import TypedDict
 from pydantic_ai import (
     BinaryContent,
     BinaryImage,
+    Citation,
     CompactionPart,
+    DocumentCitationSource,
     DocumentUrl,
     FilePart,
     FinalResultEvent,
     ImageGenerationTool,
     ImageUrl,
+    MarkerCitationAnchor,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -51,6 +54,7 @@ from pydantic_ai import (
     UsageLimitExceeded,
     UserError,
     UserPromptPart,
+    WebCitationSource,
     capture_run_messages,
 )
 from pydantic_ai.agent import Agent
@@ -89,6 +93,7 @@ from ..conftest import (
     message,
     try_import,
 )
+from .citation_utils import IsCitationList, citations_from_messages
 from .mock_openai import MockOpenAIResponses, get_mock_responses_kwargs, get_mock_retrieve_kwargs, response_message
 
 with try_import() as imports_successful:
@@ -105,7 +110,11 @@ with try_import() as imports_successful:
     from openai.types.responses.response_function_web_search import ActionSearch
     from openai.types.responses.response_output_message import Content, ResponseOutputMessage
     from openai.types.responses.response_output_refusal import ResponseOutputRefusal
-    from openai.types.responses.response_output_text import AnnotationURLCitation, ResponseOutputText
+    from openai.types.responses.response_output_text import (
+        AnnotationContainerFileCitation,
+        AnnotationURLCitation,
+        ResponseOutputText,
+    )
     from openai.types.responses.response_reasoning_item import (
         Content as ReasoningContent,
         ResponseReasoningItem,
@@ -133,6 +142,107 @@ pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
     pytest.mark.vcr,
 ]
+
+
+def test_openai_unsupported_annotation_is_ignored():
+    annotation = AnnotationContainerFileCitation(
+        container_id='container-1',
+        file_id='file-1',
+        filename='chart.png',
+        start_index=0,
+        end_index=0,
+        type='container_file_citation',
+    )
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='message-1',
+                content=[ResponseOutputText(text='answer', type='output_text', annotations=[annotation])],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='not-used'))
+
+    result = model._process_response(  # pyright: ignore[reportPrivateUsage]
+        response,
+        OpenAIResponsesModelSettings(),
+        ModelRequestParameters(),
+    )
+
+    [part] = result.parts
+    assert isinstance(part, TextPart)
+    assert part.provider_details is None
+
+
+def test_openai_invalid_url_citation_range_is_unanchored():
+    annotation = AnnotationURLCitation(
+        type='url_citation',
+        start_index=20,
+        end_index=30,
+        title='Example',
+        url='https://example.com',
+    )
+    response = response_message(
+        [
+            ResponseOutputMessage(
+                id='message-1',
+                content=[ResponseOutputText(text='answer', type='output_text', annotations=[annotation])],
+                role='assistant',
+                status='completed',
+                type='message',
+            )
+        ]
+    )
+    model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(api_key='not-used'))
+
+    result = model._process_response(  # pyright: ignore[reportPrivateUsage]
+        response, OpenAIResponsesModelSettings(), ModelRequestParameters()
+    )
+
+    [part] = result.parts
+    assert isinstance(part, TextPart)
+    assert part.citations == [Citation(sources=[WebCitationSource(url='https://example.com', title='Example')])]
+
+
+async def test_openai_response_with_null_text_and_citation(allow_model_requests: None):
+    output_text = ResponseOutputText.model_construct(
+        text=None,
+        type='output_text',
+        annotations=[
+            AnnotationURLCitation(
+                type='url_citation',
+                start_index=0,
+                end_index=0,
+                title='Example',
+                url='https://example.com',
+            )
+        ],
+    )
+    response = resp.Response(
+        id='resp-1',
+        model='gpt-5',
+        object='response',
+        created_at=0,
+        output=[
+            ResponseOutputMessage.model_construct(
+                id='msg-1', content=[output_text], role='assistant', status='completed', type='message'
+            )
+        ],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    model = OpenAIResponsesModel(
+        'gpt-5', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock(response))
+    )
+
+    result = await direct_model_request(model, [ModelRequest.user_text_prompt('')])
+
+    # Empty text makes no part, so its citations are dropped with it.
+    assert result.parts == []
 
 
 async def _cleanup_openai_resources(file: Any, vector_store: Any, async_client: Any) -> None:  # pragma: lax no cover
@@ -1722,6 +1832,20 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     )
     assert isinstance(annotation_event, PartDeltaEvent)
     assert isinstance(annotation_event.delta, TextPartDelta)
+    assert annotation_event.index in {
+        event.index for event in events if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart)
+    }
+    assert annotation_event.delta.citations_delta == [
+        Citation(
+            sources=[
+                WebCitationSource(
+                    url='https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
+                    title='Mount Columbia | mountain, Alberta, Canada | Britannica',
+                )
+            ],
+            anchor=MarkerCitationAnchor(start=77, end=162),
+        )
+    ]
     assert annotation_event.delta.provider_details == snapshot(
         {
             'annotations': [
@@ -1740,6 +1864,10 @@ async def test_openai_include_raw_annotations_streaming(allow_model_requests: No
     agent2 = Agent(model2, instructions=instructions, capabilities=[NativeTool(WebSearchTool())])
     async with agent2.run_stream_events(prompt) as event_stream2:
         events2 = [event async for event in event_stream2]
+    assert any(
+        isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta) and event.delta.citations_delta
+        for event in events2
+    )
     assert not any(
         (
             isinstance(event, PartDeltaEvent)
@@ -1884,6 +2012,69 @@ async def test_openai_include_raw_annotations_streaming_model_annotation(allow_m
     )
 
 
+async def test_openai_responses_stream_unparseable_annotation(allow_model_requests: None):
+    """A streamed annotation that isn't a known annotation type gives no citations and is kept raw."""
+    base_response = resp.Response(
+        id='resp_001',
+        model='gpt-5.6-terra',
+        object='response',
+        created_at=1704067200,
+        output=[],
+        parallel_tool_calls=True,
+        tool_choice='auto',
+        tools=[],
+    )
+    text = 'Mount Columbia is the tallest.'
+    stream: list[resp.ResponseStreamEvent] = [
+        resp.ResponseCreatedEvent(response=base_response, type='response.created', sequence_number=0),
+        resp.ResponseTextDeltaEvent(
+            content_index=0,
+            delta=text,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=1,
+            logprobs=[],
+        ),
+        resp.ResponseOutputTextAnnotationAddedEvent.model_construct(
+            annotation=None,
+            annotation_index=0,
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.annotation.added',
+            sequence_number=2,
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=0,
+            item_id='msg_001',
+            output_index=0,
+            text=text,
+            type='response.output_text.done',
+            sequence_number=3,
+            logprobs=[],
+        ),
+        resp.ResponseCompletedEvent(
+            response=base_response.model_copy(update={'status': 'completed'}),
+            type='response.completed',
+            sequence_number=4,
+        ),
+    ]
+    mock_client = MockOpenAIResponses.create_mock_stream(stream)
+    model = OpenAIResponsesModel('gpt-5.6-terra', provider=OpenAIProvider(openai_client=mock_client))
+    agent = Agent(model=model)
+    settings = OpenAIResponsesModelSettings(openai_include_raw_annotations=True)
+
+    async with agent.run_stream('What is the tallest mountain in Alberta?', model_settings=settings) as result:
+        await result.get_output()
+    response = result.all_messages()[-1]
+
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [
+        TextPart(text, id='msg_001', provider_name='openai', provider_details={'annotations': [None]})
+    ]
+
+
 async def test_openai_responses_model_http_error(allow_model_requests: None, openai_api_key: str):
     """Set temperature to -1 to trigger an error, given only values between 0 and 1 are allowed."""
     model = OpenAIResponsesModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
@@ -1900,7 +2091,11 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
     agent = Agent(model=model, model_settings=settings)
     result = await agent.run('Give me the top 3 news in the world today')
 
-    assert result.all_messages() == snapshot(
+    messages = result.all_messages()
+    citations = citations_from_messages(messages)
+    assert citations
+    assert all(isinstance(source, WebCitationSource) for citation in citations for source in citation.sources)
+    assert messages == snapshot(
         [
             ModelRequest(
                 parts=[
@@ -2051,6 +2246,7 @@ async def test_openai_responses_model_builtin_tools_web_search(allow_model_reque
                         content=IsStr(),
                         id='msg_0e3d55e9502941380068c4aada6d8c8195b8b6f92edbb53b4f',
                         provider_name='openai',
+                        citations=IsCitationList(),
                     ),
                 ],
                 usage=RequestUsage(
@@ -9179,7 +9375,12 @@ async def test_openai_responses_code_execution_return_image_stream(allow_model_r
             PartEndEvent(
                 index=4,
                 part=TextPart(
-                    content=IsStr(), id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4', provider_name='openai'
+                    content="""\
+Here\u2019s the chart of y = x^2 for x from -5 to 5.  \n\
+Download the image: [Download the chart](sandbox:/mnt/data/y_eq_x_squared_plot.png)\
+""",
+                    id='msg_06c1a26fd89d07f20068dd937ecbd48197bd91dc501bd4a4d4',
+                    provider_name='openai',
                 ),
             ),
         ]
@@ -12608,7 +12809,8 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
         )
 
         result = await agent.run('What is the capital of France?')
-        assert result.all_messages() == snapshot(
+        messages = result.all_messages()
+        assert messages == snapshot(
             [
                 ModelRequest(
                     parts=[
@@ -12664,7 +12866,6 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
             ]
         )
 
-        messages = result.all_messages()
         result = await agent.run(user_prompt='Tell me about the Eiffel Tower.', message_history=messages)
         assert result.new_messages() == snapshot(
             [
@@ -12700,6 +12901,16 @@ async def test_openai_responses_model_file_search_tool(tmp_path: Path, allow_mod
                             content='The Eiffel Tower is a famous landmark in Paris, the capital of France. It is widely recognized and serves as an iconic symbol of the city.',
                             id=IsStr(),
                             provider_name='openai',
+                            citations=[
+                                Citation(
+                                    sources=[
+                                        DocumentCitationSource(
+                                            document_id='file-U6Ke78qu8nkANsrCrjoYBr', title='tmp2zuepgia.txt'
+                                        )
+                                    ],
+                                    provider_details={'index': 137},
+                                )
+                            ],
                         ),
                     ],
                     usage=RequestUsage(
@@ -12821,6 +13032,11 @@ async def test_openai_responses_model_file_search_tool_stream(
 
         assert agent_run.result is not None
         messages = agent_run.result.all_messages()
+        citations = [
+            citation for part in messages[1].parts if isinstance(part, TextPart) for citation in part.citations or []
+        ]
+        assert citations and all(isinstance(citation.sources[0], DocumentCitationSource) for citation in citations)
+        assert all(citation.anchor is None and citation.provider_details == {'index': 30} for citation in citations)
         assert messages == snapshot(
             [
                 ModelRequest(
@@ -12851,7 +13067,12 @@ async def test_openai_responses_model_file_search_tool_stream(
                             timestamp=IsDatetime(),
                             provider_name='openai',
                         ),
-                        TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
+                        TextPart(
+                            content='The capital of France is Paris.',
+                            id=IsStr(),
+                            provider_name='openai',
+                            citations=IsCitationList(),
+                        ),
                     ],
                     usage=RequestUsage(
                         input_tokens=1177,
@@ -12929,9 +13150,21 @@ async def test_openai_responses_model_file_search_tool_stream(
                 PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' is')),
                 PartDeltaEvent(index=2, delta=TextPartDelta(content_delta=' Paris')),
                 PartDeltaEvent(index=2, delta=TextPartDelta(content_delta='.')),
+                PartDeltaEvent(
+                    index=2,
+                    delta=TextPartDelta(
+                        content_delta='',
+                        citations_delta=IsCitationList(),
+                    ),
+                ),
                 PartEndEvent(
                     index=2,
-                    part=TextPart(content='The capital of France is Paris.', id=IsStr(), provider_name='openai'),
+                    part=TextPart(
+                        content='The capital of France is Paris.',
+                        id=IsStr(),
+                        provider_name='openai',
+                        citations=IsCitationList(),
+                    ),
                 ),
             ]
         )
@@ -12972,7 +13205,8 @@ async def test_openai_responses_model_file_search_tool_with_results(
             model_settings=OpenAIResponsesModelSettings(openai_include_file_search_results=True),
         )
 
-        assert result.all_messages() == snapshot(
+        messages = result.all_messages()
+        assert messages == snapshot(
             [
                 ModelRequest(
                     parts=[
@@ -13014,7 +13248,12 @@ async def test_openai_responses_model_file_search_tool_with_results(
                             timestamp=IsDatetime(),
                             provider_name='openai',
                         ),
-                        TextPart(content=IsStr(), id=IsStr(), provider_name='openai'),
+                        TextPart(
+                            content=IsStr(),
+                            id=IsStr(),
+                            provider_name='openai',
+                            citations=IsCitationList(),
+                        ),
                     ],
                     usage=RequestUsage(
                         input_tokens=IsInt(),
@@ -13326,6 +13565,17 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     assert tool_call.args.get('type') == 'search'
 
     text_part = next(part for part in response.parts if isinstance(part, TextPart))
+    assert text_part.citations == [
+        Citation(
+            sources=[
+                WebCitationSource(
+                    url='https://www.britannica.com/place/Mount-Columbia?utm_source=openai',
+                    title='Mount Columbia | mountain, Alberta, Canada | Britannica',
+                )
+            ],
+            anchor=MarkerCitationAnchor(start=126, end=211),
+        )
+    ]
     assert text_part.provider_details and 'annotations' in text_part.provider_details
 
     # Test with annotations disabled (default)
@@ -13343,6 +13593,7 @@ async def test_openai_include_raw_annotations_non_streaming(allow_model_requests
     )
     response2 = cast(ModelResponse, messages2[1])
     text_part2 = next(part for part in response2.parts if isinstance(part, TextPart))
+    assert text_part2.citations
     assert not (text_part2.provider_details or {}).get('annotations')
 
 
@@ -15205,10 +15456,42 @@ async def test_openai_responses_phase_streamed(allow_model_requests: None):
             sequence_number=5,
             logprobs=[],
         ),
+        resp.ResponseContentPartAddedEvent(
+            content_index=1,
+            item_id='msg_001',
+            output_index=0,
+            part=resp.ResponseOutputText(text='', type='output_text', annotations=[]),
+            type='response.content_part.added',
+            sequence_number=6,
+        ),
+        resp.ResponseTextDeltaEvent(
+            content_index=1,
+            delta='Done.',
+            item_id='msg_001',
+            output_index=0,
+            type='response.output_text.delta',
+            sequence_number=7,
+            logprobs=[],
+        ),
+        resp.ResponseTextDoneEvent(
+            content_index=1,
+            item_id='msg_001',
+            output_index=0,
+            text='Done.',
+            type='response.output_text.done',
+            sequence_number=8,
+            logprobs=[],
+        ),
         resp.ResponseOutputItemDoneEvent(
             item=ResponseOutputMessage.model_construct(
                 id='msg_001',
-                content=cast(list[Content], [ResponseOutputText(text='Paris.', type='output_text', annotations=[])]),
+                content=cast(
+                    list[Content],
+                    [
+                        ResponseOutputText(text='Paris.', type='output_text', annotations=[]),
+                        ResponseOutputText(text='Done.', type='output_text', annotations=[]),
+                    ],
+                ),
                 role='assistant',
                 status='completed',
                 type='message',
@@ -15216,12 +15499,12 @@ async def test_openai_responses_phase_streamed(allow_model_requests: None):
             ),
             output_index=0,
             type='response.output_item.done',
-            sequence_number=6,
+            sequence_number=9,
         ),
         resp.ResponseCompletedEvent(
             response=base_response.model_copy(update={'status': 'completed'}),
             type='response.completed',
-            sequence_number=7,
+            sequence_number=10,
         ),
     ]
 
@@ -15234,8 +15517,9 @@ async def test_openai_responses_phase_streamed(allow_model_requests: None):
 
     response = message(result.all_messages(), ModelResponse, index=-1)
     text_parts = [p for p in response.parts if isinstance(p, TextPart)]
-    assert len(text_parts) == 1
-    assert text_parts[0].provider_details == snapshot({'phase': 'final_answer'})
+    assert [(part.content, part.provider_details) for part in text_parts] == snapshot(
+        [('Paris.', {'phase': 'final_answer'}), ('Done.', {'phase': 'final_answer'})]
+    )
 
 
 async def test_openai_responses_phase_streamed_on_part_start(allow_model_requests: None, openai_api_key: str):
