@@ -179,9 +179,11 @@ def _sse_data(*data: dict[str, Any]) -> Handler:
 
 def _raise(kind: Literal['connect', 'timeout', 'pool']) -> Handler:
     def handler(request: Any) -> Any:
-        lib = httpx if isinstance(request, httpx.Request) else httpx2
-        error_class = {'connect': lib.ConnectError, 'timeout': lib.ReadTimeout, 'pool': lib.PoolTimeout}[kind]
-        raise error_class('failed', request=request)
+        if isinstance(request, httpx.Request):
+            error_class = {'connect': httpx.ConnectError, 'timeout': httpx.ReadTimeout, 'pool': httpx.PoolTimeout}[kind]
+            raise error_class('failed', request=request)
+        error_class2 = {'connect': httpx2.ConnectError, 'timeout': httpx2.ReadTimeout, 'pool': httpx2.PoolTimeout}[kind]
+        raise error_class2('failed', request=request)
 
     return handler
 
