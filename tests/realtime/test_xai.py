@@ -2143,3 +2143,7 @@ async def test_a_request_that_fails_to_commit_the_buffer_places_nothing_ahead_of
     with pytest.raises(OSError):
         await conn.send(CreateResponse())
     assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]
+    # A request committing nothing has no snapshot to drop.
+    with pytest.raises(OSError):
+        await conn.send(CreateResponse())
+    assert conn._lifecycle._sent_before_commits == deque()  # pyright: ignore[reportPrivateUsage]
