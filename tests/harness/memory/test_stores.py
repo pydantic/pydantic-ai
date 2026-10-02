@@ -176,6 +176,17 @@ async def test_local_store_scoped_bounded_search(tmp_path: Path, index: int) -> 
     ):
         await store.write(path, content, expected_version=None)
 
+    assert await store.list_paths('tenant-a/main/', limit=10) == [
+        'tenant-a/main/alpha.md',
+        'tenant-a/main/beta.md',
+        'tenant-a/main/other.md',
+    ]
+    assert await store.list_paths('tenant-b/main/', limit=10) == ['tenant-b/main/private.md']
+    assert await store.list_paths('tenant-a/main/', limit=2) == [
+        'tenant-a/main/alpha.md',
+        'tenant-a/main/beta.md',
+    ]
+
     result = await store.search('tenant-a/main/', 'alpha', limit=10, max_files=10, max_chars=80, max_file_chars=1_000)
     assert [match.path for match in result.matches] == [
         'tenant-a/main/alpha.md',
@@ -192,14 +203,15 @@ async def test_local_store_scoped_bounded_search(tmp_path: Path, index: int) -> 
     assert tiny.matches == []
     assert tiny.truncated
 
-    for query, limit, max_files, max_chars in (
-        ('', 10, 10, 80),
-        ('alpha', 0, 10, 80),
-        ('alpha', 10, 0, 80),
-        ('alpha', 10, 10, 0),
+    for query, limit, max_files, max_chars, max_file_chars in (
+        ('', 10, 10, 80, 1_000),
+        ('alpha', 0, 10, 80, 1_000),
+        ('alpha', 10, 0, 80, 1_000),
+        ('alpha', 10, 10, 0, 1_000),
+        ('alpha', 10, 10, 80, 0),
     ):
         empty = await store.search(
-            '', query, limit=limit, max_files=max_files, max_chars=max_chars, max_file_chars=1_000
+            '', query, limit=limit, max_files=max_files, max_chars=max_chars, max_file_chars=max_file_chars
         )
         assert empty.matches == []
         assert empty.scanned == 0
@@ -228,10 +240,15 @@ async def test_local_store_search_bounds_each_file_and_ignores_namespace_prefix(
 
     bounded = await store.search(prefix, 'target', limit=10, max_files=10, max_chars=100, max_file_chars=6)
     assert bounded.matches == []
+    assert bounded.truncated
+    cut_hit = await store.search(prefix, 'prefix', limit=10, max_files=10, max_chars=100, max_file_chars=6)
+    assert [match.path for match in cut_hit.matches] == [f'{prefix}note.md']
+    assert cut_hit.truncated
     namespace_result = await store.search(prefix, namespace, limit=10, max_files=10, max_chars=100, max_file_chars=100)
     assert namespace_result.matches == []
     visible = await store.search(prefix, 'target', limit=10, max_files=10, max_chars=20, max_file_chars=100)
     assert [match.path for match in visible.matches] == [f'{prefix}note.md']
+    assert not visible.truncated
 
 
 @pytest.mark.parametrize('index', _STORE_INDEXES)

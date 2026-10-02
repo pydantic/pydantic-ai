@@ -98,13 +98,12 @@ print(result.output)
 `PixeltableMemoryStore(table_name='harness.memory')` implements `MemoryStore` and
 `SearchableMemoryStore`. The table is created on first use.
 
-- Each memory path is a `kind == 'file'` row. Writes are compare-and-set on a UUID version, enforced by
-  a conditional `update` or `delete` and the primary key on `path`.
-- Operation receipts let retries recover or replay a write without applying it twice. The path roots
-  `__op__` and `__meta__` are reserved. Paths are limited to 255 characters and operation ids to 248.
+- Writes use compare-and-set versions and operation receipts, so a retry can recover or replay a
+  mutation without applying it twice. Paths are limited to 255 characters and operation ids to 248;
+  the `__op__` and `__meta__` path roots are reserved.
 - `search_memory` uses the same lexical scoring and prefix isolation as the other stores.
-- `store.table` supports queries, joins, and computed columns. Route writes and deletes through the
-  store; direct table mutations bypass version and receipt bookkeeping.
+- `store.table` supports queries, joins, and computed columns; filter to `kind == 'file'` for memory
+  rows. Route writes and deletes through the store to preserve versions and receipts.
 - Pixeltable keeps old row versions for every update and delete, and receipts are not pruned, so the
   table grows with history.
 

@@ -142,13 +142,6 @@ def _synthetic_error() -> NoReturn:
 
 
 class TestPixeltableMemoryStore:
-    async def test_list_paths_prefix_isolation(self, store: PixeltableMemoryStore) -> None:
-        await store.write('tenant-a/main.md', 'a', expected_version=None)
-        await store.write('tenant-b/main.md', 'b', expected_version=None)
-        await store.write('tenant-a/other.md', 'c', expected_version=None)
-        assert await store.list_paths('tenant-a/', limit=10) == ['tenant-a/main.md', 'tenant-a/other.md']
-        assert await store.list_paths('tenant-b/', limit=10) == ['tenant-b/main.md']
-
     async def test_rejects_unsafe_reserved_and_long_paths(self, store: PixeltableMemoryStore) -> None:
         for path in ('../escape.md', '/absolute.md', 'a//b.md', 'a/../../b.md', 'a b.md'):
             with pytest.raises(ValueError, match='invalid memory path'):
@@ -303,43 +296,6 @@ class TestPixeltableMemoryStoreSchema:
 
 
 class TestPixeltableMemoryStoreSearch:
-    async def test_search_empty_and_invalid_bounds(self, store: PixeltableMemoryStore) -> None:
-        await store.write('a.md', 'alpha', expected_version=None)
-        for query, limit, max_files, max_chars, max_file_chars in (
-            ('', 10, 10, 80, 1_000),
-            ('alpha', 0, 10, 80, 1_000),
-            ('alpha', 10, 0, 80, 1_000),
-            ('alpha', 10, 10, 0, 1_000),
-            ('alpha', 10, 10, 80, 0),
-        ):
-            empty = await store.search(
-                '', query, limit=limit, max_files=max_files, max_chars=max_chars, max_file_chars=max_file_chars
-            )
-            assert empty.matches == []
-            assert empty.scanned == 0
-            assert not empty.truncated
-
-    async def test_list_paths_and_search_bound_prefix_in_table(self, store: PixeltableMemoryStore) -> None:
-        for path, content in (
-            ('tenant-a/main/a.md', 'alpha'),
-            ('tenant-a/main/b.md', 'alpha'),
-            ('tenant-a/main/c.md', 'alpha'),
-            ('tenant-b/main/private.md', 'alpha alpha alpha'),
-        ):
-            await store.write(path, content, expected_version=None)
-
-        assert await store.list_paths('tenant-a/main/', limit=2) == ['tenant-a/main/a.md', 'tenant-a/main/b.md']
-        result = await store.search(
-            'tenant-a/main/', 'alpha', limit=10, max_files=2, max_chars=200, max_file_chars=1_000
-        )
-        assert [match.path for match in result.matches] == ['tenant-a/main/a.md', 'tenant-a/main/b.md']
-        assert result.scanned == 2
-        assert result.truncated
-        outsider = await store.search(
-            'tenant-b/main/', 'alpha', limit=10, max_files=10, max_chars=200, max_file_chars=1_000
-        )
-        assert [match.path for match in outsider.matches] == ['tenant-b/main/private.md']
-
     async def test_list_paths_and_search_keep_code_point_order(self, store: PixeltableMemoryStore) -> None:
         paths = ['b.md', 'a.md', 'B.md', '_x.md', '-y.md']
         for path in paths:
@@ -392,26 +348,6 @@ class TestPixeltableMemoryStoreSearch:
         assert result.content == 'x' * 10
         assert result.truncated
         assert any('substr(' in statement.lower() for statement in statements)
-
-    async def test_search_bounds_each_file_and_ignores_namespace_prefix(self, store: PixeltableMemoryStore) -> None:
-        namespace = 'n' * 180
-        prefix = f'{namespace}/main/'
-        await store.write(f'{prefix}note.md', 'prefix TARGET', expected_version=None)
-
-        # Only the first 6 characters are searched, and the cut is reported.
-        bounded = await store.search(prefix, 'target', limit=10, max_files=10, max_chars=100, max_file_chars=6)
-        assert bounded.matches == []
-        assert bounded.truncated
-        cut_hit = await store.search(prefix, 'prefix', limit=10, max_files=10, max_chars=100, max_file_chars=6)
-        assert [match.path for match in cut_hit.matches] == [f'{prefix}note.md']
-        assert cut_hit.truncated
-        namespace_result = await store.search(
-            prefix, namespace, limit=10, max_files=10, max_chars=100, max_file_chars=100
-        )
-        assert namespace_result.matches == []
-        visible = await store.search(prefix, 'target', limit=10, max_files=10, max_chars=20, max_file_chars=100)
-        assert [match.path for match in visible.matches] == [f'{prefix}note.md']
-        assert not visible.truncated
 
 
 class TestPixeltableMemoryStoreRecovery:

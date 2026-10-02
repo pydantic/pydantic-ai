@@ -1,20 +1,10 @@
-"""Pixeltable backend for Harness `Memory`: one table row per memory path, plus journaled receipts.
+"""Pixeltable backend for Harness `Memory`, with file rows and operation receipts.
 
-External assumptions (source checked at Pixeltable 0.7.9; integration tested at 0.7.12):
-
-- A String primary key on a data-versioned table is enforced as a unique index on `left(path, 256)`
-  (`pixeltable/store.py`), so paths are capped at 255 characters here.
-- `String.slice(0, n)` translates to SQL `substr`; `slice(stop=n)` without a start returns `n + 1`
-  characters, and `startswith` is typed `Int` (`pixeltable/functions/string.py`). The prefix filter
-  uses `slice(0, n)`.
-- `Table.get_metadata()` renders `type_` as `'T'` for non-nullable and `'T | None'` for nullable
-  columns (`pixeltable/catalog/table_metadata.py`).
-- `update` and `delete` return row counts in `row_count_stats`, and each statement holds the table
-  lock for its duration, which is what the compare-and-set checks rely on.
-- Pixeltable creates its own database with `LC_COLLATE 'C'` (`pixeltable/utils/dbms.py`), but an
-  external Postgres configured through `DB_CONNECT_STR` keeps its own collation. Listing and search
-  order by `path COLLATE "C"` through a UDF's `to_sql`, so the database applies `limit` in code
-  point order whatever the database collation is.
+Pixeltable indexes string primary keys on `left(path, 256)`, so paths are capped at 255
+characters. Its `slice(0, n)` translates to SQL `substr`, while `slice(stop=n)` returns
+`n + 1` characters; prefix filters use the former. Compare-and-set relies on Pixeltable's
+table lock and affected-row counts. Explicit `C` collation keeps listing and search in
+code point order even when an external Postgres database uses another collation.
 """
 
 from __future__ import annotations
@@ -47,7 +37,6 @@ _KIND_OP = 'op'
 _OP_PREFIX = '__op__/'
 # Set in a receipt row's (otherwise unused) last_operation_id by whoever rolls its intent forward.
 _CLAIMED = 'claimed'
-# __op__ receipts are written today; __meta__ stays reserved for future bookkeeping.
 _RESERVED_ROOTS = frozenset({'__meta__', '__op__'})
 
 
@@ -328,16 +317,11 @@ class PixeltableMemoryStore:
     def _recover_operation(
         self, t: pxt.Table, operation: MemoryOperation, intent: str, receipt: MemoryMutation, withdraw: bool
     ) -> bool:
-        """Roll a prepared operation forward or confirm it applied, then mark the receipt complete.
+        """Settle a prepared receipt, claiming it before replay to prevent withdrawal.
 
-        `withdraw` is for the writer whose own mutation just lost the compare-and-set: an
-        intent nobody claimed cannot have landed, so it is deleted and a retry starts clean, as
-        FileStore (which checks and journals in one transaction) never keeps one. That holds
-        even when the file is gone, since another writer's delete leaves the same state. A peer
-        claims the receipt before rolling it forward, and a claimed or crash-recovered intent that
-        cannot be settled stays, blocking recovery like FileStore. After a crash, a missing file
-        settles a delete intent, as in FileStore's recovery. Returns False when the intent was
-        gone before it could be claimed.
+        A failed writer withdraws its unclaimed intent; a peer can roll it forward.
+        Unsettled claimed intents remain for recovery. A missing file settles a
+        delete after a crash. Return `False` if the intent vanished before the claim.
         """
         receipt_row = (t.path == _receipt_path(operation)) & (t.kind == _KIND_OP) & (t.content == intent)
         recorded: _Intent = json.loads(intent)
@@ -373,7 +357,6 @@ class PixeltableMemoryStore:
     def _apply_intent(
         self, t: pxt.Table, operation: MemoryOperation, recorded: _Intent, receipt: MemoryMutation
     ) -> None:
-        """Apply the journaled mutation exactly as the original attempt would have."""
         path = recorded['file']
         if recorded['op'] == 'delete':
             status = t.delete(where=(t.path == path) & (t.kind == _KIND_FILE) & (t.version == recorded['expected']))
@@ -410,7 +393,6 @@ class PixeltableMemoryStore:
         version: str | None,
         existed: bool,
     ) -> MemoryMutation | None:
-        """Journal the intended mutation under `__op__/<id>` before applying it."""
         try:
             _insert_rows(
                 t,
