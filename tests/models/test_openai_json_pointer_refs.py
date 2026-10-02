@@ -43,6 +43,86 @@ MCP_POINTER_REF_SCHEMA: dict[str, Any] = {
     '$schema': 'http://json-schema.org/draft-07/schema#',
 }
 
+# The input schema the MCP TypeScript SDK sends for a zod v4 tool `{ tree: Tree }` with a recursive `Tree`: zod v4 puts
+# the recursive subschema under draft-07 `definitions`, and leaves `additionalProperties` unset.
+MCP_ZOD4_RECURSIVE_SCHEMA: dict[str, Any] = {
+    '$schema': 'http://json-schema.org/draft-07/schema#',
+    'type': 'object',
+    'properties': {'tree': {'$ref': '#/definitions/__schema0'}},
+    'required': ['tree'],
+    'definitions': {
+        '__schema0': {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string'},
+                'children': {'type': 'array', 'items': {'$ref': '#/definitions/__schema0'}},
+            },
+            'required': ['name', 'children'],
+        }
+    },
+}
+
+
+@pytest.mark.parametrize(
+    'schema,definitions,strict_compatible',
+    [
+        pytest.param(
+            MCP_ZOD4_RECURSIVE_SCHEMA,
+            snapshot(
+                {
+                    '__schema0': {
+                        'type': 'object',
+                        'properties': {
+                            'name': {'type': 'string'},
+                            'children': {'type': 'array', 'items': {'$ref': '#/definitions/__schema0'}},
+                        },
+                        'required': ['name', 'children'],
+                        'additionalProperties': False,
+                    }
+                }
+            ),
+            True,
+            id='zod-v4-recursion',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {'x': {'$ref': '#/definitions/X'}},
+                'required': ['x'],
+                'definitions': {
+                    'X': {
+                        'type': 'object',
+                        'properties': {'a': {'type': 'string'}, 'b': {'type': 'string'}},
+                        'required': ['a'],
+                    }
+                },
+            },
+            snapshot(
+                {
+                    'X': {
+                        'type': 'object',
+                        'properties': {'a': {'type': 'string'}, 'b': {'type': 'string'}},
+                        'required': ['a'],
+                        'additionalProperties': False,
+                    }
+                }
+            ),
+            False,
+            id='optional-property',
+        ),
+    ],
+)
+def test_definitions_are_walked_like_defs(schema: dict[str, Any], definitions: dict[str, Any], strict_compatible: bool):
+    """`definitions` entries get the same strict-mode handling as `$defs` entries, and count toward inferring it.
+
+    Unit test: the VCR test below records the zod v4 shape going out strict; this pins the transformed entries and a
+    `definitions` entry that keeps the schema from being strict-compatible.
+    """
+    transformer = OpenAIJsonSchemaTransformer(schema)
+
+    assert transformer.walk()['definitions'] == definitions
+    assert transformer.is_strict_compatible is strict_compatible
+
 
 @pytest.mark.parametrize(
     'ref,strict_compatible',
@@ -170,4 +250,108 @@ async def test_mcp_json_pointer_ref_tool(
         part.content for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
     ]
     assert tool_returns == snapshot(['shipped from Springfield to Shelbyville'])
+    assert request_capture.body()['tools'] == sent_tools
+
+
+@pytest.mark.parametrize(
+    'api,tool_returns,sent_tools',
+    [
+        pytest.param(
+            'chat',
+            snapshot(['saved root with 1 children']),
+            snapshot(
+                [
+                    {
+                        'type': 'function',
+                        'function': {
+                            'name': 'save_tree',
+                            'description': 'Save a tree',
+                            'parameters': {
+                                'type': 'object',
+                                'properties': {'tree': {'$ref': '#/definitions/__schema0'}},
+                                'required': ['tree'],
+                                'definitions': {
+                                    '__schema0': {
+                                        'type': 'object',
+                                        'properties': {
+                                            'name': {'type': 'string'},
+                                            'children': {'type': 'array', 'items': {'$ref': '#/definitions/__schema0'}},
+                                        },
+                                        'required': ['name', 'children'],
+                                        'additionalProperties': False,
+                                    }
+                                },
+                                'additionalProperties': False,
+                            },
+                            'strict': True,
+                        },
+                    }
+                ]
+            ),
+            id='chat',
+        ),
+        pytest.param(
+            'responses',
+            snapshot(['saved root with 1 children']),
+            snapshot(
+                [
+                    {
+                        'name': 'save_tree',
+                        'parameters': {
+                            'type': 'object',
+                            'properties': {'tree': {'$ref': '#/definitions/__schema0'}},
+                            'required': ['tree'],
+                            'definitions': {
+                                '__schema0': {
+                                    'type': 'object',
+                                    'properties': {
+                                        'name': {'type': 'string'},
+                                        'children': {'type': 'array', 'items': {'$ref': '#/definitions/__schema0'}},
+                                    },
+                                    'required': ['name', 'children'],
+                                    'additionalProperties': False,
+                                }
+                            },
+                            'additionalProperties': False,
+                        },
+                        'type': 'function',
+                        'description': 'Save a tree',
+                        'strict': True,
+                    }
+                ]
+            ),
+            id='responses',
+        ),
+    ],
+)
+async def test_mcp_zod4_definitions_tool(
+    allow_model_requests: None,
+    openai_api_key: str,
+    request_capture: RequestCapture,
+    api: str,
+    tool_returns: list[str],
+    sent_tools: list[dict[str, Any]],
+):
+    """A zod v4 tool whose recursive subschema sits under `definitions` is sent strict, and the model calls it."""
+
+    def save_tree(**kwargs: Any) -> str:
+        return f'saved {kwargs["tree"]["name"]} with {len(kwargs["tree"]["children"])} children'
+
+    tool = Tool.from_schema(
+        save_tree, name='save_tree', description='Save a tree', json_schema=MCP_ZOD4_RECURSIVE_SCHEMA
+    )
+    provider = OpenAIProvider(api_key=openai_api_key, http_client=request_capture.client)
+    model = (
+        OpenAIChatModel('gpt-4.1-mini', provider=provider)
+        if api == 'chat'
+        else OpenAIResponsesModel('gpt-4.1-mini', provider=provider)
+    )
+
+    result = await Agent(model, tools=[tool]).run(
+        'Save a tree named root with one child named leaf that has no children, then say done.'
+    )
+
+    assert [
+        part.content for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ] == tool_returns
     assert request_capture.body()['tools'] == sent_tools

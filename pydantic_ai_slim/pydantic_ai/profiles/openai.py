@@ -631,6 +631,11 @@ class OpenAIJsonSchemaTransformer(JsonSchemaTransformer):
         # that the root schema either has type 'object' or is recursive.
         result = super().walk()
 
+        # Draft-07 `definitions` (where zod v4, via the MCP TypeScript SDK, puts a recursive subschema) are referenced
+        # like `$defs`, so their entries need the same handling to be valid in strict mode.
+        if definitions := result.get('definitions'):
+            result['definitions'] = {key: self._handle(value) for key, value in definitions.items()}
+
         # For recursive models, we need to tweak the schema to make it compatible with strict mode.
         # Because the following should never change the semantics of the schema we apply it unconditionally.
         if self.root_ref is not None:
