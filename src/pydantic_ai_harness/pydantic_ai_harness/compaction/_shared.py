@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    is_multi_modal_content,
 )
 from pydantic_ai.models import AbstractModel, Model
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -118,9 +119,11 @@ def _request_part_text(part: ModelRequestPart) -> list[str]:
     # Match the discriminator so this remains importable before the new core part is released.
     elif part.part_kind == 'instruction-delta':  # pyright: ignore[reportUnnecessaryComparison]
         return [part.render()]  # pragma: lax no cover - requires core instruction updates
-    elif isinstance(part, (ToolReturnPart, RetryPromptPart)):
-        # Both are sent in full. The tool-search and capability-load returns subclass
-        # `ToolReturnPart`, so they arrive here too.
+    elif isinstance(part, ToolReturnPart):
+        # Sent in full. The tool-search and capability-load returns subclass `ToolReturnPart`, so
+        # they arrive here too.
+        return [tool_return_text(part)]
+    elif isinstance(part, RetryPromptPart):
         return [str(part.content)]
     # Control bookkeeping rather than message text: it records which tools became available, and
     # the schemas themselves travel in the request's tool definitions. Those schemas are not free
@@ -187,6 +190,20 @@ def _instructions_text(messages: Sequence[ModelMessage]) -> list[str]:
         if isinstance(msg, ModelRequest) and msg.instructions:
             return [msg.instructions]
     return []
+
+
+def tool_return_text(part: ToolReturnPart) -> str:
+    """The tool return's content as text, with each file named by identifier rather than spelled out.
+
+    A file's `repr` carries its bytes at ~3 characters per byte, so a 1 MB file would be estimated at
+    ~700k tokens and render into a summary prompt as escaped bytes. The reference is the one a
+    text-only tool result gives the model in its place (`ToolReturnPart.model_response_str_and_user_content`).
+    """
+    if not part.files:
+        return str(part.content)
+    return ' '.join(
+        f'See file {item.identifier}.' if is_multi_modal_content(item) else str(item) for item in part.content_items()
+    )
 
 
 def _user_prompt_text_for_counting(part: UserPromptPart) -> str:
