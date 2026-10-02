@@ -374,6 +374,15 @@ async def test_a_refresh_by_another_session_while_waiting_for_the_lock_is_reused
     assert endpoint.forms == []
 
 
+async def test_a_live_sign_in_without_a_refresh_token_saved_while_waiting_for_the_lock_is_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store(tokens(expires_in=0))
+    theirs = tokens(expires_in=3600, refresh_token=None).model_copy(update={'access_token': SecretStr('at-live')})
+    lock_after(lambda: store(theirs), monkeypatch)
+    assert await session(TokenEndpoint()).token() == 'at-live'
+
+
 @pytest.mark.parametrize(
     ('saved', 'message'),
     [
