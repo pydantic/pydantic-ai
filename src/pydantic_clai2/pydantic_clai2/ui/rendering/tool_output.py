@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from rich.ansi import AnsiDecoder
 from rich.console import Console
 from rich.text import Text
-from termflow.diff import DiffRenderer, DiffTheme
 
 from pydantic_ai import AgentStreamEvent, FunctionToolCallEvent
 from pydantic_ai_harness.filesystem import FileChangeRequestEvent, FileEditedEvent, FileWrittenEvent
@@ -200,17 +199,10 @@ class ToolOutput:
         self.console.print()
 
     def _diff(self, diff: str, *, truncated: bool) -> None:
-        if not self.show_output:
-            return
         safe_diff = terminal_text(diff)
         if safe_diff:
             if self.console.is_terminal:
-                colors = (
-                    DiffTheme(addition=theme.DIFF_ADDITION, deletion=theme.DIFF_DELETION, marker_brighten=2.0)
-                    if theme.current() is None
-                    else None
-                )
-                self.console.file.write(DiffRenderer(theme=colors).render(safe_diff))
+                self.console.file.write(theme.diff_renderer().render(safe_diff))
                 self.console.file.flush()
             else:
                 self.console.print(safe_diff, markup=False, highlight=False)
@@ -245,7 +237,7 @@ class ToolOutput:
                 return True
             self._shell_finished(event)
         elif isinstance(event, FileChangeRequestEvent):
-            if self.show_output and event.operation == 'write':
+            if event.operation == 'write':
                 self._writes[event.tool_call_id, event.root_dir, event.path] = event
         elif isinstance(event, FileEditedEvent):
             key = (event.tool_call_id, 'edit_file')
@@ -258,8 +250,6 @@ class ToolOutput:
             if key not in self._headers:
                 self._header('write_file', event.path)
             self._headers.discard(key)
-            if not self.show_output:
-                return True
             request = self._writes.pop((event.tool_call_id, event.root_dir, event.path), None)
             if request is not None and not request.cancelled:
                 self._diff(request.diff, truncated=request.truncated)

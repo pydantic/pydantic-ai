@@ -31,7 +31,7 @@ needs. `get_capabilities` for tools, instructions, and agent-run hooks (a `Hooks
 capability, or `@on_event` on your own capability); `get_commands` for
 `/commands`; `render` for custom output; `get_status_segments`, `get_spinners`,
 and `get_model_providers`; `configure` for a settings menu; `on_session_start`,
-`on_session_end`, `on_turn_start`, and `on_turn_end` for CLAI's own moments. The
+`on_session_end`, `on_turn_start`, `on_turn_end`, and `on_plugin_load_failed` for CLAI's own moments. The
 settings model is the class's type parameter (`Plugin[Settings]`), validated into
 `self.settings`. `self.host` is a `PluginHost`, the plugin's runtime context
 (console, conversation, status, full screen, saved settings); it registers
@@ -62,9 +62,12 @@ same PR.
 - **No `getattr`/`hasattr` on a plugin** to discover what it supports. It
   returned the thing from a `get_*` method or it did not; `has_configure` and
   `has_render` compare against the base-class default.
-- **Only four CLAI moments.** `on_session_start`, `on_session_end`,
-  `on_turn_start`, `on_turn_end`. Adding a fifth needs a use case that core
-  cannot serve; say which core hook you checked and why it does not fit.
+- **Only shell-owned moments.** `on_session_start`, `on_session_end`,
+  `on_turn_start`, `on_turn_end`, `on_plugin_load_failed`. Startup load failures
+  happen before an agent run, so core's `before_run` cannot observe them. The
+  loader reports them after trying every enabled plugin so observability can
+  receive failures that preceded its own load. Additional moments need the same
+  justification: say which core hook you checked and why it does not fit.
 
 ## Loading and unloading
 
@@ -198,8 +201,8 @@ Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
 Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
-streamed fences and theme previews. Default diff colours stay unchanged, while
-bundled palettes use Termflow defaults.
+streamed fences and theme previews. Default diff colours stay unchanged; bundled
+palettes get diff lines from `theme.diff_renderer()`, tinted from the palette.
 
 ## Source layout
 

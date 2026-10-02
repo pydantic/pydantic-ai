@@ -249,7 +249,7 @@ async def _register(http: httpx.AsyncClient, server: _Server, scope: str) -> str
         server.registration_endpoint,
         json={
             'client_name': 'CLAI',
-            'client_uri': 'https://github.com/pydantic/pydantic-ai-harness',
+            'client_uri': 'https://github.com/pydantic/pydantic-ai',
             'grant_types': [DEVICE_GRANT, 'refresh_token'],
             'token_endpoint_auth_method': 'none',
             'application_type': 'native',
