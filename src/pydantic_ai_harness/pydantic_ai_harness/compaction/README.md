@@ -158,7 +158,8 @@ extended-thinking blocks, provider-side tool results, and the instructions, once
 the anchor only when they changed since it). That estimated portion is a ~4-characters-per-token
 approximation, not a tokenizer; pass `tokenizer=` to any strategy to measure with the real one.
 `FilePart` is not counted there -- its payload is binary, and its length in characters would mean
-nothing. Newly revealed tool schemas pending in the current request are conservatively estimated
+nothing. For the same reason a file inside a tool return counts as the `See file <identifier>.`
+reference a text-only tool result carries in its place. Newly revealed tool schemas pending in the current request are conservatively estimated
 by the implementation, since they are not covered by the earlier anchor.
 
 **If you already set an absolute `max_tokens`, re-check it.** The estimator used to count only user
