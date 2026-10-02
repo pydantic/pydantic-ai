@@ -888,6 +888,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         `ModelResponse(call) + ModelRequest(return)` so the adapter can render the
         provider-agnostic exchange.
 
+        Renders [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s as
+        `SystemPromptPart`s for this model's delivery path, dropping deltas from before the latest
+        instruction baseline.
+
         Also wraps non-leading `SystemPromptPart`s as `<system>`-tagged `UserPromptPart`s when
         the profile's `supports_inline_system_prompts` is `False`, and converts
         `SpeechPart`s from realtime session history into `UserPromptPart`s /

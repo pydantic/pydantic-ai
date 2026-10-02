@@ -2388,13 +2388,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         Args:
             func: The instructions function to register.
-            on_change: Whether to rewrite the instruction prefix (the default) or append full
-                replacements when this block changes. Appending requires an addressable instruction
-                identity; otherwise it warns and rewrites. The function still runs on every request.
             name: An optional name for the instruction part this function produces, keyed as
                 `'agent:<name>'` on [`InstructionPart.id`][pydantic_ai.messages.InstructionPart.id] so an
                 application can address this part specifically, where the bare `'agent'` key addresses
                 the agent's literal instructions. See [instruction parts](../agent.md#instruction-parts).
+            on_change: Whether to rewrite the instruction prefix (the default) or append full
+                replacements when this block changes. Appending requires an addressable instruction
+                identity; otherwise it warns and rewrites. The function still runs on every request.
         """
         if name is not None:
             _instructions.validate_instruction_name(name)
