@@ -2,7 +2,7 @@ from __future__ import annotations as _annotations
 
 import io
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Generator, Iterable, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -216,23 +216,20 @@ def _citation_document_texts(messages: Sequence[BetaMessageParam]) -> list[str |
     """
     result: list[str | None] = []
 
-    def add_documents(blocks: object) -> None:
-        # Message and tool result content is either a string or a list of blocks.
-        for block in cast(list[dict[str, Any]], blocks if isinstance(blocks, list) else []):
-            if block.get('type') == 'tool_result':
-                add_documents(block.get('content'))
-            elif block.get('type') == 'document':
-                source = block.get('source')
-                citations = block.get('citations')
-                text = (
-                    source.get('data')
-                    if is_str_dict(source)
-                    and source.get('type') == 'text'
-                    and is_str_dict(citations)
-                    and citations.get('enabled')
-                    else None
-                )
-                result.append(text if isinstance(text, str) else None)
+    def add_documents(
+        blocks: str | Iterable[BetaContentBlockParam] | Iterable[beta_tool_result_block_param.Content],
+    ) -> None:
+        # Only dict blocks can be documents: this skips the characters of string content and the response
+        # content block models the SDK also allows here.
+        for block in (block for block in blocks if isinstance(block, dict)):
+            if block['type'] == 'tool_result':
+                add_documents(block.get('content', ''))
+            elif block['type'] == 'document':
+                source, citations = block['source'], block.get('citations')
+                if source['type'] == 'text' and citations is not None and citations.get('enabled'):
+                    result.append(source['data'])
+                else:
+                    result.append(None)
 
     for message in messages:
         add_documents(message['content'])
@@ -2543,11 +2540,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                                     for citation in response_part.citations
                                     if (param := _map_citation_for_replay(citation, document_texts))
                                 ]
-                            assistant_content_params.append(
-                                BetaTextBlockParam(text=response_part.content, type='text', citations=citations)
-                                if citations
-                                else BetaTextBlockParam(text=response_part.content, type='text')
-                            )
+                            text_block = BetaTextBlockParam(text=response_part.content, type='text')
+                            if citations:
+                                text_block['citations'] = citations
+                            assistant_content_params.append(text_block)
                     elif isinstance(response_part, ToolCallPart):
                         tool_use_block_param = BetaToolUseBlockParam(
                             id=_guard_tool_call_id(t=response_part),

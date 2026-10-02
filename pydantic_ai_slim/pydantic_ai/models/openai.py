@@ -5011,7 +5011,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                             delta_provider_details = {'phase': phase}
                             _phase_started_content.add(content_key)
                         for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=(chunk.item_id, chunk.content_index),
+                            vendor_part_id=content_key,
                             content=chunk.delta,
                             id=chunk.item_id,
                             provider_name=self.provider_name,
@@ -5022,10 +5022,11 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 elif isinstance(chunk, responses.ResponseTextDoneEvent):
                     # Add annotations to provider_details if available
                     provider_details: dict[str, Any] = {}
-                    raw_annotations = _annotations_by_item.pop((chunk.item_id, chunk.content_index), None)
+                    content_key = (chunk.item_id, chunk.content_index)
+                    raw_annotations = _annotations_by_item.pop(content_key, None)
                     try:
                         annotations = responses_output_text_annotations_ta.validate_python(raw_annotations or [])
-                    except ValidationError:  # pragma: no cover
+                    except ValidationError:
                         citations = None
                         serialized_annotations = raw_annotations
                     else:
@@ -5037,15 +5038,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                         provider_details['annotations'] = serialized_annotations
                     if chunk.logprobs:
                         provider_details['logprobs'] = _map_logprobs(chunk.logprobs)
-                    content_key = (chunk.item_id, chunk.content_index)
                     if (
                         content_key not in _phase_started_content
                         and (phase := _phase_by_item.get(chunk.item_id)) is not None
                     ):
                         provider_details['phase'] = phase
                         _phase_started_content.add(content_key)
-                    vendor_part_id = (chunk.item_id, chunk.content_index)
-                    existing_part = self._parts_manager.get_part_by_vendor_id(vendor_part_id)
+                    existing_part = self._parts_manager.get_part_by_vendor_id(content_key)
                     if not isinstance(existing_part, TextPart) or existing_part.content != chunk.text:
                         # Annotation offsets address the done text, so they can't be placed on streamed text that
                         # differs from it.
@@ -5053,7 +5052,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     # Empty text makes no part, as in `_process_response`.
                     if (provider_details or citations) and chunk.text:
                         for event in self._parts_manager.handle_text_delta(
-                            vendor_part_id=vendor_part_id,
+                            vendor_part_id=content_key,
                             content='',
                             provider_name=self.provider_name,
                             provider_details=provider_details or None,

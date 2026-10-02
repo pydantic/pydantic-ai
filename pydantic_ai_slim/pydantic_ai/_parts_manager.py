@@ -246,7 +246,7 @@ class ModelResponsePartsManager:
                 citations_delta=citations,
             )
             updated_part = self._apply_metadata_or_copy_provider_details(
-                existing_text_part, part_delta, apply_metadata=_text_delta_has_metadata(existing_text_part, part_delta)
+                existing_text_part, part_delta, apply_metadata=_text_delta_needs_apply(existing_text_part, part_delta)
             )
             if content:
                 self._buffer_string_delta(part_index, existing_text_part.content, content)
@@ -787,7 +787,7 @@ class ModelResponsePartsManager:
     def apply_event(self, event: ModelResponseStreamEvent) -> None:
         """Apply a replayed stream event to the managed parts, so `get_parts()` reflects it."""
         if isinstance(event, PartStartEvent):
-            # Copy the part so changes to the event's part don't reach the managed one.
+            # A shallow copy, so assigning to the event part's fields doesn't change the managed part.
             self.handle_part(vendor_part_id=event.index, part=replace(event.part))
         elif isinstance(event, PartDeltaEvent):
             part_index = self._vendor_id_to_part_index.get(event.index)
@@ -796,7 +796,7 @@ class ModelResponsePartsManager:
             if part_index is not None and type(part) is TextPart and type(delta) is TextPartDelta:
                 # Keep replay snapshots independent while buffering their text.
                 updated_part = self._apply_metadata_or_copy_provider_details(
-                    part, delta, apply_metadata=_text_delta_has_metadata(part, delta)
+                    part, delta, apply_metadata=_text_delta_needs_apply(part, delta)
                 )
                 self._buffer_string_delta(part_index, part.content, delta.content_delta)
                 self._parts[part_index] = updated_part
@@ -808,8 +808,11 @@ class ModelResponsePartsManager:
             self.handle_part(vendor_part_id=event.index, part=event.delta.apply(part))
 
 
-def _text_delta_has_metadata(part: TextPart, delta: TextPartDelta) -> bool:
-    """Whether `delta` changes anything on `part` besides its content."""
+def _text_delta_needs_apply(part: TextPart, delta: TextPartDelta) -> bool:
+    """Whether `delta` must be applied to `part`, rather than only buffering its content.
+
+    That's when the delta carries metadata, or when `part.provider_details` is `{}`, which applying turns into `None`.
+    """
     return (
         delta.provider_name is not None
         or delta.provider_details is not None

@@ -822,11 +822,17 @@ async def test_native_citation_replay_after_persisted_history(
     openai_api_key: str,
 ) -> None:
     """Each provider accepts its own persisted native citation history on the next request."""
+    available = {
+        'anthropic-messages': anthropic_available,
+        'anthropic-document': anthropic_available,
+        'bedrock-converse': bedrock_available,
+        'openai-responses': openai_available,
+    }[provider]
+    if not available():
+        pytest.skip(f'{provider} dependencies not installed')
     agent: Agent[None, str]
     first_prompt: str | list[str | BinaryContent]
     if provider in ('anthropic-messages', 'anthropic-document'):
-        if not anthropic_available():  # pragma: no cover
-            pytest.skip('anthropic dependencies not installed')
         model = AnthropicModel(
             'claude-sonnet-4-5',
             provider=AnthropicProvider(api_key=anthropic_api_key),
@@ -842,8 +848,6 @@ async def test_native_citation_replay_after_persisted_history(
                 BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
             ]
     elif provider == 'bedrock-converse':
-        if not bedrock_available():  # pragma: no cover
-            pytest.skip('bedrock dependencies not installed')
         agent = Agent(
             BedrockConverseModel(
                 'us.anthropic.claude-sonnet-4-5-20250929-v1:0', provider=request.getfixturevalue('bedrock_provider')
@@ -855,8 +859,6 @@ async def test_native_citation_replay_after_persisted_history(
             BinaryContent(data=b'The return window is thirty days from purchase.', media_type='text/plain'),
         ]
     else:
-        if not openai_available():  # pragma: no cover
-            pytest.skip('openai dependencies not installed')
         agent = Agent(
             OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key)),
             capabilities=[NativeTool(WebSearchTool(max_uses=1))],
