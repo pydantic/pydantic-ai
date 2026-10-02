@@ -61,6 +61,7 @@ from pydantic_ai.capabilities import (
     ResolveModelId,
     Toolset,
     WrapperCapability,
+    durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
 from pydantic_ai.capabilities.combined import CombinedCapability
@@ -450,6 +451,66 @@ async def test_durability_run_context_in_durable_context(client: Client):
 
     result = await _in_durable_context_agent.run('Hello')
     assert result.output == 'workflow: False, activity: False'
+
+
+# --- A capability operation called from the capability's own tool ---
+
+
+def _operation_from_tool_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    for msg in messages:
+        for part in msg.parts:
+            if isinstance(part, ToolReturnPart):
+                return ModelResponse(parts=[TextPart(content=str(part.content))])
+    return ModelResponse(parts=[ToolCallPart(tool_name='lookup', args='{}')])
+
+
+class _OperationFromTool(AbstractCapability[Any]):
+    id = 'operation_from_tool'
+
+    @durable_operation('fetch')
+    async def fetch(self, ctx: RunContext[Any]) -> str:
+        return activity.info().activity_type
+
+    def get_toolset(self) -> FunctionToolset[Any]:
+        toolset = FunctionToolset[Any](id=self.id)
+
+        @toolset.tool
+        async def lookup(ctx: RunContext[Any]) -> str:
+            return await self.fetch(ctx)
+
+        return toolset
+
+
+_operation_from_tool_agent = Agent(
+    FunctionModel(_operation_from_tool_model_fn),
+    name='operation_from_tool',
+    capabilities=[_OperationFromTool(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class OperationFromToolWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await _operation_from_tool_agent.run(prompt)
+        return result.output
+
+
+async def test_durability_operation_called_from_a_tool_runs_in_the_tool_activity(client: Client):
+    """The tool's activity records the operation's result, so it doesn't start an activity of its own."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[OperationFromToolWorkflow],
+        plugins=[AgentPlugin(_operation_from_tool_agent)],
+    ):
+        output = await client.execute_workflow(
+            OperationFromToolWorkflow.run,
+            args=['Hello'],
+            id=OperationFromToolWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'agent__operation_from_tool__toolset__operation_from_tool__call_tool'
 
 
 # --- Durability outside workflow (transparent passthrough) ---

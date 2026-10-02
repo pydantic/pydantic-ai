@@ -260,6 +260,13 @@ class TestCapabilityOperation:
         assert not [name for name in first.step_names if name is not None and '__capability__' in name]
         assert contributor.calls == 1
 
+        resumed = FakeDurableContext(journal=first.operations)
+        result = run_durable(lambda: agent.run('go'), context=resumed)
+
+        assert result.output == 'done'
+        assert resumed.invoked == []
+        assert contributor.calls == 1
+
     def test_operation_receives_base_step_config(self) -> None:
         class Contributor(AbstractCapability[Any]):
             id = 'contributor'
