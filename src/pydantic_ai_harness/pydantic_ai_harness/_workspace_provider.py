@@ -9,7 +9,6 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 import anyio
-import sniffio
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
@@ -28,6 +27,18 @@ def safe_credential_reason(error: Exception) -> str:
     return 'Credentials rejected'
 
 
+def running_on_asyncio() -> bool:
+    """Whether the calling task runs on asyncio rather than Trio.
+
+    Not `sniffio`: the harness does not depend on it, and AnyIO stopped installing it in 4.12.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 # asyncio holds only weak references to tasks, so a detached stop needs a strong one until it ends.
 _pending_stops: set[asyncio.Task[None]] = set()
 # Extra wait past the stop grace so a stop cut off at the deadline can finish its cleanup.
@@ -44,7 +55,7 @@ async def stop_shielded(stop: Callable[[], Awaitable[object]], *, grace: float =
             # Preserve the command timeout/cancellation if a provider's stop request fails.
             pass
 
-    if sniffio.current_async_library() == 'asyncio':
+    if running_on_asyncio():
 
         async def bounded_stop() -> None:
             with anyio.move_on_after(grace, shield=True):

@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 import anyio
-import sniffio
 from anyio.to_thread import run_sync
 from opentelemetry import context as otel_context
 
@@ -137,9 +136,11 @@ def _remove_background_task(task: asyncio.Task[Any]) -> None:
 
 
 def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
-    library = sniffio.current_async_library()
-
-    if library == 'trio':  # pragma: no cover
+    # Without a running asyncio loop, AnyIO is on Trio. Not `sniffio`: this package does not depend on it,
+    # and AnyIO stopped installing it in 4.12.
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover
         import trio.lowlevel
 
         done_event = anyio.Event()
@@ -156,7 +157,6 @@ def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
 
         trio.lowlevel.spawn_system_task(_trio_task)
     else:
-        loop = asyncio.get_running_loop()
         task = loop.create_task(coro)
         with _background_lock:
             _background_tasks.add(task)
