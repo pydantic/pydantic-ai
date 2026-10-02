@@ -884,7 +884,9 @@ def test_durability_activity_config_tolerates_unschemable_annotations(monkeypatc
     class _EventGroup:
         """Stands in for a temporalio type Pydantic has no schema for."""
 
-    source_agent = TemporalAgent(Agent(_durability_fn_model, name='activity_registration_source'))
+    source_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(_durability_fn_model, name='activity_registration_source', deps_type=type(None))
+    )
     sentinel_activity: Callable[..., object] = source_agent.temporal_activities[0]
 
     class _CustomTemporalToolset(TemporalWrapperToolset[None]):
@@ -899,11 +901,17 @@ def test_durability_activity_config_tolerates_unschemable_annotations(monkeypatc
         tool_activity_config: dict[str, ActivityConfig | Literal[False]],
         deps_type: type[None],
         run_context_type: type[TemporalRunContext[None]],
+        agent: object | None,
     ) -> AbstractToolset[None]:
         return _CustomTemporalToolset(toolset)
 
-    existing_agent = TemporalAgent(
-        Agent(_durability_fn_model, name='unschemable_before_import', toolsets=[FunctionToolset[None](id='custom')]),
+    existing_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            _durability_fn_model,
+            name='unschemable_before_import',
+            deps_type=type(None),
+            toolsets=[FunctionToolset[None](id='custom')],
+        ),
         temporalize_toolset_func=temporalize_toolset,
     )
     assert sentinel_activity in existing_agent.temporal_activities
@@ -933,20 +941,25 @@ def test_durability_activity_config_tolerates_unschemable_annotations(monkeypatc
             cast(ActivityConfig, {'start_to_close_timeout': 'PT5M', 'event_groups': [event_group]}),
             'activity_config',
         )
-        expected_config: ActivityConfig = {
+        expected_config: dict[str, object] = {
             'start_to_close_timeout': timedelta(minutes=5),
             'event_groups': [event_group],
         }
         assert config == expected_config
 
     # A new agent still registers custom wrapper activities after the import check restores SDK state.
-    custom_agent = TemporalAgent(
-        Agent(_durability_fn_model, name='unschemable_after_import', toolsets=[FunctionToolset[None](id='custom')]),
+    custom_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            _durability_fn_model,
+            name='unschemable_after_import',
+            deps_type=type(None),
+            toolsets=[FunctionToolset[None](id='custom')],
+        ),
         temporalize_toolset_func=temporalize_toolset,
     )
     assert sentinel_activity in custom_agent.temporal_activities
-    assert sentinel_activity in AgentPlugin(custom_agent).activities
-    assert sentinel_activity in AgentPlugin(existing_agent).activities
+    assert AgentPlugin(custom_agent).configure_worker({}) == {'activities': custom_agent.temporal_activities}
+    assert AgentPlugin(existing_agent).configure_worker({}) == {'activities': existing_agent.temporal_activities}
 
 
 def test_durability_shared_instance_across_agents():
@@ -2009,7 +2022,7 @@ async def test_durability_complex_agent_logfire_span_tree(
     basic_spans_by_id = {
         span['context']['span_id']: BasicSpan(
             parent_id=span['parent']['span_id'] if span['parent'] else None,
-            content=attributes.get('event') or attributes['logfire.msg'],
+            content=attributes.get('event') or attributes.get('logfire.msg') or span['name'],
         )
         for span in spans
         if (attributes := span.get('attributes'))

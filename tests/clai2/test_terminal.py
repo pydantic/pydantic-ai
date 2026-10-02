@@ -130,7 +130,7 @@ async def test_coder_is_a_builtin_plugin(tmp_path: Path) -> None:
             builtin_plugins=DEFAULT_PLUGINS,
         )
     text = output.getvalue()
-    assert 'coder: pydantic_ai_harness.coder:Coder (built-in) (enabled, loaded)' in text
+    assert 'coder: pydantic_clai2.builtin_plugins.coder (built-in) (enabled, loaded)' in text
     assert 'Disabled coder.' in text
     assert 'coder is built in; restored its defaults.' in text
     assert store.plugins() == []

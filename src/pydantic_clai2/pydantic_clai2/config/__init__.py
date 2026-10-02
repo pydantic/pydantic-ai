@@ -1,8 +1,13 @@
 """Validated settings, independent of persistence and terminal code."""
 
+from typing import Literal, get_args
+
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
 from pydantic_clai2.config.theme_names import names
+
+UpdateChannel = Literal['stable', 'bleeding']
+UPDATE_CHANNELS: tuple[UpdateChannel, ...] = get_args(UpdateChannel)
 
 
 class Settings(BaseModel):
@@ -60,6 +65,10 @@ class Settings(BaseModel):
         allow_inf_nan=False,
         description='Catch-up window for smoothed response streaming, 0.1 to 5 seconds.',
     )
+    update_channel: UpdateChannel = Field(
+        default='stable',
+        description='Where /update looks: stable PyPI releases, or bleeding for the newest CLAI commit on main.',
+    )
 
     @field_validator('theme')
     @classmethod
@@ -86,9 +95,10 @@ SETTING_FIELDS = {
     'run.speculative_code_mode': 'speculative_code_mode',
     'sessions.naming': 'session_namer',
     'sessions.naming_model': 'session_namer_model',
+    'updates.channel': 'update_channel',
 }
 
-STRING_SETTINGS = frozenset({'model', 'display.theme', 'display.spinner'})
+STRING_SETTINGS = frozenset({'model', 'display.theme', 'display.spinner', 'updates.channel'})
 """Keys whose typed value is taken as text rather than parsed as JSON."""
 
 
@@ -115,10 +125,10 @@ class PluginSettings(BaseModel):
 
     @model_validator(mode='after')
     def _coder_without_delegation(self) -> 'PluginSettings':
-        """Turn `Coder`'s delegation off unless a declaration asks for it.
+        """Preserve the delegation opt-out of declarations saved before `sub_agents` existed.
 
-        CLAI passes plugins to each run, and `Coder`'s delegation needs `Coder` bound to the agent,
-        so it raises otherwise. Declarations saved before `sub_agents` existed do not set it.
+        The stock declaration explicitly opts in. Supplied agents still receive plugins per run,
+        where self-delegation requires capabilities bound to the agent instead.
         """
         if self.factory != _CODER_FACTORY or 'sub_agents' in self.settings:
             return self

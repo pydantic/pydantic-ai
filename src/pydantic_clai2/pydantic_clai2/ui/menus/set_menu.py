@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from pydantic_ai.models import known_model_names
 from pydantic_clai2.cli.command_context import CommandContext
-from pydantic_clai2.config import SETTING_FIELDS, Settings
+from pydantic_clai2.config import SETTING_FIELDS, UPDATE_CHANNELS, Settings
 from pydantic_clai2.config.api_keys import set_api_key
 from pydantic_clai2.ui.menus.field_menu import FieldMenu, FieldRow, first_error, run_flow, shown
 from pydantic_clai2.ui.menus.menu_worker import run_worker
@@ -34,6 +34,8 @@ class SettingsSource:
                 choices = tuple(BUILTIN_SPINNERS)
             elif key == 'model':
                 choices = tuple(known_model_names())
+            elif key == 'updates.channel':
+                choices = UPDATE_CHANNELS
             else:
                 choices = ()
             rows.append(

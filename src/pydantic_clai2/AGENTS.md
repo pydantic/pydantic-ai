@@ -83,16 +83,19 @@ Plugins load and unload while CLAI runs. The rules that make that safe:
   new source. Plugins keep their state on the instance, set up in `__init__`.
 - **Instruction order is capability order.** Placement is a core
   `CapabilityOrdering` (`position`, `wraps`, `wrapped_by`), not a CLAI list.
-- **Registration is idempotent per name.** A capability is bound per run
-  (`agent.run(capabilities=...)`), so "active for the next prompt" is the
-  natural unit; nothing rebuilds the agent.
+- **Registration is idempotent per name.** "Active for the next prompt" is the
+  natural unit. Stock agents are rebuilt when the capability snapshot changes,
+  with plugins bound at construction so self-delegation carries their tools,
+  instructions, and guardrails. Supplied agents still receive plugins per run
+  (`agent.run(capabilities=...)`) and are never rebuilt.
 - **Shipped plugins register first, in declared order.** The menu's alphabetical
   order is for scanning only. Registration order is the order instructions,
   renderers, and status segments are consulted in, so `coder`'s guidance leads
   the prompt. `customization_guide()` orders itself after the guidance plugins
   contribute and before harness `RepoContext`, so the CLAI hint never leads.
 - **Built-ins are declarations, not code paths.** `DEFAULT_PLUGINS` in
-  `_app.py` lists what CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
+  `_app.py` lists the library's built-ins; `STOCK_PLUGINS` opts the CLI-owned
+  agent into delegation without changing supplied-agent defaults. CLAI ships enabled (`coder`, `ask_user`, `repo_context`,
   `compaction`, `persistence`, `observability`). The loader treats them like drop-ins with the lowest
   precedence: a store declaration with the same id replaces one, `disable`
   persists an override, `remove` resets it. Do not special-case `Coder`
@@ -225,8 +228,9 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 |---|---|
 | `cli/_cli.py` | argument parsing, startup, `--agent` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
+| `cli/self_update.py` | `/update` and the status-row notice: PyPI (`stable`) or the newest CLAI commit on `main` (`bleeding`, an HTTPS source archive with `--overrides`, no git), reinstalled with `uv tool install --force` |
 | `_app.py` | the prompt loop and built-in `/commands` |
-| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, per-run plugins |
+| `runtime/_session.py` | conversation state, revision-checked saves, restore-only resume, plugin snapshots and stock-agent rebuilding |
 | `runtime/sessions.py` | resume command and background namer ownership; built-in step capture |
 | `runtime/session_naming.py` | resume-browser naming prompt, `SessionName` card schema, and the bounded `SessionNamer` worker |
 | `runtime/forks.py` | `/fork` and `/forks`: history snapshot, background child sessions, deferred fork output |
@@ -236,6 +240,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `plugins/_factories.py` | resolving a declaration's `factory` to a `Plugin` (module, `module:Class`, capability class) |
 | `plugins/loader.py` | discovery, load, unload, reload; the `/plugins` subcommands |
 | `ui/menus/plugin_menu.py` | the `/plugins` full-screen menu (`PluginMenu` plus its runner) |
+| `plugins/describe.py` | a plugin's description from its docstring, parsed with `ast`, never imported |
 | `builtin_plugins/ask_user_menu.py` | the built-in `ask_user` plugin: `QuestionMenu`, `TerminalAnswerer`, the transcript renderer |
 | `ui/prompt/screen.py` | `Screen`, what `host.full_screen()` binds to during a prompt |
 | `ui/menus/field_menu.py` | the shared field editor (`FieldSource`, `FieldMenu`, `Runners`, `run_flow`) |
@@ -246,7 +251,7 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `models/model_settings.py` | `ModelSettingsForm`, the editable subset of `ModelSettings` |
 | `models/custom_params.py` | dotted custom-parameter validation and expansion, independent of menus |
 | `ui/menus/custom_params.py` | the editor for custom model parameters |
-| `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry |
+| `builtin_plugins/logfire.py` | the default-enabled `observability` plugin, configuring Logfire locally over core `Instrumentation`; `token` picks a `/keys` write token, `ui_events` subscribes it to UI telemetry; `configure` is a `FieldMenu` whose project row runs `logfire_setup` |
 | `builtin_plugins/logfire_setup.py` | the `observability` plugin's setup menu: region or self-hosted URL, Logfire's device sign-in (not the MCP OAuth in `logfire_oauth.py`), project pick, write token saved in `/keys` |
 | `ui/telemetry.py` | UI telemetry sinks, `record`/`span`, and the menu naming; instrument shared chokepoints (`run_worker`, `Commands.execute_async`, `FieldMenu`, the loader, `/keys`, the prompt), never one menu at a time, and record names, not content |
 | `builtin_plugins/compaction.py` | the built-in `compaction` plugin: harness `FallbackCompaction([SummarizingCompaction, SlidingWindowCompaction])`, `/compact`, the context alert |
@@ -263,8 +268,12 @@ Keep documented plugin-author paths (`pydantic_clai2.plugins` and
 | `config/__init__.py` | `Settings`, `PluginSettings` |
 | `config/theme_names.py` | theme choices shared by settings validation and the picker |
 | `config/settings_store.py` | the SQLite store under `$XDG_CONFIG_HOME/pydantic-clai2/` |
+| `config/features.py` | `SUPPORTED_FEATURES`, the feature names this build implements, and `CAPABILITY_REQUIREMENTS` for capability classes |
+| `config/plugin_requirements.py` | pure rules for requirement tags: parse stored rows, drop unsupported settings, merge tags on save, the notice |
+| `runtime/capability_guard.py` | `PluginGuard`: a plugin capability's run setup `UserError` becomes `CapabilitySetupError`; that turn fails, later turns leave the capability out |
 | `config/project_settings.py` | `.clai/settings.json`: the walk-up to the git root, validation, `ProjectSettings` |
 | `builtin_plugins/repo_context.py` | the built-in `repo_context` plugin over harness `RepoContext` |
+| `builtin_plugins/coder.py` | the built-in `coder` plugin over harness `Coder`: validated settings, named agent folders (`.agents`/`.claude`/`.codex`, project then home), and its sub-agent settings menu |
 | `builtin_plugins/slack.py` | the opt-in built-in `slack` plugin over harness `Slack`; its settings menu picks a `/keys` user token or a browser sign-in, resolved each turn |
 | `slack_app.py` | Slack browser sign-in: the CLAI Slack app manifest (PKCE, MCP access, token rotation), scopes, and `PKCESignIn` for a Client ID |
 | `plugins/keys.py` | `choose_key`, `browser_sign_in`, and `on_loop`: a plugin settings menu's credential rows, Esc-cancellable |
@@ -317,6 +326,16 @@ switches. Different versions can share the same settings database.
   the current `Settings()` defaults will not catch an unintended default change.
 - Verify rejected values and unsupported schema versions leave stored data intact.
   If a change introduces a migration, test failure rollback as well as success.
+- When a plugin setting's valid values or meaning depend on code other builds may
+  lack, add a feature name to `SUPPORTED_FEATURES` in `config/features.py` and tag
+  the setting (`host.settings(Model, requires=...)`, or `CAPABILITY_REQUIREMENTS`
+  for a `module:Class` capability). Tags live in the `plugin_requirements` table;
+  never add a field to `PluginSettings`, a key to its `settings`, or bump
+  `user_version`, since older builds reject all three. A build lacking a feature
+  drops only that setting and uses the default. Run setup `UserError`s are caught
+  only by `PluginGuard`, and only around a capability CLAI built from a
+  `module:Class` declaration's settings with no `Hooks` inside, so policy hooks
+  and plugin-contributed capabilities always fail closed. See "Settings that need a feature" in `customization.md`.
 
 ## Local verification
 

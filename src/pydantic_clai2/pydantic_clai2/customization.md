@@ -124,10 +124,16 @@ with the same name and different JSON; that replaces the built-in. Keep
 "repo_context": false in that JSON: the second built-in, repo_context
 (pydantic_clai2.builtin_plugins.repo_context), already reads AGENTS.md or CLAUDE.md from the
 launch directory, and Coder's bundled RepoContext would load it again. CLAI
-turns Coder's delegation off ("sub_agents": false) unless the JSON sets it:
-delegation needs Coder bound to the agent, and CLAI passes plugins to each run. To run
-without coding tools, /plugins disable coder; to stop reading the instruction
-file, /plugins disable repo_context. /plugins remove coder resets the
+enables task delegation in the stock Coder plugin. When the active plugin
+capabilities change, CLAI rebuilds its stock agent before the next prompt with
+those capabilities bound to it. A delegated task gets a fresh conversation with
+the same plugin tools, instructions, and guardrails. Supplied agents are unchanged
+and still receive plugins per run; self-delegation on them requires capabilities
+bound at agent construction. Saved Coder declarations that omit "sub_agents"
+still default to false; set "sub_agents": true in /plugins configure coder to
+opt in. An explicit false remains an opt-out. To run without coding tools,
+/plugins disable coder; to stop reading the instruction file,
+/plugins disable repo_context. /plugins remove coder resets the
 built-in to its defaults rather than removing it. A repository's
 .clai/settings.json can declare plugins too; they show as (project), rank
 just above the built-ins, and start off until the user runs /plugins enable
@@ -169,8 +175,9 @@ Other options are service_name (default pydantic-clai2), send_to_logfire
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
 then receives the telemetry), and ui_events (default false: also record UI
 interactions such as menus, commands, settings, plugin actions, keys, and prompt
-submissions, by name and never by content). /plugins configure observability sets
-token and base_url for you, and turns sending on: pick Logfire US, EU, or
+submissions, by name and never by content). /plugins configure observability opens
+a settings menu that edits these options. Its Logfire project row sets token and
+base_url for you, and turns sending on: pick Logfire US, EU, or
 a self-hosted URL, sign in in the browser, and pick a project; its new write
 token is saved in /keys. This explicit option overrides
 LOGFIRE_SEND_TO_LOGFIRE. Use LOGFIRE_TOKEN or the SDK credential file in
@@ -300,6 +307,102 @@ For typed capability events use hooks.on.event(EventClass) with a handler taking
 RunContext and the event, or core's @on_event(EventClass) on a capability method.
 Match on event classes rather than tool-name strings. If an event supports
 cancel(), use its documented cancellation semantics.
+
+## Settings that need a feature: requirement tags
+
+Every CLAI on a machine shares one settings database (~/.config/pydantic-clai2/config.db),
+whatever code it runs: other worktrees, branches, and installs. A plugin setting that one
+build supports can break another. Version numbers cannot tell them apart, because worktrees
+are diverging branches that report the same dev version. Feature names can.
+
+### When a setting needs a tag
+
+Tag a setting whenever its valid values or its meaning depend on code that other builds may
+lack. Typical cases: a new value of an existing setting, a setting that only works with a new
+code path, or an old setting whose meaning changed. A setting every build understands the same
+way needs no tag.
+
+Tag only settings whose default is the safe choice. A build without the feature drops the
+saved value and uses the default, so dropping must never loosen a restriction.
+
+### Name the feature and declare it
+
+1. Pick a stable, descriptive name: lowercase words joined by hyphens, such as
+   stock-bound-delegation. Name the capability, not the branch or ticket. Never rename or reuse
+   a name; other builds compare names as plain strings.
+2. Add it to SUPPORTED_FEATURES in pydantic_clai2/config/features.py, in the same change that
+   adds the code behind it:
+
+```python
+SUPPORTED_FEATURES: frozenset[str] = frozenset({'stock-bound-delegation'})
+```
+
+### Tag the setting
+
+A Plugin subclass declares tags where it reads its settings. Override from_host so
+requirements are recorded before the plugin is built. Keys are the saved names,
+aliases included:
+
+```python
+class Fancy(Plugin[Options]):
+    @classmethod
+    def from_host(cls, host):
+        settings = host.settings(Options, requires={'mode': ['fancy-mode']})
+        return cls(host, settings)
+```
+
+A capability class declared as module:Class has no Plugin subclass, so list its tags in
+CAPABILITY_REQUIREMENTS in config/features.py, keyed by the factory string.
+
+That is all. Writers attach the tags for you: host.save_settings, /plugins add, /plugins
+enable and disable, and the settings menus all store them beside the declaration, in a separate
+plugin_requirements table. Never put tags in the settings JSON or in PluginSettings: builds
+before this feature pass settings to the plugin and validate declarations strictly, so an
+unknown key would break their plugin loading.
+
+### What each build does with a tag
+
+- A build that lists every feature a setting needs applies it as saved.
+- A build that lacks one, or does not recognize a name, ignores that one setting. It uses the
+  shipped declaration's value (for a built-in) or the plugin's own default, keeps every other
+  setting, and prints one line per plugin, such as
+  coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
+- Reading never rewrites anything. When that build saves the plugin's settings, it writes the
+  ignored values back unchanged, still tagged. A tag only goes away when its value changes.
+- Builds older than requirement tags never read the table, so they apply every setting as
+  before. Tags cannot protect them. The fail-soft layer below limits the damage in builds that
+  have it.
+
+### Worked example: Coder's sub_agents
+
+A branch binds Coder delegation to its stock agent, so its users can save "sub_agents": true.
+A build without that support passes Coder at run level, where SubAgents(include_self=True)
+raises UserError on every turn. The branch with support:
+
+```python
+# config/features.py on the branch with delegation support
+SUPPORTED_FEATURES: frozenset[str] = frozenset({'stock-bound-delegation'})
+CAPABILITY_REQUIREMENTS = {
+    'pydantic_ai_harness.coder:Coder': {'sub_agents': frozenset({'stock-bound-delegation'})},
+}
+```
+
+Saving coder there stores {"sub_agents": ["stock-bound-delegation"]} for it. Another build
+with tags but without the feature loads coder with the built-in "sub_agents": false and shows
+the notice. A build older than tags still applies true; with fail-soft, only its first turn fails.
+
+### Fail-soft at run setup
+
+A setting that slips through untagged costs one turn and then one capability, not every
+turn. CLAI guards each capability it builds itself from a module:Class declaration's saved
+settings (such as coder), unless any part of it is a Hooks. Capabilities a plugin's get_capabilities
+returns, and every policy hook, are never guarded. When a guarded one raises UserError while
+the run is set up (in for_run, or in wrap_run before it hands over to the run), that turn fails
+closed with the plugin named, and CLAI leaves the capability out of later turns until
+/plugins reload. The turn is not retried, so no other capability's setup runs twice, and a
+capability that refuses to run never gets skipped within the turn it refused.
+Errors from the model, tools, or hooks once the run is under way propagate as before, and
+Plugin handlers are never guarded, so a raising handler still fails closed.
 
 ## CLI UX and rendering
 
@@ -587,3 +690,15 @@ The `ask_user` plugin is skipped without changing saved preferences. Full-screen
 requests fail, stream renderers are not called, and host console output is
 suppressed. Plugins must not read input or print directly to stdout. Errors go
 to stderr with a nonzero exit status. `-m` also works in the interactive CLI.
+
+## Managed delegation UI
+
+Interactive stock agents use harness `DelegationTasks`: `/tasks` inspects children,
+Enter opens a full-width live transcript, `b` backgrounds, and `x` stops the selected
+tree. Ctrl+B backgrounds foreground children. `/tasks resume ID` is explicit user
+authorization to resume a general-purpose/custom child with its independent history.
+Explore and Plan are read-only, inherit the selected model, and cannot resume.
+Task reports are automated untrusted evidence, never user instructions or permission
+grants. Supplied agents and headless runs retain their existing delegation behavior.
+Background execution requires a local workspace; plugin changes wait for children
+to settle. These are shell services, not additional `PluginHost` hooks.

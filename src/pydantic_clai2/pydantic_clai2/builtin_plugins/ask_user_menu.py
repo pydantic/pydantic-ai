@@ -1,4 +1,7 @@
-"""The built-in `ask_user` plugin: inline questions that keep the transcript visible."""
+"""Let the model ask you multiple-choice questions inline, without leaving the transcript.
+
+The built-in `ask_user` plugin: inline questions that keep the transcript visible.
+"""
 
 from collections.abc import Callable, Sequence
 from contextlib import nullcontext
@@ -21,6 +24,7 @@ from pydantic_ai_harness.ask_user import (
     AskUserResponse,
     Question,
 )
+from pydantic_ai_harness.subagents import DelegationTasks
 from pydantic_clai2.plugins import FullScreen, Plugin
 from pydantic_clai2.ui.menus.menu_worker import run_worker
 from pydantic_clai2.ui.prompt.prompt_buffer import PromptBuffer
@@ -167,6 +171,9 @@ class TerminalAnswerer:
     async def __call__(self, request: AskUserRequest, /) -> AskUserResponse:
         """Answer every question or decline the entire request."""
         async with self._terminal, self._full_screen():
+            child_id = DelegationTasks.child_id()
+            if child_id is not None:
+                self._console.print(f'Task [{child_id[:8]}] requests your input', markup=False)
             with question_input() if self._runner is None else nullcontext(None) as key_source:
                 return await self.answer_questions(request=request, key_source=key_source)
 

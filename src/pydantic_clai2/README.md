@@ -295,6 +295,35 @@ pyramid, with CLAI lettering. The persistent `CLAI 2.0` banner uses `ansi_shadow
 The splash is disabled for redirected output, CLI arguments, small terminals,
 Windows, `NO_COLOR`, or `CLAI_NO_SPLASH=1`.
 
+## Updating
+
+Install with `uv tool install pydantic-clai2` and CLAI can update itself.
+`updates.channel` picks where it looks:
+
+- `stable` (default): the newest release on PyPI.
+- `bleeding`: the newest commit on `main` that changes CLAI. It downloads that
+  commit's source over HTTPS and installs CLAI, harness, and core from it, so it
+  needs no release and no `git`. These builds report version `0.0.0+<commit>`.
+
+```text
+/set updates.channel bleeding
+/update
+```
+
+When a newer build exists, the status row shows `update <version or commit>: /update`.
+CLAI checks once at startup and again when you change the channel, and only for
+`uv tool` installs. Offline, it shows nothing. `/update` runs `uv tool install --force`,
+shows uv's output, then exits; start `clai2` again to use the new build. Switching
+back to `stable` offers the latest release.
+
+Windows does not let a program replace files it is running from, so there
+`/update` exits first and installs in a new PowerShell window; start `clai2`
+again when that window reports success.
+
+The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
+again afterwards. Without uv on `PATH`, or outside a `uv tool` install, `/update`
+prints the command to run yourself, in PowerShell syntax on Windows.
+
 ## Your own agent
 
 ```bash
@@ -757,7 +786,7 @@ every later session; `/plugins enable repo_context` brings it back. See
 [PLUGINS.md](PLUGINS.md#the-built-in-plugins) for its settings.
 
 Interactive commands: `/login`, `/set`, `/theme`, `/model`, `/add_model`, `/model_settings`, `/help`, `/new`, `/clear`, `/resume`, `/exit`, `/config`,
-`/plugins`, `/reload`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
+`/plugins`, `/reload`, `/update`, `/usage`, `/cost`, `/fork`, `/forks`, and `/compact` from the built-in `compaction` plugin.
 Tab completion suggests commands, settings, boolean values, plugin identifiers,
 and paths after `@`. Suggestions match any substring, case-sensitively. For paths,
 matching applies to the filename within the typed directory. Path completion inserts
@@ -1016,8 +1045,10 @@ to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
 window by default). `/compact` runs the same chain between turns regardless of that
-threshold. Add words to say what the summary must keep: `/compact the auth refactor, not the CSS`. You get one line
-with the message counts before and after and an estimate of the tokens saved.
+threshold. Add free text to say what the summary must keep, for example
+`/compact don't lose the "auth" decisions`. The focus is passed to the summariser
+as written, including quotes, backslashes, and line breaks; no shell escaping is needed.
+You get one line with the message counts before and after and an estimate of the tokens saved.
 An empty conversation, or one that fits inside the protected tail, says so and
 sends nothing.
 
@@ -1038,6 +1069,12 @@ turns it off, `/compact` included:
 | `protected_tokens` | `50000` | tokens of the most recent messages never compacted |
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
+
+The status row shows compact used/max context tokens, such as `128k/1m`.
+The maximum comes from the request's model or the `context_window` override;
+it stays `?` until the plugin reports a known window. An unknown model's fallback
+compaction budget is not shown as its maximum. Counts below 1,000 stay unscaled;
+larger counts round to whole thousands (`k`) or tenths of a million (`m`).
 
 The context figure turns yellow when a request still exceeds `threshold` after
 compaction, for example because the protected tail is too large. For windows smaller
@@ -1066,6 +1103,107 @@ as your user. Review generated plugins before enabling them.
 Custom agents are unchanged. To offer the same guide, add
 `customization_guide()` from `pydantic_clai2.customization` to their capabilities.
 See [PLUGINS.md](PLUGINS.md) for the plugin contract.
+
+## Task delegation
+
+The stock `coder` plugin exposes `delegate_task`, which starts a fresh conversation
+with the same active plugin tools, instructions, and guardrails. CLAI rebuilds its
+stock agent before the next prompt when that capability snapshot changes; session
+history is preserved and running tasks keep their original snapshot.
+
+Saved Coder declarations that omit `sub_agents` still default to `false`. Enable
+`sub_agents` in `/plugins configure coder` to opt in, or use `/plugins remove coder`
+to restore the stock declaration. Explicit `false` remains an opt-out. Custom agents
+are not rebuilt and must bind delegation and its accompanying capabilities themselves.
+
+### Managed tasks in the interactive stock CLI
+
+The interactive stock agent runs `SubAgents` inside a harness `DelegationTasks`
+owner. `delegate_task(agent_name, task, background=False, resume=None)` starts a
+child with its own history. `general-purpose` is an alias for `self`, carrying
+all agent-bound tools, instructions, and guardrails. `Explore` and `Plan` use
+only filesystem readers and a `ReadOnlyWorkspace`: neither shell commands nor
+`run_code` are available. They inherit the current model and are one-shot.
+Custom delegates and general-purpose children can resume with the same task ID.
+There are three child layers below the main agent by default.
+
+Use foreground delegation when the answer is needed immediately, and background
+delegation for independent work. Give each child a self-contained task with
+paths, constraints, and expected evidence. A background acceptance receipt is
+not a result. CLAI delivers a settled child's report through core's native
+queued-message API, marked as automated, untrusted task data. Reports are not
+user instructions or permission grants. In the interactive stock CLI, a report
+that arrives while idle automatically continues the parent. No extra user prompt
+is needed, and your unfinished draft and queued input are preserved. Reports
+arriving during a turn use that run's queue; completed reports are not replayed.
+Nested children join their descendants and receive their reports before settling.
+
+- **Ctrl+B** moves foreground children of the main run to the background without
+  restarting them. The hint appears only while a foreground child can be
+  backgrounded. In tmux, send Ctrl+B through to the application or change the
+  tmux prefix.
+
+Task rows use the selected `/theme`: foreground and background modes, running
+activity, and failures each have their own role colour.
+
+### Agent folders
+
+CLAI loads custom agents from disk, in Claude Markdown (`*.md`) or Codex TOML
+(`*.toml`) format. Choose folders in `/plugins configure coder` under
+**Agent folders**, as a JSON list. Each entry is a folder name or a path:
+
+- A name such as `agents` searches `.agents/agents`, `.claude/agents`, and
+  `.codex/agents`, first in the project, then in your home directory. Project
+  definitions win over personal ones with the same name.
+- Add more names, for example `["agents", "global"]`, to also load
+  `.claude/global` and its siblings.
+- A path such as `./team-agents` or `~/my-agents` loads exactly that folder.
+- `[]` turns disk agents off.
+
+The stock CLI starts with `["agents"]`, so existing `.claude/agents` and
+`.codex/agents` definitions work without setup. If you saved Coder settings
+before this existed, disk agents stay off until you set **Agent folders**.
+Definition files are read as data and never executed.
+- **`/tasks`** opens the live picker during a turn or between turns. Enter opens
+  a full-width transcript with in-flight text; Esc returns to the picker, then
+  closes it. Arrow keys scroll the transcript; End follows its tail. Completing
+  a task does not close its detail view.
+- **`b` / `/tasks background ID`** backgrounds the selected child.
+- **`x` / `/tasks stop ID`** stops that child and its descendants, leaving siblings
+  running. Stopping a child prevents automatic model resume.
+- **`/tasks resume ID`** explicitly authorizes resume and queues a request to the
+  parent to continue the saved child. Explore and Plan cannot resume. The parent
+  uses `delegate_task` with the same ID and agent name; it remains responsible
+  for reviewing the child's result.
+
+The editor panel shows the task tree, activity, elapsed time, and descendant
+counts. Successful rows disappear on completion; failed and stopped rows remain
+for 30 seconds. The `/tasks` hint also remains for 30 seconds. The picker retains
+completed tasks for inspection. Live previews retain the latest 65,536 characters
+of an unfinished text part; settled responses retain their full history.
+Questions asked by children use the main
+terminal and identify the requesting child.
+
+Task metadata and independent histories are stored beside the session database
+in `<database-name>.tasks/`. Each database has its own task directory; in-memory
+stores do not write task files. Child runs also use the session's `StepPersistence` store.
+After restarting, resume the parent session to inspect or continue its children.
+Restoring an interrupted child does not execute it. Inspect partial effects
+before requesting resume. Delivery acknowledgements are saved to prevent replay
+of reports already consumed by a parent.
+
+Background execution is supported for local workspaces. A run-owned remote or
+sandbox workspace can still run foreground children, but background requests and
+promotion are refused because that workspace can close when its parent exits.
+Plugin changes are held while managed children run so their transports and hooks
+remain alive. Exit and reload cancel and drain managed children before plugin
+shutdown. Cancelling the main turn stops its foreground delegates; children
+already in the background remain owned by the session.
+
+Supplied agents and headless invocations keep their existing delegation behavior;
+the managed task UI is not installed on them. Saved Coder `sub_agents: false`
+and declarations omitting that setting remain opt-outs. CLAI adds no tools when
+delegation is disabled.
 
 ## Bring an agent
 
@@ -1448,6 +1586,21 @@ plugin list. Use `/plugins list` to print it. Plugins are trusted code running a
 
 [PLUGINS.md](PLUGINS.md) has every method, event, and rule.
 
+Every CLAI on your machine shares one settings database, so another worktree or
+branch may have saved a plugin setting this one cannot run. When a saved setting
+names a feature this build lacks, CLAI skips just that setting, uses the default,
+and tells you once at startup:
+
+```text
+coder: ignored saved sub_agents (needs stock-bound-delegation); using defaults.
+```
+
+Nothing is rewritten; the other build still sees your setting. If a plugin still
+rejects its settings when a turn starts, that turn fails with the plugin named, and
+CLAI leaves that plugin's capability out of later turns; `/plugins reload NAME` tries
+it again. CLAI builds from before this
+check apply every saved setting as they always did.
+
 `/plugins enable notion` gives the agent Notion's hosted MCP tools and opens its
 settings menu (`/plugins configure notion` reopens it). The token is picked from
 `/keys` by name (a new one is saved there as `NOTION_API_KEY`); without one, it
@@ -1518,13 +1671,17 @@ destination. Review that destination before supplying
 credentials. Keep tokens out of plugin settings, which are saved as plaintext.
 
 ```text
+/plugins configure observability
 /plugins disable observability
 /plugins enable observability
 /plugins reload observability
 /plugins add observability pydantic_clai2.builtin_plugins.logfire '{"include_content": false, "include_binary_content": false}'
 ```
 
-The last command replaces the built-in configuration. Its options are
+`/plugins configure observability`, or `C` on `observability` in `/plugins`, opens
+its settings menu. Each option below is a row there; each edit saves at once and
+applies from the next run. The last command replaces the built-in configuration
+instead. Its options are
 `service_name` (default `pydantic-clai2`), `include_content` (default `true`),
 `include_binary_content` (default `true`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
@@ -1544,7 +1701,8 @@ values, or secrets.
 
 ### Setting up where traces go
 
-`/plugins configure observability` (or `C` on `observability` in `/plugins`) opens a setup menu:
+Choose **Logfire project** in the settings menu (`/plugins configure observability`, or
+`C` on `observability` in `/plugins`):
 
 1. Pick where traces go: Logfire US, Logfire EU, or a self-hosted Logfire URL.
 2. Sign in, or sign up, in the browser. CLAI prints the link too, so it works over SSH.
@@ -1554,14 +1712,16 @@ CLAI then creates a write token for that project, saves it in `/keys` as
 `LOGFIRE_TOKEN_<ORG>_<PROJECT>`, and points the plugin's `token` at it; the plugin
 reloads and the next turn is traced there. The sign-in itself is not kept. The
 URL you picked is saved as the plugin's `base_url`, so `LOGFIRE_BASE_URL` cannot
-send the token elsewhere, and sending is turned on if it was off. Run the menu
-again to switch projects.
+send the token elsewhere, and sending is turned on if it was off. Choose the row
+again to switch projects, or press `R` on it to go back to `LOGFIRE_TOKEN` or the
+credentials file.
 
 ### Sending UX telemetry to the Pydantic shared project
 
 `@pydantic.dev` staff can send CLAI UX telemetry to the team's shared Logfire
-project: run `/plugins configure observability`, pick Logfire US, sign in with your
-Pydantic account, and pick the shared CLAI project. Then turn on UI events:
+project: run `/plugins configure observability`, choose **Logfire project**, pick
+Logfire US, sign in with your Pydantic account, and pick the shared CLAI project.
+Then set **UI events** to recorded in the same menu, or:
 
 ```text
 /plugins add observability pydantic_clai2.builtin_plugins.logfire '{"token": {"name": "LOGFIRE_TOKEN_<ORG>_<PROJECT>"}, "ui_events": true}'
