@@ -649,6 +649,44 @@ class PluginLoader(Generic[DepsT]):
             return message
         return f'{message}\n{await self.configure(name)}'
 
+    async def _add(self, rest: list[str]) -> str:
+        """Back `/plugins add`, replacing a shipped declaration with the same id."""
+        name = rest[0] if rest else ''  # No id matches '', so `added_plugin` reports the usage error.
+        existing = next((entry for entry in self.entries() if entry.name == name), None)
+        if existing is not None and not existing.shipped:
+            raise ValueError(f'Plugin {name} already exists; remove its declaration before replacing it.')
+        declaration = added_plugin(['add', *rest])
+        loaded = existing is not None and existing.loaded is not None
+        # Settings are plaintext, so they are saved only once the plugin accepts them: settings it
+        # rejects, perhaps a pasted secret, never reach the store.
+        self._staged[name] = declaration
+        try:
+            # Like `enable`, refuse an included plugin before unloading anything, and save nothing.
+            _check_not_included(self._entry(name))
+        except ValueError:
+            del self._staged[name]
+            raise
+        if existing is not None:
+            await self.unload(name)
+        try:
+            await self.load(name)
+        except PluginSettingsError:
+            del self._staged[name]
+            if loaded:
+                await self.load(name)
+            raise
+        except BaseException:
+            requires = self._requirements(self._entry(name))
+            self._store.save_plugin(self._staged.pop(name), requires=requires)
+            raise
+        requires = self._requirements(self._entry(name))
+        self._store.save_plugin(self._staged.pop(name), requires=requires)
+        _requested('add', name)
+        if existing is None:
+            return await self._configure_new(name, f'Added and loaded {name}.')
+        kind = 'project' if existing.project else 'built-in'
+        return await self._configure_new(name, f'Replaced {kind} {name}.')
+
     async def command(self, args: list[str]) -> str:
         """Back `/plugins` with arguments; changes apply now and are saved."""
         if not args or args == ['list']:
@@ -659,34 +697,7 @@ class PluginLoader(Generic[DepsT]):
         if rest:
             rest[0] = canonical_plugin_id(rest[0])
         if action == 'add':
-            existing = next((entry for entry in self.entries() if rest and entry.name == rest[0]), None)
-            if existing is not None and not existing.shipped:
-                raise ValueError(f'Plugin {rest[0]} already exists; remove its declaration before replacing it.')
-            declaration = added_plugin([action, *rest])
-            loaded = existing is not None and existing.loaded is not None
-            if existing is not None:
-                await self.unload(rest[0])
-            # Settings are plaintext, so they are saved only once the plugin accepts them: settings it
-            # rejects, perhaps a pasted secret, never reach the store.
-            self._staged[rest[0]] = declaration
-            try:
-                await self.load(rest[0])
-            except PluginSettingsError:
-                del self._staged[rest[0]]
-                if loaded:
-                    await self.load(rest[0])
-                raise
-            except BaseException:
-                requires = self._requirements(self._entry(rest[0]))
-                self._store.save_plugin(self._staged.pop(rest[0]), requires=requires)
-                raise
-            requires = self._requirements(self._entry(rest[0]))
-            self._store.save_plugin(self._staged.pop(rest[0]), requires=requires)
-            _requested('add', rest[0])
-            if existing is None:
-                return await self._configure_new(rest[0], f'Added and loaded {rest[0]}.')
-            kind = 'project' if existing.project else 'built-in'
-            return await self._configure_new(rest[0], f'Replaced {kind} {rest[0]}.')
+            return await self._add(rest)
         if len(rest) != 1:
             raise ValueError(
                 'Usage: /plugins [list|add ID MODULE[:ATTR] [JSON]|enable ID|disable ID|remove ID|reload ID'
