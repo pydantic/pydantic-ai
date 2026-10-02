@@ -135,7 +135,8 @@ def _fold(events: list[dict[str, Any]]) -> dict[str, Any]:
             response |= {key: metadata[key] for key in ('usage', 'metrics', 'trace') if key in metadata}
     for index, tool_input in tool_inputs.items():
         blocks[index]['toolUse']['input'] = json.loads(tool_input) if tool_input else {}
-    # `Converse` leaves out the text blocks a stream sends with only whitespace, like Qwen's `''` and `'\n\n'`.
+    # `Converse` leaves out the whitespace-only text blocks that `ConverseStream` sends, like Qwen3's `''` and `'\n\n'`
+    # (live-verified on Qwen3 models; see `test_bedrock_qwen_stream_whitespace_text_blocks`).
     content = [block for _, block in sorted(blocks.items()) if 'text' not in block or block['text'].strip()]
     return {'output': {'message': {'role': 'assistant', 'content': content}}, **response}
 
