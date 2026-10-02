@@ -45,6 +45,12 @@ async def test_text_output_json_schema():
     agent = Agent('test', output_type=TextOutput(func))
     assert agent.output_json_schema() == snapshot({'type': 'string'})
 
+    def split_into_words(text: str) -> list[str]:
+        return text.split()  # pragma: no cover
+
+    agent = Agent('test', output_type=TextOutput(split_into_words))
+    assert agent.output_json_schema() == snapshot({'items': {'type': 'string'}, 'type': 'array'})
+
 
 async def test_function_output_json_schema():
     def func(x: int) -> int:
