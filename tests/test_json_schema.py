@@ -12,6 +12,7 @@ from pydantic_ai import Agent, ModelMessage, ModelResponse, TextPart, Tool, User
 from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer, JsonSchemaTransformer
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles.meta import meta_model_profile
+from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
 
 from ._inline_snapshot import snapshot
 
@@ -231,8 +232,6 @@ def test_typed_schema_anyof_member_is_recursed_openai_strict():
     Before the fix, composition members of a typed node were never walked, so OpenAI strict
     mode additions (`additionalProperties: false` and `required`) were missing from them.
     """
-    from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer
-
     schema = {
         'type': 'object',
         'properties': {'p': {'type': 'string'}},
@@ -311,6 +310,45 @@ def test_typeless_anyof_member_still_recursed():
 
     # Single-member union collapses into the member, which is still transformed.
     assert result == {'type': 'integer'}
+
+
+def test_list_form_items_are_walked():
+    """A draft-7 tuple, spelled as an `items` list rather than `prefixItems`, has each of its schemas walked.
+
+    `zod-to-json-schema`, which the MCP TypeScript SDK uses for zod v3 tool schemas, emits this shape.
+    The walk runs before any request is built, so the transformer output is asserted directly.
+    """
+    schema = {
+        '$defs': {'Point': {'title': 'Point', 'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
+        'type': 'object',
+        'properties': {
+            'pair': {'type': 'array', 'items': [{'type': 'string', 'title': 'A'}, {'$ref': '#/$defs/Point'}]}
+        },
+    }
+
+    # OpenAI keeps `$defs` and strips `title` from each element.
+    assert OpenAIJsonSchemaTransformer(deepcopy(schema), strict=False).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {'pair': {'type': 'array', 'items': [{'type': 'string'}, {'$ref': '#/$defs/Point'}]}},
+            '$defs': {'Point': {'type': 'object', 'properties': {'x': {'type': 'integer'}}}},
+        }
+    )
+    # Inlining resolves the `$ref` inside the list.
+    assert InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk() == snapshot(
+        {
+            'type': 'object',
+            'properties': {
+                'pair': {
+                    'type': 'array',
+                    'items': [
+                        {'type': 'string', 'title': 'A'},
+                        {'title': 'Point', 'type': 'object', 'properties': {'x': {'type': 'integer'}}},
+                    ],
+                }
+            },
+        }
+    )
 
 
 def test_inline_defs_preserves_ref_sibling_keywords():
