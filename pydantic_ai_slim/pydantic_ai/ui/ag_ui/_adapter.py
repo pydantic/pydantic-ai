@@ -821,11 +821,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
             tool_calls_list = []
             tool_messages = []
 
-        for part in msg.parts:
+        for index, part in enumerate(msg.parts):
             if isinstance(part, TextPart):
                 if tool_calls_list:
                     flush()
-                if text_content:
+                if index > 0 and isinstance(msg.parts[index - 1], TextPart):
                     text_content[-1] += part.content
                 else:
                     text_content.append(part.content)

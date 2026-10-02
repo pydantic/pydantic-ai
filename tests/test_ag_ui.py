@@ -2416,35 +2416,38 @@ def test_dump_messages_preserves_explicit_newlines_in_adjacent_text_parts() -> N
     assert dumped[0].content == response.text
 
 
-@pytest.mark.parametrize(
-    'ag_ui_version,expected',
-    [
-        pytest.param(
-            '0.1.10',
-            [('AssistantMessage', 'abcd')],
-            id='v010-drops-thinking-merges-text',
-        ),
-        pytest.param(
-            '0.1.11',
-            [('AssistantMessage', 'ab'), ('ReasoningMessage', 'thinking'), ('AssistantMessage', 'cd')],
-            id='v011-separates-around-reasoning',
-            marks=requires_ag_ui('0.1.11'),
-        ),
-    ],
-)
-def test_dump_messages_keeps_separated_groups_around_non_text_parts(
-    ag_ui_version: str, expected: list[tuple[str, str]]
-) -> None:
-    """Text groups separated by a flushed ThinkingPart stay in separate messages.
-
-    The separator policy between separated groups is owned by #7713; this pins current behavior.
-    Below ag-ui-protocol 0.1.11 the ThinkingPart is dropped, so the flanking text merges instead.
-    """
+@requires_ag_ui('0.1.11')
+def test_dump_messages_keeps_separated_groups_around_reasoning() -> None:
+    """Text groups separated by a flushed ThinkingPart stay in separate messages."""
     response = ModelResponse(parts=[TextPart(content='ab'), ThinkingPart(content='thinking'), TextPart(content='cd')])
 
-    dumped = AGUIAdapter.dump_messages([response], ag_ui_version=ag_ui_version)
+    dumped = AGUIAdapter.dump_messages([response], ag_ui_version='0.1.11')
 
-    assert [(type(m).__name__, m.content) for m in dumped] == expected
+    assert [(type(m).__name__, m.content) for m in dumped] == [
+        ('AssistantMessage', 'ab'),
+        ('ReasoningMessage', 'thinking'),
+        ('AssistantMessage', 'cd'),
+    ]
+
+
+@pytest.mark.parametrize(
+    'separator',
+    [
+        pytest.param(ThinkingPart(content='thinking'), id='thinking'),
+        pytest.param(FilePart(content=BinaryImage(data=b'image data', media_type='image/png')), id='file'),
+    ],
+)
+def test_dump_messages_text_separated_by_dropped_part(separator: ThinkingPart | FilePart) -> None:
+    """Dropping a non-text part does not make its surrounding text parts adjacent.
+
+    Below ag-ui-protocol 0.1.11 a ThinkingPart is dropped, and a FilePart is dropped without `preserve_file_data`.
+    The separator policy between separated groups is owned by #7713; this pins current behavior.
+    """
+    response = ModelResponse(parts=[TextPart('a'), TextPart('b'), separator, TextPart('c'), TextPart('d')])
+
+    dumped = AGUIAdapter.dump_messages([response], ag_ui_version='0.1.10')
+
+    assert [(type(m).__name__, m.content) for m in dumped] == [('AssistantMessage', 'ab\ncd')]
 
 
 def test_dump_messages_interleaved_text_and_tool_calls() -> None:
