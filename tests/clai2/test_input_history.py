@@ -12,8 +12,8 @@ from rich.console import Console
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from pydantic_clai2 import chat
-from pydantic_clai2.input_history import input_history
-from pydantic_clai2.settings_store import SettingsStore
+from pydantic_clai2.config.settings_store import SettingsStore
+from pydantic_clai2.ui.prompt.input_history import input_history
 
 
 async def test_history_survives_reopening(tmp_path: Path) -> None:

@@ -23,11 +23,15 @@ from genai_prices.types import ClauseEquals, ModelInfo, ModelPrice
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
-from pydantic_ai.exceptions import UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import ModelHTTPError, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
+    AudioUrl,
     BinaryContent,
     BinaryImage,
+    CachePoint,
+    DocumentUrl,
     FilePart,
+    ImageUrl,
     ModelRequest,
     ModelResponse,
     RealtimeSessionErrorEvent,
@@ -39,7 +43,10 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
+    UploadedFile,
+    UserContent,
     UserPromptPart,
+    VideoUrl,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.realtime import (
@@ -47,6 +54,7 @@ from pydantic_ai.realtime import (
     RealtimeModelProfile,
     RealtimeSession,
     RealtimeTurnCompleteEvent,
+    WebRTCSession,
     infer_realtime_model,
 )
 from pydantic_ai.realtime.codec import (
@@ -64,16 +72,18 @@ from pydantic_ai.realtime.codec import (
     ToolResult,
     TruncateOutput,
 )
-from pydantic_ai.settings import ToolOrOutput
+from pydantic_ai.settings import ThinkingLevel, ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from ..conftest import try_import
 
 with try_import() as imports_successful:
+    import httpx2
     import websockets
     from openai import AsyncOpenAI
     from openai.types.live import ServerEvent, SessionConfig
+    from openai.types.shared import ReasoningEffort
     from pydantic import TypeAdapter
     from websockets.frames import Close
 
@@ -143,10 +153,12 @@ def test_profile(model: OpenAILiveModel) -> None:
         supports_session_seeding=True,
         supports_seeding_images=False,
         supports_seeding_audio=False,
-        supports_webrtc=False,
+        # A server relays the offer and attaches a sideband; there are no client secrets.
+        supports_webrtc=True,
         async_tool_call_mode='always',
         supports_async_tool_calls=True,  # deprecated, derived from `async_tool_call_mode`
-        supports_thinking=False,
+        # `thinking` sets the delegated backend's reasoning effort.
+        supports_thinking=True,
         supports_tool_return_schema=False,
         emits_input_speech_events=False,
         # The one model in the repo that infers its turn boundary rather than reading it off the wire.
@@ -235,6 +247,50 @@ def test_delegation_settings_reach_the_backend(model: OpenAILiveModel) -> None:
     assert config['instructions'] == 'Speak slowly.'
     assert config['audio']['output'] == {'voice': 'cedar'}
     assert config['store'] is True
+
+
+@pytest.mark.parametrize(
+    'backend,thinking,expected',
+    [
+        pytest.param('gpt-5.6-sol', True, 'medium', id='on'),
+        pytest.param('gpt-5.6-sol', 'high', 'high', id='level'),
+        pytest.param('gpt-5.6-sol', False, 'none', id='off'),
+        # Resolved against the backend's profile, as a direct Responses request to it would be.
+        pytest.param('gpt-5.6-sol', 'minimal', 'low', id='no-minimal-effort'),
+        pytest.param('gpt-5', 'minimal', 'minimal', id='minimal-effort'),
+        # A backend that always reasons can't be turned off, so `False` leaves it at its default.
+        pytest.param('gpt-5', False, None, id='always-reasons'),
+        # A backend that doesn't reason is sent no effort at all.
+        pytest.param('gpt-4.1', 'high', None, id='does-not-reason'),
+    ],
+)
+def test_thinking_sets_the_backends_reasoning_effort(
+    model: OpenAILiveModel, backend: str, thinking: ThinkingLevel, expected: ReasoningEffort
+) -> None:
+    """The backend does the reasoning, so the shared `thinking` setting is its effort."""
+    settings = OpenAILiveModelSettings(thinking=thinking, openai_live_delegation={'model': backend})
+    responses = _config(model, settings=settings)['delegation']['responses']
+
+    assert responses.get('reasoning') == ({'effort': expected} if expected is not None else None)
+
+
+def test_delegation_settings_take_precedence_over_shared_ones(model: OpenAILiveModel) -> None:
+    settings = OpenAILiveModelSettings(
+        thinking='high',
+        parallel_tool_calls=True,
+        openai_live_delegation={'model': 'gpt-5.6-sol', 'reasoning_effort': 'low', 'parallel_tool_calls': False},
+    )
+    responses = _config(model, settings=settings)['delegation']['responses']
+
+    assert responses['reasoning'] == {'effort': 'low'}
+    assert responses['parallel_tool_calls'] is False
+
+
+def test_shared_parallel_tool_calls_reaches_the_backend(model: OpenAILiveModel) -> None:
+    """The backend is what calls the tools, so the shared setting applies to it."""
+    responses = _config(model, settings=OpenAILiveModelSettings(parallel_tool_calls=False))['delegation']['responses']
+
+    assert responses['parallel_tool_calls'] is False
 
 
 @pytest.mark.parametrize(
@@ -638,6 +694,30 @@ async def test_a_result_for_an_abandoned_call_is_not_sent() -> None:
     assert sent == []
 
 
+async def test_a_call_abandoned_while_its_media_downloads_is_not_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mapping media can wait on a download, and a backend that gives up meanwhile must still be honored."""
+    sent: list[dict[str, Any]] = []
+
+    class _Recorder(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)  # pragma: no cover
+
+    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    map_items = live_module._tool_result_follow_up  # pyright: ignore[reportPrivateUsage]
+
+    async def downloading(result: ToolResult, *, provider_name: str) -> Any:
+        # The backend gives up while the download is in flight.
+        connection._map_response_event(_backend_terminal('response.failed'), delegation_id='d1')  # pyright: ignore[reportPrivateUsage]
+        return await map_items(result, provider_name=provider_name)
+
+    monkeypatch.setattr(live_module, '_tool_result_follow_up', downloading)
+    image = BinaryContent(data=b'png', media_type='image/png')
+    await connection.send(ToolResult('c1', output='too late', content=[image]))
+
+    assert sent == []
+
+
 @pytest.mark.parametrize('nested_type', ['response.completed', 'response.failed'])
 def test_a_tool_calls_usage_always_arrives(nested_type: str) -> None:
     """Delegated calls wait for their response's usage, so its terminal must always report some.
@@ -792,18 +872,118 @@ async def test_tool_result_text_content_reaches_the_backend() -> None:
     )
 
 
-async def test_tool_result_media_is_refused() -> None:
-    """Live carries no media, so a result that needs it fails with nothing on the wire."""
+async def test_tool_result_text_content_types_reach_the_backend_as_text() -> None:
+    """Typed text rides with plain text in the follow-up message; a cache point has no meaning here."""
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Sink(object())  # pyright: ignore[reportArgumentType]
+    await connection.send(
+        ToolResult('c1', output='ok', content=[TextContent(content='Returning guest.'), CachePoint()])
+    )
+
+    assert sent[1] == snapshot(
+        {
+            'type': 'response.item.create',
+            'item': {
+                'type': 'message',
+                'role': 'user',
+                'content': [{'type': 'input_text', 'text': 'Returning guest.'}],
+            },
+        }
+    )
+
+
+async def test_tool_result_media_follows_the_output_as_a_user_message() -> None:
+    """Files a tool returns follow its output as a user message, as they do on the Realtime API.
+
+    Each item keeps its place among the text. The per-item mapping is `OpenAIResponsesModel`'s, so a pinned
+    payload is what catches it drifting: a cassette would still match.
+    """
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)
+
+    connection = _Sink(object(), provider_name='openai')  # pyright: ignore[reportArgumentType]
+    content: list[UserContent] = [
+        'The photo:',
+        BinaryContent(data=b'png', media_type='image/png'),
+        TextContent(content='The invoice:'),
+        BinaryContent(data=b'pdf', media_type='application/pdf'),
+        CachePoint(),
+        ImageUrl(url='https://example.com/kiwi.jpg'),
+        DocumentUrl(url='https://example.com/terms.pdf'),
+        UploadedFile(file_id='file-abc', provider_name='openai', media_type='image/png'),
+    ]
+    await connection.send(ToolResult('c1', output='See the attachments.', content=content))
+
+    assert sent == snapshot(
+        [
+            {
+                'type': 'response.item.create',
+                'item': {'type': 'function_call_output', 'call_id': 'c1', 'output': 'See the attachments.'},
+            },
+            {
+                'type': 'response.item.create',
+                'item': {
+                    'type': 'message',
+                    'role': 'user',
+                    'content': [
+                        {'type': 'input_text', 'text': 'The photo:'},
+                        {'image_url': 'data:image/png;base64,cG5n', 'type': 'input_image', 'detail': 'auto'},
+                        {'type': 'input_text', 'text': 'The invoice:'},
+                        {
+                            'type': 'input_file',
+                            'file_data': 'data:application/pdf;base64,cGRm',
+                            'filename': 'filename.pdf',
+                        },
+                        {'image_url': 'https://example.com/kiwi.jpg', 'type': 'input_image', 'detail': 'auto'},
+                        {'type': 'input_file', 'file_url': 'https://example.com/terms.pdf'},
+                        {'type': 'input_image', 'file_id': 'file-abc', 'detail': 'auto'},
+                    ],
+                },
+            },
+            {'type': 'response.create'},
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    'item,match',
+    [
+        (AudioUrl(url='https://example.com/clip'), 'cannot send `AudioUrl` content'),
+        (VideoUrl(url='https://example.com/clip'), 'cannot send `VideoUrl` content'),
+        (BinaryContent(data=b'x', media_type='audio/wav'), 'cannot send `audio/wav` content'),
+        (BinaryContent(data=b'x', media_type='video/mp4'), 'cannot send `video/mp4` content'),
+        (DocumentUrl(url='https://example.com/clip.mp3'), 'cannot send a `audio/mpeg` `DocumentUrl`'),
+        (
+            DocumentUrl(url='https://example.com/clip', media_type='video/mp4'),
+            'cannot send a `video/mp4` `DocumentUrl`',
+        ),
+        (UploadedFile(file_id='f', provider_name='openai', media_type='audio/wav'), 'uploaded `audio/wav` file'),
+        (UploadedFile(file_id='f', provider_name='openai', media_type='video/mp4'), 'uploaded `video/mp4` file'),
+        (UploadedFile(file_id='f', provider_name='anthropic'), "provider_name='anthropic'"),
+    ],
+)
+async def test_tool_result_media_the_backend_cannot_read_is_refused(item: UserContent, match: str) -> None:
+    """The backend takes text, images, and documents only, so anything else fails with nothing sent."""
     sent: list[dict[str, Any]] = []
 
     class _Recorder(OpenAILiveConnection):
         async def _send_event(self, event: dict[str, Any]) -> None:
             sent.append(event)  # pragma: no cover
 
-    connection = _Recorder(object())  # pyright: ignore[reportArgumentType]
-    result = ToolResult('c1', output='see this', content=[BinaryContent(data=b'x', media_type='image/png')])
+    connection = _Recorder(object(), provider_name='openai')  # pyright: ignore[reportArgumentType]
+    result = ToolResult(
+        'c1', output='see this', content=['Here:', BinaryContent(data=b'x', media_type='image/png'), item]
+    )
 
-    with pytest.raises(UserError, match='does not support media in tool results'):
+    with pytest.raises(UserError, match=match):
         await connection.send(result)
 
     assert sent == []
@@ -2001,3 +2181,212 @@ async def test_special_token_text_is_counted_as_live_counts_it() -> None:
     with pytest.raises(UserError, match='and this is 501'):
         await connection.send(_text_of(500) + '<|endoftext|>')
     assert len(sent) == 1
+
+
+# --- browser WebRTC ---------------------------------------------------------------------------------
+
+
+def _webrtc_model(handler: Any, *, settings: OpenAILiveModelSettings | None = None) -> OpenAILiveModel:
+    """A Live model whose signaling request is served by `handler` instead of the network."""
+    provider = OpenAIProvider(
+        api_key='sk-test', http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    )
+    return OpenAILiveModel('gpt-live-1', provider=provider, settings=settings)
+
+
+def _created(session_id: str = 'live_test') -> httpx2.Response:
+    return httpx2.Response(
+        200, json={'session': {'id': session_id}, 'transport': {'type': 'webrtc', 'sdp': 'v=0\r\nanswer'}}
+    )
+
+
+async def test_answering_an_offer_starts_the_whole_session() -> None:
+    """Live can't be reconfigured once started, so the offer carries the complete configuration.
+
+    WebRTC negotiates the audio format, so none is sent, and the browser's data channel is closed.
+    """
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        assert request.url.path == '/v1/live/sessions'
+        sent.append(json.loads(request.content))
+        return _created()
+
+    model = _webrtc_model(handler, settings=OpenAILiveModelSettings(openai_voice='cedar'))
+    tool = ToolDefinition(name='lookup', parameters_json_schema={'type': 'object'})
+    answer = await model.answer_webrtc_offer('v=0\r\noffer', instructions='You look things up.', tools=[tool])
+
+    assert answer.sdp == 'v=0\r\nanswer'
+    assert answer.session == WebRTCSession(provider_name='openai', session_id='live_test')
+    assert sent == snapshot(
+        [
+            {
+                'session': {
+                    'model': 'gpt-live-1',
+                    'instructions': 'You are a voice assistant. Keep replies short and conversational. When the user asks for something you cannot answer from this conversation alone, delegate the task and tell them you are looking it up.',
+                    'audio': {'output': {'voice': 'cedar'}},
+                    'delegation': {
+                        'type': 'responses',
+                        'responses': {
+                            'model': AUTO_BACKEND_MODEL,
+                            'instructions': 'You look things up.',
+                            'tools': [{'type': 'function', 'name': 'lookup', 'parameters': {'type': 'object'}}],
+                        },
+                    },
+                    'client': {'data_channel': {'allowed_client_events': [], 'allowed_server_events': []}},
+                },
+                'transport': {'type': 'webrtc', 'sdp': 'v=0\r\noffer'},
+            }
+        ]
+    )
+
+
+async def test_the_browsers_data_channel_can_be_opened() -> None:
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    captions = OpenAILiveModelSettings(
+        openai_live_data_channel={
+            'allowed_client_events': [],
+            'allowed_server_events': [{'type': 'session.output_transcript.delta'}],
+        }
+    )
+    await _webrtc_model(handler).answer_webrtc_offer('v=0', model_settings=captions)
+
+    session = sent[0]['session']
+    assert session['client'] == {
+        'data_channel': {
+            'allowed_client_events': [],
+            'allowed_server_events': [{'type': 'session.output_transcript.delta'}],
+        }
+    }
+    # With no voice set there is nothing left to say about audio.
+    assert 'audio' not in session
+
+
+async def test_answering_an_offer_uses_the_agents_model_as_the_backend() -> None:
+    """As when a WebSocket session connects, the backend defaults to the agent's own model."""
+    sent: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        sent.append(json.loads(request.content))
+        return _created()
+
+    agent = Agent(OpenAIResponsesModel('gpt-5.6-sol', provider=OpenAIProvider(api_key='sk-test')))
+    await agent.realtime(_webrtc_model(handler)).answer_webrtc_offer('v=0')
+
+    assert sent[0]['session']['delegation']['responses']['model'] == 'gpt-5.6-sol'
+
+
+async def test_a_rejected_offer_is_an_http_error() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(400, json={'error': {'message': 'bad sdp', 'type': 'invalid_request_error'}})
+
+    with pytest.raises(ModelHTTPError) as exc_info:
+        await _webrtc_model(handler).answer_webrtc_offer('v=0')
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.model_name == 'gpt-live-1'
+
+
+async def test_unsupported_settings_raise_before_answering_an_offer() -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        raise AssertionError('no HTTP request expected')  # pragma: no cover
+
+    with pytest.raises(UserError, match='`max_tokens` cannot be set'):
+        await _webrtc_model(handler).answer_webrtc_offer('v=0', model_settings=OpenAILiveModelSettings(max_tokens=10))
+
+
+async def test_there_are_no_client_secrets(model: OpenAILiveModel) -> None:
+    with pytest.raises(UserError, match=r'has no ephemeral client secrets.*answer_webrtc_offer'):
+        await model.create_client_secret()
+
+
+def test_the_sideband_attaches_to_the_session(model: OpenAILiveModel) -> None:
+    assert model._sideband_url('live_u1/x') == snapshot(  # pyright: ignore[reportPrivateUsage]
+        'wss://api.openai.com/v1/live/sessions/live_u1%2Fx/attach'
+    )
+
+
+def _started_frame(**session: Any) -> str:
+    return json.dumps(
+        {
+            'type': 'session.started',
+            'event_id': 'e',
+            'session': {'id': 'live_test', 'expires_at': 0, 'model': 'gpt-live-1', 'status': 'active', **session},
+        }
+    )
+
+
+async def test_the_sideband_runs_the_session_it_attaches_to(model: OpenAILiveModel) -> None:
+    """The sideband sends nothing to set up: Live replays `session.started`, which names the backend."""
+    ws = _FakeWebSocket(
+        [_started_frame(delegation={'type': 'responses', 'responses': {'model': 'gpt-5.6-luna', 'tools': []}})]
+    )
+    with _patched_connect(ws):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            assert connection.model_name == 'gpt-live-1'
+            assert connection._backend_model == 'gpt-5.6-luna'  # pyright: ignore[reportPrivateUsage]
+            # The browser plays the call's audio, so the sideband's copy only drives the turn clock.
+            assert connection._map_output_audio(b'\x7f\x7f' * 240) == []  # pyright: ignore[reportPrivateUsage]
+            assert connection._response_open  # pyright: ignore[reportPrivateUsage]
+            assert connection._map_output_audio(bytes(480)) == []  # pyright: ignore[reportPrivateUsage]
+    assert ws.sent == []
+
+
+async def test_a_sideband_on_a_client_delegated_session_has_no_backend(model: OpenAILiveModel) -> None:
+    with _patched_connect(_FakeWebSocket([_started_frame(delegation={'type': 'client'})])):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ) as connection:
+            assert connection._backend_model is None  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_malformed_started_event_on_the_sideband_raises(model: OpenAILiveModel) -> None:
+    with _patched_connect(_FakeWebSocket([json.dumps({'type': 'session.started', 'session': {}})])):
+        with pytest.raises(RealtimeError, match=r'Malformed `session\.started`'):
+            async with model.connect_webrtc(
+                WebRTCSession(provider_name='openai', session_id='live_test'),
+                messages=[],
+                model_settings=None,
+                model_request_parameters=ModelRequestParameters(),
+            ):
+                pass  # pragma: no cover
+
+
+async def test_a_sideband_must_attach_through_the_same_provider(model: OpenAILiveModel) -> None:
+    with pytest.raises(UserError, match="negotiated by provider 'azure'"):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='azure', session_id='live_test'),
+            messages=[],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass  # pragma: no cover
+
+
+async def test_a_sideband_cannot_seed_history(model: OpenAILiveModel) -> None:
+    """Live takes its history when the session starts, which the offer already did."""
+    with pytest.raises(UserError, match='cannot seed `message_history`'):
+        async with model.connect_webrtc(
+            WebRTCSession(provider_name='openai', session_id='live_test'),
+            messages=[ModelRequest(parts=[UserPromptPart(content='My name is Ada.')])],
+            model_settings=None,
+            model_request_parameters=ModelRequestParameters(),
+        ):
+            pass  # pragma: no cover
+
+
+def test_a_document_url_of_unknown_type_is_left_to_the_mapper() -> None:
+    """Whether it can be sent is the Responses mapping's call, as on `OpenAIResponsesModel`."""
+    assert not live_module._is_audio_or_video_url(DocumentUrl(url='https://example.com/noext'))  # pyright: ignore[reportPrivateUsage]

@@ -404,6 +404,12 @@ BLOCKBUSTER_EXEMPTIONS: list[tuple[str, str, str | tuple[str, ...]]] = [
     ('os.stat', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
     ('io.TextIOWrapper.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
     ('io.BufferedReader.read', 'anthropic/lib/aws/_auth.py', 'get_auth_headers'),
+    # Decoding the first stream from an Anthropic Bedrock client loads botocore's `bedrock-runtime` service model
+    # from disk, once per process (`lru_cache`).
+    ('os.stat', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('os.listdir', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('io.TextIOWrapper.read', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
+    ('io.BufferedReader.read', 'anthropic/lib/bedrock/_stream_decoder.py', 'get_response_stream_shape'),
     # pydantic extracts field docstrings from source (`inspect`/`linecache`) the first time a
     # tool schema is built, which can happen during an agent run.
     ('os.stat', 'pydantic_ai/_function_schema.py', 'function_schema'),
@@ -743,12 +749,15 @@ def check_vcr_cassette_usage(vcr: Cassette, strict_usage: bool) -> None:
     if vcr.play_count == 0 and not strict_usage:
         return
 
-    unused_indexes = [index for index in range(len(vcr)) if vcr.play_counts.get(index, 0) == 0]
-    if unused_indexes:
-        pytest.fail(
-            f'Cassette {vcr.path} did not play all interactions: '
-            f'played {vcr.play_count}/{len(vcr)}; unused indexes: {unused_indexes}'
-        )
+    # Each protocol numbers its interactions from 0, and `play_counts` only covers HTTP.
+    unused = {
+        'HTTP': [index for index in range(len(vcr.interactions)) if vcr.play_counts.get(index, 0) == 0],
+        'gRPC': [index for index, played in enumerate(vcr.grpc_played_indices) if not played],
+        'WebSocket': [index for index, played in enumerate(vcr.ws_played_indices) if not played],
+    }
+    if any(unused.values()):
+        details = '; '.join(f'unused {protocol} indexes: {indexes}' for protocol, indexes in unused.items() if indexes)
+        pytest.fail(f'Cassette {vcr.path} did not play all interactions: {details}')
 
 
 @pytest.fixture(autouse=True)

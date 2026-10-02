@@ -45,6 +45,7 @@ from ..messages import (
     UserPromptPart,
 )
 from ..profiles import ModelProfile, merge_profile
+from ..profiles.decision import DecisionModelProfile
 from ..providers import InterfaceClient
 from ..settings import ModelSettings
 from ..tools import ToolDefinition
@@ -361,7 +362,8 @@ class UnsureRoute(DecisionHandOff):
 class _Limits:
     """How many options a pick-one and how many levels a rubric can have on this model, `None` for no limit.
 
-    Read from the model's `max_choice_options` and `max_score_levels` once per request, so that turning fields into
+    Read once per request from the profile's `decision_max_choice_options` and `decision_max_score_levels`, or the
+    model's `max_choice_options` and `max_score_levels` where the profile leaves them out, so that turning fields into
     questions can refuse a pick-one the backend would reject before anything is sent, and ask whole numbers with
     more levels than a rubric can have as a pick-one instead.
     """
@@ -389,7 +391,7 @@ class DecisionModel(Model[InterfaceClient]):
     - The field's description is the question, the output type's docstring its goal, and the agent's
       `instructions` framing shared by every question; a nested field's question also carries what it sits in.
       The latest user prompt is the text to judge, the message history before it goes along beside it, and once a
-      tool has returned, what was done since goes along apart from both.
+      tool has returned or a retry was sent, what was done since goes along apart from both.
     - With tools attached, or a union of output types, one more pick-one asks which route the text calls for, and
       the likeliest is taken. The fields of every route the model can fill are asked beside it, each on the premise
       of its route, and only the taken route's answers are read; past a size cutoff, a picked route with fields is
@@ -405,33 +407,40 @@ class DecisionModel(Model[InterfaceClient]):
 
     To support a backend, subclass this, implement [`decide`][pydantic_ai.models.decision.DecisionModel.decide]
     along with `model_name`, `system` and `base_url`, and set `max_choice_options` and `max_score_levels` to the
-    backend's limits. See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for the full rules
+    backend's limits, or have its provider set them per model in a
+    [`DecisionModelProfile`][pydantic_ai.profiles.decision.DecisionModelProfile]. See [Decision models](https://pydantic.dev/docs/ai/models/decision/) for the full rules
     and an example.
     """
 
     max_choice_options: ClassVar[int | None] = None
     """The most options the backend accepts in one pick-one question, or `None` for no limit.
 
-    A pick-one field with more options, or more routes than this on the route question, is a
+    The profile's `decision_max_choice_options` takes precedence where it is set. A pick-one field with more options, or more routes than this on the route question, is a
     [`UserError`][pydantic_ai.exceptions.UserError] before a request is sent.
     """
 
     max_score_levels: ClassVar[int | None] = None
     """The most levels the backend accepts in one rubric, or `None` for no limit.
 
-    Whole numbers from 0 with more levels than this are not a rubric, so a field of them is asked as a pick-one
+    The profile's `decision_max_score_levels` takes precedence where it is set. Whole numbers from 0 with more levels than this are not a rubric, so a field of them is asked as a pick-one
     instead, and counts against `max_choice_options`.
     """
 
     @cached_property
     def profile(self) -> ModelProfile:
-        """The model profile, with text output off whatever the provider or `profile=` says.
+        """The model profile: text output off and inline system prompts on, whatever the provider or `profile=` says.
 
         A decision model answers questions and has no way to write text, so this is a fact about the class
         rather than a default to override: with text output left on, an `output_type` like `[Ticket, str]`
         would pass the shared request preparation and have its `str` branch silently never taken.
+
+        It also judges a system prompt rather than asking it, so a system prompt partway through the conversation
+        stays a `system` entry: without inline system prompts, the shared request preparation would fold it into
+        the user text, where it would be judged as the request.
         """
-        return merge_profile(super().profile, ModelProfile(supports_text_output=False))
+        return merge_profile(
+            super().profile, ModelProfile(supports_text_output=False, supports_inline_system_prompts=True)
+        )
 
     @abstractmethod
     async def decide(self, request: DecisionRequest, model_settings: DecisionModelSettings) -> DecisionResponse:
@@ -543,7 +552,12 @@ class DecisionModel(Model[InterfaceClient]):
         # An unset route bar is 0, which no probability is below, so every pick is taken.
         route_threshold = _threshold(settings, 'decision_route_threshold', 0.0)
         boolean_threshold = _threshold(settings, 'decision_boolean_threshold', _DEFAULT_BOOLEAN_THRESHOLD)
-        limits = _Limits(choice_options=self.max_choice_options, score_levels=self.max_score_levels)
+        # The model behind the URL sets its own limits through the profile, and the class's are the fallback.
+        profile = cast(DecisionModelProfile, self.profile)
+        limits = _Limits(
+            choice_options=profile.get('decision_max_choice_options', self.max_choice_options),
+            score_levels=profile.get('decision_max_score_levels', self.max_score_levels),
+        )
         if forced_tool is not None:
             # Every other route has returned this turn, so the one left is taken without a choice question.
             return await self._forced_with_arguments(
@@ -1926,7 +1940,7 @@ def _described(tool: ToolDefinition) -> str | None:
 
 
 def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tuple[list[ToolDefinition], bool]:
-    """The tools still on offer, and whether any tool has returned this turn.
+    """The tools still on offer, and whether the agent loop has acted this turn: a tool returned or a retry was sent.
 
     A tool whose result is already in the turn is not offered again. A decision model judges the text in front of it
     and has no notion of having made a call: with a call and its result in view, the text still calls for the tool, so
@@ -1937,6 +1951,7 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
     not withhold the tool, but a judged history that ends in another agent's call to a tool of the same name does.
     """
     returned: set[str] = set()
+    retried = False
     for message in messages:
         if not isinstance(message, ModelRequest):
             continue
@@ -1945,9 +1960,12 @@ def _tools_left(messages: list[ModelMessage], tools: list[ToolDefinition]) -> tu
                 # A new prompt starts a turn, and a result that arrived before it in the same request is the
                 # previous turn's.
                 returned.clear()
+                retried = False
             elif isinstance(part, ToolReturnPart):
                 returned.add(part.tool_name)
-    return [tool for tool in tools if tool.name not in returned], bool(returned)
+            elif isinstance(part, RetryPromptPart):
+                retried = True
+    return [tool for tool in tools if tool.name not in returned], bool(returned) or retried
 
 
 _ROUTE_QUESTION = 'Which of these does this call for?'
@@ -2106,11 +2124,11 @@ def _map_messages(messages: list[ModelMessage], *, turn: bool) -> JsonValue:
     The latest user text on its own is the whole state, sent as the plain text it is. With a conversation behind
     it there are two parts to keep apart, so they get named: the text under judgement and the `history` before it.
 
-    With `turn`, a tool has returned since the latest user prompt, and the state splits at that prompt into three:
-    the `history` before it, the prompt itself as `text`, and what has been done since under `done` — the calls, their
-    results, and anything else in the turn — so the request stays the text being judged while the steps taken for it
-    are told apart from it. Every entry lands in exactly one of the three, however the messages arrived: a run's own,
-    or a `message_history` passed in that ends partway through a turn.
+    With `turn`, a tool has returned or a retry was sent since the latest user prompt, and the state splits at that
+    prompt into three: the `history` before it, the prompt itself as `text`, and what has been done since under `done`
+    — the calls, their results, the retries, and anything else in the turn — so the request stays the text being
+    judged while the steps taken for it are told apart from it. Every entry lands in exactly one of the three,
+    however the messages arrived: a run's own, or a `message_history` passed in that ends partway through a turn.
     """
     if turn and any(isinstance(part, UserPromptPart) for message in messages for part in message.parts):
         return _map_turn(messages)

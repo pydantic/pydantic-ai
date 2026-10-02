@@ -120,6 +120,8 @@ class _ReconnectableOpenAIProtocolConnection(Protocol):
     @property
     def message_history(self) -> Callable[[], Sequence[ModelMessage]] | None: ...
 
+    def _history_items_sent(self, items: Sequence[dict[str, Any]]) -> None: ...
+
 
 _ConnectionT = TypeVar('_ConnectionT', bound=_ReconnectableOpenAIProtocolConnection)
 
@@ -310,16 +312,31 @@ class _ProtocolAudioTranscriptDoneEvent(BaseModel):
     type: Literal['response.output_audio_transcript.done', 'response.audio_transcript.done']
 
 
+class ProtocolResponseStatus(BaseModel):
+    """SDK `RealtimeResponseStatus` with open `type` and `reason` strings.
+
+    The SDK closes both to the values documented today, so a value the server adds later would fail
+    validation of the whole `response.done`, losing the only terminal (and usage) the response gets.
+    """
+
+    model_config = ConfigDict(extra='allow')
+
+    error: RealtimeResponseStatusError | None = None
+    reason: str | None = None
+    type: str | None = None
+
+
 class ProtocolRealtimeResponse(BaseModel):
-    """SDK response with cassette-proven xAI extensions kept typed."""
+    """SDK response with cassette-proven xAI extensions kept typed, and its closed enums left open."""
 
     model_config = ConfigDict(extra='allow')
 
     id: str | None = None
     output: list[ConversationItem | _ProtocolResponseOutputItem] | None = None
-    status: Literal['completed', 'cancelled', 'failed', 'incomplete', 'in_progress'] | None = None
-    status_details: RealtimeResponseStatus | str | None = None
+    status: str | None = None
+    status_details: ProtocolResponseStatus | str | None = None
     usage: RealtimeResponseUsage | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class ProtocolResponseDoneEvent(BaseModel):
@@ -337,6 +354,83 @@ class ProtocolResponseCreatedEvent(BaseModel):
     event_id: str
     response: ProtocolRealtimeResponse
     type: Literal['response.created']
+
+
+class _ProtocolItemContent(BaseModel):
+    model_config = ConfigDict(extra='allow')
+
+    type: str
+
+
+class ProtocolConversationItem(BaseModel):
+    """The fields of a conversation item that say whose it is, on every dialect of the protocol.
+
+    The SDK's `ConversationItem` union rejects the item shapes clones send (xAI gives function calls and
+    their outputs `role='tool'`), and only the kind of item matters here.
+    """
+
+    model_config = ConfigDict(extra='allow')
+
+    id: str | None = None
+    type: str
+    role: str | None = None
+    call_id: str | None = None
+    content: list[_ProtocolItemContent] | None = None
+
+
+class ProtocolConversationItemAddedEvent(BaseModel):
+    """An item joining the conversation: GA `conversation.item.added`, or beta (Azure Voice Live) `.created`."""
+
+    model_config = ConfigDict(extra='allow')
+
+    type: Literal['conversation.item.added', 'conversation.item.created']
+    item: ProtocolConversationItem
+
+
+CONVERSATION_ITEM_ADDED_EVENT_ADAPTER: TypeAdapter[ProtocolConversationItemAddedEvent] = TypeAdapter(
+    ProtocolConversationItemAddedEvent
+)
+
+
+def is_user_message_item(item: ProtocolConversationItem | dict[str, Any]) -> bool:
+    """Whether a conversation item is a user message the client created: text or images, not spoken audio.
+
+    Spoken audio joins the conversation as a user message too, but the server makes that item itself when
+    it commits the audio buffer, so it answers to no `conversation.item.create` of the client's.
+    """
+    if isinstance(item, dict):
+        item = ProtocolConversationItem.model_validate(item)
+    return (
+        item.type == 'message'
+        and item.role == 'user'
+        and not any(content.type == 'input_audio' for content in item.content or ())
+    )
+
+
+RESPONSE_INPUTS_METADATA_KEY = 'pydantic_ai_inputs'
+"""The `response.create` metadata key naming the inputs a requested response answers.
+
+The server echoes a response's `metadata` on its `response.created` and `response.done`, so the response
+itself says which inputs it answers, however requests were merged, deferred, or raced by server VAD.
+"""
+_MAX_METADATA_VALUE_LENGTH = 512
+_METADATA_INPUTS_RE = re.compile(r'\d+(?:-\d+)*')
+
+
+def response_request_metadata(answers: Sequence[int]) -> dict[str, str] | None:
+    """The `metadata` for a `response.create` answering `answers`, or `None` if they don't fit in one value."""
+    value = '-'.join(map(str, answers))
+    if not value or len(value) > _MAX_METADATA_VALUE_LENGTH:
+        return None
+    return {RESPONSE_INPUTS_METADATA_KEY: value}
+
+
+def response_metadata_answers(metadata: dict[str, Any] | None) -> tuple[int, ...] | None:
+    """The inputs a response's echoed `metadata` says it answers, or `None` when it names none of ours."""
+    value = (metadata or {}).get(RESPONSE_INPUTS_METADATA_KEY)
+    if not isinstance(value, str) or not _METADATA_INPUTS_RE.fullmatch(value):
+        return None
+    return tuple(int(index) for index in value.split('-'))
 
 
 _InputTranscriptionCompletedEvent = (
@@ -665,7 +759,9 @@ def _is_function_call_only(output: Sequence[ConversationItem | _ProtocolResponse
 def _response_status_reason(response: ProtocolResponse) -> str | None:
     """Return the raw terminal `status_details.reason`, when present."""
     status_details = response.status_details
-    return status_details.reason if isinstance(status_details, RealtimeResponseStatus) else None
+    return (
+        status_details.reason if isinstance(status_details, RealtimeResponseStatus | ProtocolResponseStatus) else None
+    )
 
 
 def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
@@ -693,7 +789,7 @@ def response_finish_reason(response: ProtocolResponse) -> FinishReason | None:
 def _response_status_error(response: ProtocolResponse) -> RealtimeResponseStatusError | None:
     """Return the `status_details.error` of a failed response, when present."""
     status_details = response.status_details
-    return status_details.error if isinstance(status_details, RealtimeResponseStatus) else None
+    return status_details.error if isinstance(status_details, RealtimeResponseStatus | ProtocolResponseStatus) else None
 
 
 def response_failed_error(response: ProtocolResponse) -> RealtimeSessionErrorEvent | None:
@@ -889,6 +985,24 @@ def _map_input_transcription_event(
 
 
 _CLIENT_EVENT_ID_RE = re.compile(r'pydantic_ai\.(content|response)\.(\d+(?:-\d+)*)')
+_CLIENT_ITEM_ID_RE = re.compile(r'pydantic_ai_item_(\d+)')
+
+
+def client_item_id(input_index: int) -> str:
+    """The id a user message item is created under, naming the input that sent it.
+
+    The server adds the item to the conversation under the id the client chose, so its
+    `conversation.item.added` says which input joined the conversation there, whatever else is added
+    around it (seeded history, a browser's items on a sideband).
+    """
+    return f'pydantic_ai_item_{input_index}'
+
+
+def client_item_input(item_id: str | None) -> int | None:
+    """The input an item was created by, when its id is one `client_item_id` chose."""
+    if item_id is None or (match := _CLIENT_ITEM_ID_RE.fullmatch(item_id)) is None:
+        return None
+    return int(match[1])
 
 
 def client_event_id(refused: Literal['content', 'response'], input_indexes: Sequence[int]) -> str:
@@ -1041,8 +1155,10 @@ async def connect_openai_protocol(
         on_unexpected = on_unexpected_during_update() if on_unexpected_during_update is not None else None
         await expect_event(ws, SESSION_UPDATED_EVENT, timeout=handshake_timeout, on_unexpected=on_unexpected)
         if replay_on_redial and connection is not None and (message_history := connection.message_history) is not None:
-            for item in await replay_items(message_history(), profile=profile, provider_name=provider_name):
+            replayed = await replay_items(message_history(), profile=profile, provider_name=provider_name)
+            for item in replayed:
                 await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
+            connection._history_items_sent(replayed)  # pyright: ignore[reportPrivateUsage]
         return ws
 
     try:
@@ -1052,6 +1168,7 @@ async def connect_openai_protocol(
             for item in seed:
                 await ws.send(to_json({'type': CONVERSATION_ITEM_CREATE_EVENT, 'item': item}).decode())
         connection = build_connection(ws, dial, server_model, lambda: server_model)
+        connection._history_items_sent(seed)  # pyright: ignore[reportPrivateUsage]
         yield connection
     finally:
         # Coverage cannot attribute a failed `__aenter__` to the false exit arc.
