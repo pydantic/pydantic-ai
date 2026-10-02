@@ -332,6 +332,12 @@ and binary image attachments by default, including retained history used by
 later turns. This may export source code, file contents, and screenshots; verify
 the configured telemetry destination first.
 
+Startup plugin load failures reported in the terminal, including missing optional dependencies,
+are recorded with their exception and traceback through this same instance. This does not require
+`ui_events`. Reporting waits until startup loading finishes, so failures before the
+observability plugin loaded are included. Disabling observability stops this reporting;
+the existing terminal messages remain.
+
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
 in `$XDG_CONFIG_HOME/pydantic-clai2/logfire/`, defaulting to
 `~/.config/pydantic-clai2/logfire/`. SDK configuration is read only from that user
@@ -1608,16 +1614,16 @@ contributes nothing:
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models CLAI can run |
 | `configure()` | the settings menu `/plugins` opens |
-| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` | handlers for CLAI's own moments |
+| `on_session_start` / `on_session_end` / `on_turn_start` / `on_turn_end` / `on_plugin_load_failed` | handlers for CLAI's own moments |
 
 The class says what settings it takes, and `self.host` is what it can reach at
 runtime: the console, the conversation, the status row, the full screen, and its
 saved settings. Set up state in `__init__`; call `super().__init__(host, settings)`
 first.
 
-### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`
+### React to CLAI's moments: `on_session_start`, `on_session_end`, `on_turn_start`, `on_turn_end`, `on_plugin_load_failed`
 
-Four `async` methods fire outside the agent run, in the shell:
+Five `async` methods fire outside the agent run, in the shell:
 
 | Method | When | Event fields | Can change things? |
 |---|---|---|---|
@@ -1625,6 +1631,14 @@ Four `async` methods fire outside the agent run, in the shell:
 | `on_session_end` | CLAI is quitting, or the plugin is unloading | `reason`: `exit`, `eof`, or `error` | no |
 | `on_turn_start` | you pressed Enter on a prompt | `text` | yes: edit `event.text`, or `event.cancel()` |
 | `on_turn_end` | the turn finished, failed, or was interrupted | `text`, `outcome`, `result`, `error` | no |
+| `on_plugin_load_failed` | startup loading finished, once per reported plugin failure | `plugin`, `error` | no |
+
+`on_plugin_load_failed` receives a `PluginLoadFailed` event with the failed plugin's
+name and original exception. Every successfully loaded plugin receives it, regardless
+of load order. It covers startup loading, not individual `/plugins` actions. Declarations
+whose own module is not installed stay quiet, as on the terminal; a missing dependency
+inside an available plugin is reported. A handler failure is printed without stopping
+startup or preventing other handlers from running.
 
 Ctrl-C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running

@@ -1657,6 +1657,11 @@ spans, including timing, token usage, and failures. It adds CLAI's own UI spans
 only when `ui_events` is on (see below), and does not instrument HTTP clients or
 unrelated agents globally.
 
+Startup plugin load failures reported in the terminal are also sent through the configured
+Logfire instance, including their exception and traceback, even when `ui_events` is off. Failures are
+reported after loading finishes, including those that happened before observability
+loaded. Disabling the plugin leaves these failures as terminal messages only.
+
 This plugin was previously named `logfire`. Existing enabled/disabled choices,
 settings, and saved token references carry over without reconfiguration. Existing
 commands and project or drop-in declarations using `logfire` still target this
