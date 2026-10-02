@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -8,79 +11,128 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '302'
+      - "290"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Think about it, then say what 17*23 is.
-          type: text
-        role: user
-      model: claude-opus-5-5
-      output_config:
-        effort: high
-      stream: false
-      system:
-      - text: You are a helpful assistant. Answer briefly.
-        type: text
-    uri: https://api.anthropic.com/v1/messages?beta=true
-  response:
-    headers:
-      connection:
-      - keep-alive
-      content-length:
-      - '1429'
-      content-security-policy:
-      - default-src 'none'; frame-ancestors 'none'
-      content-type:
-      - application/json
-      strict-transport-security:
-      - max-age=31536000; includeSubDomains; preload
-      traceresponse:
-      - 00-7534db6137f68bc344f4f81225c64f8d-5f5027a4ca46a158-01
-      transfer-encoding:
-      - chunked
-      vary:
-      - Accept-Encoding
-    parsed_body:
-      container: null
+    body:
+      type: json
       content:
-      - signature: CAQSpAQKEAgSGAI4AUIIdGhpbmtpbmcSDMsa0Miqo1/jzWOc7RoMSYfkgWob+dmlVDiJIjCH4Ppi6QQ+YyTKUaZAdmp2tLNcvNllUgDcIfe7/WRqAU3J/2eA/cv0R7ndtzgwdtoqwQN+m6IxBaUWYz8Jbcy0Cs+0s8nMfvCrKree5HSzqXIhVce9fqDkTu9d49WP2jKwhgLmyux64J/c0Or0NLDb8kwH2m82JMdOVW1obj5EyCkOfFBtrbVY/7z1m1lWcO5R5OKyyYvrCxyqYJKvpKbatRCWRfPp7vgRdQSYD7ARSnhaxUkGUI+OkC/rsRSj14GQuBesfm3XSVYIs1ox+pfP2SdvwJvjJdUz0HoQSkihHQYEr1mePWU4x605VJyDqpD8R1eiM27Gc33oCz6Vk5bbhdHV45OW/lBAXzhsdBm8OTdnRL4MC1kOOGF1g13BkIbcFIXAIQ6Sx/jC6L+eaQgKXr29iTTCPKc4RzWqqEbvbG7a+eP7nS6PmmIraEAP8wVZK8cNWkJXPpgZPHv/fJ9Ua25cUPCvaR5vTMPIy0N+2VW3up9cVa7y+40S9cDbPuqRGvYwE87Z0Zi8arG/BAo1WfBc7Y9GexgHlBgRVz56u/wLj9LO8Fx+v4L0+2KMvzwN4ltWhdwsZlsACQ0gh+xOaZhrctNM9ybzS1nGZ2aQBLSjVc+3mph/iu8tV+nRSJJVmXFRsvZYEcxnLFjzPd7PzYBQQBgB
-        thinking: ''
-        type: thinking
-      - text: |-
-          17 × 23 = **391**
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Think it through, then say what 4817 * 2963 is.
+            type: text
+        model: claude-opus-5-5
+        output_config:
+          effort: high
+        stream: true
+        system:
+        - type: text
+          text: You are a helpful assistant. Answer briefly.
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-3fb707b605068e6932a2aed3a5be4131-27e5e0c4cd891d51-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CfY4dtJ3YSXnQUAjwDBjX","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global"},"diagnostics":null}               }
 
-          (17 × 20 = 340, plus 17 × 3 = 51, so 340 + 51 = 391.)
-        type: text
-      id: msg_011CfK1NJ1y3GG7qqEwtj78W
-      model: claude-opus-5-5
-      role: assistant
-      stop_details: null
-      stop_reason: end_turn
-      stop_sequence: null
-      type: message
-      usage:
-        cache_creation:
-          ephemeral_1h_input_tokens: 0
-          ephemeral_5m_input_tokens: 0
-        cache_creation_input_tokens: 0
-        cache_read_input_tokens: 0
-        inference_geo: global
-        input_tokens: 41
-        output_tokens: 60
-        output_tokens_details:
-          thinking_tokens: 10
-        service_tier: standard
-    status:
-      code: 200
-      message: OK
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}               }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQSwAUKEAgSGAI4AUIIdGhpbmtpbmcSDMaAf5v+2wkO7kXKoRoMkrlqCrrFKNPWYc/KIjDrnvBWHmTdYqZtLeSEirSNLU0G/3KjcX5cjtTitPj8nRvsLKMmZ3SXcY1U9obafe4q3QRvS5/SGdVKhE/17a2JbnrjGMfgPQf982i1HNX8hkcMVd3EzeyQ3cCy7BY6tYHAbg462GhGVjwHJ25V/SJUv3jY4pmgFln0YIINy4r8qWoXdSnYkwHmeVM1okaKDO4TMyzkvzv3vW0ZMRnTHrF4QYClA1PFzPEDttYeeC66raCSJ+PnQMW2gh2BST3mZu5IaDSxWglgAuTaHNSh2NWagj4IkdqpI6A9bqaiwgjYBe8s9k1/ywKjFt9zs2iz86o7oppamtfyaw7rzGl/KynQY46UPMIJWcSQNfuLW2v2OV+2rf1N1b5Mu37FV1xkGgBHF97zT4qsj9rTjIVvJ+6mCPQCV/maYKh2N1XK5AkiVC5prwR9YmAEC/W3358AagIEsAXg/GdZQDHH0XPXc+UDkOd1Reau6oeuLeh6HbDYxHXSfweEh8c9EjmxFYBK1iebjWjqXeYL6pbQhUho+qG4HTAhOPUbNjniGFovrwpfjiIbG0TPwK7FHHagwnJMCwxU/ofZqBCTxYujjLMlNLs3Qnu7Mbi8PuEhKvpw48GXi14SdtCW9AXgVZdRzUjASJ8UmZ9uDI6Ol7byxDDdqkiqQTlW6CwziCMs74HnyYjUYZzQJzsxPVG2dqtkX32ng8ZSpdJwaSuWYYgOI859vK1lSKqQF1prvynyzNqv+LblQjTB3Ip57oNoqoiu34LskLYZgJVdA5NlnsC6junN/+EBm2wQLBh71XiozTFGqg3/MZr3RMGMYFkO391jp/VR+pzNkjvvfhwTB0i21dd7PIog53THiLro4XH9R3Ocwz6QSBgB"}        }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**4817 ×"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 2963 = 14,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"272,771**\n\nWrite"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" 2963 as 3000"}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" − 37:\n- "} }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"4817 × 3000 "}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"= 14,451,000"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"\n- 4817 × 37"}     }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" = 144"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":",510 + 33,719"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" = "}             }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"178,229\n- 14,"}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"451,000 − 178,"}       }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"229 = **14,272,"}         }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"771**"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1       }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":208,"output_tokens_details":{"thinking_tokens":105}}      }
+
+        event: message_stop
+        data: {"type":"message_stop"             }
+
+  recorded_at: 2026-09-29T16:41:33.564047+00:00
 - request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
     headers:
       accept:
       - application/json
@@ -89,49 +141,52 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '1401'
+      - "1659"
       content-type:
       - application/json
       host:
       - api.anthropic.com
-    method: POST
-    parsed_body:
-      max_tokens: 4096
-      messages:
-      - content:
-        - text: Think about it, then say what 17*23 is.
-          type: text
-        role: user
-      - content:
-        - signature: CAQSpAQKEAgSGAI4AUIIdGhpbmtpbmcSDMsa0Miqo1/jzWOc7RoMSYfkgWob+dmlVDiJIjCH4Ppi6QQ+YyTKUaZAdmp2tLNcvNllUgDcIfe7/WRqAU3J/2eA/cv0R7ndtzgwdtoqwQN+m6IxBaUWYz8Jbcy0Cs+0s8nMfvCrKree5HSzqXIhVce9fqDkTu9d49WP2jKwhgLmyux64J/c0Or0NLDb8kwH2m82JMdOVW1obj5EyCkOfFBtrbVY/7z1m1lWcO5R5OKyyYvrCxyqYJKvpKbatRCWRfPp7vgRdQSYD7ARSnhaxUkGUI+OkC/rsRSj14GQuBesfm3XSVYIs1ox+pfP2SdvwJvjJdUz0HoQSkihHQYEr1mePWU4x605VJyDqpD8R1eiM27Gc33oCz6Vk5bbhdHV45OW/lBAXzhsdBm8OTdnRL4MC1kOOGF1g13BkIbcFIXAIQ6Sx/jC6L+eaQgKXr29iTTCPKc4RzWqqEbvbG7a+eP7nS6PmmIraEAP8wVZK8cNWkJXPpgZPHv/fJ9Ua25cUPCvaR5vTMPIy0N+2VW3up9cVa7y+40S9cDbPuqRGvYwE87Z0Zi8arG/BAo1WfBc7Y9GexgHlBgRVz56u/wLj9LO8Fx+v4L0+2KMvzwN4ltWhdwsZlsACQ0gh+xOaZhrctNM9ybzS1nGZ2aQBLSjVc+3mph/iu8tV+nRSJJVmXFRsvZYEcxnLFjzPd7PzYBQQBgB
-          thinking: ''
-          type: thinking
-        - text: |-
-            17 × 23 = **391**
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: Think it through, then say what 4817 * 2963 is.
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAQSwAUKEAgSGAI4AUIIdGhpbmtpbmcSDMaAf5v+2wkO7kXKoRoMkrlqCrrFKNPWYc/KIjDrnvBWHmTdYqZtLeSEirSNLU0G/3KjcX5cjtTitPj8nRvsLKMmZ3SXcY1U9obafe4q3QRvS5/SGdVKhE/17a2JbnrjGMfgPQf982i1HNX8hkcMVd3EzeyQ3cCy7BY6tYHAbg462GhGVjwHJ25V/SJUv3jY4pmgFln0YIINy4r8qWoXdSnYkwHmeVM1okaKDO4TMyzkvzv3vW0ZMRnTHrF4QYClA1PFzPEDttYeeC66raCSJ+PnQMW2gh2BST3mZu5IaDSxWglgAuTaHNSh2NWagj4IkdqpI6A9bqaiwgjYBe8s9k1/ywKjFt9zs2iz86o7oppamtfyaw7rzGl/KynQY46UPMIJWcSQNfuLW2v2OV+2rf1N1b5Mu37FV1xkGgBHF97zT4qsj9rTjIVvJ+6mCPQCV/maYKh2N1XK5AkiVC5prwR9YmAEC/W3358AagIEsAXg/GdZQDHH0XPXc+UDkOd1Reau6oeuLeh6HbDYxHXSfweEh8c9EjmxFYBK1iebjWjqXeYL6pbQhUho+qG4HTAhOPUbNjniGFovrwpfjiIbG0TPwK7FHHagwnJMCwxU/ofZqBCTxYujjLMlNLs3Qnu7Mbi8PuEhKvpw48GXi14SdtCW9AXgVZdRzUjASJ8UmZ9uDI6Ol7byxDDdqkiqQTlW6CwziCMs74HnyYjUYZzQJzsxPVG2dqtkX32ng8ZSpdJwaSuWYYgOI859vK1lSKqQF1prvynyzNqv+LblQjTB3Ip57oNoqoiu34LskLYZgJVdA5NlnsC6junN/+EBm2wQLBh71XiozTFGqg3/MZr3RMGMYFkO391jp/VR+pzNkjvvfhwTB0i21dd7PIog53THiLro4XH9R3Ocwz6QSBgB
+            type: thinking
+          - text: |-
+              **4817 × 2963 = 14,272,771**
 
-            (17 × 20 = 340, plus 17 × 3 = 51, so 340 + 51 = 391.)
-          type: text
-        role: assistant
-      - content:
-        - text: And times two?
-          type: text
-        role: user
-      model: claude-opus-5-5
-      stream: false
-      system:
-      - text: You are a helpful assistant. Answer briefly. Today is 2026-09-01.
-        type: text
-      thinking:
-        block_binding:
-          prefix_mismatch_behavior: error
-        type: adaptive
-    uri: https://api.anthropic.com/v1/messages?beta=true
+              Write 2963 as 3000 − 37:
+              - 4817 × 3000 = 14,451,000
+              - 4817 × 37 = 144,510 + 33,719 = 178,229
+              - 14,451,000 − 178,229 = **14,272,771**
+            type: text
+        - role: user
+          content:
+          - text: And times two?
+            type: text
+        model: claude-opus-5-5
+        stream: true
+        system:
+        - type: text
+          text: You are a helpful assistant. Answer briefly. Today is 2026-09-01.
+        thinking:
+          type: adaptive
+          block_binding:
+            prefix_mismatch_behavior: error
   response:
+    status: 400
     headers:
       connection:
       - keep-alive
-      content-length:
-      - '396'
       content-security-policy:
       - default-src 'none'; frame-ancestors 'none'
       content-type:
@@ -139,20 +194,17 @@ interactions:
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-f2f623e6e50883ad5d3ad0f1a3e74f29-a5d8725a3948cfb9-01
+      - 00-7c4182956f9371825cc59afedc55c7fd-f66348f0f1763a45-01
       transfer-encoding:
       - chunked
       vary:
       - Accept-Encoding
-    parsed_body:
-      error:
-        message: 'messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation.
-          Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to "drop_block". The `system` prompt
-          differs from the one this block was created with.'
-        type: invalid_request_error
-      request_id: req_011CfK1NNCUwkp4iigkcpewx
-      type: error
-    status:
-      code: 400
-      message: Bad Request
-version: 1
+    body:
+      type: json
+      content:
+        type: error
+        error:
+          type: invalid_request_error
+          message: "messages.1.content.0: Invalid `signature` in `thinking` block. The block is bound to a different conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to \"drop_block\". The `system` prompt differs from the one this block was created with."
+        request_id: req_011CfY4e44AqEWPqs1aiaXuD
+  recorded_at: 2026-09-29T16:41:33.733442+00:00

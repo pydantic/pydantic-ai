@@ -242,6 +242,27 @@ class _TypedResultCodec(ResultCodec[_T]):
         return self._load(payload)
 
 
+def _durable_policies(workspace: Workspace) -> list[tuple[object, ...]]:
+    """Constructor values of each policy wrapper, outermost first.
+
+    `workspace_layers` records only types. Two wrappers of one class can still be different policies,
+    and a durable unit rebuilds the construction-time one.
+    """
+    policies: list[tuple[object, ...]] = []
+    layer: Workspace = workspace
+    while True:
+        if type(layer) is not Workspace:
+            policies.append(layer.durable_policy())
+        backend = layer._backend  # pyright: ignore[reportPrivateUsage]
+        if not isinstance(backend, Workspace):
+            return policies
+        layer = backend
+
+
+def _same_durable_workspace(left: Workspace, right: Workspace) -> bool:
+    return workspace_layers(left) == workspace_layers(right) and _durable_policies(left) == _durable_policies(right)
+
+
 class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     """Base for building a durable execution engine as an agent capability.
 
@@ -447,11 +468,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         """Reject a run-level workspace a unit on another worker would not rebuild.
 
         Units rebuild the workspace from the agent's construction-time capabilities, so a policy that
-        only a run-level capability adds (say `read_only=True`) would be silently lost inside them.
+        only a run-level capability adds (say `read_only=True`, or the same wrapper with different
+        arguments) would be silently lost inside them.
         """
         assert self._agent is not None
         construction = select_workspace(self._agent.root_capability, ctx, ref=workspace.ref)
-        if construction is None or workspace_layers(construction) != workspace_layers(workspace):
+        if construction is None or not _same_durable_workspace(construction, workspace):
             raise UserError(
                 f'Under {self.engine_name}, the workspace comes from the capabilities the agent is built with, '
                 'because each durable unit rebuilds it from them. This run selected a different workspace; '
@@ -497,7 +519,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         supplied = workspace.wrapped if isinstance(workspace, DurableWorkspace) else workspace
         supplied_layers = workspace_layers(supplied)
         # A bare backend takes the capability's policy; only a caller-side wrapper can be lost.
-        if len(supplied_layers) > 1 and supplied_layers != workspace_layers(rebuilt):
+        if len(supplied_layers) > 1 and not _same_durable_workspace(supplied, rebuilt):
             raise UserError(
                 f'Under {self.engine_name}, a `workspace=` policy would be lost across durable units; '
                 'configure its wrapper on the capability instead.'
