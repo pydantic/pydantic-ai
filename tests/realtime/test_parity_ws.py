@@ -118,7 +118,8 @@ REALTIME_PARITY_CASES = [
         supports_image_input=False,
         supports_manual_turn_control=False,
         supports_interruption=False,
-        supports_native_tools=False,
+        # Web search, run by the delegated backend.
+        supports_native_tools=True,
         supports_text_output=False,
         drives_turns_with_text=False,
         synthesizes_turn_boundary=True,
