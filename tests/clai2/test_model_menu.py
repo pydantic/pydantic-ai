@@ -306,9 +306,10 @@ def test_remove_model_persists_without_changing_other_preferences(tmp_path: Path
     assert reopened.models() == ['test']
     assert reopened.model_settings('unused:model') == {}
     assert reopened.model_settings('test') == {'max_tokens': 5, 'custom_params': {'extra_body.key': 'value'}}
-    assert reopened.overrides() == (
-        {'display.thinking': False, 'model': 'test'} if saved_default == 'test' else {'display.thinking': False}
-    )
+    expected: dict[str, JsonValue] = {'display.thinking': False}
+    if saved_default is not None:
+        expected['model'] = saved_default
+    assert reopened.overrides() == expected
     reopened.add_model(name='unused:model')
     assert reopened.model_settings('unused:model') == {}
 
@@ -383,6 +384,33 @@ async def test_cannot_delete_current_model(
     assert context.store.model_settings(original) == {'max_tokens': 5}
     assert context.settings.model == original and applied == []
     assert 'Select another model' in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('current', [None, 'test'])
+async def test_cannot_delete_saved_default_model(
+    tmp_path: Path, current: str | None, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    store = SettingsStore(tmp_path / 'config.db')
+    store.set('model', 'saved:default')
+    store.save_model_settings('saved:default', {'max_tokens': 5})
+    context = CommandContext(
+        settings=Settings(model=current),
+        store=store,
+        clear_history=lambda: None,
+        apply_setting=lambda key, settings: None,
+    )
+    pressed = iter(['home', 'ctrl-d', 'escape'])
+    monkeypatch.setattr('pydantic_clai2.ui.menus.model_picker.menu_key', lambda: next(pressed))
+    assert await model_command(context, []) == 'No changes.'
+    output = capsys.readouterr().out
+    assert 'saved:default (saved default)' in output
+    assert 'This is your saved default model.' in output
+    assert '/set model first.' in output
+    assert 'Delete saved:default?' not in output
+    assert 'saved:default' in store.models()
+    assert store.model_settings('saved:default') == {'max_tokens': 5}
+    assert store.load().model == 'saved:default'
+    assert context.settings.model == current
 
 
 @pytest.mark.parametrize('keys', [['enter'], ['escape'], ['ctrl-c']])

@@ -116,13 +116,10 @@ class SettingsStore:
             connection.execute('INSERT OR IGNORE INTO models VALUES (?)', (name,))
 
     def remove_model(self, *, name: str) -> None:
-        """Forget a saved model, its overrides, and any matching startup preference."""
+        """Forget a saved model and its overrides without changing preferences."""
         with self._connect() as connection:
             connection.execute('DELETE FROM models WHERE name = ?', (name,))
             connection.execute('DELETE FROM model_settings WHERE model = ?', (name,))
-            connection.execute(
-                "DELETE FROM settings WHERE key = 'model' AND value_json = ?", (_JSON.dump_json(name).decode(),)
-            )
 
     def reset(self, key: str) -> None:
         """Remove a setting override, restoring its default."""

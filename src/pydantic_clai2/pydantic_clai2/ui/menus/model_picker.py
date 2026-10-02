@@ -34,7 +34,11 @@ def build_model_picker(context: CommandContext, *, message: str = '') -> Menu:
     """List saved models with routes to add, select, and delete models."""
     names = context.store.models()
     current = context.settings.model
-    items = [MenuItem(f'{name}{" (current)" if name == current else ""}', value=name) for name in names]
+    saved_default = context.store.overrides().get('model')
+    items: list[MenuItem] = []
+    for name in names:
+        status = ' (current)' if name == current else ' (saved default)' if name == saved_default else ''
+        items.append(MenuItem(f'{name}{status}', value=name))
     items.append(MenuItem('Add a model...', value=ModelPickerAction.ADD))
     if message:
         items.append(MenuItem(message, disabled=True))
@@ -49,11 +53,12 @@ def build_model_picker(context: CommandContext, *, message: str = '') -> Menu:
             return item.label
         if item.value is ModelPickerAction.ADD:
             return 'Browse providers to add\nand select a model.'
-        deletion = (
-            'Select another model before\ndeleting the current model.'
-            if item.value == current
-            else 'Ctrl+D or Delete removes this model\nand its settings after confirmation.'
-        )
+        if item.value == current:
+            deletion = 'Select another model before\ndeleting the current model.'
+        elif item.value == saved_default:
+            deletion = 'This is your saved default model.\nChoose another with /set model first.'
+        else:
+            deletion = 'Ctrl+D or Delete removes this model\nand its settings after confirmation.'
         return f'{item.value}\n\nEnter selects this model\nfor the next prompt.\n\n{deletion}'
 
     return (
@@ -82,14 +87,17 @@ def _run_model_picker(context: CommandContext, *, runners: Runners) -> tuple[Men
         if name == context.settings.model:
             message = 'Select another model before deleting the current model.'
             continue
+        if name == context.store.overrides().get('model'):
+            message = 'This is your saved default model. Choose another with /set model first.'
+            continue
         confirmation = runners.run_choice(
             MenuBuilder(f'Delete {name}?')
             .style(markdown_style())
             .items([MenuItem('Keep model', value=False), MenuItem('Delete model', value=True)])
             .preview(
                 lambda item: (
-                    'Remove this saved model and its\nper-model settings, and clear any\n'
-                    'saved startup preference for it.\n\nProvider credentials are kept.\nThis cannot be undone.'
+                    'Remove this saved model and its\nper-model settings.\n\n'
+                    'Provider credentials are kept.\nThis cannot be undone.'
                 )
             )
             .footer_hint('Enter select - Esc keep model')

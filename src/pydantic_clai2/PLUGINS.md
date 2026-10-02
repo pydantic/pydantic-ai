@@ -2214,8 +2214,9 @@ and hyphens. It cannot be one Pydantic AI or CLAI already runs, aliases included
 wins. Unloading the plugin removes the prefix; a saved model under it stays in
 `/model`, and runs with it fail as an unknown provider until the plugin is enabled
 again. Users can remove an unused model and its saved settings with **Ctrl+D** or **Delete** in
-`/model`, after confirmation. The current model is protected; select another first.
-Deleting a model does not unload its plugin or delete provider credentials.
+`/model`, after confirmation. The current model and saved default are protected;
+select another model or change the default with `/set model NAME` first. Deleting
+a model does not unload its plugin or delete provider credentials.
 
 `/model_settings` offers generic controls (max tokens, temperature, custom
 parameters) for plugin models. When `resolve` returns a model class of a provider
