@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import importlib.metadata
 import inspect
 import os
 import random
@@ -2451,6 +2452,10 @@ async def test_baggage_disabled_via_config(capfire: CaptureLogfire):
     assert 'tenant' not in attrs
 
 
+@pytest.mark.skipif(
+    any(req.startswith('sniffio') for req in importlib.metadata.requires('anyio') or []),
+    reason='AnyIO before 4.12 depends on and imports `sniffio`, so every install has it',
+)
 def test_imports_without_sniffio():
     """Nothing `pydantic-evals` declares installs `sniffio`, so a clean install has none."""
     code = "import sys; sys.modules['sniffio'] = None\nimport pydantic_evals.online\n"

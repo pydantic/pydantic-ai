@@ -1,4 +1,5 @@
 import asyncio
+import importlib.metadata
 import os
 import subprocess
 import sys
@@ -136,6 +137,10 @@ async def test_stop_cleanup_finishes_before_stop_shielded_returns() -> None:
     assert events == ['stop cleanup', 'returned']
 
 
+@pytest.mark.skipif(
+    any(req.startswith('sniffio') for req in importlib.metadata.requires('anyio') or []),
+    reason='AnyIO before 4.12 depends on and imports `sniffio`, so every install has it',
+)
 def test_imports_without_sniffio() -> None:
     # Nothing the harness declares installs `sniffio`, so a clean install has none. Every sandbox backend imports this module.
     code = "import sys; sys.modules['sniffio'] = None\nimport pydantic_ai_harness._workspace_provider\n"
