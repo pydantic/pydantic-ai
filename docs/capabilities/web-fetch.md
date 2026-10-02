@@ -10,7 +10,7 @@ The [`WebFetch`][pydantic_ai.capabilities.WebFetch] [capability](overview.md) le
 
 For the local side, pass `local=True` for the bundled [markdownify-based fetch tool](../common-tools.md#web-fetch-tool) (requires the `web-fetch` optional group), or any callable, [`Tool`][pydantic_ai.tools.Tool], or [`AbstractToolset`][pydantic_ai.toolsets.AbstractToolset].
 
-Native constraint fields: `allowed_domains`, `blocked_domains`, `max_uses`, `enable_citations`, `max_content_tokens`. `max_uses` requires native. Domain filters are enforced by the native tool built from them and by the bundled `local=True` fetcher, but not by a local tool you supply: beside one, they require native too, and `native=False` raises a [`UserError`][pydantic_ai.exceptions.UserError]. A `native=WebFetchTool(...)` instance carries its own configuration.
+Native constraint fields: `allowed_domains`, `blocked_domains`, `max_uses`, `enable_citations`, `max_content_tokens`. `max_uses` requires native. Domain filters are enforced by the native tool built from them and by the bundled `local=True` fetcher, but not by a local tool you supply: beside one, they require native too, so that tool never runs. `native=False` raises a [`UserError`][pydantic_ai.exceptions.UserError]; otherwise the capability warns at construction. A `native=WebFetchTool(...)` instance carries its own configuration.
 
 ```python {title="web_fetch.py" test="skip" lint="skip"}
 from pydantic_ai.capabilities import WebFetch

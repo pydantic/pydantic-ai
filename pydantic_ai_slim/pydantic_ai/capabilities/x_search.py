@@ -221,7 +221,10 @@ class XSearch(NativeOrLocalTool[AgentDepsT]):
         return XSearchTool.kind
 
     def _default_local(self) -> Tool[AgentDepsT] | None:
-        """The `x_search` tool that runs `fallback_subagent_model`, built from the current settings."""
+        """The local fallback used when `local` is unset.
+
+        With `fallback_subagent_model` set, the `x_search` tool that runs it, built from the current settings.
+        """
         if self.fallback_subagent_model is None:
             return None
         from pydantic_ai.common_tools.x_search import x_search_tool

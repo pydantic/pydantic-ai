@@ -799,14 +799,20 @@ class ImageGeneration(NativeOrLocalTool[AgentDepsT]):
         return self._resolve_native_with_overrides(ImageGenerationTool, self._image_gen_kwargs())
 
     def _resolve_local(self) -> Tool[AgentDepsT] | AbstractToolset[AgentDepsT] | None:
-        # A direct generator, on `local` or named by `fallback_image_model`, becomes the
-        # `generate_image` tool built around it.
+        """Resolve `local` to the tool or toolset it declares.
+
+        A direct generator, on `local` or named by `fallback_image_model`, becomes the `generate_image`
+        tool built around it.
+        """
         if (generator := self._direct_generator) is not None:
             return self._direct_local_tool(generator)
         return super()._resolve_local()
 
     def _default_local(self) -> Tool[AgentDepsT] | None:
-        """The `generate_image` tool that runs `fallback_subagent_model`, built from the current settings."""
+        """The local fallback used when `local` is unset and no direct generator is configured.
+
+        With `fallback_subagent_model` set, the `generate_image` tool that runs it, built from the current settings.
+        """
         if self.fallback_subagent_model is None:
             return None
         from pydantic_ai.common_tools.image_generation import image_generation_tool
