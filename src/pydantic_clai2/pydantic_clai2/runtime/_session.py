@@ -5,7 +5,7 @@ import os
 import sys
 from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
 from contextlib import nullcontext
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Generic, Literal, TypeVar, cast
@@ -28,7 +28,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai.workspaces import WorkspaceRef
+from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_ai_harness.step_persistence import SqliteStepStore, StepStore
 from pydantic_ai_harness.step_persistence.conversations import (
@@ -37,6 +37,7 @@ from pydantic_ai_harness.step_persistence.conversations import (
     ensure_inactive,
 )
 from pydantic_ai_harness.subagents import DelegationReports, DelegationTasks
+from pydantic_clai2.runtime.capability_guard import CapabilitySetupError, raised_here, setup_errors
 from pydantic_clai2.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -47,11 +48,11 @@ def _supports_local_workspace() -> bool:
     return sys.platform != 'win32'
 
 
-def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]]) -> bool:
+def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]], *, include_dynamic: bool = True) -> bool:
     """Whether a plugin, such as a sandbox, supplies the run's workspace, so clai adds no `LocalWorkspace`.
 
-    A plugin counts when it has a leaf, loaded up front, that overrides `get_workspace` or is a
-    capability function, whose capability is known only once the run starts.
+    A plugin counts when it has a leaf, loaded up front, that overrides `get_workspace`. With
+    `include_dynamic`, a capability function counts too, as its capability is known only once the run starts.
     """
     leaves: list[AbstractCapability[DepsT]] = []
     for plugin in plugins:
@@ -65,10 +66,14 @@ def _supplies_workspace(plugins: Sequence[AgentCapability[DepsT]]) -> bool:
             ):
                 return True
             capability.apply(leaves.append)
-    return any(not leaf.defer_loading and _overrides_get_workspace(leaf) for leaf in leaves)
+        elif include_dynamic:
+            return True
+    return any(
+        not leaf.defer_loading and _overrides_get_workspace(leaf, include_dynamic=include_dynamic) for leaf in leaves
+    )
 
 
-def _overrides_get_workspace(leaf: AbstractCapability[DepsT]) -> bool:
+def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic: bool) -> bool:
     while isinstance(leaf, WrapperCapability):
         if type(leaf).get_workspace is not WrapperCapability.get_workspace:
             return True
@@ -78,8 +83,34 @@ def _overrides_get_workspace(leaf: AbstractCapability[DepsT]) -> bool:
             # A wrapped tree's leaves are visited on their own; only a lone wrapped capability hides behind its wrapper.
             return False
         leaf = leaf.wrapped
-    # A capability function's capability, and so its workspace, is known only once the run starts.
-    return isinstance(leaf, DynamicCapability) or type(leaf).get_workspace is not AbstractCapability.get_workspace
+    if isinstance(leaf, DynamicCapability):
+        # A capability function's capability, and so its workspace, is known only once the run starts.
+        return include_dynamic
+    return type(leaf).get_workspace is not AbstractCapability.get_workspace
+
+
+@dataclass
+class _LocalFallback(LocalWorkspace[DepsT]):
+    """The session directory, for a run whose capability functions turn out to supply no workspace.
+
+    Returned from a capability function itself, so core asks it only after the run's capability functions
+    have resolved, alongside whatever workspace they supplied, which it defers to.
+    """
+
+    _asking: bool = field(default=False, init=False, repr=False)
+
+    def get_workspace(self, ctx: RunContext[DepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
+        if self._asking:
+            return None
+        assert ctx.root_capability is not None, 'core sets the root capability before selecting a workspace'
+        # Ask the resolved tree itself, so a provider of any shape (a group, a wrapper) is found; this
+        # instance declines while asking. Selection does no I/O, so asking twice is harmless.
+        self._asking = True
+        try:
+            other = ctx.root_capability.get_workspace(ctx, ref=ref)
+        finally:
+            self._asking = False
+        return None if other is not None else super().get_workspace(ctx, ref=ref)
 
 
 def _agent_capabilities(agent: AbstractAgent[DepsT, OutputT]) -> list[AgentCapability[DepsT]]:
@@ -184,6 +215,8 @@ class Session(Generic[DepsT, OutputT]):
         self._run_context: RunContext[DepsT] | None = None
         self._pending_steering: list[Sequence[UserContent]] = []
         self.on_context_usage: Callable[[int], None] | None = None
+        self.on_setup_error: Callable[[CapabilitySetupError], None] | None = None
+        """Told when a guarded plugin capability rejected its configuration, before the failed turn's error propagates."""
 
     @property
     def messages(self) -> list[ModelMessage]:
@@ -331,10 +364,14 @@ class Session(Generic[DepsT, OutputT]):
                             )
                         )
                     workspace: Literal['new'] | None = None
-                    if _supports_local_workspace() and not _supplies_workspace(
-                        [*_agent_capabilities(self.agent), *self.plugins]
-                    ):
-                        capabilities.append(LocalWorkspace[DepsT](self.workspace, env=_command_env()))
+                    configured = [*_agent_capabilities(self.agent), *self.plugins]
+                    if _supports_local_workspace() and not _supplies_workspace(configured, include_dynamic=False):
+                        if _supplies_workspace(configured):
+                            # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
+                            fallback = _LocalFallback[DepsT](self.workspace, env=_command_env(), id=None)
+                            capabilities.append(DynamicCapability[DepsT](lambda ctx: fallback))
+                        else:
+                            capabilities.append(LocalWorkspace[DepsT](self.workspace, env=_command_env()))
                         if _stale_local_workspace(previous, self.workspace):
                             # A conversation resumed from another directory: work in this session's.
                             workspace = 'new'
@@ -365,13 +402,14 @@ class Session(Generic[DepsT, OutputT]):
                     try:
                         with move_on_after(5, shield=True):
                             await self._save_turn(outcome='cancelled')
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 -- persistence failure must not swallow cancellation.
                         if sys.version_info >= (3, 11):  # `add_note` is 3.11+; the log below covers 3.10.
                             cancelled.add_note(f'Could not save cancelled turn: {exc}')
                         logging.getLogger(__name__).error('Could not save cancelled turn: %s', exc)
                     raise
-                except Exception:
+                except Exception as exc:
                     self._accepting_steering = False
+                    self._report_setup_errors(exc)
                     if self.conversations is not None:
                         self._messages = messages or self._messages
                         self._mark_interrupted()
@@ -382,6 +420,14 @@ class Session(Generic[DepsT, OutputT]):
             self._run_context = None
             self._pending_steering.clear()
             self._running = False
+
+    def _report_setup_errors(self, error: BaseException) -> None:
+        """Tell `on_setup_error` about each setup failure from one of this session's guards; the turn still fails."""
+        if self.on_setup_error is None:
+            return
+        for setup_error in setup_errors(error) or ():
+            if raised_here(self.plugins, setup_error):
+                self.on_setup_error(setup_error)
 
     async def _stream(self, ctx: RunContext[DepsT], events: AsyncIterable[AgentStreamEvent]) -> None:
         self._accepting_steering = True

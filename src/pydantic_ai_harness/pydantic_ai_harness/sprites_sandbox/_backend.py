@@ -71,7 +71,6 @@ from typing import TypeVar
 import anyio
 import anyio.to_thread
 import httpx
-import sniffio
 from websockets.exceptions import InvalidHandshake, InvalidMessage
 
 from pydantic_ai.exceptions import UserError
@@ -89,7 +88,13 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
-from pydantic_ai_harness._workspace_provider import absolute_path, command_argv, safe_credential_reason, stop_shielded
+from pydantic_ai_harness._workspace_provider import (
+    absolute_path,
+    command_argv,
+    running_on_asyncio,
+    safe_credential_reason,
+    stop_shielded,
+)
 
 try:
     from sprites import AsyncCmd, AsyncSprite, AsyncSpritesClient
@@ -190,7 +195,7 @@ _lookups = _LookupCache()
 
 
 def _require_asyncio() -> None:
-    if sniffio.current_async_library() != 'asyncio':
+    if not running_on_asyncio():
         raise UserError('Sprites needs the asyncio event loop: the Sprites SDK runs its calls on asyncio tasks.')
 
 
@@ -586,7 +591,7 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         is logged, not raised.
         """
         # Under another event loop every operation refused before opening a client: nothing to close.
-        if not self._owns_client or sniffio.current_async_library() != 'asyncio':
+        if not self._owns_client or not running_on_asyncio():
             return
 
         async def close() -> None:

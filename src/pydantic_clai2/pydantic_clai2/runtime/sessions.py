@@ -1,4 +1,7 @@
-"""Shell integration for persisted conversations, the browser, and auxiliary naming."""
+"""Save conversations so /resume can restore them, and name them in the background.
+
+Shell integration for persisted conversations, the browser, and auxiliary naming.
+"""
 
 import asyncio
 from collections.abc import Awaitable, Coroutine, Sequence

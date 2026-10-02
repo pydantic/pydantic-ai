@@ -1,4 +1,6 @@
-"""The built-in `notion` plugin: harness `Notion`, connected with a named key from `/keys` or a browser sign-in.
+"""Use Notion, signed in with a key from /keys or in the browser.
+
+The built-in `notion` plugin: harness `Notion`, connected with a named key from `/keys` or a browser sign-in.
 
 Plugin settings are plaintext SQLite, so they hold only `Notion`'s non-secret options, all edited in the menu
 `/plugins configure notion` opens. Its key row picks or enters a key in the named keystore and saves only the

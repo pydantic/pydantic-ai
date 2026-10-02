@@ -45,6 +45,7 @@ from ..messages import (
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import (
+    SUPPORTED_NATIVE_TOOLS,
     AbstractNativeTool,
     CodeExecutionTool,
     FileSearchTool,
@@ -256,9 +257,11 @@ class GoogleModelSettings(ModelSettings, total=False):
     """
 
     google_labels: dict[str, str]
-    """User-defined metadata to break down billed charges. Only supported by the Vertex AI API.
+    """User-defined metadata attached to the request.
 
-    See the [Gemini API docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls) for use cases and limitations.
+    On Vertex AI, labels break down billed charges; see the [Vertex AI docs](https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/add-labels-to-api-calls).
+    The Gemini API accepts them from `google-genai` 2.26.0; earlier versions raise `ValueError` before sending the request.
+    See the [Gemini API reference](https://ai.google.dev/api/generate-content) for label requirements.
     """
 
     google_video_resolution: MediaResolution
@@ -599,8 +602,14 @@ class GoogleModel(Model[Client]):
         When the client talks to the Gemini API, `gemini-3.1-flash-image` models default to
         `google_thinking_levels` of `MINIMAL` and `HIGH`; on Vertex AI they keep the full scale. A
         `google_thinking_levels` set by the provider or the `profile=` argument takes precedence.
+
+        `ImageGenerationTool` is only supported when `supports_image_output` is true, so a text model
+        falls back to the local tool an `ImageGeneration` capability provides.
         """
-        profile = cast(GoogleModelProfile, super().profile)
+        profile: GoogleModelProfile = cast(GoogleModelProfile, super().profile)
+        if not profile.get('supports_image_output', False):
+            native_tools = profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {ImageGenerationTool}
+            profile = {**profile, 'supported_native_tools': native_tools}
         # Google documents only `minimal` and `high` for this model on both APIs, but the Gemini API
         # alone enforces that: verified live 2026-09-30, the Gemini API 400s `LOW` and `MEDIUM` for this
         # id and its `-preview`, while Vertex (`global`, `us`, `eu`) accepts them. So the level set
@@ -623,12 +632,25 @@ class GoogleModel(Model[Client]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        # Ignore optional infrastructure native tools (e.g. auto-injected `ToolSearchTool`) —
-        # they're dropped by `Model.prepare_request` when inert and shouldn't trigger the
-        # "native tool + output tools" path.
-        user_native_tools = [t for t in model_request_parameters.native_tools if not t.optional]
+        # Check before base validation so a text model points at an image model, not the generic error.
         if (
-            user_native_tools
+            not self.profile.get('supports_image_output', False)
+            and any(
+                isinstance(t, ImageGenerationTool) and not t.optional for t in model_request_parameters.native_tools
+            )
+            and not any(t.unless_native == 'image_generation' for t in model_request_parameters.function_tools)
+        ):
+            raise UserError(
+                f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
+                "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
+            )
+        # Count only native tools this model supports. `Model.prepare_request` swaps an unsupported
+        # one for its local fallback, drops it when optional, or rejects it, so it never reaches the
+        # wire beside output tools. A supported one is sent even when optional.
+        supported_native_tools = tuple(self.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))
+        sent_native_tools = [t for t in model_request_parameters.native_tools if isinstance(t, supported_native_tools)]
+        if (
+            sent_native_tools
             and model_request_parameters.output_tools
             and not self.profile.get('google_supports_tool_combination', False)
         ):
@@ -814,10 +836,6 @@ class GoogleModel(Model[Client]):
                     file_search_config = FileSearchDict(file_search_store_names=list(tool.file_store_ids))
                     tools.append(ToolDict(file_search=file_search_config))
                 elif isinstance(tool, ImageGenerationTool):  # pragma: no branch
-                    if not self.profile.get('supports_image_output', False):
-                        raise UserError(
-                            "`ImageGenerationTool` is not supported by this model. Use a model with 'image' in the name instead."
-                        )
                     image_config = self._build_image_config(tool)
                 else:  # pragma: no cover
                     raise UserError(
