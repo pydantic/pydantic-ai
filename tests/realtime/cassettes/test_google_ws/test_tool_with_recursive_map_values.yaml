@@ -1,0 +1,268 @@
+version: 1
+interactions:
+- kind: message
+  direction: sent
+  at: 0.0
+  data:
+    setup:
+      model: models/gemini-3.1-flash-live-preview
+      generationConfig:
+        responseModalities:
+        - AUDIO
+      systemInstruction:
+        parts:
+        - text: Use save_tree when asked to save a tree, then confirm it in one short
+            sentence.
+        role: user
+      tools:
+      - functionDeclarations:
+        - description: Save a tree of named nodes.
+          name: save_tree
+          parameters:
+            properties:
+              name:
+                type: STRING
+              children:
+                default: {}
+                type: OBJECT
+            required:
+            - name
+            type: OBJECT
+      inputAudioTranscription: {}
+      outputAudioTranscription: {}
+- kind: message
+  direction: received
+  at: 0.205
+  data:
+    setupComplete: {}
+- kind: message
+  direction: sent
+  at: 0.218
+  data:
+    client_content:
+      turns:
+      - parts:
+        - text: Save a tree whose root is named "oak" and has no children.
+        role: user
+      turnComplete: true
+- kind: message
+  direction: received
+  at: 0.642
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 0.665
+  data:
+    toolCall:
+      functionCalls:
+      - name: save_tree
+        args:
+          name: oak
+        id: fc_950730395950788700
+- kind: message
+  direction: sent
+  at: 0.672
+  data:
+    tool_response:
+      functionResponses:
+      - id: fc_950730395950788700
+        name: save_tree
+        response:
+          output: Saved oak.
+- kind: message
+  direction: received
+  at: 0.998
+  data:
+    sessionResumptionUpdate:
+      newHandle: 8e972421-cbe1-41ee-a7b1-2d3ee7543f4f
+      resumable: true
+- kind: message
+  direction: received
+  at: 1.072
+  data:
+    serverContent: {}
+- kind: message
+  direction: received
+  at: 1.235
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: AAA=
+      outputTranscription:
+        text: The tree
+- kind: message
+  direction: received
+  at: 1.26
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: EgATAA0ACwAJAAwAEgAOABEAEQAPAAwACgAMAAgADgAL
+- kind: message
+  direction: received
+  at: 1.339
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: EfNr92n7BP5n/ykA4QALAV4BdgLNAxQF6QVKB0AJmAuq
+- kind: message
+  direction: received
+  at: 1.347
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 9gH6AR4DUgTkBRUGAgULAib+qPp/9zH2sfWS9gz34/e2
+- kind: message
+  direction: received
+  at: 1.437
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: DiLlMHo0Mi62HxURZguNEFMdSCx1OKg/YEH9QMY/1T0m
+      outputTranscription:
+        text: ' "oak"'
+- kind: message
+  direction: received
+  at: 1.484
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: 3f/f/93/3v/f/+D/4P/f/+L/3//j/9//7v/0//H/+P/4
+      outputTranscription:
+        text: ' has been'
+- kind: message
+  direction: received
+  at: 1.496
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: wPjD+uf7nvx9/PT77/vW+q/6Ivr4+Sv61/ms+jX6ufn1
+- kind: message
+  direction: received
+  at: 1.609
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: Ueyp657q1ekX6SfoTudd5oHlHeXS5FjkuuM148LibuL/
+      outputTranscription:
+        text: ' saved'
+- kind: message
+  direction: received
+  at: 1.617
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: OP6l/An8KPwJ/HT8vfyn/IH9u/2//BP74PqE+6n7qvp8
+- kind: message
+  direction: received
+  at: 1.676
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ZgYwBwAIzwh6CS8KxApHC7ELBQxJDHkMnAy2DL0MyAzL
+      outputTranscription:
+        text: ' with no'
+- kind: message
+  direction: received
+  at: 1.683
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: cAGEAY8BnwG1AcMBxwHcAesB8QH/AQoCEAIdAiwCMgI/
+- kind: message
+  direction: received
+  at: 1.784
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: gR3qGJcTeQ2MB9ACDv/S+/j40fYf9LXxme8+7hjvOPEw
+      outputTranscription:
+        text: ' children.'
+- kind: message
+  direction: received
+  at: 1.803
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: ifNg80LzAfTH9Gn1ufZv93r3cveG9r70b/MM8onx5PEy
+- kind: message
+  direction: received
+  at: 1.845
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: zAC8ALMAsgC1AL0AzgDiAPIA+AACAQYB/gDqAN8A1gDD
+- kind: message
+  direction: received
+  at: 1.876
+  data:
+    serverContent:
+      modelTurn:
+        parts:
+        - inlineData:
+            mimeType: audio/pcm;rate=24000
+            data: /f/+/////v/7//7//v/9/wAA//8AAP7//v8DAAAA/v/+
+- kind: message
+  direction: received
+  at: 1.928
+  data:
+    serverContent:
+      generationComplete: true
+- kind: message
+  direction: received
+  at: 3.547
+  data:
+    serverContent:
+      turnComplete: true
+    usageMetadata:
+      promptTokenCount: 496
+      responseTokenCount: 75
+      totalTokenCount: 571
+      promptTokensDetails:
+      - modality: TEXT
+        tokenCount: 370
+      responseTokensDetails:
+      - modality: AUDIO
+        tokenCount: 63
