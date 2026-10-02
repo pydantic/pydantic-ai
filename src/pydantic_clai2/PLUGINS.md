@@ -1544,6 +1544,9 @@ pip install 'pydantic-ai-harness[exa]'
 export EXA_API_KEY=...
 ```
 
+With `uv tool`, extra packages installed using `--with` must be added again after
+`/update`. See [Updating](README.md#updating) for how CLAI installs updates.
+
 ```text
 /plugins add exa pydantic_ai_harness.exa:ExaSearch '{"num_results": 8}'
 ```

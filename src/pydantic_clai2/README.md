@@ -329,8 +329,9 @@ Install with `uv tool install pydantic-clai2` and CLAI can update itself.
 
 - `stable` (default): the newest release on PyPI.
 - `bleeding`: the newest commit on `main` that changes CLAI. It downloads that
-  commit's source over HTTPS and installs CLAI, harness, and core from it, so it
-  needs no release and no `git`. These builds report version `0.0.0+<commit>`.
+  commit's `.tar.gz` archive over HTTPS and uses `--overrides` to install CLAI,
+  harness, and core with their required extras. It needs no release and no `git`.
+  These builds report version `0.0.0+<full-commit-sha>`.
 
 ```text
 /set updates.channel bleeding
@@ -350,8 +351,9 @@ Windows does not let a program replace files it is running from, so there
 again when that window reports success.
 
 The reinstall keeps only CLAI's own packages, so add any extra `--with` packages
-again afterwards. Without uv on `PATH`, `/update` prints the command to run
-yourself, in PowerShell syntax on Windows.
+again afterwards. Without uv on `PATH`, `/update` prints the complete command to
+run yourself, in PowerShell syntax on Windows. For bleeding installs, it also
+writes the overrides file and includes its path in the printed command.
 
 ## Your own agent
 
