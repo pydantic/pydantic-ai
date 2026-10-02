@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+import review_test_quality
 from pydantic import ValidationError
 from review_test_quality import (
     Candidate,
     GitHub,
     PinnedReview,
     ReviewContext,
+    _candidate_inventory,
     _check_runs,
     _ci_jobs,
     _matches_pinned_pr,
@@ -161,6 +164,77 @@ def test_setup_cfg_missing_or_malformed_source_fails_closed(before: str | None, 
     assert candidates == []
     assert not complete
     assert reason
+
+
+@pytest.mark.parametrize('change_kind', ['removed', 'renamed'])
+def test_candidate_inventory_accounts_for_removed_pyproject(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change_kind: str
+) -> None:
+    subprocess.run(['git', 'init', '--quiet', '-b', 'main'], cwd=tmp_path, check=True)
+    subprocess.run(['git', 'config', 'user.name', 'Test'], cwd=tmp_path, check=True)
+    subprocess.run(['git', 'config', 'user.email', 'test@example.com'], cwd=tmp_path, check=True)
+    (tmp_path / 'pyproject.toml').write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding='utf-8')
+    subprocess.run(['git', 'add', 'pyproject.toml'], cwd=tmp_path, check=True)
+    subprocess.run(['git', 'commit', '--quiet', '-m', 'add pytest configuration'], cwd=tmp_path, check=True)
+    base_sha = subprocess.run(
+        ['git', 'rev-parse', 'HEAD'], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+    if change_kind == 'removed':
+        subprocess.run(['git', 'rm', '--quiet', 'pyproject.toml'], cwd=tmp_path, check=True)
+        file_data: dict[str, object] = {'filename': 'pyproject.toml', 'status': 'removed'}
+    else:
+        subprocess.run(['git', 'mv', 'pyproject.toml', 'pyproject-renamed.toml'], cwd=tmp_path, check=True)
+        file_data = {
+            'filename': 'pyproject-renamed.toml',
+            'previous_filename': 'pyproject.toml',
+            'status': 'renamed',
+        }
+    subprocess.run(['git', 'commit', '--quiet', '-m', 'remove pytest configuration'], cwd=tmp_path, check=True)
+    head_sha = subprocess.run(
+        ['git', 'rev-parse', 'HEAD'], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    monkeypatch.chdir(tmp_path)
+
+    def merge_base(repository: str, base: str, head: str) -> str:
+        assert repository == 'pydantic/test'
+        return subprocess.run(
+            ['git', 'merge-base', base, head], cwd=tmp_path, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    monkeypatch.setattr(review_test_quality, '_fetch_git_objects', merge_base)
+
+    class FakeGitHub(GitHub):
+        def __init__(self) -> None:
+            super().__init__('unused', 'pydantic/test')
+
+        def request(self, path: str, **kwargs: object) -> object:
+            if path.startswith('actions/runs/10/jobs?'):
+                return {'total_count': 0, 'jobs': []}
+            if path.startswith('pulls/1/files?'):
+                return [file_data]
+            raise AssertionError(f'unexpected GitHub endpoint: {path}')
+
+    pinned = PinnedReview(
+        pr_number=1,
+        pr={'changed_files': 1},
+        head_sha=head_sha,
+        base_sha=base_sha,
+        base_ref='main',
+        run_id=10,
+        ci_run={},
+        ci_run_url='https://github.com/pydantic/test/actions/runs/10',
+        review_run_url='https://github.com/pydantic/test/actions/runs/11',
+        workflow_version='workflow-sha',
+    )
+
+    jobs, candidates, merge_base_sha = _candidate_inventory(FakeGitHub(), pinned, 'pydantic/test')
+
+    assert jobs == []
+    assert merge_base_sha == base_sha
+    assert len(candidates) == 1
+    assert candidates[0].path == file_data['filename']
+    assert candidates[0].relevant_paths == ['pyproject.toml']
 
 
 def test_current_ci_test_workflows_are_candidates() -> None:

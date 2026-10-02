@@ -167,11 +167,11 @@ def _relevant_config_changed(
 ) -> bool | None:
     """Compare test selection config; return None when either source is incomplete or malformed."""
     if config_path == 'pyproject.toml':
-        if before is None or after is None:
+        if before is None and after is None:
             return None
         try:
-            old_data = tomllib.loads(before)
-            new_data = tomllib.loads(after)
+            old_data = tomllib.loads(before or '')
+            new_data = tomllib.loads(after or '')
             old_tool = _mapping(old_data.get('tool', {}))
             new_tool = _mapping(new_data.get('tool', {}))
             if old_tool is None or new_tool is None:
@@ -817,19 +817,19 @@ def _candidate_inventory(
     if not isinstance(expected_file_count, int) or expected_file_count != len(files):
         raise ValueError('pull-request file listing is incomplete')
     merge_base_sha = _fetch_git_objects(repository, pinned.base_sha, pinned.head_sha)
-    before = after = None
-    if any(
-        file.get('filename') == 'pyproject.toml' or file.get('previous_filename') == 'pyproject.toml' for file in files
-    ):
-        before = _git_text('show', f'{merge_base_sha}:pyproject.toml')
-        after = _git_text('show', f'{pinned.head_sha}:pyproject.toml')
-    setup_cfg_before = setup_cfg_after = None
-    if any(file.get('filename') == 'setup.cfg' or file.get('previous_filename') == 'setup.cfg' for file in files):
+    config_contents: dict[str, tuple[str | None, str | None]] = {}
+    for config_path in ('pyproject.toml', 'setup.cfg'):
+        if not any(
+            file.get('filename') == config_path or file.get('previous_filename') == config_path for file in files
+        ):
+            continue
         revisions: list[str | None] = []
         for revision in (merge_base_sha, pinned.head_sha):
-            tree_paths = _git_text('ls-tree', '-r', '--name-only', revision, '--', 'setup.cfg').splitlines()
-            revisions.append(_git_text('show', f'{revision}:setup.cfg') if 'setup.cfg' in tree_paths else None)
-        setup_cfg_before, setup_cfg_after = revisions
+            tree_paths = _git_text('ls-tree', '-r', '--name-only', revision, '--', config_path).splitlines()
+            revisions.append(_git_text('show', f'{revision}:{config_path}') if config_path in tree_paths else None)
+        config_contents[config_path] = (revisions[0], revisions[1])
+    before, after = config_contents.get('pyproject.toml', (None, None))
+    setup_cfg_before, setup_cfg_after = config_contents.get('setup.cfg', (None, None))
     changed_workflows = {
         path
         for file in files
