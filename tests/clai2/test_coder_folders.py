@@ -271,12 +271,21 @@ def test_browse_add_replace_and_duplicate(folders: FolderMenu[object]) -> None:
     assert folders.folders() == [str(folders.project)]
 
 
-def test_missing_saved_directory_can_be_browsed_away_or_removed(
-    folders: FolderMenu[object], keyboard: Keyboard
+@pytest.mark.parametrize(
+    ('saved', 'problem', 'browse'),
+    [
+        # The browser opens in the missing directory, so step up to its parent first.
+        ('./missing', 'does not exist', ['enter', 'enter']),
+        # An unknown user has no directory to open, so the browser starts in the project.
+        ('~nosuchuser-coder/agents', 'Cannot open directory', ['enter']),
+    ],
+)
+def test_broken_saved_directory_can_be_browsed_away_or_removed(
+    folders: FolderMenu[object], keyboard: Keyboard, saved: str, problem: str, browse: list[str]
 ) -> None:
-    folders.source.apply(folders.source.rows()[1], '["./missing"]')
-    assert 'does not exist' in folders.details(MenuItem('', value=0))
-    keyboard.press(['enter', 'down', 'enter', 'enter', 'enter', 'd', 'escape'])
+    folders.source.host.save_settings(CoderSettings(agent_folders=[saved]))
+    assert problem in ' '.join(folders.details(MenuItem('', value=0)).split())
+    keyboard.press(['enter', 'down', 'enter', *browse, 'd', 'escape'])
     assert folders.run(runners=keyboard.runners) == ['Agent folder saved.', 'Folder removed. Files were not changed.']
     assert folders.folders() == []
 
@@ -430,9 +439,9 @@ def test_browser_shortcuts_recover_when_search_has_no_matches(
 
 
 def test_existing_control_characters_never_reach_text_input(folders: FolderMenu[object], keyboard: Keyboard) -> None:
+    # Windows forbids control characters in file names, so the saved entry deliberately does not exist.
     unsafe = './agent\x1b[2Jfolder'
     directory = folders.project / unsafe
-    directory.mkdir()
     folders.source.host.save_settings(CoderSettings(agent_folders=[unsafe]))
     editor = folders.editor(named=False, index=0)
     assert editor.text == ''

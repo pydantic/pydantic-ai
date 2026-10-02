@@ -1,5 +1,6 @@
 """The Coder folder list and local directory browser, run on the menu worker."""
 
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from sqlite3 import Error as SQLiteError
@@ -388,9 +389,11 @@ class FolderMenu(Generic[DepsT]):
         current = self.folders()[action.index] if action.index is not None else ''
         named = action.kind == 'name' or (action.kind == 'edit' and is_folder_name(current))
         if action.kind == 'browse':
-            start = (
-                self.project if not current or is_folder_name(current) else self.project / Path(current).expanduser()
-            )
+            start = self.project
+            if current and not is_folder_name(current):
+                # A broken entry like `~nosuchuser/agents` must still be replaceable from the project.
+                with suppress(RuntimeError):
+                    start = self.project / Path(current).expanduser()
             chosen = DirectoryPicker(start=start, project=self.project).run(runners=runners)
             if chosen is None:
                 return None
