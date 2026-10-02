@@ -198,8 +198,8 @@ Markdown keeps its original style by default and uses `to_render_style()` for a
 selected palette. The preview renders a sample without OSC changes or persistence.
 Heavy imports in `theme.py` stay lazy for the splash. Code uses the terminal
 foreground and ANSI syntax colours through `theme.syntax_theme()`, shared by
-streamed fences and theme previews. Default diff colours stay unchanged, while
-bundled palettes use Termflow defaults.
+streamed fences and theme previews. Default diff colours stay unchanged; bundled
+palettes get diff lines from `theme.diff_renderer()`, tinted from the palette.
 
 ## Source layout
 
