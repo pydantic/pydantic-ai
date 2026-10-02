@@ -24,9 +24,10 @@ def _dump_messages_json(messages: list[_messages.ModelMessage], info: pydantic.S
     # dataclass's config doesn't apply to the message types it holds. Read back, those values are
     # their base64 string, exactly as they are through the adapter itself.
     #
-    # A plain serializer's return isn't filtered by the caller's dump settings, so they are passed on:
-    # without `include`/`exclude`, `exclude={'messages': {'__all__': {'metadata'}}}` would dump the
-    # metadata it was asked to redact. `info` carries this field's own share of a nested spec.
+    # A plain serializer's return isn't shaped by the caller's dump settings, so every one of them is
+    # passed on: without `include`/`exclude`, `exclude={'messages': {'__all__': {'metadata'}}}` would
+    # dump the metadata it was asked to redact, and without `context` a context-aware serializer in
+    # that metadata couldn't redact itself. `info` carries this field's own share of a nested spec.
     return _messages.ModelMessagesTypeAdapter.dump_python(
         messages,
         mode='json',
@@ -40,6 +41,8 @@ def _dump_messages_json(messages: list[_messages.ModelMessage], info: pydantic.S
         exclude_computed_fields=info.exclude_computed_fields,
         round_trip=info.round_trip,
         serialize_as_any=info.serialize_as_any,
+        polymorphic_serialization=info.polymorphic_serialization,
+        context=info.context,
     )
 
 

@@ -10,7 +10,7 @@ import json
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, SerializationInfo, TypeAdapter, field_serializer
 
 from pydantic_ai import Agent, Conversation, ConversationTypeAdapter, RunUsage
 from pydantic_ai.exceptions import CallDeferred, UserError
@@ -310,8 +310,9 @@ def test_serialization_honors_the_caller_s_dump_settings() -> None:
     """A redaction asked for is a redaction applied, on its own or nested in a model of the caller's.
 
     The messages are dumped through `ModelMessagesTypeAdapter`, and a plain serializer's return isn't
-    filtered by the outer dump's settings, so they have to be passed on: dropping `exclude` would
-    send the metadata a server meant to keep from its client.
+    shaped by the outer dump's settings, so they have to be passed on: dropping `exclude` would send
+    the metadata a server meant to keep from its client, and dropping `context` would stop a
+    context-aware serializer inside it from redacting itself.
     """
     messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart('Hi')], metadata={'api_key': 'secret'})]
     conversation = Conversation(messages=messages)
@@ -322,6 +323,19 @@ def test_serialization_honors_the_caller_s_dump_settings() -> None:
 
     assert b'secret' not in ConversationTypeAdapter.dump_json(conversation, exclude=redact_metadata)
     assert 'secret' not in Thread(conversation=conversation).model_dump_json(exclude={'conversation': redact_metadata})
+
+    class Token(BaseModel):
+        value: str
+
+        @field_serializer('value')
+        def _redact(self, value: str, info: SerializationInfo) -> str:
+            context: dict[str, bool] = info.context or {}
+            return '***' if context.get('redact') else value
+
+    with_token = Conversation(
+        messages=[ModelRequest(parts=[UserPromptPart('Hi')], metadata={'token': Token(value='secret')})]
+    )
+    assert b'secret' not in ConversationTypeAdapter.dump_json(with_token, context={'redact': True})
 
     dumped = json.loads(ConversationTypeAdapter.dump_json(conversation, exclude_none=True, exclude_defaults=True))
     assert dumped['messages'] == json.loads(
