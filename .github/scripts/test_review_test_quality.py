@@ -167,13 +167,21 @@ def test_setup_cfg_missing_or_malformed_source_fails_closed(before: str | None, 
 
 
 @pytest.mark.parametrize('change_kind', ['removed', 'renamed'])
+@pytest.mark.parametrize(
+    'configuration',
+    [
+        '[tool.pytest.ini_options]\ntestpaths = ["tests"]\n',
+        '[tool.coverage.report]\nfail_under = 100\n',
+    ],
+    ids=['pytest-only', 'coverage-only'],
+)
 def test_candidate_inventory_accounts_for_removed_pyproject(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change_kind: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change_kind: str, configuration: str
 ) -> None:
     subprocess.run(['git', 'init', '--quiet', '-b', 'main'], cwd=tmp_path, check=True)
     subprocess.run(['git', 'config', 'user.name', 'Test'], cwd=tmp_path, check=True)
     subprocess.run(['git', 'config', 'user.email', 'test@example.com'], cwd=tmp_path, check=True)
-    (tmp_path / 'pyproject.toml').write_text('[tool.pytest.ini_options]\ntestpaths = ["tests"]\n', encoding='utf-8')
+    (tmp_path / 'pyproject.toml').write_text(configuration, encoding='utf-8')
     subprocess.run(['git', 'add', 'pyproject.toml'], cwd=tmp_path, check=True)
     subprocess.run(['git', 'commit', '--quiet', '-m', 'add pytest configuration'], cwd=tmp_path, check=True)
     base_sha = subprocess.run(
@@ -455,24 +463,40 @@ def test_changed_workflow_without_pinned_content_fails_closed() -> None:
     assert reason
 
 
-def test_pyproject_candidate_requires_pytest_or_coverage_configuration_change() -> None:
-    before = '[project]\nversion = "1"\n\n[tool.pytest.ini_options]\naddopts = "-q"\n'
-    unrelated_after = '[project]\nversion = "2"\n\n[tool.pytest.ini_options]\naddopts = "-q"\n'
-    relevant_after = '[project]\nversion = "1"\n\n[tool.pytest.ini_options]\naddopts = "-q -ra"\n'
+@pytest.mark.parametrize(
+    'before,after,expected',
+    [
+        (
+            '[project]\nversion = "1"\n\n[tool.pytest.ini_options]\naddopts = "-q"\n',
+            '[project]\nversion = "2"\n\n[tool.pytest.ini_options]\naddopts = "-q"\n',
+            False,
+        ),
+        (
+            '[project]\nversion = "1"\n\n[tool.pytest.ini_options]\naddopts = "-q"\n',
+            '[project]\nversion = "1"\n\n[tool.pytest.ini_options]\naddopts = "-q -ra"\n',
+            True,
+        ),
+        (
+            '[tool.coverage.report]\nfail_under = 100\n',
+            '[tool.coverage.report]\nfail_under = 99\n',
+            True,
+        ),
+        (
+            '[tool.coverage.run]\ninclude = ["tests/**/*.py"]\n',
+            '[tool.coverage.run]\ninclude = ["tests/**/*.py"]\nomit = ["tests/live_*.py"]\n',
+            True,
+        ),
+    ],
+    ids=['unrelated-project-change', 'pytest-change', 'coverage-threshold-change', 'coverage-scope-change'],
+)
+def test_pyproject_candidate_requires_pytest_or_coverage_configuration_change(
+    before: str, after: str, expected: bool
+) -> None:
+    file_data: list[dict[str, object]] = [{'filename': 'pyproject.toml', 'status': 'modified'}]
+    candidates, complete, reason = build_candidates(file_data, pyproject_before=before, pyproject_after=after)
 
-    unrelated, unrelated_complete, _ = build_candidates(
-        [{'filename': 'pyproject.toml', 'status': 'modified'}],
-        pyproject_before=before,
-        pyproject_after=unrelated_after,
-    )
-    relevant, relevant_complete, _ = build_candidates(
-        [{'filename': 'pyproject.toml', 'status': 'modified'}],
-        pyproject_before=before,
-        pyproject_after=relevant_after,
-    )
-
-    assert unrelated_complete and unrelated == []
-    assert relevant_complete and [item.path for item in relevant] == ['pyproject.toml']
+    assert complete, reason
+    assert [item.path for item in candidates] == (['pyproject.toml'] if expected else [])
 
 
 @pytest.mark.parametrize(
