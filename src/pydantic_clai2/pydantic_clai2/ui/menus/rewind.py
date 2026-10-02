@@ -37,6 +37,7 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
     """Offer run-start prompts, never a steering message amid unfinished tool calls."""
     # Compaction inserts newer context ahead of older preserved prompts; core may
     # merge them into one request. Those prompts no longer have their original boundary.
+    # Harness pins this shape in `tests/harness/compaction/test_summary_provenance.py`.
     context_time = max(
         (
             part.timestamp
@@ -84,22 +85,27 @@ def build_rewind_menu(messages: Sequence[ModelMessage]) -> Menu:
         MenuBuilder('Rewind conversation')
         .style(markdown_style())
         .items(list(reversed(items)) or [MenuItem('No earlier prompts to rewind to.', disabled=True)])
-        .preview(
-            lambda item: (
-                (
-                    f'Cannot rewind this prompt:\n{item.description}.\n\n'
-                    if item.disabled
-                    else 'Remove this prompt and all\nlater messages, then edit it again.\n\n'
-                )
-                + 'Files and tool side effects\nare NOT undone.\n\n'
-                + f'{terminal_text(item.value.text)}\n\nAttachments: {len(item.value.images)}'
-                if isinstance(item.value, RewindPoint)
-                else 'No editable prompts in the retained history.'
-            )
-        )
+        .preview(_preview)
         .footer_hint('Up/Down select - Enter rewind - Esc cancel | does NOT undo files')
         .key_source(menu_key)
         .build()
+    )
+
+
+def _preview(item: MenuItem) -> str:
+    if not isinstance(item.value, RewindPoint):
+        return 'No editable prompts in the retained history.'
+    if item.disabled:
+        header = f'Cannot rewind this prompt:\n{item.description}.\n\n'
+    else:
+        header = (
+            'Remove this prompt and all\nlater messages, then edit it again.\n\n'
+            'Replaces your current draft\nand its attachments.\n\n'
+        )
+    return (
+        header
+        + 'Files and tool side effects\nare NOT undone.\n\n'
+        + f'{terminal_text(item.value.text)}\n\nAttachments: {len(item.value.images)}'
     )
 
 

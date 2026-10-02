@@ -65,6 +65,7 @@ def test_menu_selects_run_boundaries_and_sanitizes_preview(monkeypatch: pytest.M
         assert result.cancelled
     text = ' '.join(Text.from_ansi(output.getvalue()).plain.split())
     assert 'Rewind conversation' in text and 'does NOT undo files' in text
+    assert 'Replaces your current draft' in text and 'and its attachments.' in text
     assert 'steering' not in text and 'not a boundary' not in text
     assert '\x1b]52;' not in output.getvalue() and '\x07' not in output.getvalue()
 

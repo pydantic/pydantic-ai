@@ -157,7 +157,8 @@ conversation. An empty conversation shows a disabled placeholder.
 
 Rewinding removes the selected prompt and all later messages from the saved
 conversation, then restores that prompt and its image attachments to the editor.
-Edit it and press Enter when ready. It does **not** undo file changes or other
+This replaces any unsent draft and its attachments; cancel the menu to keep them.
+Edit the restored prompt and press Enter when ready. It does **not** undo file changes or other
 tool side effects, replay tools, or erase the terminal scrollback. Only prompts
 still present in the retained history are available. Prompts predating retained
 rewritten context, such as a compaction summary, are disabled even if compaction
