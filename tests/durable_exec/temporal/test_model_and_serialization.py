@@ -564,9 +564,12 @@ def test_replay_safe_logfire_honors_suppressed_scopes(monkeypatch: pytest.Monkey
     Logfire enforces suppression in its tracer proxy, so the replay-safe provider has to sit behind the proxy
     rather than hand out tracers directly.
     """
-    proxy = logfire.DEFAULT_LOGFIRE_INSTANCE.config.get_tracer_provider()
-    # `suppress_scopes()` is process-wide; start from an empty set that `monkeypatch` restores afterwards.
-    monkeypatch.setattr(proxy, 'suppressed_scopes', set[str]())
+    config = logfire.DEFAULT_LOGFIRE_INSTANCE.config
+    # `suppress_scopes()` is process-wide and suppresses the scope on the tracer, meter and logger providers;
+    # start each from an empty set that `monkeypatch` restores afterwards, or later tests on this worker
+    # record `pydantic-ai` metrics into a no-op meter.
+    for provider in (config.get_tracer_provider(), config.get_meter_provider(), config.get_logger_provider()):
+        monkeypatch.setattr(provider, 'suppressed_scopes', set[str]())
     monkeypatch.setattr(Agent, '_instrument_default', False)
     _setup_replay_safe_logfire()
     logfire.suppress_scopes('pydantic-ai')

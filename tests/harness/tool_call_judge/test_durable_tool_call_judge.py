@@ -121,10 +121,13 @@ async def test_dbos_replays_the_recorded_verdict(dbos: DBOS) -> None:
 
     with SetWorkflowID(workflow_id):
         assert await _workflow() == 'done'
-    with SetWorkflowID(workflow_id):
-        assert await _workflow() == 'done'
+    steps = await dbos.list_workflow_steps_async(workflow_id)
+    assert 'durable_judge__capability__refund-judge.judge' in {step['function_name'] for step in steps}
+
+    # Re-execute the workflow function from its last step, the way recovery does. Calling it again
+    # under the same ID is no replay: from `dbos` 2.28 it returns the stored result without running it.
+    handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
+    assert await handle.get_result() == 'done'
 
     assert _judge_calls == 1, 'the replay asked the judging model again'
     assert [v.verdict for v in _verdicts] == ['allow', 'allow'], '`on_verdict` fires on every replay'
-    steps = await dbos.list_workflow_steps_async(workflow_id)
-    assert 'durable_judge__capability__refund-judge.judge' in {step['function_name'] for step in steps}
