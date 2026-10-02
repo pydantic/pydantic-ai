@@ -21,8 +21,11 @@ dropping context already inside it.
 | `Summarize` | one LLM call | yes | A size-gated summary (inherits the run's model by default) |
 
 `Spill` is lossless: the full payload is persisted and the model reads slices of it through
-the registered `read_tool_result(handle, offset, limit, from_end, pattern)` tool (the Claude
-Code pattern, the core [#4352](https://github.com/pydantic/pydantic-ai/issues/4352) design).
+`read_tool_result(handle, offset, limit, from_end, pattern)` (the Claude Code pattern, the core
+[#4352](https://github.com/pydantic/pydantic-ai/issues/4352) design). When an active file-tools
+provider can return a complete text spill in the run's workspace, `read_tool_result` is omitted
+and the spill marker gives the exact path and provider read tool instead. Binary spills and text
+with a line longer than the provider's read ceiling retain the dedicated reader.
 That tool is bounded: `offset >= 0`, `limit` clamped to a built-in line cap, the joined output
 capped, and `pattern` is a literal substring (not a regex), so a model-supplied value cannot
 hang the host with catastrophic backtracking. The read-back tool's own returns are exempt from
@@ -238,6 +241,13 @@ The default `WorkspaceStore` writes each spill as a file in the run's workspace,
 sandbox the files live in the sandbox. The handle is the file's absolute path, so a file tool
 such as `FileSystem`'s `read_file` can open it too. `read_tool_result` only opens handles
 inside the store's directory.
+
+With an active file-tools provider whose access rules admit the spill path and whose read ceiling
+can return every line intact, the capability omits `read_tool_result` and names the provider tool
+and path in the truncation marker. Reads of known spill paths are exempt from reduction so they
+cannot recursively spill themselves. The dedicated reader stays for binary or overlong-line
+spills, when no provider can read the exact path, or when `WorkspaceStore(workspace=...)` or
+another store keeps spills outside the run's workspace.
 
 To keep spills in a different workspace than the run's, pass a backend:
 

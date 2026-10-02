@@ -50,6 +50,11 @@ Exposes one tool, `inventory_agent_context()`, that reports where the repo's CE 
 Rename the tool with `inventory_tool_name`, or scope which roots it scans with `asset_roots`.
 Skill discovery goes at most eight directories deep.
 
+When an active file-tools provider can list and read every descendant of every configured asset
+root, RepoContext omits the inventory tool and its instruction hint. The inventory stays when no
+such provider is active, its discovery tools are unavailable, or its root or access patterns
+cannot guarantee access to the complete trees.
+
 ### 3. Nested-on-traversal (off by default)
 
 When the model lists or reads a directory, surface that directory's

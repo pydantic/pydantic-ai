@@ -135,6 +135,17 @@ working directory but inside `root_dir` use `..` components. Containment,
 access patterns, and event paths retain their `root_dir` basis, as does
 `search_files`'s `include_glob` filter.
 
+### File-tool provider protocol
+
+`FileSystem` implements the runtime-checkable `ProvidesFileTools` protocol. `file_tools()`
+returns `FileToolsInfo`, which describes the read tool, its path argument, discovery tools, and
+read-size ceiling. `can_read(path, workspace=...)` applies the same `root_dir`, allowed-pattern,
+denied-pattern, and symlink-target rules as `read_file`, without requiring the path to exist.
+`can_read_tree(...)` additionally guarantees that every descendant is readable; `FileSystem`
+answers false when allow or deny patterns prevent that guarantee. Harness capabilities use these
+checks only for providers active in the current run. Custom file-tool capabilities can implement
+the protocol to participate in the same discovery.
+
 ## Events
 
 `FileSystem` emits typed capability events in the `file_system` namespace so a

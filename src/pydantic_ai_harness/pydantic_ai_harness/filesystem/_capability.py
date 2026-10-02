@@ -10,12 +10,15 @@ from typing import Any
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FilteredToolset
+from pydantic_ai.workspaces import WorkspaceBackend
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored, warn_argument_renamed
 from pydantic_ai_harness._workspace import require_workspace
+from pydantic_ai_harness.filesystem._providers import FileToolsInfo
 from pydantic_ai_harness.filesystem._toolset import (
     DEFAULT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
     FileSystemToolset,
+    file_toolset_can_read,
     root_spelling,
 )
 
@@ -171,6 +174,33 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Fail without a workspace, without touching it: the boundary waits for the first file operation."""
         require_workspace(ctx.workspace, 'FileSystem', ctx.messages)
+
+    async def can_read(self, path: str, *, workspace: WorkspaceBackend) -> bool:
+        """Whether this capability's `read_file` tool can read `path` in `workspace`.
+
+        This applies the configured `root_dir`, `allowed_patterns`, and `denied_patterns`,
+        including the resolved target of a symlink. It does not require the path to exist.
+        """
+        if 'read_file' not in self.tools:
+            return False
+        return await file_toolset_can_read(self._file_system_toolset(), path, workspace=workspace)
+
+    async def can_read_tree(self, path: str, *, workspace: WorkspaceBackend) -> bool:
+        """Whether `read_file` can read every file below `path`."""
+        if self.allowed_patterns or self.denied_patterns:
+            return False
+        return await self.can_read(path, workspace=workspace)
+
+    def file_tools(self) -> FileToolsInfo:
+        """Describe this capability's model-facing read and discovery tools."""
+        tools = frozenset(self.tools)
+        if self.read_only:
+            tools &= READ_ONLY_TOOL_NAMES
+        return FileToolsInfo(
+            read_tool='read_file' if 'read_file' in tools else '',
+            list_tools=tools & {'list_directory', 'find_files', 'list_files'},
+            max_read_chars=self.max_read_chars,
+        )
 
     def get_toolset(self) -> FileSystemToolset[AgentDepsT] | FilteredToolset[AgentDepsT]:
         """The filesystem toolset, the same one for every run, so durable execution sees the leaf it registered."""

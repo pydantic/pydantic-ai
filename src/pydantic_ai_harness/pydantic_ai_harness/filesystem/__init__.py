@@ -15,6 +15,7 @@ from pydantic_ai_harness.filesystem._events import (
     FileWrittenEvent,
     SearchKind,
 )
+from pydantic_ai_harness.filesystem._providers import FileToolsInfo, ProvidesFileTools
 from pydantic_ai_harness.filesystem._toolset import (
     DEFAULT_TOOL_NAMES,
     FILE_SYSTEM_TOOL_NAMES,
@@ -40,8 +41,10 @@ __all__ = [
     'FileReadEvent',
     'FileSystem',
     'FileSystemToolset',
+    'FileToolsInfo',
     'FilesSearchedEvent',
     'FileWrittenEvent',
     'Replacement',
+    'ProvidesFileTools',
     'SearchKind',
 ]

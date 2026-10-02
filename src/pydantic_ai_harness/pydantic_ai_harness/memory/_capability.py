@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import posixpath
 from collections.abc import Callable
 from copy import copy
 from dataclasses import KW_ONLY, dataclass, field, replace
@@ -13,8 +14,9 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, TextContent, UserPromptPart
 from pydantic_ai.models import ModelRequestContext
-from pydantic_ai.tools import AgentDepsT, RunContext
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
+from pydantic_ai_harness.filesystem._providers import FILE_READ_OVERHEAD_CHARS, FileToolsInfo, file_tools_provider
 from pydantic_ai_harness.memory._store import FileStore, InMemoryStore, MemoryFile, MemoryStore, validate_store_path
 from pydantic_ai_harness.memory._toolset import (
     MAIN_FILENAME,
@@ -47,8 +49,8 @@ class Memory(AbstractCapability[AgentDepsT]):
     """Persistent agent memory across sessions.
 
     `MEMORY.md` is injected as user-role context and longer topic files are
-    available through `read_memory` and `search_memory`. Automatic snapshot
-    loading is journaled by durability engines that support capability
+    available through `search_memory` and either `read_memory` or active general file tools.
+    Automatic snapshot loading is journaled by durability engines that support capability
     operations.
     """
 
@@ -166,12 +168,27 @@ class Memory(AbstractCapability[AgentDepsT]):
         `before_model_request` so model-written content is not placed in the
         instruction channel.
         """
-        return self._render_guidance()
-
-    def _render_guidance(self) -> str | None:
         guidance = _DEFAULT_GUIDANCE if self.guidance is None else self.guidance
         if not guidance:
             return None
+        if not isinstance(self.store, FileStore) and self.store_resolver is None:
+            return self._render_guidance()
+
+        async def instructions(ctx: RunContext[AgentDepsT]) -> str | None:
+            return self._render_guidance(await self._file_tools_path(ctx))
+
+        return instructions
+
+    def _render_guidance(self, file_tools: tuple[str, FileToolsInfo] | None = None) -> str | None:
+        guidance = _DEFAULT_GUIDANCE if self.guidance is None else self.guidance
+        if not guidance:
+            return None
+        if self.guidance is None and file_tools is not None:
+            path, info = file_tools
+            guidance = guidance.replace(
+                'Read a listed file with `read_memory` when it looks relevant,',
+                f'Read a listed file with `{info.read_tool}` under `{path}` when it looks relevant,',
+            )
         return render_memory_prompt(
             '',
             [],
@@ -180,6 +197,30 @@ class Memory(AbstractCapability[AgentDepsT]):
             max_lines=self.max_lines,
             max_tokens=self.max_tokens,
         )
+
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        """Drop `read_memory` when active general file tools can read this run's file store."""
+        if self.guidance not in (None, ''):
+            return tool_defs
+        if await self._file_tools_path(ctx, tool_names={tool.name for tool in tool_defs}) is not None:
+            return [tool_def for tool_def in tool_defs if tool_def.name != 'read_memory']
+        return tool_defs
+
+    async def _file_tools_path(
+        self, ctx: RunContext[AgentDepsT], *, tool_names: set[str] | None = None
+    ) -> tuple[str, FileToolsInfo] | None:
+        store, scope = self.resolve_scope(ctx)
+        if not isinstance(store, FileStore) or store.workspace is not None:
+            return None
+        path = posixpath.join(store.directory, scope)
+        match = await file_tools_provider(
+            ctx,
+            path,
+            tool_names=tool_names,
+            require_tree=True,
+            min_read_chars=self.max_memory_size + FILE_READ_OVERHEAD_CHARS,
+        )
+        return (path, match[1]) if match is not None else None
 
     async def before_model_request(
         self,
@@ -226,7 +267,7 @@ class Memory(AbstractCapability[AgentDepsT]):
 
             main_content = '' if main is None else main.content
             rendered = ''
-            guidance = self._render_guidance()
+            guidance = self._render_guidance(await self._file_tools_path(ctx))
             content_budget = (
                 self.max_tokens * 4 - len(guidance or '') - len(_MEMORY_DATA_PREFIX) - len(_MEMORY_DATA_SUFFIX)
             )

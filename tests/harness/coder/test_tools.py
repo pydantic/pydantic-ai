@@ -84,6 +84,7 @@ class TestCoder:
             ('coder__capability__workspace.call', 'ensure'),
             ('coder__capability__workspace.call', 'stat'),
             ('coder__capability__workspace.call', 'stat'),
+            *([('coder__capability__workspace.call', 'realpath')] * 2 if extra_limits else []),
             ('coder__model.request_stream', None),
         ]
 
