@@ -1049,6 +1049,47 @@ Change a single tool definition, and the whole prefix is re-created instead — 
 - To place explicit cache breakpoints on messages, use [`CachePoint`][pydantic_ai.messages.CachePoint] (honored by Anthropic, Bedrock, and OpenRouter). Anthropic's tool, system, and instruction caching settings are documented under [Anthropic prompt caching](models/anthropic.md#prompt-caching).
 - On providers that cache tool definitions at the front of the prefix — Anthropic, OpenAI, and xAI — editing a single tool's description invalidates the cached prefix. Google's *implicit* cache is prefix-based on a different layout (its `system_instruction` is a separate field ahead of the tool block), so a large stable system instruction can keep cache hits even when the tool list changes; an explicit [`CachedContent`](models/google.md) instead fixes the tools as an immutable part of the cache by construction.
 
+## Typed Tool Parts {#typed-tool-parts}
+
+A tool's name is chosen by whoever wrote or configured it, and can be renamed or prefixed (for example by [`PrefixTools`][pydantic_ai.capabilities.PrefixTools]), so code that needs to recognize a particular tool should not compare names. Instead, a tool can declare what it is with [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. Its call and return parts carry the same `tool_kind` and are promoted to typed subclasses of [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. A hook or history processor can then match the tool with `isinstance`, whatever it is called. Core's tool search and deferred-capability tools work this way: [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] and [`LoadCapabilityReturnPart`][pydantic_ai.messages.LoadCapabilityReturnPart] are examples.
+
+A kind is registered by defining its typed subclass: a subclass that sets a `tool_kind` default registers that kind, and narrows `args` (or `content`, for a return part) to the shape it promises:
+
+```python {title="typed_tool_part.py"}
+from dataclasses import KW_ONLY, dataclass
+from typing import Literal
+
+from typing_extensions import TypedDict
+
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, ToolCallPart
+
+
+class LookupArgs(TypedDict):
+    sku: str
+
+
+@dataclass(repr=False)
+class LookupCallPart(ToolCallPart):
+    _: KW_ONLY
+
+    args: str | LookupArgs | None = None  # pyright: ignore[reportIncompatibleVariableOverride]
+    tool_kind: Literal['inventory-lookup'] = 'inventory-lookup'  # pyright: ignore[reportIncompatibleVariableOverride]
+
+
+response = ModelResponse(parts=[ToolCallPart('lookup_v2', {'sku': 'A-1'}, tool_kind='inventory-lookup')])
+part = response.parts[0]
+print(type(part).__name__, part.args)
+#> LookupCallPart {'sku': 'A-1'}
+
+stored = ModelMessagesTypeAdapter.dump_json([response])
+print(type(ModelMessagesTypeAdapter.validate_json(stored)[0].parts[0]).__name__)
+#> LookupCallPart
+```
+
+A tool declares the kind by setting `tool_kind` on its [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], for example in its toolset's `get_tools` or a [`prepare`](#tool-prepare) function. A `ToolDefinition` with a kind no typed part has registered raises [`UserError`][pydantic_ai.exceptions.UserError], so kinds are declared up front.
+
+A typed subclass may only narrow `args` / `content` and add properties; adding a field of its own raises `UserError` when the part is first promoted. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't register (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is registered. A return part whose [`outcome`][pydantic_ai.messages.BaseToolReturnPart.outcome] isn't `'success'` also stays a base part, since its content is an error rather than the typed result.
+
 ## See Also
 
 - [Function Tools](tools.md) - Basic tool concepts and registration

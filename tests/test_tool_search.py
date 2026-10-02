@@ -6297,10 +6297,8 @@ def test_discriminator_unknown_tool_kind_falls_through_to_part_kind() -> None:
     doesn't contain `(part_kind, 'unknown-kind')`, so the discriminator returns the bare
     `part_kind` rather than a typed-subclass tag.
 
-    Calls the discriminator directly because constructing a valid ModelMessage with
-    `tool_kind='unknown-kind'` would fail Pydantic's `ToolPartKind` Literal validation
-    upstream — the registry-miss branch is internal logic, not a deserialization path
-    that any well-formed input would take.
+    Calls the discriminator directly; the deserialization path for unregistered kinds is
+    covered in `tests/test_typed_tool_parts.py`.
     """
 
     return_raw = {

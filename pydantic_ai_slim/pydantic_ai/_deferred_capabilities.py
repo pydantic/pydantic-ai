@@ -4,17 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import KW_ONLY, dataclass
-from typing import TYPE_CHECKING, Annotated, Literal, Union, cast
+from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 import pydantic
 from typing_extensions import NotRequired, TypedDict
 
-from ._utils import copy_dataclass_fields
-
 # Imported late by `messages.py`; avoid imports that would re-enter it.
 from .messages import (
-    _TOOL_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
-    _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
     ToolCallPart,
@@ -101,32 +97,6 @@ class LoadCapabilityReturnPart(ToolReturnPart):
         """Loaded capability instructions, if any."""
         return self.content.get('instructions')
 
-
-_LOAD_CAPABILITY_CALL_ARGS_TA: pydantic.TypeAdapter[str | LoadCapabilityArgs | None] = pydantic.TypeAdapter(
-    Union[str, LoadCapabilityArgs, None]  # noqa: UP007
-)
-_LOAD_CAPABILITY_RETURN_CONTENT_TA: pydantic.TypeAdapter[LoadCapabilityReturn] = pydantic.TypeAdapter(
-    LoadCapabilityReturn
-)
-
-
-def _narrow_load_capability_call(part: ToolCallPart) -> LoadCapabilityCallPart:
-    if isinstance(part, LoadCapabilityCallPart):
-        return part
-    validated_args = _LOAD_CAPABILITY_CALL_ARGS_TA.validate_python(part.args)
-    return copy_dataclass_fields(part, LoadCapabilityCallPart, args=validated_args, tool_kind='capability-load')
-
-
-def _narrow_load_capability_return(part: ToolReturnPart) -> LoadCapabilityReturnPart:
-    if isinstance(part, LoadCapabilityReturnPart):
-        return part
-    validated_content = _LOAD_CAPABILITY_RETURN_CONTENT_TA.validate_python(part.content)
-    return copy_dataclass_fields(part, LoadCapabilityReturnPart, content=validated_content, tool_kind='capability-load')
-
-
-# Narrow on `tool_kind` so user tools named `load_capability` are not promoted.
-_TOOL_CALL_NARROWERS['capability-load'] = _narrow_load_capability_call
-_TOOL_RETURN_NARROWERS['capability-load'] = _narrow_load_capability_return
 
 _TYPED_PART_TAGS[('tool-call', 'capability-load')] = 'capability-load-call'
 _TYPED_PART_TAGS[('tool-return', 'capability-load')] = 'capability-load-return'

@@ -22,10 +22,11 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
+    NamedTuple,
     TypeAlias,
     TypeGuard,
     cast,
-    get_args,
+    get_type_hints,
     overload,
 )
 from urllib.parse import urlparse
@@ -1369,29 +1370,104 @@ tool_return_content_ta: pydantic.TypeAdapter[ToolReturnContent] = pydantic.TypeA
 typed as `Any` (e.g. Vercel's `ToolOutputAvailablePart.output`)."""
 
 
-ToolPartKind: TypeAlias = Literal['tool-search', 'capability-load']
-"""Discriminator value for the typed call/return-part subclass associated with a tool.
+ToolPartKind: TypeAlias = str
+"""What a tool is, independent of its name: the `tool_kind` of a typed call/return-part subclass.
 
 Set on [`BaseToolCallPart.tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind],
 [`BaseToolReturnPart.tool_kind`][pydantic_ai.messages.BaseToolReturnPart.tool_kind], and
-[`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. Extended as new
-typed-part families (e.g. web search) gain dedicated subclasses.
+[`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind]. A kind is registered by
+defining a typed subclass of [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] or
+[`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] (or their native counterparts) that sets a
+`tool_kind` default; see [Typed tool parts](../tools-advanced.md#typed-tool-parts). Core registers
+`'tool-search'` and `'capability-load'`.
+
+A part may carry a kind that isn't registered in the current process, for example when it was
+recorded by a process that imported the defining module. It then stays a base part that keeps its
+`tool_kind`, so it round-trips and is promoted wherever the kind is registered.
 
 Distinct from [`ToolKind`][pydantic_ai.tools.ToolKind] (invocation semantics —
 `'function'`, `'output'`, `'external'`, `'unapproved'`).
 """
 
-_TOOL_PART_KINDS: tuple[ToolPartKind, ...] = get_args(ToolPartKind)
+
+class _TypedToolPart(NamedTuple):
+    cls: type[Any]
+    base: type[Any]
+    payload_field: str
+
+
+_TYPED_TOOL_PARTS: dict[tuple[str, str], _TypedToolPart] = {}
+"""Registry: (base `part_kind`, `tool_kind`) → the typed subclass registered for it.
+
+Populated by `_register_typed_tool_part` from the `__init_subclass__` of the four tool part classes.
+"""
+
+_PAYLOAD_ADAPTERS: dict[type[Any], pydantic.TypeAdapter[Any]] = {}
+"""Per typed subclass: the adapter validating its narrowed `args` / `content`. Built on first use."""
+
+
+def _register_typed_tool_part(cls: type[Any], base: type[Any], payload_field: str) -> None:
+    """Register `cls` as the typed subclass for the `tool_kind` default its class body declares.
+
+    A subclass that declares no `tool_kind` default (an intermediate base) registers nothing.
+    Re-registering the same class (a module reloaded under the same qualified name) replaces it;
+    two different classes claiming one kind is an error.
+    """
+    kind = cls.__dict__.get('tool_kind')
+    if not isinstance(kind, str):
+        return
+    key: tuple[str, str] = (base.part_kind, kind)
+    existing = _TYPED_TOOL_PARTS.get(key)
+    if existing is not None and (existing.cls.__module__, existing.cls.__qualname__) != (
+        cls.__module__,
+        cls.__qualname__,
+    ):
+        raise UserError(
+            f'Tool kind {kind!r} is already registered for {base.__name__} by '
+            f'{existing.cls.__module__}.{existing.cls.__qualname__}; tool kinds must be unique.'
+        )
+    _TYPED_TOOL_PARTS[key] = _TypedToolPart(cls, base, payload_field)
+    _PAYLOAD_ADAPTERS.pop(cls, None)
+
+
+def _payload_adapter(typed: _TypedToolPart) -> pydantic.TypeAdapter[Any]:
+    """The adapter for a typed subclass's narrowed payload, checking its shape the first time it's used.
+
+    A typed subclass may only narrow `args` / `content` and add accessors. A stored field of its own
+    would be lost whenever the part falls back to the base class because the kind isn't registered.
+    """
+    adapter = _PAYLOAD_ADAPTERS.get(typed.cls)
+    if adapter is None:
+        added = {f.name for f in dataclasses.fields(typed.cls)} - {f.name for f in dataclasses.fields(typed.base)}
+        if added:
+            raise UserError(
+                f'{typed.cls.__qualname__} adds the field(s) {", ".join(sorted(added))} to {typed.base.__name__}. '
+                f'A typed tool part may only narrow `{typed.payload_field}` and add properties, so that it '
+                'loses nothing when it falls back to the base part.'
+            )
+        payload_type = next(f.type for f in dataclasses.fields(typed.cls) if f.name == typed.payload_field)
+        # Resolve only this annotation, in the module of the class that declared it: other inherited
+        # ones may name types that only exist for type checking.
+        # (`__annotations__` on a class holds only its own annotations on Python 3.10+.)
+        owner = next(k for k in typed.cls.__mro__ if typed.payload_field in getattr(k, '__annotations__', {}))
+        holder = type('_Payload', (), {'__annotations__': {'value': payload_type}, '__module__': owner.__module__})
+        adapter = _PAYLOAD_ADAPTERS[typed.cls] = pydantic.TypeAdapter(get_type_hints(holder)['value'])
+    return adapter
+
+
+def is_registered_tool_kind(value: str) -> bool:
+    """Whether a typed tool part has registered `value` as its `tool_kind` in this process."""
+    return any(kind == value for _, kind in _TYPED_TOOL_PARTS)
 
 
 def parse_tool_kind(value: str) -> ToolPartKind | None:
-    """Return `value` if it's a known [`ToolPartKind`][pydantic_ai.messages.ToolPartKind], else `None`.
+    """Return `value` if it's a registered [`ToolPartKind`][pydantic_ai.messages.ToolPartKind], else `None`.
 
     UI adapters call this at the wire boundary to validate an untrusted client-supplied `tool_kind`
     string before setting it on a part, so an unknown value degrades to `None` rather than asserting a
     bogus discriminator.
     """
-    return next((kind for kind in _TOOL_PART_KINDS if kind == value), None)
+    return value if is_registered_tool_kind(value) else None
 
 
 INTERRUPTED_TOOL_RETURN_CONTENT = 'The tool call was interrupted before a result was produced.'
@@ -1710,17 +1786,23 @@ class ToolReturnPart(BaseToolReturnPart):
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _register_typed_tool_part(cls, ToolReturnPart, 'content')
+
     @staticmethod
     def narrow_type(part: ToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> ToolReturnPart:
         """Promote a base `ToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
         Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
-        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
-        validate against that subclass — keeping it on a base part would break a
-        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
-        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
+        no registered subclass, keeping that `tool_kind`. When the part's data doesn't validate against
+        the subclass, the part stays a base part; for core's own kinds, which deserialization routes
+        straight to their subclass, an unsubstantiated `tool_kind` is also stripped so the part still
+        round-trips through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter].
+        A return part whose `outcome` isn't `'success'` is never promoted: its content is an error, not
+        the tool's result shape.
         """
-        return _narrow_return(part, _TOOL_RETURN_NARROWERS, tool_kind)
+        return _narrow_return(part, tool_kind)
 
 
 @dataclass(repr=False)
@@ -1750,17 +1832,23 @@ class NativeToolReturnPart(BaseToolReturnPart):
     part_kind: Literal['builtin-tool-return'] = 'builtin-tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _register_typed_tool_part(cls, NativeToolReturnPart, 'content')
+
     @staticmethod
     def narrow_type(part: NativeToolReturnPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolReturnPart:
         """Promote a base `NativeToolReturnPart` to its typed subclass when its `tool_kind` is registered.
 
         Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
-        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
-        validate against that subclass — keeping it on a base part would break a
-        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
-        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
+        no registered subclass, keeping that `tool_kind`. When the part's data doesn't validate against
+        the subclass, the part stays a base part; for core's own kinds, which deserialization routes
+        straight to their subclass, an unsubstantiated `tool_kind` is also stripped so the part still
+        round-trips through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter].
+        A return part whose `outcome` isn't `'success'` is never promoted: its content is an error, not
+        the tool's result shape.
         """
-        return _narrow_return(part, _NATIVE_RETURN_NARROWERS, tool_kind)
+        return _narrow_return(part, tool_kind)
 
 
 error_details_ta = pydantic.TypeAdapter(list[pydantic_core.ErrorDetails], config=pydantic.ConfigDict(defer_build=True))
@@ -2137,6 +2225,10 @@ class ModelRequest:
                 raise ValueError(
                     f"`SpeechPart` in `ModelRequest.parts` must have `speaker='user'`, got {part.speaker!r}"
                 )
+        # Promote a tool part whose kind is registered but that deserialization left a base part.
+        promoted = [_promote_registered_part(part) for part in self.parts]
+        if any(new is not old for new, old in zip(promoted, self.parts)):
+            self.parts = promoted
 
     @classmethod
     def user_text_prompt(cls, user_prompt: str, *, instructions: str | None = None) -> ModelRequest:
@@ -2541,17 +2633,23 @@ class ToolCallPart(BaseToolCallPart):
     part_kind: Literal['tool-call'] = 'tool-call'
     """Part type identifier, this is available on all parts as a discriminator. Note that this is different from `ToolCallPartDelta.part_delta_kind`."""
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _register_typed_tool_part(cls, ToolCallPart, 'args')
+
     @staticmethod
     def narrow_type(part: ToolCallPart, *, tool_kind: ToolPartKind | None = None) -> ToolCallPart:
         """Promote a base `ToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
         Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
-        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
-        validate against that subclass — keeping it on a base part would break a
-        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
-        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
+        no registered subclass, keeping that `tool_kind`. When the part's data doesn't validate against
+        the subclass, the part stays a base part; for core's own kinds, which deserialization routes
+        straight to their subclass, an unsubstantiated `tool_kind` is also stripped so the part still
+        round-trips through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter].
+        A return part whose `outcome` isn't `'success'` is never promoted: its content is an error, not
+        the tool's result shape.
         """
-        return _narrow_call(part, _TOOL_CALL_NARROWERS, tool_kind)
+        return _narrow_call(part, tool_kind)
 
 
 @dataclass(repr=False)
@@ -2567,17 +2665,16 @@ class NativeToolCallPart(BaseToolCallPart):
     a worked example):
 
     1. Add a sibling `pydantic_ai/_<name>.py` module that defines the cross-provider
-       `TypedDict`s, the `NativeToolCallPart` / `NativeToolReturnPart` subclasses,
-       and registers their narrowers into `_NATIVE_CALL_NARROWERS` /
-       `_NATIVE_RETURN_NARROWERS` keyed by `tool_kind`. Subclass overrides
-       `tool_kind: Literal['<emitter>']` to match the emitting
-       [`AbstractNativeTool.kind`][pydantic_ai.native_tools.AbstractNativeTool.kind],
-       and shadows `args` / `content` with a narrower type.
+       `TypedDict`s and the `NativeToolCallPart` / `NativeToolReturnPart` subclasses.
+       Each subclass declares `tool_kind: Literal['<emitter>'] = '<emitter>'` to match the
+       emitting [`AbstractNativeTool.kind`][pydantic_ai.native_tools.AbstractNativeTool.kind]
+       and shadows `args` / `content` with a narrower type; declaring the `tool_kind`
+       default registers it.
     2. Late-import the new module from this file (alongside the existing tool-search
        import) so registration runs whenever `pydantic_ai.messages` is imported.
-    3. Add the subclass to `ModelResponsePart`'s discriminated union and to
-       `_model_response_part_discriminator` so Pydantic deserialization auto-promotes
-       on `model_validate` / `model_validate_json`.
+    3. Optionally, add the subclass to `ModelResponsePart`'s discriminated union and its
+       `_TYPED_PART_TAGS` entries so it appears in the message JSON schema. Without that,
+       deserialization still promotes it after validation.
 
     Dispatch is by `tool_kind`, not `tool_name`. This protects users whose tools happen to
     share a name with one of ours from accidentally getting their parts promoted (and
@@ -2598,68 +2695,88 @@ class NativeToolCallPart(BaseToolCallPart):
     part_kind: Literal['builtin-tool-call'] = 'builtin-tool-call'
     """Part type identifier, this is available on all parts as a discriminator."""
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        _register_typed_tool_part(cls, NativeToolCallPart, 'args')
+
     @staticmethod
     def narrow_type(part: NativeToolCallPart, *, tool_kind: ToolPartKind | None = None) -> NativeToolCallPart:
         """Promote a base `NativeToolCallPart` to its typed subclass when its `tool_kind` is registered.
 
         Best-effort: returns the part unchanged when the `tool_kind` (kwarg or on the part) resolves to
-        no registered subclass, and strips an unsubstantiated `tool_kind` when the part's data doesn't
-        validate against that subclass — keeping it on a base part would break a
-        [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter] round-trip. For
-        direct construction; Pydantic deserialization promotes automatically via the discriminated union.
+        no registered subclass, keeping that `tool_kind`. When the part's data doesn't validate against
+        the subclass, the part stays a base part; for core's own kinds, which deserialization routes
+        straight to their subclass, an unsubstantiated `tool_kind` is also stripped so the part still
+        round-trips through [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter].
+        A return part whose `outcome` isn't `'success'` is never promoted: its content is an error, not
+        the tool's result shape.
         """
-        return _narrow_call(part, _NATIVE_CALL_NARROWERS, tool_kind)
-
-
-# Registry of typed promoters for `NativeToolCallPart` / `NativeToolReturnPart`.
-# Populated at import time by typed-subclass modules (see `pydantic_ai._tool_search`).
-_NATIVE_CALL_NARROWERS: dict[str, Callable[[NativeToolCallPart], NativeToolCallPart]] = {}
-_NATIVE_RETURN_NARROWERS: dict[str, Callable[[NativeToolReturnPart], NativeToolReturnPart]] = {}
-
-
-# Registry of typed promoters for the local-execution `ToolCallPart` / `ToolReturnPart`
-# variants — applied to the regular function-call/return shape that flows on adapters
-# without native tool search.
-_TOOL_CALL_NARROWERS: dict[str, Callable[[ToolCallPart], ToolCallPart]] = {}
-_TOOL_RETURN_NARROWERS: dict[str, Callable[[ToolReturnPart], ToolReturnPart]] = {}
+        return _narrow_call(part, tool_kind)
 
 
 _CallPartT = TypeVar('_CallPartT', bound='BaseToolCallPart')
 _ReturnPartT = TypeVar('_ReturnPartT', bound='BaseToolReturnPart')
 
 
-def _narrow_call(
-    part: _CallPartT, narrowers: dict[str, Callable[[_CallPartT], _CallPartT]], tool_kind: ToolPartKind | None
-) -> _CallPartT:
+def _unsubstantiated(part: _CallPartT | _ReturnPartT, kind: str) -> Any:
+    """A part whose data doesn't fit its kind's typed subclass, left a base part.
+
+    Core's own kinds are routed straight to their subclass on deserialization (`_TYPED_PART_TAGS`),
+    so their `tool_kind` is stripped to keep the part loadable. Any other kind keeps it: it is only
+    ever promoted after validation, so keeping it costs nothing and preserves what the tool was.
+    """
+    if (part.part_kind, kind) in _TYPED_PART_TAGS and part.tool_kind is not None:
+        return replace(part, tool_kind=None)
+    return part
+
+
+def _narrow_call(part: _CallPartT, tool_kind: ToolPartKind | None) -> _CallPartT:
     """Best-effort promotion shared by the call-part `narrow_type` methods. See `ToolCallPart.narrow_type`."""
     kind = tool_kind if tool_kind is not None else part.tool_kind
-    narrower = narrowers.get(kind) if kind is not None else None
-    if narrower is None:
+    typed = _TYPED_TOOL_PARTS.get((part.part_kind, kind)) if kind is not None else None
+    if typed is None or isinstance(part, typed.cls):
         return part
+    assert kind is not None
     try:
-        return narrower(part)
+        args = _payload_adapter(typed).validate_python(part.args)
     except pydantic.ValidationError:
-        return replace(part, tool_kind=None) if part.tool_kind is not None else part
+        return _unsubstantiated(part, kind)
+    return _utils.copy_dataclass_fields(part, typed.cls, args=args, tool_kind=kind)
 
 
-def _narrow_return(
-    part: _ReturnPartT, narrowers: dict[str, Callable[[_ReturnPartT], _ReturnPartT]], tool_kind: ToolPartKind | None
-) -> _ReturnPartT:
+def _promote_registered_part(part: Any) -> Any:
+    """Promote a tool part whose `tool_kind` was registered outside the deserialization union.
+
+    Core's own kinds are in `ModelRequestPart` / `ModelResponsePart`, so deserialization already
+    promotes them and direct construction keeps what it was given. A kind registered anywhere else
+    (by harness or an application) is promoted here, after validation, so it works whatever order
+    modules were imported in. An unregistered kind stays a base part with its `tool_kind` intact.
+    """
+    kind = getattr(part, 'tool_kind', None)
+    if kind is None or (part.part_kind, kind) in _TYPED_PART_TAGS:
+        return part
+    if isinstance(part, ToolCallPart | NativeToolCallPart):
+        return _narrow_call(part, None)
+    if isinstance(part, ToolReturnPart | NativeToolReturnPart):
+        return _narrow_return(part, None)
+    return part  # pragma: no cover
+
+
+def _narrow_return(part: _ReturnPartT, tool_kind: ToolPartKind | None) -> _ReturnPartT:
     """Best-effort promotion shared by the return-part `narrow_type` methods. See `ToolReturnPart.narrow_type`."""
     kind = tool_kind if tool_kind is not None else part.tool_kind
-    narrower = narrowers.get(kind) if kind is not None else None
-    if narrower is None:
+    typed = _TYPED_TOOL_PARTS.get((part.part_kind, kind)) if kind is not None else None
+    if typed is None or isinstance(part, typed.cls) or part.outcome != 'success':
         return part
-    # Restructure JSON-string content for the narrower, but only when parsing changed it, so an
-    # already-typed part keeps its identity (the narrower short-circuits on it) instead of a rebuild.
+    assert kind is not None
+    # Content that arrived as a JSON string is parsed before it's validated against the subclass.
     structured = part.structured_content()
-    narrow_input = (
-        replace(part, content=structured) if structured is not None and structured is not part.content else part
-    )
+    content = structured if structured is not None else part.content
     try:
-        return narrower(narrow_input)
+        content = _payload_adapter(typed).validate_python(content)
     except pydantic.ValidationError:
-        return replace(part, tool_kind=None) if part.tool_kind is not None else part
+        return _unsubstantiated(part, kind)
+    return _utils.copy_dataclass_fields(part, typed.cls, content=content, tool_kind=kind)
 
 
 _TYPED_PART_TAGS: dict[tuple[str, str], str] = {}
@@ -2716,7 +2833,8 @@ def _model_request_part_discriminator(v: Any) -> str | None:
         v_dict = cast(dict[str, Any], v)
         kind = v_dict.get('part_kind')
         tool_kind = v_dict.get('tool_kind')
-        if isinstance(kind, str) and isinstance(tool_kind, str):
+        # A return that isn't a success carries an error, not the typed shape, so it stays a base part.
+        if isinstance(kind, str) and isinstance(tool_kind, str) and v_dict.get('outcome', 'success') == 'success':
             tag = _TYPED_PART_TAGS.get((kind, tool_kind))
             if tag is not None:
                 return tag
@@ -2766,7 +2884,8 @@ def _model_response_part_discriminator(v: Any) -> str | None:
         v_dict = cast(dict[str, Any], v)
         kind = v_dict.get('part_kind')
         tool_kind = v_dict.get('tool_kind')
-        if isinstance(kind, str) and isinstance(tool_kind, str):
+        # A return that isn't a success carries an error, not the typed shape, so it stays a base part.
+        if isinstance(kind, str) and isinstance(tool_kind, str) and v_dict.get('outcome', 'success') == 'success':
             tag = _TYPED_PART_TAGS.get((kind, tool_kind))
             if tag is not None:
                 return tag
@@ -2907,6 +3026,10 @@ class ModelResponse:
                 raise ValueError(
                     f"`SpeechPart` in `ModelResponse.parts` must have `speaker='assistant'`, got {part.speaker!r}"
                 )
+        # Promote a tool part whose kind is registered but that deserialization left a base part.
+        promoted = [_promote_registered_part(part) for part in self.parts]
+        if any(new is not old for new, old in zip(promoted, self.parts)):
+            self.parts = promoted
 
     @property
     def text(self) -> str | None:

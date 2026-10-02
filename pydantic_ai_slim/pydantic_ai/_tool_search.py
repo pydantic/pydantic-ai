@@ -23,23 +23,17 @@ provider boundaries.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Literal, Union, cast
+from typing import TYPE_CHECKING, Literal, cast
 
-import pydantic
 import pydantic_core
 from typing_extensions import NotRequired, TypedDict, assert_never
 
 from . import messages as _messages
-from ._utils import copy_dataclass_fields
 
 # `messages.py` imports this module before its `ModelMessage` / `ModelRequest` / `ModelResponse`
 # types are defined; bind the parts we need at class-definition time directly here, and access
 # the message-level types via `_messages.ModelResponse` etc. at function-call time.
 from .messages import (
-    _NATIVE_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
-    _NATIVE_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
-    _TOOL_CALL_NARROWERS,  # pyright: ignore[reportPrivateUsage]
-    _TOOL_RETURN_NARROWERS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS,  # pyright: ignore[reportPrivateUsage]
     _TYPED_PART_TAGS_BY_TYPE,  # pyright: ignore[reportPrivateUsage]
     NativeToolCallPart,
@@ -361,50 +355,6 @@ class ToolSearchReturnPart(ToolReturnPart):
         """
         return self.content.get('message')
 
-
-_TOOL_SEARCH_CALL_ARGS_TA: pydantic.TypeAdapter[str | ToolSearchArgs | None] = pydantic.TypeAdapter(
-    Union[str, ToolSearchArgs, None]  # noqa: UP007
-)
-_TOOL_SEARCH_RETURN_CONTENT_TA: pydantic.TypeAdapter[ToolSearchReturnContent] = pydantic.TypeAdapter(
-    ToolSearchReturnContent
-)
-
-
-def _narrow_native_tool_search_call(part: NativeToolCallPart) -> NativeToolSearchCallPart:
-    if isinstance(part, NativeToolSearchCallPart):
-        return part
-    validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
-    return copy_dataclass_fields(part, NativeToolSearchCallPart, args=validated_args, tool_kind='tool-search')
-
-
-def _narrow_native_tool_search_return(part: NativeToolReturnPart) -> NativeToolSearchReturnPart:
-    if isinstance(part, NativeToolSearchReturnPart):
-        return part
-    validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
-    return copy_dataclass_fields(part, NativeToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
-
-
-def _narrow_tool_search_call(part: ToolCallPart) -> ToolSearchCallPart:
-    if isinstance(part, ToolSearchCallPart):
-        return part
-    validated_args = _TOOL_SEARCH_CALL_ARGS_TA.validate_python(part.args)
-    return copy_dataclass_fields(part, ToolSearchCallPart, args=validated_args, tool_kind='tool-search')
-
-
-def _narrow_tool_search_return(part: ToolReturnPart) -> ToolSearchReturnPart:
-    if isinstance(part, ToolSearchReturnPart):
-        return part
-    validated_content = _TOOL_SEARCH_RETURN_CONTENT_TA.validate_python(part.content)
-    return copy_dataclass_fields(part, ToolSearchReturnPart, content=validated_content, tool_kind='tool-search')
-
-
-# Narrowers dispatch on `tool_kind` (set by the framework when it emits a typed call/return)
-# so user-defined tools that happen to share `tool_name` with a typed subclass are not
-# accidentally promoted.
-_NATIVE_CALL_NARROWERS['tool-search'] = _narrow_native_tool_search_call
-_NATIVE_RETURN_NARROWERS['tool-search'] = _narrow_native_tool_search_return
-_TOOL_CALL_NARROWERS['tool-search'] = _narrow_tool_search_call
-_TOOL_RETURN_NARROWERS['tool-search'] = _narrow_tool_search_return
 
 # Register typed-part discriminator tags so `messages._model_request_part_discriminator` /
 # `_model_response_part_discriminator` can route serialized dicts and Python instances to

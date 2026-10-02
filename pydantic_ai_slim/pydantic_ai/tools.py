@@ -26,7 +26,7 @@ from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import UserError
 from .function_signature import FunctionSignature
-from .messages import ToolPartKind
+from .messages import ToolPartKind, is_registered_tool_kind
 from .native_tools import AbstractNativeTool
 
 __all__ = (
@@ -698,23 +698,16 @@ class ToolDefinition:
     the wire; that's `defer_loading`'s question.
     """
 
-    # Implementation note for new typed native tools: registering a new tool_kind value
-    # requires (1) extending the ToolPartKind Literal in messages.py, (2) defining
-    # the typed subclass + narrower under pydantic_ai/<your_native_tool>.py and registering
-    # in _TOOL_CALL_NARROWERS / _NATIVE_CALL_NARROWERS / _TOOL_RETURN_NARROWERS /
-    # _NATIVE_RETURN_NARROWERS, (3) adding the (part_kind, tool_kind) → Tag entries
-    # in messages.py's _TYPED_PART_TAGS and _TYPED_PART_TAGS_BY_TYPE registries, and
-    # (4) extending the ModelResponsePart / ModelRequestPart Annotated unions with
-    # the new typed subclasses.
     tool_kind: ToolPartKind | None = None
-    """Discriminator for a cross-provider typed call/return shape (e.g. `'tool-search'`).
+    """What this tool is, independent of its name (e.g. `'tool-search'`), for tools with typed parts.
 
-    Set by the framework when a tool emits parts that should be promoted to a typed
-    subclass (such as [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
-    and [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]). Leave as
-    `None` for user-defined function tools — they go through the standard
-    [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] /
-    [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] shapes.
+    The tool's call and return parts carry it and are promoted to the typed subclasses
+    registered for it (such as [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart]
+    and [`ToolSearchReturnPart`][pydantic_ai.messages.ToolSearchReturnPart]), so code can
+    recognize the tool with `isinstance` even when it has been renamed or prefixed. The kind
+    must be registered by a typed tool part (see
+    [Typed tool parts](../tools-advanced.md#typed-tool-parts)); setting an unregistered kind
+    raises `UserError`. Leave as `None` for tools that have no typed parts.
 
     To detect a tool-search part regardless of execution path (native server-side vs.
     local fallback), check `part.tool_kind == 'tool-search'` — this works across both
@@ -756,6 +749,14 @@ class ToolDefinition:
     deferred capability it gates visibility: the tool is revealed once that capability's id appears
     in [`RunContext.loaded_capability_ids`][pydantic_ai.tools.RunContext.loaded_capability_ids].
     """
+
+    def __post_init__(self) -> None:
+        if self.tool_kind is not None and not is_registered_tool_kind(self.tool_kind):
+            raise UserError(
+                f'Tool {self.name!r} declares `tool_kind={self.tool_kind!r}`, which no typed tool part has registered. '
+                'Define a `ToolCallPart` / `ToolReturnPart` subclass that sets this `tool_kind` default, and import '
+                'its module before building the tool.'
+            )
 
     @cached_property
     def function_signature(self) -> FunctionSignature:
