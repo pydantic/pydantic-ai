@@ -134,7 +134,7 @@ if TYPE_CHECKING:
     from ..models import ModelRequestParameters
     from ..models.instrumented import InstrumentationSettings
     from ..tools import DeferredToolRequests, DeferredToolResults
-    from .model import RealtimeModel
+    from .model import RealtimeModel, RealtimeProviderSession
 
 # Session-level events (yielded by `RealtimeSession.__aiter__`).
 #
@@ -523,6 +523,23 @@ def _build_session_tool_return(
     return result_part, user_content
 
 
+def _chain_context(error: BaseException, context: BaseException) -> None:
+    """Attach `context` at the end of `error`'s context chain, where a traceback shows it first.
+
+    `error.__context__` is usually taken already (a mapped provider error carries the SDK's), so it can't
+    just be set.
+    """
+    seen: set[int] = set()
+    tail = error
+    while tail.__context__ is not None:
+        if tail is context or id(tail) in seen:
+            return
+        seen.add(id(tail))
+        tail = tail.__context__
+    if tail is not context:
+        tail.__context__ = context
+
+
 def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolReturnPart:
     """The return a session records when a tool call couldn't settle normally.
 
@@ -694,6 +711,7 @@ class RealtimeSession:
         message_history: Sequence[ModelMessage] | None = None,
         profile: RealtimeModelProfile | None = None,
         owns_media: bool = True,
+        provider_session: RealtimeProviderSession | None = None,
         conversation_id: str | None = None,
         run_id: str | None = None,
         instructions: str | None = None,
@@ -718,6 +736,14 @@ class RealtimeSession:
         # plane, so the audio methods are unavailable and no audio bytes flow over it (transcripts still
         # build history). Set by the connect path when a `provider_session` is attached.
         self._owns_media = owns_media
+        # The WebRTC call a sideband session runs, which `hang_up()` ends; `None` on a session that owns
+        # its own connection, where closing it is what ends the call.
+        self._model = model
+        self._provider_session = provider_session
+        self._hang_up_requested = False
+        # The teardown's own failed hangup, which the caller that collects it from `close()` has been told.
+        self._teardown_hang_up_error: Exception | None = None
+        self._hung_up = False
         self._model_name = model.model_name if model is not None else None
         self._provider_name = model.system if model is not None else None
         self._provider_url = model.base_url if model is not None else None
@@ -1117,11 +1143,71 @@ class RealtimeSession:
             self._close_error = None
             raise error
 
+    async def hang_up(self) -> None:
+        """End the call, then close the session.
+
+        On a [WebRTC sideband](../realtime/deployment.md#browser-webrtc-server-sideband) session,
+        [`close()`][pydantic_ai.realtime.RealtimeSession.close] only detaches this server from the call,
+        and the browser stays connected to the provider (and billed) until it hangs up itself. This asks the
+        provider to end the call for everyone. On a session that owns its connection, closing it already
+        ends the call, so this is the same as `close()`. Either way, the session is closed afterwards, as
+        by `close()`.
+
+        A tool can call this method through
+        [`ctx.realtime_session`][pydantic_ai.tools.RunContext.realtime_session], as it can `close()`: the
+        call is still ended after the tool itself is cancelled by the teardown.
+
+        Raises [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] or
+        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] if the provider refuses to end the call,
+        and [`UserError`][pydantic_ai.exceptions.UserError] if the model can't hang up WebRTC calls.
+        """
+        provider_session, model = self._provider_session, self._model
+        if provider_session is None or model is None:
+            await self.close()
+            return
+        # Refused before anything is torn down, so a model that can't hang up leaves the session as it was.
+        model._check_hang_up(provider_session)  # pyright: ignore[reportPrivateUsage]
+        # The call is ended from the teardown, once the pump has stopped: the provider closes the sideband
+        # when the call ends, which the pump would otherwise report as a lost connection.
+        self._hang_up_requested = True
+        close_error: BaseException | None = None
+        try:
+            await self.close()
+        except BaseException as e:
+            close_error = e
+            raise
+        finally:
+            teardown_done = self._teardown is None or self._teardown.done()
+            told_of_failure = close_error is not None and close_error is self._teardown_hang_up_error
+            if not self._hung_up and teardown_done and not told_of_failure:
+                # The call is still up, and this caller hasn't been told why: the session was closed (or
+                # never started) before this call, another caller collected the teardown's failed hangup,
+                # or one is being retried. Even if closing raised something else, the call must still end.
+                try:
+                    await self._hang_up_call()
+                except Exception as hang_up_error:
+                    if close_error is not None:
+                        _chain_context(hang_up_error, close_error)
+                    raise
+
+    async def _hang_up_call(self) -> None:
+        provider_session, model = self._provider_session, self._model
+        assert provider_session is not None and model is not None
+        await model.hang_up(provider_session)
+        # Only once it worked: a hangup that failed leaves the call up, so asking again tries again.
+        self._hung_up = True
+
     async def _finish_teardown(self) -> None:
         # A session closed without ever sending, subscribing, or iterating started no pump, so there
         # may be nothing here but the background tasks.
         pump_tasks = (self._pump_task,) if self._pump_task is not None else ()
         await cancel_and_drain(*self._background_tasks, *pump_tasks, msg='Realtime session exited')
+        hang_up_error: Exception | None = None
+        if self._hang_up_requested and not self._hung_up:
+            try:
+                await self._hang_up_call()
+            except Exception as e:
+                hang_up_error = self._teardown_hang_up_error = e
 
         # Any open `chat` span was closed by the settlement above (an open span counts as a response
         # in flight), with the error — if any — already recorded on it before settlement.
@@ -1154,6 +1240,12 @@ class RealtimeSession:
         if self._closing_error is None and (error := self._first_undelivered_error()) is not None:
             self._delivered_errors.append(error)
             self._close_error = error
+        if hang_up_error is not None:
+            # A call left up is what matters most to the caller, so it wins; anything that ended the
+            # session first stays attached to it.
+            if self._close_error is not None:
+                _chain_context(hang_up_error, self._close_error)
+            self._close_error = hang_up_error
 
     def _queue_put(self, item: RealtimeEvent | object) -> None:
         """Append an item, bounding the queue while no session iterator is active."""

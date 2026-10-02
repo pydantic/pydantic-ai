@@ -102,6 +102,7 @@ from ._openai_protocol import (
     realtime_websocket_url,
     tool_choice_config,
 )
+from ._openai_webrtc import HANG_UP_MAX_RETRIES, HANG_UP_TIMEOUT, ignore_ended_call
 from ._utils import DEFAULT_MAX_RECONNECTS, inject_trace_context, reconnect_with_backoff, resolve_advertised_tools
 from .codec import (
     AudioDelta,
@@ -1716,6 +1717,15 @@ class OpenAILiveModel(RealtimeModel):
             session=WebRTCSession(provider_name=self.system, session_id=created.session.id),
         )
 
+    def _check_hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_webrtc_session_provider(session)
+
+    async def hang_up(self, session: RealtimeProviderSession) -> None:
+        self._check_hang_up(session)
+        client = self.client.with_options(timeout=HANG_UP_TIMEOUT, max_retries=HANG_UP_MAX_RETRIES)
+        with ignore_ended_call('session_id_not_found'), map_openai_api_errors(self.model_name):
+            await client.live.sessions.hangup(session.session_id)
+
     @asynccontextmanager
     async def connect_webrtc(
         self,
@@ -1731,12 +1741,7 @@ class OpenAILiveModel(RealtimeModel):
         only runs it: it executes the backend's tool calls and records the conversation, while the browser
         holds the audio. For the same reason it can't be seeded with `message_history`.
         """
-        if session.provider_name != self.system:
-            raise UserError(
-                f'This WebRTC call was negotiated by provider {session.provider_name!r}, but this realtime '
-                f'model connects through {self.system!r}. Answer the offer and attach the sideband with the '
-                'same model/provider.'
-            )
+        self._check_webrtc_session_provider(session)
         if seed_input_items(messages, provider_name=self.system):
             raise UserError(
                 'An OpenAI GPT-Live session takes its history when it starts, so a WebRTC sideband attaching to '

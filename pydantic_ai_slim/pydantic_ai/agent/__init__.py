@@ -4086,6 +4086,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                     model=resolved.model,
                     tool_manager=resolved.tool_manager,
                     owns_media=owns_media,
+                    provider_session=provider_session,
                     instrumentation=resolved.instrumentation_settings,
                     # Fall back to 'agent' like the classic run span (see `capabilities/instrumentation.py`)
                     # so the session span always carries an `agent_name`; backends that group runs by it
