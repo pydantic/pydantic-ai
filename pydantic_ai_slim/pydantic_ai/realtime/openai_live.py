@@ -1096,7 +1096,7 @@ class OpenAILiveConnection(RealtimeConnection):
         if reason in _NORMAL_CLOSE_REASONS:
             return events
         events.extend(self._settle_open_turns(interrupted=True))
-        if event.reason in _RECONNECTABLE_CLOSE_REASONS and self._can_reconnect:
+        if reason in _RECONNECTABLE_CLOSE_REASONS and self._can_reconnect:
             # Not the end of the call: the reconnect policy re-opens the session once the socket closes.
             self._redial_on_close = True
             return events
