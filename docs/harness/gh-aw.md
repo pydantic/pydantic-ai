@@ -47,10 +47,11 @@ import-based engine like this one, so it is not part of the configuration below.
 - The [`gh` CLI](https://cli.github.com), authenticated with the `repo` and `workflow`
   scopes: `gh auth login --scopes repo,workflow`.
 - The gh-aw extension: `gh extension install github/gh-aw`. Append `@vX.Y.Z` to pin it.
-- gh-aw runtime v0.86.3 or newer. The engine definition needs
-  `deriveBaseUrlFromModelsURL`, which
-  [v0.86.3](https://github.com/github/gh-aw/releases/tag/v0.86.3) is the first release to
-  export. An older pin in an already committed lockfile stays in force until you recompile.
+- gh-aw v0.89.0 or newer, for both the extension and the runtime it pins. The engine
+  definition declares `detection-engine`, which
+  [v0.89.0](https://github.com/github/gh-aw/releases/tag/v0.89.0) is the first release to
+  accept; older compilers reject the definition. An older pin in an already committed
+  lockfile stays in force until you recompile.
 - Linux runners. gh-aw's sandbox needs Linux and Docker, so the `macos-*` and `windows-*`
   runner labels are
   [not supported](https://github.github.com/gh-aw/reference/frontmatter/).
@@ -296,10 +297,11 @@ Key by key:
   the form its [templating reference](https://github.github.com/gh-aw/reference/templating/)
   documents for prompts (`.title` and `.body` expose the two halves separately).
 
-The compile error you get from a missing `imports:` line carries a tip naming
-`github/gh-aw/.github/workflows/shared/pydantic.md@<version>`. That is gh-aw's own older
-copy of the definition. Ignore it and write the `pydantic/pydantic-ai` line above;
-the definition in this repository is the one that is maintained.
+The compile error you get from a missing `imports:` line carries a tip naming an import
+path. Depending on the gh-aw release, that path can be gh-aw's own former copy of the
+definition or the archived `pydantic/pydantic-ai-harness` repository. Write the
+`pydantic/pydantic-ai` line above either way: the definition in this repository is the one
+that is maintained.
 
 **Freezing the definition.** `@main` is re-resolved on every compile, so a change to the
 definition reaches you the next time you run `gh aw compile`. To hold a fixed version,
@@ -383,7 +385,8 @@ reads:
 | `openai/...` | `CODEX_API_KEY`, or `OPENAI_API_KEY` when `CODEX_API_KEY` is unset |
 | `codex/...` | `CODEX_API_KEY`, or `OPENAI_API_KEY` when `CODEX_API_KEY` is unset |
 
-Only the secret for the provider you use needs setting. The workflow above uses
+Only the secret for the provider you use needs setting, plus whichever one
+[threat detection](#threat-detection) reads. The workflow above uses
 `openai/gpt-5`, so it needs `CODEX_API_KEY` or, when that is unset, `OPENAI_API_KEY`. The
 examples below set `OPENAI_API_KEY`.
 
@@ -426,6 +429,24 @@ keyed endpoint of your own, point `PAI_BASE_URL` at a gateway you run that holds
 the engine's
 [README](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/gh-aw/README.md)
 covers that path.
+
+### Threat detection
+
+With safe outputs declared, gh-aw runs a
+[threat-detection job](https://github.github.com/gh-aw/reference/threat-detection/) over the
+agent's output before applying it. That job runs only on gh-aw's built-in engines, and the
+definition picks `copilot`, so detection reads `COPILOT_GITHUB_TOKEN` even when the agent
+uses another provider. A workflow without that secret points detection at the built-in
+engine whose key it already has, `codex` for `openai/` and `codex/` models and `claude` for
+`anthropic/` ones, or sets `false` to skip the AI analysis. The workflow above has an
+OpenAI key, so it would add:
+
+```yaml
+safe-outputs:
+  add-comment:
+  threat-detection:
+    engine: codex
+```
 
 ## Repository settings
 
