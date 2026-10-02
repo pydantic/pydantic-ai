@@ -51,6 +51,14 @@ Content-less speech parts are skipped because they carry no replayable content. 
 raises [`UserError`][pydantic_ai.exceptions.UserError] instead of being silently dropped. Video,
 documents, uploaded-file references, and model-generated files cannot be seeded.
 
+!!! warning "Seeded history is trusted"
+    As in a standard run, `message_history` is treated as trusted server-side state: its system
+    prompts become session instructions, and its image URLs are downloaded by your server
+    according to the [download settings](../input.md#user-side-download-vs-direct-file-url) each URL
+    carries. If the history came from a browser or another untrusted client, pass it through
+    [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] before seeding the session; see
+    [Loading untrusted history](../message-history.md#loading-untrusted-history).
+
 Speech transcripts are preferred over retained audio. Where no transcript exists, retained user
 audio is replayed on models whose profile sets `supports_seeding_audio`, as long as it was recorded
 at the model's input sample rate. Assistant speech always needs a transcript for seeding. Check

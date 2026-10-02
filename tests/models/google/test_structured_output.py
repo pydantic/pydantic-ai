@@ -19,7 +19,7 @@ import pytest
 from pydantic import BaseModel
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import NativeTool
+from pydantic_ai.capabilities import ImageGeneration, NativeTool
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelRequest,
@@ -36,10 +36,11 @@ from pydantic_ai.output import NativeOutput, ToolOutput
 from pydantic_ai.usage import RequestUsage
 
 from ..._inline_snapshot import snapshot
-from ...conftest import IsDatetime, IsStr, try_import
+from ...conftest import IsDatetime, IsStr, RequestCapture, try_import
 
 with try_import() as imports_successful:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
 
 if TYPE_CHECKING:
     GoogleModelFactory = Callable[..., GoogleModel]
@@ -97,9 +98,13 @@ async def test_function_tools_with_builtin_tools_unsupported(
         await agent.run('What is the largest city in the user country?')
 
 
-async def test_tool_output_with_builtin_tools_unsupported(allow_model_requests: None, google_model: GoogleModelFactory):
+@pytest.mark.parametrize('optional', [False, True])
+async def test_tool_output_with_builtin_tools_unsupported(
+    allow_model_requests: None, google_model: GoogleModelFactory, optional: bool
+):
+    """A supported native tool goes on the wire even when optional, so it counts against output tools."""
     m = google_model('gemini-2.5-flash')
-    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebSearchTool())])
+    agent = Agent(m, output_type=ToolOutput(CityLocation), capabilities=[NativeTool(WebSearchTool(optional=optional))])
 
     with pytest.raises(
         UserError,
@@ -1153,5 +1158,58 @@ async def test_auto_output_mode_with_builtin_tools_falls_back(
                 run_id=IsStr(),
                 conversation_id=IsStr(),
             ),
+        ]
+    )
+
+
+async def test_google_image_generation_local_fallback_with_tool_output(
+    allow_model_requests: None, gemini_api_key: str, request_capture: RequestCapture
+):
+    """A swapped-out native tool doesn't count against output tools on a model without tool combination."""
+
+    class Axolotl(BaseModel):
+        color: str
+
+    provider = GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=30))
+    model = GoogleModel('gemini-2.5-flash', provider=provider)
+    assert model.profile.get('google_supports_tool_combination') is False
+
+    prompts: list[str] = []
+
+    def generate_image(prompt: str) -> str:
+        """Generate an image from a text prompt."""
+        prompts.append(prompt)
+        return 'The image of a pink axolotl was generated and shown to the user.'
+
+    agent = Agent(model, output_type=ToolOutput(Axolotl), capabilities=[ImageGeneration(local=generate_image)])
+    result = await agent.run('Generate an image of an axolotl, then report its color.')
+
+    assert prompts == snapshot(['an axolotl'])
+    assert result.output == snapshot(Axolotl(color='pink'))
+    assert request_capture.body(':generateContent')['tools'] == snapshot(
+        [
+            {
+                'functionDeclarations': [
+                    {
+                        'description': 'Generate an image from a text prompt.',
+                        'name': 'generate_image',
+                        'parameters_json_schema': {
+                            'additionalProperties': False,
+                            'properties': {'prompt': {'type': 'string'}},
+                            'required': ['prompt'],
+                            'type': 'object',
+                        },
+                    },
+                    {
+                        'description': 'The final response which ends this conversation',
+                        'name': 'final_result',
+                        'parameters_json_schema': {
+                            'properties': {'color': {'type': 'string'}},
+                            'required': ['color'],
+                            'type': 'object',
+                        },
+                    },
+                ]
+            }
         ]
     )
