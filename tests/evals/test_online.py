@@ -5,12 +5,16 @@ from __future__ import annotations as _annotations
 import asyncio
 import inspect
 import random
+import subprocess
+import sys
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import anyio
+import anyio.from_thread
+import anyio.to_thread
 import pytest
 
 from ..conftest import try_import
@@ -2446,3 +2450,20 @@ async def test_baggage_disabled_via_config(capfire: CaptureLogfire):
 
     attrs = dict(capfire.log_exporter.get_finished_logs()[0].log_record.attributes or {})
     assert 'tenant' not in attrs
+
+
+async def test_loop_callback_from_a_thread_is_asyncio():
+    """`anyio.from_thread.run_sync` runs on the loop but outside any asyncio task; `dispatch_async` must still use asyncio."""
+    assert await anyio.to_thread.run_sync(anyio.from_thread.run_sync, _online.running_on_asyncio)
+
+
+async def test_without_sniffio_a_running_asyncio_loop_decides(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(_online, '_sniffio', None)
+    assert _online.running_on_asyncio()
+    assert not await anyio.to_thread.run_sync(_online.running_on_asyncio)
+
+
+def test_imports_without_sniffio():
+    """Nothing `pydantic-evals` declares installs `sniffio`, so a clean install has none."""
+    code = "import sys; sys.modules['sniffio'] = None\nimport pydantic_evals.online, pydantic_evals.online_capability\n"
+    subprocess.run([sys.executable, '-c', code], check=True)

@@ -13,6 +13,12 @@ import anyio
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import WorkspaceCommand, WorkspaceTimeoutError
 
+# Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
+try:
+    import sniffio as _sniffio
+except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
+    _sniffio = None
+
 
 def safe_credential_reason(error: Exception) -> str:
     """Classify a provider credential rejection without copying its possibly secret-bearing text."""
@@ -28,14 +34,22 @@ def safe_credential_reason(error: Exception) -> str:
 
 
 def running_on_asyncio() -> bool:
-    """Whether the calling task is an asyncio task rather than a Trio one.
+    """Whether the caller runs on asyncio rather than Trio.
 
-    A running asyncio loop is not enough: Trio guest mode and `trio-asyncio` run Trio tasks on a thread whose
-    asyncio loop is running. Not `sniffio`: the harness does not depend on it, and AnyIO stopped installing it in 4.12.
+    Inspired by AnyIO's private `current_async_library`. With `sniffio` installed, ask it: Trio records itself
+    there, so the answer holds even for Trio guest mode on an asyncio loop. Without it, Trio cannot be running,
+    because Trio depends on `sniffio`, so a running asyncio loop means asyncio. If Trio ever drops `sniffio`,
+    only guest mode would be misread, as AnyIO would misread it too.
     """
+    if _sniffio is None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
     try:
-        return asyncio.current_task() is not None
-    except RuntimeError:
+        return _sniffio.current_async_library() == 'asyncio'
+    except _sniffio.AsyncLibraryNotFoundError:
         return False
 
 

@@ -23,6 +23,12 @@ from .evaluators._run_evaluator import run_evaluator
 from .evaluators.context import EvaluatorContext
 from .evaluators.evaluator import EvaluationResult, Evaluator, EvaluatorFailure
 
+# Optional, not a dependency: it used to arrive only transitively, and AnyIO dropped it in 4.12.
+try:
+    import sniffio as _sniffio
+except ModuleNotFoundError:  # pragma: no cover - exercised by the clean-import test in a subprocess
+    _sniffio = None
+
 if TYPE_CHECKING:
     # Imported only for type annotations; `online` imports from this module at runtime.
     from .online import OnlineEvalConfig, OnlineEvaluator, SpanReference
@@ -135,15 +141,28 @@ def _remove_background_task(task: asyncio.Task[Any]) -> None:
         _background_tasks.discard(task)
 
 
-def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
-    # Outside an asyncio task, AnyIO is on Trio, even when Trio's guest mode runs on an asyncio loop.
-    # Not `sniffio`: this package does not depend on it, and AnyIO stopped installing it in 4.12.
-    try:
-        on_asyncio = asyncio.current_task() is not None
-    except RuntimeError:  # pragma: no cover
-        on_asyncio = False
+def running_on_asyncio() -> bool:
+    """Whether the caller runs on asyncio rather than Trio.
 
-    if not on_asyncio:  # pragma: no cover
+    Inspired by AnyIO's private `current_async_library`. With `sniffio` installed, ask it: Trio records itself
+    there, so the answer holds even for Trio guest mode on an asyncio loop. Without it, Trio cannot be running,
+    because Trio depends on `sniffio`, so a running asyncio loop means asyncio. If Trio ever drops `sniffio`,
+    only guest mode would be misread, as AnyIO would misread it too.
+    """
+    if _sniffio is None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        return True
+    try:
+        return _sniffio.current_async_library() == 'asyncio'
+    except _sniffio.AsyncLibraryNotFoundError:
+        return False
+
+
+def dispatch_async(coro: Coroutine[Any, Any, None]) -> None:
+    if not running_on_asyncio():  # pragma: no cover
         import trio.lowlevel
 
         done_event = anyio.Event()
