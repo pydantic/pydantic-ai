@@ -92,19 +92,14 @@ def _overrides_get_workspace(leaf: AbstractCapability[DepsT], *, include_dynamic
 class _LocalFallback(LocalWorkspace[DepsT]):
     """The session directory, for a run whose capability functions turn out to supply no workspace.
 
-    Core selects a workspace before `for_run` and rejects one that `for_run` changes, so this declines until
-    the capability functions have run, then defers to any workspace they supplied.
+    Returned from a capability function itself, so core asks it only after the run's capability functions
+    have resolved, alongside whatever workspace they supplied, which it defers to.
     """
 
-    resolved: bool = False
     _asking: bool = field(default=False, init=False, repr=False)
 
-    async def for_run(self, ctx: RunContext[DepsT]) -> AbstractCapability[DepsT]:
-        # A fresh instance also tells core the tree changed in `for_run`, so it selects again afterwards.
-        return replace(self, resolved=True)
-
     def get_workspace(self, ctx: RunContext[DepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
-        if not self.resolved or self._asking:
+        if self._asking:
             return None
         assert ctx.root_capability is not None, 'core sets the root capability before selecting a workspace'
         # Ask the resolved tree itself, so a provider of any shape (a group, a wrapper) is found; this
@@ -368,11 +363,12 @@ class Session(Generic[DepsT, OutputT]):
                     workspace: Literal['new'] | None = None
                     configured = [*_agent_capabilities(self.agent), *self.plugins]
                     if _supports_local_workspace() and not _supplies_workspace(configured, include_dynamic=False):
-                        capabilities.append(
-                            _LocalFallback[DepsT](self.workspace, env=_command_env(), id=None)
-                            if _supplies_workspace(configured)
-                            else LocalWorkspace[DepsT](self.workspace, env=_command_env())
-                        )
+                        if _supplies_workspace(configured):
+                            # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
+                            fallback = _LocalFallback[DepsT](self.workspace, env=_command_env(), id=None)
+                            capabilities.append(DynamicCapability[DepsT](lambda ctx: fallback))
+                        else:
+                            capabilities.append(LocalWorkspace[DepsT](self.workspace, env=_command_env()))
                         if _stale_local_workspace(previous, self.workspace):
                             # A conversation resumed from another directory: work in this session's.
                             workspace = 'new'
