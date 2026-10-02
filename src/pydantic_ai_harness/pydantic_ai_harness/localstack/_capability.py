@@ -112,7 +112,7 @@ class LocalStack(AbstractCapability[AgentDepsT]):
 
     _: KW_ONLY
     id: str | None = 'localstack'
-    """Stable identity for durable execution, which records each command's output under it."""
+    """Stable identity for durable execution, which records commands against an external instance under it."""
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
