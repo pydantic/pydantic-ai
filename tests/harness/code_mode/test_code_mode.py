@@ -76,8 +76,8 @@ from pydantic_ai_harness.code_mode._capability import (
 )
 from pydantic_ai_harness.code_mode._toolset import (
     _SEARCH_TOOLS_MODIFIER,  # pyright: ignore[reportPrivateUsage]
-    _TOOL_SEARCH_ADDENDUM,  # pyright: ignore[reportPrivateUsage]
     _sanitize_tool_name,  # pyright: ignore[reportPrivateUsage]
+    _tool_search_addendum,  # pyright: ignore[reportPrivateUsage]
     global_mode_is_sequential,
 )
 from pydantic_ai_harness.tool_output_limits import LocalFileStore
@@ -3223,7 +3223,19 @@ class TestToolSearchIntegration:
 
         run_code_desc = tools['run_code'].tool_def.description
         assert run_code_desc is not None
-        assert _TOOL_SEARCH_ADDENDUM.strip() in run_code_desc
+        assert _tool_search_addendum(_SEARCH_TOOLS_NAME).strip() in run_code_desc
+
+    async def test_renamed_search_tool_is_found_by_kind(self) -> None:
+        """A prefixed search tool is recognized by its `tool_kind`, and the note uses its name."""
+        toolset = _StaticToolset([_search_tool_def(name='mcp_search_tools')])
+        code_mode = CodeModeToolset(wrapped=toolset, tool_selector='all')
+        tools = await code_mode.get_tools(build_run_context(None))
+
+        search_desc = tools['mcp_search_tools'].tool_def.description
+        assert search_desc is not None and search_desc.endswith(_SEARCH_TOOLS_MODIFIER)
+        run_code_desc = tools['run_code'].tool_def.description
+        assert run_code_desc is not None
+        assert _tool_search_addendum('mcp_search_tools').strip() in run_code_desc
 
     async def test_run_code_description_no_search_note_without_search_tools(self) -> None:
         """run_code description does NOT include search addendum when no search_tools."""
@@ -3264,7 +3276,7 @@ class TestToolSearchIntegration:
         assert tools['later'].tool_def.defer_loading is True
         # search_tools is the discovery surface and stays native alongside run_code.
         assert _SEARCH_TOOLS_NAME in tools
-        assert _TOOL_SEARCH_ADDENDUM.strip() in description
+        assert _tool_search_addendum(_SEARCH_TOOLS_NAME).strip() in description
 
     async def test_tool_search_toolset_discovered_tool_in_run_code(self) -> None:
         """End-to-end: once `search_tools` has discovered the deferred tool, it folds into `run_code`."""
@@ -3423,7 +3435,7 @@ class TestDynamicCatalog:
 
         description = tools['run_code'].tool_def.description
         assert description is not None
-        assert _TOOL_SEARCH_ADDENDUM.strip() in description
+        assert _tool_search_addendum(_SEARCH_TOOLS_NAME).strip() in description
 
     async def test_for_run_step_preserves_catalog_stash(self) -> None:
         """A per-step rebuild must carry `_last_catalog` so instructions stay populated."""
@@ -4149,7 +4161,7 @@ class TestCodeModeOSAccess:
         assert wrapper.mount is mount
 
 
-def _search_tool_def(description: str = 'Search for tools.') -> ToolDefinition:
+def _search_tool_def(description: str = 'Search for tools.', name: str = _SEARCH_TOOLS_NAME) -> ToolDefinition:
     """Create a ToolDefinition mimicking the search_tools tool from ToolSearchToolset.
 
     Carries `tool_kind='tool-search'`, matching what pydantic-ai emits (since 1.95.0);
@@ -4157,7 +4169,7 @@ def _search_tool_def(description: str = 'Search for tools.') -> ToolDefinition:
     """
 
     return ToolDefinition(
-        name=_SEARCH_TOOLS_NAME,
+        name=name,
         description=description,
         parameters_json_schema={'type': 'object', 'properties': {'keywords': {'type': 'string'}}},
         tool_kind='tool-search',
