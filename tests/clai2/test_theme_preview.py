@@ -11,8 +11,9 @@ from termflow.themes import PALETTES
 
 from pydantic_ai import PartStartEvent, TextPart
 from pydantic_ai_harness.filesystem import FileEditedEvent
-from pydantic_clai2 import StreamRenderer, theme
-from pydantic_clai2.theme_picker import theme_preview
+from pydantic_clai2 import StreamRenderer
+from pydantic_clai2.ui.menus.theme_picker import theme_preview
+from pydantic_clai2.ui.rendering import theme
 
 
 @pytest.mark.parametrize('name', theme.names())

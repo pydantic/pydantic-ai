@@ -16,9 +16,8 @@ from keyring.errors import KeyringError
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 
 from pydantic_ai.exceptions import UserError
-
-from ..credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
-from ._settings import RemoteServer
+from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.mcp._settings import RemoteServer
 
 _TOKENS = 'mcp-oauth-token'
 """The collection FastMCP keeps access and refresh tokens in."""

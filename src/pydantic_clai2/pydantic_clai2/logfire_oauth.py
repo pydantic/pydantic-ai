@@ -35,10 +35,9 @@ from pydantic import (
 )
 
 from pydantic_ai.exceptions import UserError
-
-from .credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
-from .mcp import http_client
-from .tool_output import terminal_text
+from pydantic_clai2.config.credential_store import delete_credentials, load_codex_credentials, save_codex_credentials
+from pydantic_clai2.mcp import http_client
+from pydantic_clai2.ui.rendering.tool_output import terminal_text
 
 ACCOUNT = 'logfire-oauth'
 """The credential account holding Logfire sign-ins, one per MCP URL."""

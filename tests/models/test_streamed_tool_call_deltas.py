@@ -306,6 +306,7 @@ CASES = [
                     provider_url='https://api.openai.com/v1',
                     provider_details={'timestamp': IsDatetime()},
                     provider_response_id='123',
+                    finish_reason='stop',
                     run_id=IsStr(),
                     conversation_id=IsStr(),
                 ),

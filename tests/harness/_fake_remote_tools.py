@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -72,9 +73,14 @@ class FakeRemoteTools:
 
 
 def install_fake_remote_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeRemoteTools:
-    """Put fake `ssh` and `bwrap` first on `PATH`, and point `HOME` (the fake remote login directory) at a new directory."""
-    bin_dir = tmp_path / 'fake-bin'
-    home = tmp_path / 'fake-home'
+    """Put fake `ssh` and `bwrap` first on `PATH`, and point `HOME` (the fake remote login directory) at a new directory.
+
+    Both live beside `tmp_path`, not inside it. A sandbox whose working directory is `tmp_path` must not
+    see its own launcher or `~/.ssh` as writable paths it is responsible for protecting.
+    """
+    root = Path(tempfile.mkdtemp(prefix=f'fake-remote-{tmp_path.name}-', dir=str(tmp_path.parent)))
+    bin_dir = root / 'fake-bin'
+    home = root / 'fake-home'
     bin_dir.mkdir()
     home.mkdir()
     for name, script in (('ssh', _FAKE_SSH), ('bwrap', _FAKE_BWRAP)):
