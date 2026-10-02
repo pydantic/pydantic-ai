@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     RealtimeInputSpeechEndEvent,
     RealtimeInputSpeechStartEvent,
     RealtimeInputTranscriptionErrorEvent,
+    RealtimeSessionReconnectEvent,
     SpeechPart,
     TextPart,
     ToolCallPart,
@@ -597,3 +598,18 @@ def test_a_new_call_whose_id_matches_a_replayed_item_is_recorded() -> None:
         ended('r1'),
     )
     assert summary(session_core.all_messages()) == snapshot(['r1 [call:shared] complete stop'])
+
+
+def test_a_turn_still_spoken_when_the_connection_is_replaced_is_over() -> None:
+    """xAI added it at speech start; the speech end was lost with the old connection, and the new one won't hear it."""
+    session_core = feed(
+        core(input_transcription_enabled=False),
+        RealtimeInputSpeechStartEvent(item_id='u1'),
+        UserTurnStarted(turn_id='u1'),
+        UserTurnEnded(turn_id='u1', still_speaking=True),
+        RealtimeSessionReconnectEvent(state_restored=True),
+        started('r1'),
+        said('r1', 'Hm.'),
+        ended('r1'),
+    )
+    assert summary(session_core.all_messages()) == snapshot(['{user:None}', 'r1 [assistant:Hm.] complete stop'])
