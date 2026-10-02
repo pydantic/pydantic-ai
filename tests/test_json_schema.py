@@ -701,7 +701,9 @@ def test_inline_defs_recursive_json_pointer_ref_raises(schema: dict[str, Any], r
         InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
 
 
-@pytest.mark.parametrize('ref', ['#/properties/missing', '#/required/9', '#/required/0', '#/$defs/Missing'])
+@pytest.mark.parametrize(
+    'ref', ['#/properties/missing', '#/required/9', '#/required/01', '#/required/²', '#/required/0', '#/$defs/Missing']
+)
 def test_inline_defs_dangling_ref_raises(ref: str):
     """A `$ref` that resolves to no schema object raises rather than inlining something else.
 
