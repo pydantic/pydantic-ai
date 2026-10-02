@@ -402,6 +402,9 @@ class AzureRealtimeModel(OpenAIRealtimeModel):
     """
 
     _connection_type: ClassVar[type[OpenAIRealtimeConnection]] = AzureRealtimeConnection
+    # Azure resolves it against the resource's deployments, so `'auto'` names the deployment our docs tell
+    # users to create; changing it would break every resource deployed for the old name.
+    _auto_transcription_model: ClassVar[str] = 'gpt-realtime-whisper'
     credential: AzureTokenCredential | None = None
 
     def __init__(
