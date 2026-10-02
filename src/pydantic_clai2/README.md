@@ -1461,8 +1461,9 @@ While the model writes:
 
 - **Eager execution** runs each complete statement as soon as it has streamed,
   so a slow `shell` build or test starts before the snippet is finished.
-- **Speculation** starts `list_files`, `read_file`, `grep`, `rank_relevance`,
-  and `read_clai_customization_guide` calls whose arguments are all literals the
+- **Speculation** starts `list_files`, `read_file`, `grep`,
+  `read_clai_customization_guide`, and (with a local model only)
+  `rank_relevance` calls whose arguments are all literals the
   moment their line has streamed. Only these
   read-only tools speculate, because an early call may belong to a branch the
   snippet never takes. They must come from CLAI's own file tools and guide: a

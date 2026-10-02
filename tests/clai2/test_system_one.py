@@ -1,8 +1,9 @@
 """The `system_one` plugin: a speculation-only `rank_relevance` tool over the SystemOne decisions API."""
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
+import anyio
 import httpx2
 import pytest
 from pydantic import SecretStr
@@ -11,7 +12,7 @@ from rich.console import Console
 from pydantic_ai import Agent, ModelRetry, models
 from pydantic_ai.capabilities import AbstractCapability, Hooks
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_clai2 import DEFAULT_PLUGINS
 from pydantic_clai2.builtin_plugins import system_one
 from pydantic_clai2.builtin_plugins.system_one import (
@@ -160,6 +161,53 @@ async def test_rejected_jev_key_points_at_keys(
     assert isinstance(message, str)
     assert message.startswith('Jev (jev-latest at https://api.typesafe.ai) failed')
     assert f'check the {JEV_KEY} key saved in /keys' in message
+
+
+@pytest.mark.parametrize(
+    ('jev_key', 'ollama_url', 'launches'),
+    [
+        pytest.param(None, 'http://localhost:11434', 1, id='local-nimble'),
+        pytest.param('jev-secret', 'http://localhost:11434', 0, id='jev'),
+        pytest.param(None, 'http://gpu-box:11434', 0, id='remote-ollama'),
+    ],
+)
+async def test_speculates_only_with_a_local_model(
+    requests: Callable[[Handler], list[httpx2.Request]],
+    monkeypatch: pytest.MonkeyPatch,
+    jev_key: str | None,
+    ollama_url: str,
+    launches: int,
+) -> None:
+    """A launch for an untaken branch must not send text to a remote API or spend its quota."""
+    pytest.importorskip('pydantic_monty')
+    from pydantic_clai2.runtime.speculation import SpeculationCounters
+    from pydantic_clai2.runtime.speculative_mode import speculative_capabilities
+
+    if jev_key is not None:
+        monkeypatch.setattr(system_one, 'load_keys', lambda: {JEV_KEY: SecretStr(jev_key)})
+    requests(answer)
+    snippet = 'if False:\n    await rank_relevance(question="q?", candidates={"a": "retry"})\n'
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) > 1:
+            yield 'done'
+            return
+        args = json.dumps({'code': snippet})
+        yield {0: DeltaToolCall(name='run_code')}
+        for offset in range(0, len(args), 8):
+            yield {0: DeltaToolCall(json_args=args[offset : offset + 8])}
+            await anyio.sleep(0)
+
+    counters = SpeculationCounters()
+    context = SystemOneContext[None](settings=SystemOneSettings(ollama_url=ollama_url))
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        deps_type=type(None),
+        capabilities=[context, *speculative_capabilities(counters, [context])],
+    )
+    with anyio.fail_after(10):
+        await agent.run('go')
+    assert (counters.hits, counters.wasted) == (0, launches)
 
 
 async def test_candidate_limits() -> None:

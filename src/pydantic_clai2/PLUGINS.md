@@ -330,8 +330,10 @@ only does something while speculative execution is on. Then it adds a
 model to use it when gathering context. It sends a yes/no question and each
 candidate text to a decision model, and returns each candidate's probability of
 yes, most relevant first. The model ranks grep hits or files this way, then reads
-only the best ones. `rank_relevance` is read-only, so the sandbox may start it
-speculatively, like `read_file` and `grep`.
+only the best ones. With a model on this machine (Ollama at a loopback URL), the
+sandbox may start `rank_relevance` speculatively, like `read_file` and `grep`.
+With Jev or a remote Ollama it waits for the snippet to reach it, so a branch the
+snippet never takes sends no text and spends no quota.
 
 It uses core `SystemOneModel` over the `/v1/systemone` API, picking a backend on
 every call:

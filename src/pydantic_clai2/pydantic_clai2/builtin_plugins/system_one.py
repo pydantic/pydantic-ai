@@ -1,17 +1,19 @@
 """Rank candidate context with a fast SystemOne decision model: TypeSafe's Jev, or Nimble on Ollama.
 
 The built-in `system_one` plugin. While speculative execution is on, it adds `rank_relevance`, a
-read-only tool the `run_code` sandbox may start speculatively, and guidance to gather context with
-it. Jev answers when a key named `JEV_API_KEY` is saved in `/keys` (or set in the environment);
+read-only tool, and guidance to gather context with it. The `run_code` sandbox may start it
+speculatively only while its model runs on this machine: a launch for a branch the snippet never
+takes must not send text to a remote API or spend its quota. Jev answers when a key named `JEV_API_KEY` is saved in `/keys` (or set in the environment);
 otherwise Nimble on a local Ollama does (`ollama pull nimble`). Both speak the `/v1/systemone` API
 through core `SystemOneModel`.
 """
 
 import os
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import anyio
 from anyio import to_thread
@@ -33,6 +35,7 @@ MAX_CANDIDATES = 64
 MAX_CHARS = 12_000
 """Per-candidate text cap, well under Ollama's 64 KiB request and Jev's 32k-token state."""
 _CONCURRENCY = 4
+_LOOPBACK = frozenset({'localhost', '127.0.0.1', '::1'})
 
 GUIDANCE = """\
 SystemOne decision models (TypeSafe's Jev, or Nimble on a local Ollama) are available for
@@ -76,6 +79,11 @@ class Backend:
     url: str
     model: str
     api_key: str | None = None
+
+    @property
+    def local(self) -> bool:
+        """Whether requests stay on this machine, so a discarded speculative launch discloses nothing."""
+        return urlsplit(self.url).hostname in _LOOPBACK
 
 
 def backend(settings: SystemOneSettings) -> Backend:
@@ -135,10 +143,6 @@ async def score(chosen: Backend, question: str, candidates: dict[str, str]) -> d
     return failures[0] if failures else scores
 
 
-async def _when_speculating(ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
-    return tool_def if speculating(ctx) else None
-
-
 @dataclass
 class SystemOneContext(AbstractCapability[AgentDepsT]):
     """`rank_relevance` and its guidance, offered only on runs with speculative execution on."""
@@ -147,7 +151,14 @@ class SystemOneContext(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> FunctionToolset[AgentDepsT]:
         """The one read-only tool, hidden on runs without the speculative sandbox."""
-        return FunctionToolset[AgentDepsT]([Tool(self.rank_relevance, prepare=_when_speculating)])
+        return FunctionToolset[AgentDepsT]([Tool(self.rank_relevance, prepare=self._prepare)])
+
+    async def _prepare(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> ToolDefinition | None:
+        """Offer the tool only beside the sandbox, and let it speculate only with a local model."""
+        if not speculating(ctx):
+            return None
+        chosen = await to_thread.run_sync(partial(backend, self.settings))
+        return replace(tool_def, metadata={**(tool_def.metadata or {}), 'read_only': chosen.local})
 
     def get_instructions(self) -> Callable[[RunContext[AgentDepsT]], str]:
         """Encourage ranking candidates with a decision model, only when the tool is offered."""
