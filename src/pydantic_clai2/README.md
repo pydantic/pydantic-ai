@@ -172,8 +172,9 @@ command and returns to the prompt. On POSIX the command runs in its own session,
 so CLAI forwards the Ctrl-C to its process group, and 0.25 seconds later (as
 `subprocess.run` waits) kills whatever is still running there, including
 background jobs and programs that ignore Ctrl-C. Only a process that detaches
-on purpose with `setsid()`, as daemons do, outlives the command. Without a
-controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
+on purpose with `setsid()`, as daemons do, outlives the command. Detached jobs
+should redirect stdout and stderr: CLAI stops collecting their output after the
+shell exits. Without a controlling terminal, programs that prompt through `/dev/tty`, such as `sudo`
 or `ssh` password prompts, cannot read your input. On Windows the console
 delivers the Ctrl-C, and `taskkill` then ends the command's process tree. As at other times, a second Ctrl-C within two seconds exits
 CLAI. The command, stdout, stderr, and completion status are saved in the

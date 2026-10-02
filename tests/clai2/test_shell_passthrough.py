@@ -8,6 +8,7 @@ import shlex
 import signal
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import anyio
@@ -21,6 +22,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_clai2 import chat
 from pydantic_clai2.cli.shell_passthrough import (
+    _ShellOutput,  # pyright: ignore[reportPrivateUsage]
     _taskkill_path,  # pyright: ignore[reportPrivateUsage]
     run_shell_command,
     shell_command,
@@ -105,36 +107,39 @@ class TestShellPassthrough:
     async def test_ctrl_c_during_process_spawn(self, monkeypatch: pytest.MonkeyPatch) -> None:
         spawn_started = asyncio.Event()
         release_spawn = asyncio.Event()
-        wait_calls = 0
         cleanup_calls: list[str] = []
 
-        class Process:
-            def __init__(self) -> None:
-                self.stdout = asyncio.StreamReader()
-                self.stderr = asyncio.StreamReader()
-                self.stdout.feed_eof()
-                self.stderr.feed_eof()
+        class Process(asyncio.SubprocessTransport):
+            def __init__(self, output: _ShellOutput) -> None:
+                self.output = output
 
-            async def wait(self) -> int:
-                nonlocal wait_calls
-                wait_calls += 1
+            def get_returncode(self) -> int:
                 return 0
 
-        async def delayed_spawn(command: str, *, start_new_session: bool, stdout: int, stderr: int) -> Process:
+            def close(self) -> None:
+                cleanup_calls.append('close')
+                self.output.connection_lost(None)
+
+        async def delayed_spawn(
+            factory: Callable[[], _ShellOutput], command: str, **kwargs: object
+        ) -> tuple[Process, _ShellOutput]:
             assert command == 'sleep forever'
-            assert start_new_session is True
-            assert stdout == stderr == asyncio.subprocess.PIPE
+            assert kwargs['start_new_session'] is True
+            assert kwargs['stdin'] is None
+            assert kwargs['stdout'] == kwargs['stderr'] == asyncio.subprocess.PIPE
+            output = factory()
             spawn_started.set()
             await release_spawn.wait()
-            return Process()
+            return Process(output), output
 
-        def interrupt(_process: Process) -> None:
+        def interrupt(process: Process) -> None:
             cleanup_calls.append('interrupt')
+            process.output.process_exited()
 
         async def kill_process_tree(_process: Process) -> None:
             cleanup_calls.append('kill')
 
-        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.asyncio.create_subprocess_shell', delayed_spawn)
+        monkeypatch.setattr(asyncio.get_running_loop(), 'subprocess_shell', delayed_spawn)
         monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._interrupt', interrupt)
         monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough._kill_process_tree', kill_process_tree)
         output = io.StringIO()
@@ -148,8 +153,7 @@ class TestShellPassthrough:
         asyncio.get_running_loop().call_soon(release_spawn.set)
         await command
 
-        assert wait_calls == 3
-        assert cleanup_calls == ['interrupt', 'kill']
+        assert cleanup_calls == ['interrupt', 'kill', 'close']
         assert 'Interrupted (' in output.getvalue()
 
     async def test_ctrl_c_interrupts_command_not_clai(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,20 +169,29 @@ class TestShellPassthrough:
     @pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX shell process-group signalling')
     async def test_ctrl_c_is_forwarded_before_kill(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A command in its own session still gets Ctrl-C, so it can clean up before the grace kill."""
-        spawn = asyncio.create_subprocess_shell
+        loop = asyncio.get_running_loop()
+        spawn = loop.subprocess_shell
 
         async def spawn_then_ctrl_c(
-            command: str, *, start_new_session: bool, stdout: int, stderr: int
-        ) -> asyncio.subprocess.Process:
+            factory: Callable[[], asyncio.SubprocessProtocol],
+            command: str,
+            *,
+            start_new_session: bool,
+            stdin: int | None,
+            stdout: int,
+            stderr: int,
+        ) -> tuple[asyncio.SubprocessTransport, asyncio.SubprocessProtocol]:
             # Press Ctrl-C only once the spawn has returned and the shell has installed its trap.
-            process = await spawn(command, start_new_session=start_new_session, stdout=stdout, stderr=stderr)
+            process = await spawn(
+                factory, command, start_new_session=start_new_session, stdin=stdin, stdout=stdout, stderr=stderr
+            )
             with anyio.fail_after(5):
                 while not (tmp_path / 'ready').exists():
                     await anyio.sleep(0.01)  # pragma: lax no cover -- the shell may already be ready.
             os.kill(os.getpid(), signal.SIGINT)
             return process
 
-        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.asyncio.create_subprocess_shell', spawn_then_ctrl_c)
+        monkeypatch.setattr(loop, 'subprocess_shell', spawn_then_ctrl_c)
         command = "trap 'printf cleaned > cleanup.txt; exit 130' INT; : > ready; while :; do :; done"
         text = await shell_session(tmp_path, monkeypatch, [f'!{command}', '/exit'])
         assert 'Interrupted (' in text
@@ -215,10 +228,10 @@ class TestShellPassthrough:
         assert 'Interrupted (' in text
 
     async def test_spawn_failure_is_reported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        async def unavailable(command: str, **kwargs: object) -> None:
+        async def unavailable(factory: object, command: str, **kwargs: object) -> None:
             raise FileNotFoundError('no shell')
 
-        monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.asyncio.create_subprocess_shell', unavailable)
+        monkeypatch.setattr(asyncio.get_running_loop(), 'subprocess_shell', unavailable)
         text = await shell_session(tmp_path, monkeypatch, ['!ls', '/exit'])
         assert 'Shell error: no shell' in text
 
@@ -376,37 +389,77 @@ async def test_output_streams_before_exit_and_readers_are_drained(external_cance
     assert asyncio.all_tasks() == tasks_before
 
 
-async def test_decodes_split_and_invalid_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
-    streams = [asyncio.StreamReader(), asyncio.StreamReader()]
-    first_read = asyncio.Event()
-    printed = asyncio.Event()
+@pytest.mark.skipif(sys.platform == 'win32', reason='uses POSIX fork and detached sessions')
+@pytest.mark.parametrize('cancel', [False, True])
+async def test_detached_descendant_cannot_hold_output_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel: bool
+) -> None:
+    for name in list(os.environ):
+        if name.startswith('COVERAGE_'):
+            monkeypatch.delenv(name)
+    ready = asyncio.Event()
+    pid_file = tmp_path / 'detached.pid'
+    code = (
+        'import os, pathlib, time\n'
+        'reader, writer = os.pipe()\n'
+        'if os.fork() == 0:\n'
+        '    os.setsid()\n'
+        f'    pathlib.Path({str(pid_file)!r}).write_text(str(os.getpid()))\n'
+        "    print('DETACHED_READY', flush=True)\n"
+        "    os.write(writer, b'1')\n"
+        '    time.sleep(60)\n'
+        'else:\n'
+        '    os.close(writer)\n'
+        '    os.read(reader, 1)\n'
+        f'    time.sleep(60 if {cancel} else 0)\n'
+    )
 
     class Output(io.StringIO):
         def write(self, text: str) -> int:
-            if text == 'start':
-                first_read.set()
-            if '€' in text:
-                printed.set()
-            return super().write(text)
+            size = super().write(text)
+            if 'DETACHED_READY\n' in self.getvalue():
+                ready.set()
+            return size
 
-    class Process:
-        stdout, stderr = streams
+    interrupts = Interrupts()
+    tasks_before = asyncio.all_tasks()
+    task = asyncio.create_task(
+        run_shell_command(
+            f'exec {shlex.quote(sys.executable)} -c {shlex.quote(code)}',
+            console=Console(file=Output()),
+            interrupts=interrupts,
+        )
+    )
+    try:
+        with anyio.fail_after(10):
+            await ready.wait()
+        if cancel:
+            assert interrupts.cancel()
+        done, _ = await asyncio.wait({task}, timeout=10)
+        assert task in done, 'Shell waited for a detached descendant to close stdout/stderr'
+        context = task.result()
+        assert '\nstdout:\nDETACHED_READY\n' in context
+        assert ('\nInterrupted\n' if cancel else '\nExit code 0\n') in context
+        os.kill(int(pid_file.read_text()), 0)  # The detached child is still alive when the command returns.
+    finally:
+        if pid_file.exists():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert asyncio.all_tasks() == tasks_before
 
-        async def wait(self) -> int:
-            return 0
 
-    async def spawn(command: str, **kwargs: object) -> Process:
-        return Process()
-
-    monkeypatch.setattr('pydantic_clai2.cli.shell_passthrough.asyncio.create_subprocess_shell', spawn)
-    task = asyncio.create_task(run_shell_command('test', console=Console(file=Output()), interrupts=Interrupts()))
-    with anyio.fail_after(10):
-        streams[0].feed_data(b'start\xe2\x82')
-        await first_read.wait()
-        streams[0].feed_data(b'\xac')
-        await printed.wait()
-        streams[0].feed_eof()
-        streams[1].feed_data(b'\xff\xe2')
-        streams[1].feed_eof()
-        context = await task
-    assert '\nstdout:\nstart€\n\nstderr:\n��' in context
+def test_decodes_split_and_invalid_utf8() -> None:
+    # A real pipe cannot guarantee the byte boundaries delivered to its protocol.
+    console_output = io.StringIO()
+    output = _ShellOutput(console=Console(file=console_output))
+    output.pipe_data_received(1, b'start\xe2\x82')
+    assert console_output.getvalue() == 'start'
+    output.pipe_data_received(1, b'\xac')
+    output.pipe_connection_lost(1, None)
+    output.pipe_data_received(2, b'\xff\xe2')
+    output.pipe_connection_lost(2, None)
+    assert output.stdout.getvalue() == 'start€'
+    assert output.stderr.getvalue() == '��'
+    assert console_output.getvalue() == 'start€��'

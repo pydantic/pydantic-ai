@@ -14,7 +14,6 @@ import time
 from rich.console import Console
 from rich.text import Text
 
-from pydantic_ai._utils import gather
 from pydantic_clai2.ui.prompt.interrupts import Interrupts
 from pydantic_clai2.ui.rendering import theme
 
@@ -22,6 +21,37 @@ HELP = '!COMMAND: Run COMMAND with the system shell (/bin/sh, or cmd.exe on Wind
 
 # Matches `subprocess.run`: a Ctrl-C'd child gets this long to exit on its own SIGINT before it is killed.
 _INTERRUPT_GRACE = 0.25
+_OUTPUT_DRAIN_GRACE = 0.1
+
+
+class _ShellOutput(asyncio.SubprocessProtocol):
+    """Observe shell exit independently of descendants keeping its output pipes open."""
+
+    def __init__(self, *, console: Console) -> None:
+        self.console = console
+        self.stdout, self.stderr = io.StringIO(), io.StringIO()
+        self.exited, self.closed = asyncio.Event(), asyncio.Event()
+        self.needs_newline = False
+        self._decoders = {fd: codecs.getincrementaldecoder('utf-8')(errors='replace') for fd in (1, 2)}
+
+    def _write(self, fd: int, data: bytes, *, final: bool = False) -> None:
+        text = self._decoders[fd].decode(data, final=final)
+        (self.stdout if fd == 1 else self.stderr).write(text)
+        if text:
+            self.console.print(text, end='', markup=False, highlight=False, soft_wrap=True)
+            self.needs_newline = not text.endswith('\n')
+
+    def pipe_data_received(self, fd: int, data: bytes) -> None:
+        self._write(fd, data)
+
+    def pipe_connection_lost(self, fd: int, exc: Exception | None) -> None:
+        self._write(fd, b'', final=True)
+
+    def process_exited(self) -> None:
+        self.exited.set()
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        self.closed.set()
 
 
 def _taskkill_path() -> str:
@@ -29,26 +59,26 @@ def _taskkill_path() -> str:
     return ntpath.join(os.environ.get('SystemRoot', r'C:\Windows'), 'System32', 'taskkill.exe')
 
 
-def _signal_process_group(process: asyncio.subprocess.Process, signum: int) -> None:
+def _signal_process_group(process: asyncio.SubprocessTransport, signum: int) -> None:
     """Signal the shell's process group, which holds every descendant that has not left it."""
     with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signum)
+        os.killpg(process.get_pid(), signum)
 
 
-def _interrupt(process: asyncio.subprocess.Process) -> None:
+def _interrupt(process: asyncio.SubprocessTransport) -> None:
     """Forward Ctrl-C, which the terminal delivers to CLAI but not to a command in its own session."""
     if sys.platform != 'win32':  # The Windows console delivers Ctrl-C to every attached process.
         _signal_process_group(process, signal.SIGINT)
 
 
-async def _kill_process_tree(process: asyncio.subprocess.Process) -> None:
+async def _kill_process_tree(process: asyncio.SubprocessTransport) -> None:
     """Kill the shell and its descendants."""
     if sys.platform == 'win32':
         try:
             killer = await asyncio.create_subprocess_exec(
                 _taskkill_path(),
                 '/PID',
-                str(process.pid),
+                str(process.get_pid()),
                 '/T',
                 '/F',
                 stdin=subprocess.DEVNULL,
@@ -86,54 +116,45 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
     """
     console.print(Text.assemble(('$ ', theme.color(theme.ACCENT)), command))
     console.print('Shell command and output saved for the next prompt', style=theme.color(theme.MUTED))
-    stdout, stderr = io.StringIO(), io.StringIO()
+    output = _ShellOutput(console=console)
     exit_code: int | None = None
-    needs_newline = False
-
-    async def read_output(stream: asyncio.StreamReader, output: io.StringIO) -> None:
-        nonlocal needs_newline
-        decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
-        while True:
-            chunk = await stream.read(8192)
-            text = decoder.decode(chunk, final=not chunk)
-            output.write(text)
-            if text:
-                console.print(text, end='', markup=False, highlight=False, soft_wrap=True)
-                needs_newline = not text.endswith('\n')
-            if not chunk:
-                break
 
     async def execute() -> None:
+        nonlocal exit_code
         # A new POSIX session gives the command a process group to kill; `start_new_session` is
         # ignored on Windows, where `taskkill /T` follows parent PIDs and the console's Ctrl-C
         # still reaches the command.
         # A child can signal us before asyncio returns its process handle. Keep spawning shielded so we can reap it.
         spawn_task = asyncio.create_task(
-            asyncio.create_subprocess_shell(
-                command, start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            asyncio.get_running_loop().subprocess_shell(
+                lambda: output,
+                command,
+                start_new_session=True,
+                stdin=None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
         )
-
-        async def capture_output() -> None:
-            nonlocal exit_code
-            process = await spawn_task
-            assert process.stdout is not None and process.stderr is not None
-            await gather(read_output(process.stdout, stdout), read_output(process.stderr, stderr))
-            exit_code = await process.wait()
-
-        output_task = asyncio.create_task(capture_output())
+        process: asyncio.SubprocessTransport | None = None
         try:
-            await asyncio.shield(output_task)
+            process, _ = await asyncio.shield(spawn_task)
+            await output.exited.wait()
         except asyncio.CancelledError:
-            process = await spawn_task
+            process, _ = await spawn_task
             _interrupt(process)
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(process.wait(), _INTERRUPT_GRACE)
+                await asyncio.wait_for(output.exited.wait(), _INTERRUPT_GRACE)
             await _kill_process_tree(process)
-            await process.wait()
+            await output.exited.wait()
             raise
         finally:
-            await output_task
+            if process is not None:
+                # Drain final buffered output, but do not wait forever for a detached descendant's pipes.
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(output.closed.wait(), _OUTPUT_DRAIN_GRACE)
+                process.close()
+                await output.closed.wait()
+                exit_code = process.get_returncode()
 
     started = time.monotonic()
     error: str | None = None
@@ -143,7 +164,7 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
     except (OSError, ValueError) as exc:  # `ValueError`: the command text contains a NUL byte.
         error = str(exc)
     elapsed = f' ({time.monotonic() - started:.1f}s)'
-    if needs_newline:
+    if output.needs_newline:
         console.print()
     if error is not None:
         status = f'Shell error: {error}'
@@ -160,5 +181,5 @@ async def run_shell_command(command: str, *, console: Console, interrupts: Inter
     console.print()
     return (
         f'The user ran a local shell command (not an agent tool call):\n'
-        f'$ {command}\n{status}\n\nstdout:\n{stdout.getvalue()}\n\nstderr:\n{stderr.getvalue()}'
+        f'$ {command}\n{status}\n\nstdout:\n{output.stdout.getvalue()}\n\nstderr:\n{output.stderr.getvalue()}'
     )
