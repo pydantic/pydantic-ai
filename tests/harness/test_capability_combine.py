@@ -310,6 +310,7 @@ COMBINE_POLICY: dict[str, Policy] = {
         lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
     ),
     'RepoContext': Anonymous('one per workspace root'),
+    'RetryPolicy': Anonymous('independent retry wrappers; retry budgets multiply for overlapping tools'),
     'ReportContextUsage': Anonymous('a passive observer; several callbacks compose'),
     'SlidingWindowCompaction': Anonymous('composes as a tier under `TieredCompaction`'),
     'GoogleWorkspace': Anonymous('one per set of products, and `services` is what names it'),
