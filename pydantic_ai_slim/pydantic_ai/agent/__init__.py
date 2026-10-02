@@ -4360,6 +4360,13 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 # last and wins, giving its awaiter the outer run's history.
                 _run_cancelled('The agent run was cancelled by an external asyncio cancellation.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
                 raise
+            except BaseException as exc:
+                # A durable execution engine can cancel the run from outside with its own exception rather
+                # than a `CancelledError` (DBOS raises `DBOSWorkflowCancelledError`). It's an external
+                # cancellation all the same: it keeps propagating, with the run state attached the same way.
+                if isinstance(exc, _cancellation_error_types(self.run_capability)):
+                    _run_cancelled('The agent run was cancelled by its durable execution engine.')._attach_to(exc)  # pyright: ignore[reportPrivateUsage]
+                raise
             finally:
                 # On every exit path — translation above, a clean exit after user code swallowed a
                 # requested cancellation, a superseded driving task, or a non-cancellation error
@@ -4466,6 +4473,13 @@ class _PreparedAgentRun(Generic[_PreparedDepsT, _PreparedOutputT]):
                 finally:
                     if agent_run.result is not None:
                         self.resolve_metadata(agent_run.ctx)
+
+
+def _cancellation_error_types(capability: AbstractCapability[Any]) -> tuple[type[BaseException], ...]:
+    """The exception types the run's capabilities declare their environment cancels a run with."""
+    error_types: list[type[BaseException]] = []
+    capability.apply(lambda leaf: error_types.extend(leaf._cancellation_error_types))  # pyright: ignore[reportPrivateUsage]
+    return tuple(error_types)
 
 
 def _merge_retries_with_spec(

@@ -214,6 +214,16 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
     """
 
     @property
+    def _cancellation_error_types(self) -> tuple[type[BaseException], ...]:
+        """Exceptions the environment this capability integrates with cancels a run with from outside.
+
+        Internal, in-tree only: durability capabilities report their
+        [`DurabilityEngineSpec.cancellation_error_types`][pydantic_ai.durable_exec.DurabilityEngineSpec.cancellation_error_types]
+        here, so the run can attach its state to them as it does to an external `CancelledError`.
+        """
+        return ()
+
+    @property
     def _emits_app_events(self) -> bool:
         """Whether this app-facing capability may emit `CustomEvent`s while dispatching callbacks.
 
