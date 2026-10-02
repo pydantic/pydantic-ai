@@ -54,6 +54,7 @@ from pydantic_ai.realtime import (
     RealtimeError,
     RealtimeModelProfile,
     RealtimeSession,
+    RealtimeSessionReconnectEvent,
     RealtimeTurnCompleteEvent,
     WebRTCSession,
     infer_realtime_model,
@@ -2560,6 +2561,348 @@ async def test_a_session_that_expires_as_it_is_asked_to_end_still_reports_its_us
     assert [report.usage.audio_seconds for report in await _ended(_LiveSink(ws))] == [3]
 
 
+# --- reconnecting -----------------------------------------------------------------------------------
+
+
+class _DroppingWebSocket(_FakeWebSocket):
+    """A socket that delivers its frames, then drops the way a lost connection does."""
+
+    async def recv(self) -> str:
+        if self._frames:
+            return self._frames.pop(0)
+        raise websockets.ConnectionClosedError(None, None)
+
+
+def _started(session_id: str, **session: Any) -> str:
+    return json.dumps(
+        {
+            'type': 'session.started',
+            'event_id': 'e',
+            'session': {'id': session_id, 'expires_at': 0, 'model': 'gpt-live-1', 'status': 'active', **session},
+        }
+    )
+
+
+@contextmanager
+def _patched_dials(*sockets: _FakeWebSocket) -> Any:
+    """Stand in for `websockets.connect`, answering each dial with the next socket and noting its URL."""
+    urls: list[str] = []
+    queue = list(sockets)
+
+    class _Opening:
+        def __init__(self, ws: _FakeWebSocket) -> None:
+            self.ws = ws
+
+        async def __aenter__(self) -> _FakeWebSocket:
+            return self.ws
+
+        async def __aexit__(self, *args: Any) -> None:
+            self.ws.closed = True
+
+    original = live_module.websockets.connect
+
+    def _connect(url: str, **kwargs: Any) -> _Opening:
+        urls.append(url)
+        return _Opening(queue.pop(0))
+
+    live_module.websockets.connect = _connect
+    try:
+        yield urls
+    finally:
+        live_module.websockets.connect = original
+
+
+_RECONNECT = OpenAILiveModelSettings(reconnect={'base_delay': 0.0, 'jitter': False, 'max_attempts': 2})
+_STORED_RECONNECT = OpenAILiveModelSettings(_RECONNECT, openai_live_store=True)
+
+
+async def _first_events(connection: OpenAILiveConnection, count: int) -> list[Any]:
+    events: list[Any] = []
+    with anyio.fail_after(5):
+        async for event in connection:  # pragma: no branch
+            events.append(event)
+            if len(events) == count:
+                break
+    return events
+
+
+async def test_a_drop_without_a_reconnect_policy_still_ends_the_session(model: OpenAILiveModel) -> None:
+    with _patched_dials(_DroppingWebSocket([_started('s1')])):
+        async with model.connect(
+            messages=[], model_settings=None, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+            with pytest.raises(websockets.ConnectionClosedError):
+                await _first_events(connection, 1)
+
+
+async def test_a_session_with_no_history_reconnects_to_an_unseeded_session(model: OpenAILiveModel) -> None:
+    """Nothing to replay is not a reason to fail: the replacement just starts empty."""
+    first, second = _DroppingWebSocket([_started('s1')]), _FakeWebSocket([_started('s2')])
+    with _patched_dials(first, second) as urls:
+        async with model.connect(
+            messages=[], model_settings=_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            assert connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=False)]
+    assert urls == ['wss://api.openai.com/v1/live/sessions'] * 2
+    assert first.closed
+    replacement = json.loads(second.sent[0])['session']
+    assert 'input' not in replacement and replacement['model'] == 'gpt-live-1'
+
+
+async def test_a_replacement_session_is_seeded_with_the_history_so_far(model: OpenAILiveModel) -> None:
+    first, second = _DroppingWebSocket([_started('s1')]), _FakeWebSocket([_started('s2')])
+    history = [
+        ModelRequest(parts=[UserPromptPart(content=['Look at this:', BinaryImage(data=b'x', media_type='image/png')])])
+    ]
+    with _patched_dials(first, second):
+        async with model.connect(
+            messages=[], model_settings=_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            connection.set_message_history(lambda: history)
+            # Like gpt-realtime's replay, a replay of the offered history restores the call.
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=True)]
+    # A replay has nothing to refuse: the image is left out rather than raising.
+    assert json.loads(second.sent[0])['session']['input'] == [
+        {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Look at this:'}]}
+    ]
+
+
+async def test_a_stored_session_is_forked_from_the_latest_session(model: OpenAILiveModel) -> None:
+    """Each fork is a new session, so the next drop forks that one."""
+    sockets = (
+        _DroppingWebSocket([_started('s1')]),
+        _DroppingWebSocket([_started('s2')]),
+        _FakeWebSocket([_started('s3')]),
+    )
+    settings = _STORED_RECONNECT
+    with _patched_dials(*sockets) as urls:
+        async with model.connect(
+            messages=[], model_settings=settings, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            assert await _first_events(connection, 2) == [RealtimeSessionReconnectEvent(state_restored=True)] * 2
+    assert urls == snapshot(
+        [
+            'wss://api.openai.com/v1/live/sessions',
+            'wss://api.openai.com/v1/live/sessions/s1/fork',
+            'wss://api.openai.com/v1/live/sessions/s2/fork',
+        ]
+    )
+    assert [json.loads(ws.sent[0])['session'] for ws in sockets[1:]] == [{}, {}]
+
+
+async def test_a_reconnect_that_keeps_failing_ends_the_session(model: OpenAILiveModel) -> None:
+    """A refused start counts as a failed attempt; once they're spent, the session ends with a reason."""
+    refused = json.dumps(
+        {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'The stored session was not found.'}}
+    )
+    sockets = (_DroppingWebSocket([_started('s1')]), _FakeWebSocket([refused]), _FakeWebSocket([refused]))
+    settings = _RECONNECT
+    with _patched_dials(*sockets):
+        async with model.connect(
+            messages=[], model_settings=settings, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            with anyio.fail_after(5):
+                # The stream ends after the error, rather than trying again.
+                [error] = [event async for event in connection]
+            assert isinstance(error, RealtimeSessionErrorEvent) and not error.recoverable
+            assert 'reconnect failed' in error.message
+            assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_call_the_lost_session_asked_for_is_not_answered_on_the_new_one() -> None:
+    """The new session has no record of the call (checked live), and its turn and usage start over."""
+    sent: list[dict[str, Any]] = []
+
+    class _Sink(OpenAILiveConnection):
+        async def _send_event(self, event: dict[str, Any]) -> None:
+            sent.append(event)  # pragma: no cover
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        return object(), 's2'
+
+    connection = _Sink(object(), dial=dial, reconnect={'base_delay': 0.0, 'jitter': False}, forks=True, session_id='s1')  # pyright: ignore[reportArgumentType]
+    _open_delegation(connection, call_ids=('c1',))
+    connection._reported_seconds = 30.0  # pyright: ignore[reportPrivateUsage]
+
+    assert await connection._try_reconnect()  # pyright: ignore[reportPrivateUsage]
+    assert connection._session_id == 's2'  # pyright: ignore[reportPrivateUsage]
+    assert not connection._delegations and not connection._response_open  # pyright: ignore[reportPrivateUsage]
+    assert connection._silence_timeout() is None  # pyright: ignore[reportPrivateUsage]
+    assert connection._reported_seconds == 0.0  # pyright: ignore[reportPrivateUsage]
+    await connection.send(ToolResult('c1', output='too late'))
+    assert sent == []
+
+
+async def test_a_reconnect_budget_that_is_spent_is_not_retried() -> None:
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        raise AssertionError('no dial expected')  # pragma: no cover
+
+    connection = OpenAILiveConnection(object(), dial=dial, reconnect={'max_reconnects': 0})  # pyright: ignore[reportArgumentType]
+    assert not connection._can_reconnect  # pyright: ignore[reportPrivateUsage]
+    assert not await connection._try_reconnect()  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_replay_keeps_the_most_recent_history_within_lives_caps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live refuses more than 128 items or 8,192 tokens at the start, so a long call replays its recent end."""
+    many = [ModelRequest(parts=[UserPromptPart(content=f'message {i}')]) for i in range(200)]
+    items = await live_module.replay_input_items(many, provider_name='openai')
+    assert len(items) == 128
+    assert items[-1]['content'][0]['text'] == 'message 199'
+
+    long = [ModelRequest(parts=[UserPromptPart(content=' '.join(['word'] * 1000) + f' {i}')]) for i in range(20)]
+    items = await live_module.replay_input_items(long, provider_name='openai')
+    assert [item['content'][0]['text'].rsplit(' ', 1)[-1] for item in items] == [
+        '12',
+        '13',
+        '14',
+        '15',
+        '16',
+        '17',
+        '18',
+        '19',
+    ]
+
+
+class _ClosingWebSocket(_FakeWebSocket):
+    """A socket that delivers its frames, then closes cleanly, as Live does after `session.closed`."""
+
+    async def recv(self) -> str:
+        if self._frames:
+            return self._frames.pop(0)
+        raise websockets.ConnectionClosedOK(None, None)
+
+
+@pytest.mark.parametrize('reason', ['expired', 'connection_lost'])
+async def test_a_session_live_ends_itself_reconnects(model: OpenAILiveModel, reason: str) -> None:
+    """Live announces a duration limit or a lost connection before its clean close; the policy re-opens it."""
+    audio = json.dumps({'type': 'session.output_audio.delta', 'delta': 'f39/f39/f38='})
+    first = _ClosingWebSocket([_started('s1'), audio, json.dumps(_session_closed(reason))])
+    second = _FakeWebSocket([_started('s2')])
+    with _patched_dials(first, second) as urls:
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            events = await _first_events(connection, 3)
+    assert events == [
+        AudioDelta(data=b'\x7f\x7f\x7f\x7f\x7f\x7f\x7f\x7f'),
+        ResponseDone(interrupted=True),
+        RealtimeSessionReconnectEvent(state_restored=True),
+    ]
+    assert urls[-1] == 'wss://api.openai.com/v1/live/sessions/s1/fork'
+
+
+async def test_a_session_the_safety_filter_ended_stays_ended(model: OpenAILiveModel) -> None:
+    first = _ClosingWebSocket([_started('s1'), json.dumps(_session_closed('content'))])
+    with _patched_dials(first):
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            with anyio.fail_after(5):
+                events = [event async for event in connection]
+    assert events[-1] == RealtimeSessionErrorEvent(
+        message='The OpenAI GPT-Live session ended: content.', code='live_session_content', recoverable=False
+    )
+
+
+async def test_a_session_live_refuses_to_fork_is_replayed_instead(model: OpenAILiveModel) -> None:
+    refused = json.dumps(
+        {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'The stored session was not found.'}}
+    )
+    sockets = (_DroppingWebSocket([_started('s1')]), _FakeWebSocket([refused]), _FakeWebSocket([_started('s2')]))
+    history = [ModelRequest(parts=[UserPromptPart(content='Hi')])]
+    with _patched_dials(*sockets) as urls:
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            connection.set_message_history(lambda: history)
+            assert await _first_events(connection, 1) == [RealtimeSessionReconnectEvent(state_restored=True)]
+    assert urls[1:] == ['wss://api.openai.com/v1/live/sessions/s1/fork', 'wss://api.openai.com/v1/live/sessions']
+    replacement = json.loads(sockets[2].sent[0])['session']
+    assert replacement['store'] is True
+    assert replacement['input'] == [{'role': 'user', 'content': [{'type': 'input_text', 'text': 'Hi'}]}]
+
+
+async def test_a_stored_session_without_an_id_is_replayed() -> None:
+    """With no session to fork, a fork would start blank; replaying at least carries the history."""
+    dials: list[str | None] = []
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        dials.append(fork_from)
+        return _FakeWebSocket([]), 's2'
+
+    connection = OpenAILiveConnection(object(), dial=dial, reconnect={'base_delay': 0.0}, forks=True)  # pyright: ignore[reportArgumentType]
+    assert await connection._try_reconnect()  # pyright: ignore[reportPrivateUsage]
+    assert dials == [None]
+    assert not connection._restored  # pyright: ignore[reportPrivateUsage]
+
+
+class _SendDroppingWebSocket(_FakeWebSocket):
+    async def send(self, data: str) -> None:
+        raise websockets.ConnectionClosedError(None, None)
+
+
+async def test_a_drop_while_continuing_a_delegation_reconnects() -> None:
+    """The continuation goes out from the receive loop, so a drop there takes the same reconnect path."""
+
+    async def dial(fork_from: str | None, seed: list[dict[str, Any]]) -> tuple[Any, str | None]:
+        return _FakeWebSocket([]), 's2'
+
+    ws = _SendDroppingWebSocket([_transcript_frame('Checking.')])
+    connection = OpenAILiveConnection(ws, dial=dial, reconnect={'base_delay': 0.0}, session_id='s1')  # pyright: ignore[reportArgumentType]
+    connection._continuations_due.append(live_module._Delegation('d1'))  # pyright: ignore[reportPrivateUsage]
+    events = await _first_events(connection, 2)
+    assert events[-1] == RealtimeSessionReconnectEvent(state_restored=False)
+    assert connection._session_id == 's2'  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_drop_while_continuing_without_a_policy_raises() -> None:
+    ws = _SendDroppingWebSocket([_transcript_frame('Checking.')])
+    connection = OpenAILiveConnection(ws)  # pyright: ignore[reportArgumentType]
+    connection._continuations_due.append(live_module._Delegation('d1'))  # pyright: ignore[reportPrivateUsage]
+    with pytest.raises(websockets.ConnectionClosedError):
+        await _first_events(connection, 2)
+
+
+async def test_a_message_too_long_to_replay_alone_is_skipped() -> None:
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content='earlier')]),
+        ModelRequest(parts=[UserPromptPart(content=' '.join(['word'] * 9000))]),
+    ]
+    items = await live_module.replay_input_items(messages, provider_name='openai')
+    assert [item['content'][0]['text'] for item in items] == ['earlier']
+
+    # A skipped message doesn't take up one of the 128 places.
+    many = [ModelRequest(parts=[UserPromptPart(content=f'message {i}')]) for i in range(130)]
+    items = await live_module.replay_input_items([*many, *messages[1:]], provider_name='openai')
+    assert len(items) == 128
+    assert items[0]['content'][0]['text'] == 'message 2'
+
+
 def test_a_document_url_of_unknown_type_is_left_to_the_mapper() -> None:
     """Whether it can be sent is the Responses mapping's call, as on `OpenAIResponsesModel`."""
     assert not live_module._is_audio_or_video_url(DocumentUrl(url='https://example.com/noext'))  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize('ending', ['expired', 'connection_lost', 'dropped'])
+async def test_closing_after_a_reconnect_ends_the_replacement_session(model: OpenAILiveModel, ending: str) -> None:
+    """The session Live ended was replaced, so closing still asks the replacement to end, and records its seconds."""
+    if ending == 'dropped':
+        first: _FakeWebSocket = _DroppingWebSocket([_started('s1')])
+    else:
+        first = _ClosingWebSocket([_started('s1'), json.dumps(_session_closed(ending, seconds=3))])
+    second = _FakeWebSocket([_started('s2')], closed_seconds=6)
+    with _patched_dials(first, second):
+        async with model.connect(
+            messages=[], model_settings=_STORED_RECONNECT, model_request_parameters=ModelRequestParameters()
+        ) as connection:
+            with anyio.fail_after(5):
+                async for event in connection:  # pragma: no branch
+                    if isinstance(event, RealtimeSessionReconnectEvent):
+                        break
+                reports = await _ended(connection)
+
+    assert [report.usage.audio_seconds for report in reports] == [6]
+    assert [json.loads(frame)['type'] for frame in first.sent if json.loads(frame)['type'] == 'session.close'] == []
+    assert [json.loads(frame)['type'] for frame in second.sent[1:]] == ['session.close']
