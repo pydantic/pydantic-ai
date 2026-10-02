@@ -702,14 +702,33 @@ def test_inline_defs_recursive_json_pointer_ref_raises(schema: dict[str, Any], r
 
 
 @pytest.mark.parametrize(
-    'ref', ['#/properties/missing', '#/required/9', '#/required/01', '#/required/²', '#/required/0', '#/$defs/Missing']
+    'ref',
+    [
+        '#/properties/missing',
+        '#/required/9',
+        '#/properties/t/prefixItems/01',
+        '#/properties/t/prefixItems/\u0661',
+        '#/required/\u00b2',
+        '#/required/0',
+        '#/$defs/Missing',
+    ],
 )
 def test_inline_defs_dangling_ref_raises(ref: str):
     """A `$ref` that resolves to no schema object raises rather than inlining something else.
 
+    RFC 6901 array indexes are ASCII digits without a leading zero, so `01`, an Arabic-Indic `1` and a
+    superscript `2` resolve to nothing, even where a looser match would reach a schema in `prefixItems`.
     Unit test: the walker raises before any request is built.
     """
-    schema = {'type': 'object', 'properties': {'a': {'type': 'string'}, 'b': {'$ref': ref}}, 'required': ['a']}
+    schema = {
+        'type': 'object',
+        'properties': {
+            'a': {'type': 'string'},
+            't': {'type': 'array', 'prefixItems': [{'type': 'integer'}, {'type': 'string'}]},
+            'b': {'$ref': ref},
+        },
+        'required': ['a'],
+    }
 
     with pytest.raises(
         UserError, match=f'^Could not find \\$ref definition for {re.escape(ref.removeprefix("#/$defs/"))}$'
