@@ -1029,7 +1029,9 @@ class RealtimeSession:
             # Offer the conversation for replay, so a provider that keeps no state across sessions can
             # carry the call through a reconnect instead of resuming with amnesia. Gated on seeding
             # support because that is the mechanism, and a no-op where the provider resumes natively.
-            self._connection.set_message_history(self.all_messages)
+            self._connection.set_message_history(
+                self.all_messages if self._core is None else self._core.replayable_messages
+            )
         self._connection._set_audio_commit_listener(self._place_held_commit)  # pyright: ignore[reportPrivateUsage]
 
         self._session_instrumentation.start_session_span()

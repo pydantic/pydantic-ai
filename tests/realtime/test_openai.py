@@ -5140,3 +5140,62 @@ async def test_a_chat_spans_input_is_the_conversation_ahead_of_its_response(monk
     [(input_messages, response)] = ended
     assert response is not None
     assert [type(message).__name__ for message in input_messages] == ['ModelRequest']
+
+
+class _DropAfterFrames(FakeWebSocket):
+    """Yields its frames after the handshake, then drops abnormally."""
+
+    async def __aiter__(self) -> AsyncIterator[Any]:
+        while self._incoming:
+            yield self._incoming.pop(0)
+        raise rt_openai.websockets.ConnectionClosed(None, None)
+
+
+async def test_reconnect_replays_a_reply_held_back_behind_a_missing_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """History holds the reply back for the spoken turn's transcript, but the new socket must still get both."""
+    frames: list[dict[str, Any]] = [
+        {'type': 'input_audio_buffer.speech_started', 'item_id': 'item_u1', 'audio_start_ms': 0},
+        {'type': 'input_audio_buffer.speech_stopped', 'item_id': 'item_u1', 'audio_end_ms': 500},
+        {'type': 'input_audio_buffer.committed', 'item_id': 'item_u1', 'previous_item_id': None},
+        {'type': 'conversation.item.input_audio_transcription.delta', 'item_id': 'item_u1', 'delta': 'Weather?'},
+        {
+            'type': 'response.created',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'in_progress', 'output': []},
+        },
+        {
+            'type': 'response.output_audio_transcript.delta',
+            'response_id': 'resp_1',
+            'item_id': 'item_a1',
+            'delta': 'Sunny.',
+        },
+        {
+            'type': 'response.done',
+            'response': {'id': 'resp_1', 'object': 'realtime.response', 'status': 'completed', 'output': []},
+        },
+    ]
+    dropped = _DropAfterFrames([_created(), _updated(), *map(json.dumps, frames)])
+    fresh = FakeWebSocket([_created(), _updated()])
+    monkeypatch.setattr(rt_openai.websockets, 'connect', _ConnectSequence([dropped, fresh]))
+    model = OpenAIRealtimeModel(
+        'gpt-realtime',
+        provider=OpenAIProvider(api_key='k'),
+        settings={'reconnect': {'base_delay': 0.0, 'max_attempts': 1}},
+    )
+
+    async with Agent().realtime(model).session() as session:
+        with anyio.fail_after(5):
+            async for event in session:  # pragma: no branch
+                if isinstance(event, RealtimeSessionReconnectEvent):
+                    break
+
+    replayed = [
+        json.loads(frame)['item'] for frame in fresh.sent if json.loads(frame)['type'] == 'conversation.item.create'
+    ]
+    assert [
+        (item['role'], item['content'][0].get('text') or item['content'][0].get('transcript')) for item in replayed
+    ] == [
+        ('user', 'Weather?'),
+        ('assistant', 'Sunny.'),
+    ]

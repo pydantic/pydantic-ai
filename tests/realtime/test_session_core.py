@@ -55,6 +55,7 @@ from pydantic_ai.realtime._lifecycle import (
 )
 from pydantic_ai.realtime.codec import (
     AudioDelta,
+    ConversationItemCreated,
     InputRejected,
     InputTranscript,
     OutputTranscript,
@@ -567,3 +568,20 @@ def test_a_withdrawn_input_is_let_go() -> None:
     assert session_core.all_messages() == []
     assert not session_core._inputs and not session_core._unplaced  # pyright: ignore[reportPrivateUsage]
     assert session_core._placed == []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_repeated_or_replayed_call_is_recorded_once() -> None:
+    """xAI's resumption can repeat a call of a response still open, and replay items history already has."""
+    call = ToolCall('call_1', tool_name='lookup', args='{}', response_id='r1')
+    session_core = feed(
+        core(),
+        started('r1'),
+        call,
+        call,
+        ConversationItemCreated(item_id='item_old', tool_call_id='call_old', replayed=True),
+        ConversationItemCreated(item_id='item_new'),
+        ToolCall('call_old', tool_name='lookup', args='{}', response_id='r1'),
+        said('r1', 'Replayed.', item_id='item_old'),
+        ended('r1'),
+    )
+    assert summary(session_core.all_messages()) == snapshot(['r1 [call:call_1] complete stop'])

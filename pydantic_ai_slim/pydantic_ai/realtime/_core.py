@@ -295,6 +295,8 @@ class SessionCore:
         """Entities in the order they joined the provider's conversation."""
         self._responses: dict[str, _Response] = {}
         self._turns: dict[str, _UserTurn] = {}
+        self._replayed_ids: set[str] = set()
+        """Item and tool call ids of a resumed conversation's replay, whose content the core already has."""
         self._inputs: dict[InputId, _Input] = {}
         """The inputs history records (not audio chunks, say, or a bare request for a response), by id."""
         self._unplaced: dict[InputId, _Input] = {}
@@ -330,6 +332,10 @@ class SessionCore:
             self._response_content(item)
         elif isinstance(item, ToolCall):
             self._tool_call(item)
+        elif isinstance(item, ConversationItemCreated):
+            if item.replayed:
+                # A resumed conversation's replay of what history already has (xAI): nothing in it is new.
+                self._replayed_ids.update(filter(None, (item.item_id, item.tool_call_id)))
         elif isinstance(item, OutputItemDetails):
             if (response := self._open_response(item.response_id)) is not None:
                 response.item_details[item.item_id] = item.provider_details
@@ -369,7 +375,6 @@ class SessionCore:
                 RealtimeSessionReconnectEvent,
                 RealtimeSessionErrorEvent,
                 ConversationCreated,
-                ConversationItemCreated,
                 PartStartEvent,
                 PartEndEvent,
             ),
@@ -450,7 +455,7 @@ class SessionCore:
 
     def _response_content(self, event: AudioDelta | OutputTranscript) -> None:
         response = self._open_response(event.response_id)
-        if response is None:
+        if response is None or event.item_id in self._replayed_ids:
             return
         output_text = isinstance(event, OutputTranscript) and event.output_text
         part = self._open_part(response, output_text=output_text, item_id=event.item_id)
@@ -509,7 +514,12 @@ class SessionCore:
 
     def _tool_call(self, event: ToolCall) -> None:
         response = self._open_response(event.response_id)
-        if response is None:
+        if (
+            response is None
+            or event.tool_call_id in self._call_response
+            or self._replayed_ids.intersection((event.tool_call_id, event.item_id))
+        ):
+            # Repeated (a resumed conversation replaying it, say): the call is already recorded, once.
             return
         self._close_part(response)
         response.parts.append(ToolCallPart(tool_name=event.tool_name, args=event.args, tool_call_id=event.tool_call_id))
@@ -669,6 +679,9 @@ class SessionCore:
             self._build_turn(turn)
 
     def _build_turn(self, turn: _UserTurn) -> None:
+        turn.message = self._turn_request(turn)
+
+    def _turn_request(self, turn: _UserTurn) -> ModelRequest:
         audio = (
             BinaryContent(data=pcm_to_wav(turn.audio, self._input_rate), media_type=_WAV_MEDIA_TYPE)
             if turn.audio
@@ -677,7 +690,7 @@ class SessionCore:
         part = SpeechPart(speaker='user', transcript=turn.transcript.strip() or None, audio=audio)
         request = ModelRequest(parts=[part])
         fill_run_metadata(request, run_id=self._run_id, conversation_id=self._conversation_id)
-        turn.message = request
+        return request
 
     # --- inputs and obligations --------------------------------------------------------------------
 
@@ -740,6 +753,25 @@ class SessionCore:
                 yield entry.message
             else:
                 yield entry.request
+
+    def replayable_messages(self) -> list[ModelMessage]:
+        """The provider's conversation as far as it went, for a reconnect to replay on a new connection.
+
+        Unlike `all_messages()`, this holds nothing back: a spoken turn still waiting for its transcript is in it
+        with what it has, and so is everything after it. A response under way isn't: the old connection takes it
+        along.
+        """
+        messages: list[ModelMessage] = list(self._seeded)
+        for entry in self._placed:
+            if isinstance(entry, _Response):
+                if entry.message is not None:
+                    messages.append(entry.message)
+                    messages.extend(self._returns_of(entry))
+            elif isinstance(entry, _UserTurn):
+                messages.append(entry.message or self._turn_request(entry))
+            else:
+                messages.append(entry.request)
+        return messages
 
     def _held_from(self) -> int:
         """Where history is held back: the first entity not final yet (a response under way, a turn untranscribed)."""

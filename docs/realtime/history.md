@@ -182,7 +182,9 @@ On OpenAI, Azure OpenAI, and xAI, history follows the order of the provider's ow
   transcript of the spoken turn before it, which can arrive after the reply itself is done, for up to 30
   seconds after that; past that, the turn is recorded with the transcript it has so far.
 - Nothing is inserted ahead of messages already returned, so each snapshot starts with the one before it.
-  The one exception is a tool's return, which always directly follows the response that called it.
+  The one exception is a tool's return, which always directly follows the response that called it: a tool
+  that finishes after later messages were recorded has its return inserted ahead of them.
+
 - Assistant messages from `gpt-realtime-2` models carry their `phase` (`'commentary'` on the way to a tool
   call, or `'final_answer'`) as `'phase'` in the part's `provider_details`, the way a standard OpenAI run
   records [text phases](../models/openai.md#text-phases).
