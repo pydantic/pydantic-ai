@@ -935,6 +935,9 @@ def test_durability_activity_config_tolerates_unschemable_annotations(monkeypatc
         with pytest.raises(UserError, match='unknown_key'):
             validate_activity_config(cast(ActivityConfig, {'unknown_key': 1}), 'activity_config')
 
+        with pytest.raises(UserError, match='event_groups'):
+            validate_activity_config(cast(ActivityConfig, {'event_groups': [object()]}), 'activity_config')
+
         # The unschemable type passes through while an ISO duration keeps its coercion.
         event_group = _EventGroup()
         config = validate_activity_config(
