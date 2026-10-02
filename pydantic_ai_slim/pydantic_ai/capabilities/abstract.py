@@ -433,6 +433,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
         Under durable execution, worker processes re-derive this instance from the deserialized
         run context, so all per-run state must be derivable from `ctx`.
         Default: return `self` (shared across runs).
+
+        Return per-run instances here, but don't acquire resources (connections, processes,
+        temporary files): this runs before any run hook, so nothing releases them if the run fails
+        before it starts. Acquire them in `before_run` or `wrap_run`, and release them in `wrap_run`.
         """
         return self
 
@@ -748,6 +752,10 @@ class AbstractCapability(ABC, Generic[AgentDepsT]):
 
         Recovery happens before control returns to `wrap_run`, so wrap hooks only observe
         failures that this hook does not recover.
+
+        Only failures of the run body reach this hook. An exception from `before_run` or
+        `after_run`, including another capability's, goes straight to `wrap_run`, so release
+        resources acquired in `before_run` from `wrap_run` (a `try`/`finally` around `handler()`).
 
         Cancellation is terminal: the hook may observe it and clean up, but cannot recover the
         run to success. A result returned for a cancellation is discarded, and `wrap_run` still
